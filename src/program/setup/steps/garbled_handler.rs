@@ -29,6 +29,8 @@ struct GarbledJob {
 enum GarbledJobType {
     /// Prove(input_bytes, circuit_type, output_dir)
     Prove(Vec<u8>, String, String),
+    /// Verify all participants' garbled step data
+    Verify(Vec<GarbledStepData>),
 }
 
 /// [`AsyncStepHandler`] for garbled circuits.
@@ -114,5 +116,60 @@ impl AsyncStepHandler for GarbledHandler {
 
     fn dispatcher_id(&self, config: &ComponentsConfig) -> Option<Identifier> {
         config.garbled.clone()
+    }
+
+    fn create_verify_job(
+        &self,
+        protocol_id: &Uuid,
+        all_data: &[String],
+    ) -> Result<String, BitVMXError> {
+        // Parse all participants' data
+        let step_data: Vec<GarbledStepData> = all_data
+            .iter()
+            .map(|d| serde_json::from_str(d))
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                BitVMXError::InvalidMessage(format!(
+                    "Failed to parse garbled step data for verification: {}",
+                    e
+                ))
+            })?;
+
+        // TODO: Replace with real verification job when garbled-dispatcher is integrated
+        let job = GarbledJob {
+            job_id: protocol_id.to_string(),
+            job_type: GarbledJobType::Verify(step_data),
+        };
+
+        serde_json::to_string(&job).map_err(|e| {
+            BitVMXError::InvalidMessage(format!(
+                "Failed to serialize garbled verify job: {}",
+                e
+            ))
+        })
+    }
+
+    fn parse_verify_result(&self, result: &[u8]) -> Result<(), BitVMXError> {
+        // TODO: Replace with real verification result parsing
+        let result_json: serde_json::Value =
+            serde_json::from_slice(result).map_err(|e| {
+                BitVMXError::InvalidMessage(format!(
+                    "Failed to parse garbled verify result: {}",
+                    e
+                ))
+            })?;
+
+        let status = result_json["status"]
+            .as_str()
+            .unwrap_or("UNKNOWN");
+
+        if status != "OK" {
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Garbled verification failed: {}",
+                result_json["details"].as_str().unwrap_or("unknown error")
+            )));
+        }
+
+        Ok(())
     }
 }

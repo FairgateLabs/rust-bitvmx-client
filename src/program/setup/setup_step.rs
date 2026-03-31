@@ -106,4 +106,39 @@ pub trait SetupStep {
             "receive_generation_result called on a non-async step".to_string(),
         ))
     }
+
+    /// Send a verification job to the dispatcher with all participants' data.
+    ///
+    /// Only relevant for async steps (`is_async() == true`).
+    /// Called after all participants' data has been received (`AllParticipantsCompleted`).
+    /// The engine transitions to `WaitingVerification` after this call.
+    ///
+    /// Default: returns error (not an async step).
+    fn send_verification_job(
+        &self,
+        _protocol: &ProtocolType,
+        _participants: &[CommsAddress],
+        _context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        Err(BitVMXError::InvalidMessage(
+            "send_verification_job called on a non-async step".to_string(),
+        ))
+    }
+
+    /// Called when an async verification result arrives from the dispatcher.
+    ///
+    /// Only relevant for async steps (`is_async() == true`).
+    /// Should return `Ok(())` if verification passed, or an error if it failed.
+    ///
+    /// Default: returns error (not an async step).
+    fn receive_verification_result(
+        &self,
+        _result: &[u8],
+        _protocol: &ProtocolType,
+        _context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        Err(BitVMXError::InvalidMessage(
+            "receive_verification_result called on a non-async step".to_string(),
+        ))
+    }
 }

@@ -30,6 +30,7 @@ struct MockGarbledJob {
 #[derive(Debug, Deserialize)]
 enum MockGarbledJobType {
     Prove(#[allow(dead_code)] Vec<u8>, String, String),
+    Verify(#[allow(dead_code)] Vec<serde_json::Value>),
 }
 
 /// Mock result matching the garbled-dispatcher's ProveResult format
@@ -44,6 +45,13 @@ struct MockProveResult {
     digest_ct: String,
     digest_io: String,
     proof_path: String,
+}
+
+/// Mock result for verification jobs
+#[derive(Debug, Serialize)]
+struct MockVerifyResult {
+    r#type: String,
+    status: String,
 }
 
 /// Creates a DualChannel that acts as the mock garbled dispatcher.
@@ -69,18 +77,25 @@ fn create_mock_garbled_channel(config: &Config) -> Result<(DualChannel, Identifi
     Ok((channel, identifier))
 }
 
+/// What kind of job the mock dispatcher processed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MockJobProcessed {
+    None,
+    Prove,
+    Verify,
+}
+
 /// Processes one pending message from the mock garbled dispatcher channel.
 ///
 /// If there's a garbled job request, creates and sends back a mock result.
-/// Returns true if a job was processed.
-fn process_mock_garbled_dispatcher(channel: &DualChannel) -> Result<bool> {
+fn process_mock_garbled_dispatcher(channel: &DualChannel) -> Result<MockJobProcessed> {
     match channel.recv()? {
         Some((msg, from)) => {
             // Handle ping
             if let Ok(PingMessage::Ping) = serde_json::from_str::<PingMessage>(&msg) {
                 let pong = serde_json::to_string(&PingMessage::Pong)?;
                 channel.send(&from, pong)?;
-                return Ok(false);
+                return Ok(MockJobProcessed::None);
             }
 
             // Handle garbled job
@@ -90,32 +105,41 @@ fn process_mock_garbled_dispatcher(channel: &DualChannel) -> Result<bool> {
                 job.job_id, job.job_type
             );
 
-            let (circuit_type, output_dir) = match &job.job_type {
-                MockGarbledJobType::Prove(_, circuit, out) => (circuit.clone(), out.clone()),
-            };
-
-            let result = MockProveResult {
-                r#type: "ProveResult".to_string(),
-                status: "OK".to_string(),
-                circuit_type,
-                num_gates: 42,
-                num_inputs: 3,
-                digest_circ: "test_digest_circ_001".to_string(),
-                digest_ct: "test_digest_ct_002".to_string(),
-                digest_io: "test_digest_io_003".to_string(),
-                proof_path: format!("{}/proof.bin", output_dir),
+            let (job_kind, result_json) = match &job.job_type {
+                MockGarbledJobType::Prove(_, circuit, out) => {
+                    let result = MockProveResult {
+                        r#type: "ProveResult".to_string(),
+                        status: "OK".to_string(),
+                        circuit_type: circuit.clone(),
+                        num_gates: 42,
+                        num_inputs: 3,
+                        digest_circ: "test_digest_circ_001".to_string(),
+                        digest_ct: "test_digest_ct_002".to_string(),
+                        digest_io: "test_digest_io_003".to_string(),
+                        proof_path: format!("{}/proof.bin", out),
+                    };
+                    (MockJobProcessed::Prove, serde_json::to_string(&result)?)
+                }
+                MockGarbledJobType::Verify(_data) => {
+                    info!("Mock garbled dispatcher: verifying garbled data");
+                    let result = MockVerifyResult {
+                        r#type: "VerifyResult".to_string(),
+                        status: "OK".to_string(),
+                    };
+                    (MockJobProcessed::Verify, serde_json::to_string(&result)?)
+                }
             };
 
             let result_message = ResultMessage {
                 job_id: job.job_id,
-                result: serde_json::to_string(&result)?,
+                result: result_json,
             };
 
             channel.send(&from, serde_json::to_string(&result_message)?)?;
             info!("Mock garbled dispatcher: sent result");
-            Ok(true)
+            Ok(job_kind)
         }
-        None => Ok(false),
+        None => Ok(MockJobProcessed::None),
     }
 }
 
@@ -214,12 +238,19 @@ pub fn test_garbled_setup() -> Result<()> {
     //   3. Mock dispatcher receives job → sends result
     //   4. Client receives result → WaitingForParticipants → Completed
     let mut setup_completed_count = 0;
+    let mut prove_jobs_count = 0;
+    let mut verify_jobs_count = 0;
     let max_iterations = 5000;
 
     for i in 0..max_iterations {
         // Process mock garbled dispatchers (one per broker)
-        process_mock_garbled_dispatcher(&mock_garbled_channel_op1)?;
-        process_mock_garbled_dispatcher(&mock_garbled_channel_op2)?;
+        for channel in [&mock_garbled_channel_op1, &mock_garbled_channel_op2] {
+            match process_mock_garbled_dispatcher(channel)? {
+                MockJobProcessed::Prove => prove_jobs_count += 1,
+                MockJobProcessed::Verify => verify_jobs_count += 1,
+                MockJobProcessed::None => {}
+            }
+        }
 
         // Tick all instances
         for instance in instances.iter_mut() {
@@ -256,6 +287,20 @@ pub fn test_garbled_setup() -> Result<()> {
         setup_completed_count >= 2,
         "Expected both participants to complete setup, got {}",
         setup_completed_count
+    );
+
+    // Verify the mock dispatcher processed the expected job types:
+    // - 2 Prove jobs (one per participant for generation)
+    // - 2 Verify jobs (one per participant for verification)
+    assert_eq!(
+        prove_jobs_count, 2,
+        "Expected 2 Prove jobs (one per participant), got {}",
+        prove_jobs_count
+    );
+    assert_eq!(
+        verify_jobs_count, 2,
+        "Expected 2 Verify jobs (one per participant), got {}",
+        verify_jobs_count
     );
 
     info!("================================================");
@@ -348,7 +393,7 @@ pub fn test_garbled_setup() -> Result<()> {
     info!("================================================");
     info!("Test completed successfully!");
     info!("  - Keys step: completed (aggregated key matches)");
-    info!("  - GarbledCircuits step: completed (async flow worked)");
+    info!("  - GarbledCircuits step: generation ({} Prove jobs) + verification ({} Verify jobs)", prove_jobs_count, verify_jobs_count);
     info!("  - All garbled data verified across participants");
     info!("================================================");
 

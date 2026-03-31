@@ -50,6 +50,21 @@ pub trait AsyncStepHandler {
 
     /// Return the dispatcher Identifier from the components config.
     fn dispatcher_id(&self, config: &ComponentsConfig) -> Option<Identifier>;
+
+    /// Create a serialized verification job from all participants' data.
+    ///
+    /// Called after all participants' data has been received, before the step completes.
+    /// The dispatcher verifies that the collected data is consistent/valid.
+    fn create_verify_job(
+        &self,
+        protocol_id: &Uuid,
+        all_data: &[String],
+    ) -> Result<String, BitVMXError>;
+
+    /// Parse the verification result from the dispatcher.
+    ///
+    /// Should return `Ok(())` if verification passed, or an error if it failed.
+    fn parse_verify_result(&self, result: &[u8]) -> Result<(), BitVMXError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +261,96 @@ impl SetupStep for AsyncDispatcherStep {
             participants.len()
         );
         Ok(true)
+    }
+
+    fn send_verification_job(
+        &self,
+        protocol: &ProtocolType,
+        participants: &[CommsAddress],
+        context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let protocol_id = protocol.context().id;
+
+        info!(
+            "AsyncDispatcherStep[{}]: Collecting data for verification job",
+            self.name
+        );
+
+        // Collect all participants' data from globals
+        let all_data: Vec<String> = participants
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                context
+                    .globals
+                    .get_var(&protocol_id, &format!("participant_{}_{}", idx, self.name))?
+                    .ok_or_else(|| {
+                        BitVMXError::InvalidMessage(format!(
+                            "Missing data for participant {} in step '{}'",
+                            idx, self.name
+                        ))
+                    })?
+                    .string()
+            })
+            .collect::<Result<_, _>>()?;
+
+        // Create verification job via handler, then drop the borrow
+        let (msg, dispatcher_id) = {
+            let handler = context.async_step_handlers.get(&self.name).ok_or_else(|| {
+                BitVMXError::InvalidMessage(format!(
+                    "No AsyncStepHandler registered for step '{}'",
+                    self.name
+                ))
+            })?;
+
+            let msg = handler.create_verify_job(&protocol_id, &all_data)?;
+            let id = handler
+                .dispatcher_id(&context.components_config)
+                .ok_or_else(|| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Dispatcher not configured for async step '{}'",
+                        self.name
+                    ))
+                })?;
+            (msg, id)
+        };
+
+        context.broker_channel.send(&dispatcher_id, msg)?;
+        info!(
+            "AsyncDispatcherStep[{}]: Verification job sent to dispatcher",
+            self.name
+        );
+
+        Ok(())
+    }
+
+    fn receive_verification_result(
+        &self,
+        result: &[u8],
+        _protocol: &ProtocolType,
+        context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        info!(
+            "AsyncDispatcherStep[{}]: Received verification result ({} bytes)",
+            self.name,
+            result.len()
+        );
+
+        let handler = context.async_step_handlers.get(&self.name).ok_or_else(|| {
+            BitVMXError::InvalidMessage(format!(
+                "No AsyncStepHandler registered for step '{}'",
+                self.name
+            ))
+        })?;
+
+        handler.parse_verify_result(result)?;
+
+        info!(
+            "AsyncDispatcherStep[{}]: Verification passed",
+            self.name
+        );
+
+        Ok(())
     }
 
     fn on_step_complete(

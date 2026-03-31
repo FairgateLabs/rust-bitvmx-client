@@ -1286,7 +1286,7 @@ impl BitVMXApi for BitVMX {
 
             // Route the result to the program's setup engine
             let mut program = self.load_program(&program_id)?;
-            program.receive_async_generation_result(result_data, &mut self.program_context)?;
+            program.receive_dispatcher_result(result_data, &mut self.program_context)?;
         }
         Ok(())
     }

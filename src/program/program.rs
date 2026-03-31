@@ -410,29 +410,50 @@ impl Program {
         Ok(message_processed)
     }
 
-    /// Receives the result of an async generation operation for the current setup step.
+    /// Receives a dispatcher result and routes it based on the engine's current state.
     ///
-    /// This is called when a job dispatcher returns the result for an async setup step
-    pub fn receive_async_generation_result(
+    /// This is called when a job dispatcher returns a result for an async setup step.
+    /// Routes to either generation or verification handling based on engine state.
+    pub fn receive_dispatcher_result(
         &mut self,
         result: &[u8],
         program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         if !matches!(self.state, ProgramState::SettingUp) {
-            debug!("Program::receive_async_generation_result() - Not in SettingUp state, ignoring");
+            debug!("Program::receive_dispatcher_result() - Not in SettingUp state, ignoring");
             return Ok(());
         }
 
         let state_changed = if let Some(engine) = &mut self.setup_engine {
-            engine.receive_async_result(
-                result,
-                &mut self.protocol,
-                &self.participants,
-                self.my_idx,
-                &self.program_id,
-                self.leader,
-                program_context,
-            )?
+            let current_state = engine.state().current_step_state.clone();
+            match current_state {
+                StepState::WaitingGeneration => {
+                    engine.receive_async_result(
+                        result,
+                        &mut self.protocol,
+                        &self.participants,
+                        self.my_idx,
+                        &self.program_id,
+                        self.leader,
+                        program_context,
+                    )?
+                }
+                StepState::WaitingVerification => {
+                    engine.receive_async_verification_result(
+                        result,
+                        &self.protocol,
+                        &self.participants,
+                        program_context,
+                    )?
+                }
+                other => {
+                    warn!(
+                        "Program::receive_dispatcher_result() - Unexpected engine state {:?}, ignoring",
+                        other
+                    );
+                    false
+                }
+            }
         } else {
             false
         };
@@ -440,7 +461,7 @@ impl Program {
         if state_changed {
             self.save()?;
             info!(
-                "Program::receive_async_generation_result() - Saved program state after async result"
+                "Program::receive_dispatcher_result() - Saved program state after dispatcher result"
             );
         }
 

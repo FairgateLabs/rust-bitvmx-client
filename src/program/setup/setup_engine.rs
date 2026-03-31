@@ -42,6 +42,11 @@ pub enum StepState {
     WaitingForParticipants,
     /// All participants have sent data and step is ready to advance to the next step
     AllParticipantsCompleted,
+    /// Step has sent a verification job and is waiting for the result.
+    /// Only used by async steps (where `SetupStep::is_async() == true`).
+    /// Transitions to `Completed` when the verification result arrives
+    /// via `SetupEngine::receive_async_verification_result()`.
+    WaitingVerification,
     /// Step has received all data and can advance
     Completed,
 }
@@ -364,18 +369,38 @@ impl SetupEngine {
             participants.len()
         );
 
+        // Async steps need verification before completing
+        if step.is_async() {
+            info!(
+                "SetupEngine: Step '{}' sending verification job to dispatcher",
+                step_name
+            );
+            step.send_verification_job(protocol, participants, context)?;
+            self.state.current_step_state = StepState::WaitingVerification;
+            return Ok(true);
+        }
+
+        self.complete_current_step(protocol, participants, context, &step_name)?;
+        Ok(true)
+    }
+
+    /// Completes the current step: calls on_step_complete, advances to next step.
+    fn complete_current_step(
+        &mut self,
+        protocol: &ProtocolType,
+        participants: &[CommsAddress],
+        context: &mut ProgramContext,
+        step_name: &str,
+    ) -> Result<(), BitVMXError> {
         info!(
             "SetupEngine: Step '{}' completed, advancing to next step",
             step_name
         );
 
-        // Call the completion hook
+        let step = &self.steps[self.state.current_step_index];
         step.on_step_complete(protocol, participants, context)?;
 
-        // Transition to completed
         self.state.current_step_state = StepState::Completed;
-
-        // Advance to next step
         self.state.advance_to_next_step();
 
         if self.is_complete() {
@@ -389,6 +414,42 @@ impl SetupEngine {
                 self.state.total_steps
             );
         }
+
+        Ok(())
+    }
+
+    /// Receives the result of an async verification operation.
+    ///
+    /// Called when the dispatcher returns the verification result for an async step.
+    /// If verification passes, completes the step and advances. If it fails, returns error.
+    pub fn receive_async_verification_result(
+        &mut self,
+        result: &[u8],
+        protocol: &ProtocolType,
+        participants: &[CommsAddress],
+        context: &mut ProgramContext,
+    ) -> Result<bool, BitVMXError> {
+        self.if_not_completed()?;
+
+        let step_name = self.current_step_name().to_string();
+
+        if self.state.current_step_state != StepState::WaitingVerification {
+            return Err(BitVMXError::InvalidState(format!(
+                "Cannot receive verification result: step '{}' is not in WaitingVerification state (current: {:?})",
+                step_name, self.state.current_step_state
+            )));
+        }
+
+        info!(
+            "SetupEngine::receive_async_verification_result() - Processing result ({} bytes) for step '{}'",
+            result.len(),
+            step_name
+        );
+
+        let step = &self.steps[self.state.current_step_index];
+        step.receive_verification_result(result, protocol, context)?;
+
+        self.complete_current_step(protocol, participants, context, &step_name)?;
 
         Ok(true)
     }
@@ -808,6 +869,13 @@ impl SetupEngine {
                     );
                     state_changed = true;
                 }
+            }
+            StepState::WaitingVerification => {
+                // Async step: waiting for verification result via receive_async_verification_result()
+                debug!(
+                    "SetupEngine::tick() - Step '{}' is WaitingVerification, waiting for dispatcher result",
+                    step_name
+                );
             }
             StepState::Completed => {
                 error!("We should never be in Completed state during tick - the engine should have already advanced to the next step. Step '{}'", step_name);
