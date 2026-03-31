@@ -138,6 +138,7 @@ impl BitVMX {
             Some(config.comms.storage_path.clone()),
             &config.broker.allow_list, //TODO: should be different from broker
             &config.broker.routing_table,
+            config.broker.settings.clone(),
         )?;
 
         let wallet = Wallet::from_derive_keypair(
@@ -172,6 +173,7 @@ impl BitVMX {
             config.broker.port,
             Some(config.broker.ip),
             config.broker.get_pubk_hash()?,
+            Some(config.broker.settings.clone()),
         );
         let broker = BrokerSync::new(
             &broker_config,
@@ -209,7 +211,10 @@ impl BitVMX {
         let timestamp_verifier =
             TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
-        let message_queue = MessageQueue::new(store.clone(), RetryPolicy::default());
+        let message_queue = MessageQueue::new(
+            store.clone(),
+            RetryPolicy::new(&config.broker.settings.queue_channel_config)?,
+        );
 
         let coordinator_throttle = Throttle::new(config.coordinator_throttle.clone());
         let bitvmx_throttle = Throttle::new(config.bitvmx_throttle.clone());
@@ -363,8 +368,15 @@ impl BitVMX {
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
         let is_new_message = msg.retry_state.get_attempts() == 0;
-        let (version, msg_type, program_id, data, timestamp, signature) =
-            deserialize_msg(msg.data.clone())?;
+        let (version, msg_type, program_id, data, timestamp, signature) = deserialize_msg(
+            msg.data.clone(),
+            self.config
+                .broker
+                .settings
+                .msg_size_config
+                .max_frame_size_kb
+                - 4, // Payload
+        )?;
 
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {

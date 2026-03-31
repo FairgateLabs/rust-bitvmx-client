@@ -192,8 +192,12 @@ impl TestHelper {
         let configs = get_configs(network)?;
         for config in &configs {
             let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-            let broker_config =
-                BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+            let broker_config = BrokerConfig::new(
+                config.broker.port,
+                None,
+                config.broker.get_pubk_hash()?,
+                Some(config.broker.settings.clone()),
+            );
             let channel = DualChannel::new(
                 &broker_config,
                 Cert::new_with_privk(
@@ -429,8 +433,12 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
         );
 
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let broker_config =
-            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+        let broker_config = BrokerConfig::new(
+            config.broker.port,
+            None,
+            config.broker.get_pubk_hash()?,
+            Some(config.broker.settings.clone()),
+        );
         let channel = DualChannel::new(
             &broker_config,
             Cert::new_with_privk(
@@ -475,8 +483,12 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
     for (i, config) in configs.iter().enumerate() {
         info!("Starting zkp connection with port: {}", config.broker.port);
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let broker_config =
-            BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+        let broker_config = BrokerConfig::new(
+            config.broker.port,
+            None,
+            config.broker.get_pubk_hash()?,
+            Some(config.broker.settings.clone()),
+        );
         let channel = DualChannel::new(
             &broker_config,
             Cert::new_with_privk(

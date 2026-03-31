@@ -10,7 +10,6 @@ use std::rc::Rc;
 use uuid::Uuid;
 
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
-const MAX_EXPECTED_MSG_LEN: usize = 2000000; // Maximum length for a message
 const CURRENT_PROTOCOL_VERSION: &str = "1.0";
 
 // Public function for signature verification
@@ -313,9 +312,11 @@ pub fn serialize_msg<T: Serialize>(
 
 pub fn deserialize_msg(
     data: Vec<u8>,
+    max_expected_msg_len_kb: usize,
 ) -> Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError> {
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
-    if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > MAX_EXPECTED_MSG_LEN {
+    let max_expected_msg_len = max_expected_msg_len_kb * 1024; // Convert KB to bytes
+    if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > max_expected_msg_len {
         return Err(BitVMXError::InvalidMessage(
             format!("Invalid message length: {}", data.len()).to_string(),
         ));
@@ -554,7 +555,7 @@ mod tests {
             deserialized_msg,
             _deserialized_timestamp,
             deserialized_signature,
-        ) = deserialize_msg(serialized_msg).unwrap();
+        ) = deserialize_msg(serialized_msg, 200000).unwrap();
 
         assert_eq!(deserialized_version, version);
         assert_eq!(deserialized_msg_type, msg_type);
