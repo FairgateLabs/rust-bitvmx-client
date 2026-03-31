@@ -5,7 +5,9 @@ use crate::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             claim::{ClaimGate, CLAIM_GATE_START, CLAIM_GATE_STOP, CLAIM_GATE_SUCCESS},
-            dispute::{self, action_wins_prefix},
+            dispute::{
+                self, action_wins_prefix, program_input_prev_prefix, program_input_prev_protocol,
+            },
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
@@ -36,14 +38,14 @@ use bitcoin::{Amount, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitcoin_scriptexec::scriptint_vec;
 use core::result::Result::Ok;
-use key_manager::key_type::BitcoinKeyType;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
+use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzSignature};
 use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
     scripts::{
-        op_return_script, timelock, verify_signature,
-        verify_winternitz_signature_timelock, SignMode,
+        op_return_script, timelock, verify_signature, verify_winternitz_signature_timelock,
+        ProtocolScript, SignMode,
     },
     types::{
         connection::{InputSpec, OutputSpec},
@@ -58,15 +60,22 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 pub const PEGOUT_ID: &str = "PEGOUT_ID";
-const PEGOUT_ID_KEY: &str = "PEGOUT_ID_KEY";
-const SECRET_KEY: &str = "SECRET_KEY";
+pub const PEGOUT_ID_KEY: &str = "PEGOUT_ID_KEY";
+pub const PEGOUT_ID_KEY_WORDS: usize = 8; // Number of words the PEGOUT_ID_KEY is split into (32 bytes / 4 bytes per key)
 pub const CHALLENGE_KEY: &str = "CHALLENGE_KEY";
-const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
+pub const SLOT_ID_KEY: &str = "SLOT_ID_KEY";
 const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
+const PEGOUT_ID_KEYS: &str = "PEGOUT_ID_KEYS";
 const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
 const INIT_CHALLENGE_SLOT: &str = "INIT_CHALLENGE_SLOT";
-const OP_COSIGN_KEY: &str = "OP_COSIGN_KEY";
-const WT_COSIGN_KEY: &str = "WT_COSIGN_KEY";
+
+pub const OP_COSIGN_SLOT_KEY: &str = "OP_COSIGN_SLOT_KEY";
+pub const OP_COSIGN_PEGOUT_ID_KEY: &str = "OP_COSIGN_PEGOUT_ID_KEY";
+pub const WT_COSIGN_SLOT_KEY: &str = "WT_COSIGN_SLOT_KEY";
+pub const WT_COSIGN_PEGOUT_ID_KEY: &str = "WT_COSIGN_PEGOUT_ID_KEY";
+
+// This is defined in `union-verifier.yaml`
+// const PEGOUT_ID_DRP_INPUT_INDEX: u32 = 4;
 
 const CLAIM_GATE_FEE: u64 = 335; // TODO: Validate this value
 
@@ -287,122 +296,105 @@ impl ProtocolHandler for DisputeCoreProtocol {
         ])
     }
 
-    fn generate_keys(
-        &self,
-        program_context: &mut ProgramContext,
-    ) -> Result<ParticipantKeys, BitVMXError> {
-        let committee = self.committee(program_context)?;
+    fn generate_keys(&self, context: &mut ProgramContext) -> Result<ParticipantKeys, BitVMXError> {
+        let committee = self.committee(context)?;
         let packet_size = committee.packet_size;
-        let data = self.dispute_core_data(program_context)?;
+        let data = self.dispute_core_data(context)?;
         let mut keys = vec![];
 
-        let speedup_key = program_context
-            .key_manager
-            .next_keypair(BitcoinKeyType::P2tr)?;
+        let speedup_key = context.key_manager.next_keypair(BitcoinKeyType::P2tr)?;
 
         keys.push((
             SPEEDUP_KEY.to_string(),
             PublicKeyType::Public(speedup_key.clone()),
         ));
 
-        program_context.globals.set_var(
+        context.globals.set_var(
             &self.ctx.id,
             SPEEDUP_KEY,
             VariableTypes::PubKey(speedup_key),
         )?;
 
         let dispute_pair_keys =
-            self.get_dispute_pair_keys(&program_context, data.committee_id, &committee.members)?;
+            self.get_dispute_pair_keys(&context, data.committee_id, &committee.members)?;
 
         keys.extend(dispute_pair_keys);
 
-        let prover = self.prover(program_context)?;
+        if self.is_prover(context)? {
+            let slot_id_keys =
+                self.load_or_create_slot_id_keys(&context, &data.committee_id, &committee)?;
 
-        let mut slot_id_keys = self.slot_id_keys(&program_context, data.committee_id)?;
-        if prover {
-            // Load SLOT_ID_KEYS if they were previously generated
-            // If not present, generate and store them
-            if slot_id_keys.is_empty() {
-                for _ in 0..packet_size as usize {
-                    slot_id_keys.push(PublicKeyType::Winternitz(
-                        program_context
-                            .key_manager
-                            .next_winternitz(2, WinternitzType::HASH160)?, // Sign 2 bytes of u16 slot id.
-                    ));
-                }
+            let pegout_id_keys =
+                self.load_or_create_pegout_id_keys(&context, &data.committee_id, &committee)?;
 
-                program_context.globals.set_var(
-                    &data.committee_id,
-                    SLOT_ID_KEYS,
-                    VariableTypes::String(serde_json::to_string(&slot_id_keys)?),
-                )?;
-            } else if slot_id_keys.len() != packet_size as usize {
-                return Err(BitVMXError::InvalidParameter(format!(
-                    "Expected {} slot_id_keys but found {}",
-                    packet_size,
-                    slot_id_keys.len()
-                )));
-            }
-        }
-
-        for i in 0..packet_size as usize {
-            if prover {
+            for slot_index in 0..packet_size as usize {
                 keys.push((
-                    indexed_name(PEGOUT_ID_KEY, i).to_string(),
-                    PublicKeyType::Winternitz(
-                        program_context
-                            .key_manager
-                            .next_winternitz(32, WinternitzType::HASH160)?,
-                    ),
+                    indexed_name(PEGOUT_ID_KEY, slot_index).to_string(),
+                    pegout_id_keys[slot_index].clone(),
                 ));
 
                 keys.push((
-                    indexed_name(SECRET_KEY, i).to_string(),
-                    PublicKeyType::Winternitz(
-                        program_context
-                            .key_manager
-                            .next_winternitz(1, WinternitzType::HASH160)?,
-                    ),
-                ));
-
-                keys.push((
-                    indexed_name(SLOT_ID_KEY, i).to_string(),
-                    slot_id_keys[i].clone(),
+                    indexed_name(SLOT_ID_KEY, slot_index).to_string(),
+                    slot_id_keys[slot_index].clone(),
                 ));
             }
 
+            // OP_COSIGN_PEGOUT_ID_KEY should be split in words size. Pegout ID has 32 bytes, then 8 keys of 4 bytes are needed.
+            for word in 0..PEGOUT_ID_KEY_WORDS {
+                keys.push((
+                    double_indexed_name(OP_COSIGN_PEGOUT_ID_KEY, self.ctx.my_idx, word).to_string(),
+                    PublicKeyType::Winternitz(
+                        context
+                            .key_manager
+                            .next_winternitz(4, WinternitzType::HASH160)?,
+                    ),
+                ));
+            }
             keys.push((
-                indexed_name(CHALLENGE_KEY, i),
+                OP_COSIGN_SLOT_KEY.to_string(),
                 PublicKeyType::Winternitz(
-                    program_context
-                        .key_manager
-                        .next_winternitz(1, WinternitzType::HASH160)?,
-                ),
-            ));
-        }
-
-        if prover {
-            keys.push((
-                OP_COSIGN_KEY.to_string(),
-                PublicKeyType::Winternitz(
-                    program_context
+                    context
                         .key_manager
                         .next_winternitz(COSIGN_SLOT_SIZE, WinternitzType::HASH160)?,
                 ),
             ));
         }
 
+        for slot_index in 0..packet_size as usize {
+            keys.push((
+                indexed_name(CHALLENGE_KEY, slot_index),
+                PublicKeyType::Winternitz(
+                    context
+                        .key_manager
+                        .next_winternitz(1, WinternitzType::HASH160)?,
+                ),
+            ));
+        }
+
         if data.member_index == self.ctx.my_idx {
-            for (i, member) in committee.members.iter().enumerate() {
+            for (member_index, member) in committee.members.iter().enumerate() {
                 if member.role == ParticipantRole::Prover {
                     keys.push((
-                        indexed_name(WT_COSIGN_KEY, i),
+                        indexed_name(WT_COSIGN_SLOT_KEY, member_index),
                         PublicKeyType::Winternitz(
-                            program_context
+                            context
                                 .key_manager
                                 .next_winternitz(COSIGN_SLOT_SIZE, WinternitzType::HASH160)?,
                         ),
                     ));
+
+                    // WT_COSIGN_PEGOUT_ID_KEY should be split in words size. Pegout ID has 32 bytes, then 8 keys of 4 bytes are needed.
+                    for word in 0..PEGOUT_ID_KEY_WORDS {
+                        keys.push((
+                            double_indexed_name(WT_COSIGN_PEGOUT_ID_KEY, member_index, word)
+                                .to_string(),
+                            PublicKeyType::Winternitz(
+                                context
+                                    .key_manager
+                                    .next_winternitz(4, WinternitzType::HASH160)?,
+                            ),
+                        ));
+                    }
                 }
             }
         }
@@ -420,10 +412,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         set_my_idx(context, self.ctx.id, self.ctx.my_idx)?;
         let committee = self.committee(context)?;
-        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
-
         let dispute_core_data = self.dispute_core_data(context)?;
+
+        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
         self.validate_keys(&keys, context, dispute_core_data.committee_id)?;
+
+        self.set_drp_variables(context, dispute_core_data.committee_id, &committee, &keys)?;
 
         let mut protocol = self.load_or_create_protocol();
         let settings = self.load_stream_setting(context)?;
@@ -758,46 +752,60 @@ impl DisputeCoreProtocol {
         let mut op_cosign_outputs: Vec<Option<OutputType>> = vec![];
         let challenge_cost = dispute::protocol_cost();
 
-        for (member_index, member) in committee.members.clone().iter().enumerate() {
+        for (op_index, member) in committee.members.clone().iter().enumerate() {
             let mut scripts = vec![];
-            let op_speedup_key = keys[member_index].get_public(SPEEDUP_KEY)?;
-            let op_dispute_key = &committee.members[member_index].dispute_key;
 
-            if member.role == ParticipantRole::Prover && data.member_index != member_index {
-                let wt_cosign_key = keys[data.member_index]
-                    .get_winternitz(&indexed_name(WT_COSIGN_KEY, member_index))?;
+            if member.role == ParticipantRole::Prover && data.member_index != op_index {
+                let op_speedup_key = keys[op_index].get_public(SPEEDUP_KEY)?;
+                let op_dispute_key = &committee.members[op_index].dispute_key;
+
+                let wt_cosign_slot_key = keys[data.member_index]
+                    .get_winternitz(&indexed_name(WT_COSIGN_SLOT_KEY, op_index))?;
+
+                let mut wt_cosign_pegout_id_keys = vec![];
+                let mut op_cosign_pegout_id_keys = vec![];
+                for word in 0..PEGOUT_ID_KEY_WORDS {
+                    let wt_key_name = double_indexed_name(WT_COSIGN_PEGOUT_ID_KEY, op_index, word);
+                    wt_cosign_pegout_id_keys
+                        .push(keys[data.member_index].get_winternitz(&wt_key_name)?);
+
+                    let op_key_name = double_indexed_name(OP_COSIGN_PEGOUT_ID_KEY, op_index, word);
+                    op_cosign_pegout_id_keys.push(keys[op_index].get_winternitz(&op_key_name)?);
+                }
 
                 for slot in 0..committee.packet_size as usize {
-                    let key_name = indexed_name(SLOT_ID_KEY, slot);
-                    let slot_id_key = keys[member_index].get_winternitz(&key_name)?;
+                    let op_slot_id_key =
+                        keys[op_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
+
+                    let op_pegout_id_key =
+                        keys[op_index].get_winternitz(&indexed_name(PEGOUT_ID_KEY, slot))?;
 
                     // Validate OP signature and WT slot_id Winternitz signature
                     let mut s = scripts::init_challenge_script(
                         wt_dispute_key,
                         self.get_sign_mode(data.member_index),
-                        SLOT_ID_KEY,
-                        &slot_id_key,
                         slot as u32,
-                        WT_COSIGN_KEY,
-                        &wt_cosign_key,
+                        op_index,
+                        &op_slot_id_key,
+                        op_pegout_id_key,
+                        &wt_cosign_slot_key,
+                        &wt_cosign_pegout_id_keys,
                     )?;
+
                     // Validate slot id in the script. It's used to extract the leaf index when detected a transaction spending the WT_START_ENABLER_TX output, to know which slot is being challenged.
                     s.set_assert_leaf_id(slot as u32);
                     scripts.push(s);
                 }
 
                 let init_challenge_name =
-                    double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, member_index);
-                let op_cosign_name =
-                    double_indexed_name(OP_COSIGN_TX, data.member_index, member_index);
+                    double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, op_index);
+                let op_cosign_name = double_indexed_name(OP_COSIGN_TX, data.member_index, op_index);
                 let op_no_cosign_name =
-                    double_indexed_name(OP_NO_COSIGN_TX, data.member_index, member_index);
+                    double_indexed_name(OP_NO_COSIGN_TX, data.member_index, op_index);
                 let wt_no_challenge_name =
-                    double_indexed_name(WT_NO_CHALLENGE_TX, data.member_index, member_index);
-                let wt_claim_name =
-                    double_indexed_name(WT_CLAIM_GATE, data.member_index, member_index);
-                let op_claim_name =
-                    double_indexed_name(OP_CLAIM_GATE, data.member_index, member_index);
+                    double_indexed_name(WT_NO_CHALLENGE_TX, data.member_index, op_index);
+                let wt_claim_name = double_indexed_name(WT_CLAIM_GATE, data.member_index, op_index);
+                let op_claim_name = double_indexed_name(OP_CLAIM_GATE, data.member_index, op_index);
 
                 protocol.add_connection(
                     "init_challenge",
@@ -809,14 +817,15 @@ impl DisputeCoreProtocol {
                     None,
                 )?;
 
-                let op_cosign_key = keys[member_index].get_winternitz(OP_COSIGN_KEY)?;
+                let op_cosign_slot_key = keys[op_index].get_winternitz(OP_COSIGN_SLOT_KEY)?;
                 let cosign_script = scripts::cosign_script(
                     op_dispute_key,
-                    self.get_sign_mode(member_index),
-                    WT_COSIGN_KEY,
-                    wt_cosign_key,
-                    OP_COSIGN_KEY,
-                    op_cosign_key,
+                    self.get_sign_mode(op_index),
+                    op_index,
+                    op_cosign_slot_key,
+                    wt_cosign_slot_key,
+                    &op_cosign_pegout_id_keys,
+                    &wt_cosign_pegout_id_keys,
                 )?;
 
                 let verify_dispute_aggregated =
@@ -848,7 +857,7 @@ impl DisputeCoreProtocol {
                     None,
                 )?;
 
-                let key_pair_name = get_dispute_pair_key_name(data.member_index, member_index);
+                let key_pair_name = get_dispute_pair_key_name(data.member_index, op_index);
                 let key_pair = keys[data.member_index].get_public(&key_pair_name)?;
 
                 // Create WT claim gate
@@ -880,7 +889,7 @@ impl DisputeCoreProtocol {
                     protocol,
                     &init_challenge_name,
                     &op_claim_name,
-                    (op_dispute_key, self.get_sign_mode(member_index)),
+                    (op_dispute_key, self.get_sign_mode(op_index)),
                     &committee.dispute_aggregated_key,
                     CLAIM_GATE_FEE,
                     DUST_VALUE,
@@ -1172,7 +1181,7 @@ impl DisputeCoreProtocol {
         let start_reimbursement = scripts::verify_winternitz(
             dispute_aggregated_key,
             SignMode::Aggregate,
-            PEGOUT_ID_KEY,
+            &pegout_id_name,
             pegout_id_key,
         )?;
 
@@ -1217,11 +1226,11 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let slot_id_key =
-            operator_keys.get_winternitz(&indexed_name(SLOT_ID_KEY, dispute_core_index))?;
+        let key_name = &indexed_name(SLOT_ID_KEY, dispute_core_index);
+        let slot_id_key = operator_keys.get_winternitz(key_name)?;
         let reveal_script = protocol_builder::scripts::verify_winternitz_signatures_aux(
             &operator_dispute_key,
-            &vec![(SLOT_ID_KEY, slot_id_key)],
+            &vec![(key_name, slot_id_key)],
             self.get_sign_mode(dispute_core_data.member_index),
             false,
             None,
@@ -1469,7 +1478,7 @@ impl DisputeCoreProtocol {
                 script_index: leaf_index,
                 winternitz_data: Some(WinternitzData {
                     data: self.pegout_id(context, slot_index)?,
-                    key_name: PEGOUT_ID_KEY.to_string(),
+                    key_name: indexed_name(PEGOUT_ID_KEY, slot_index),
                     key_type: WinternitzType::HASH160,
                     key_manager: context.key_manager.as_ref(),
                 }),
@@ -1548,7 +1557,7 @@ impl DisputeCoreProtocol {
             .unwrap();
 
         let script = protocol.get_script_to_spend(name, input_index as u32, slot_index as u32)?;
-        let wt_key_name = WT_COSIGN_KEY.to_string();
+        let wt_key_name = indexed_name(WT_COSIGN_SLOT_KEY, op_index);
 
         let key = script.get_key(&wt_key_name).ok_or_else(|| {
                 BitVMXError::InvalidParameter(format!(
@@ -1567,13 +1576,42 @@ impl DisputeCoreProtocol {
         let mut input_args = InputArgs::new_taproot_script_args(slot_index);
 
         // Get OP slot key signature
-        let key_name = indexed_name(SLOT_ID_KEY, op_index);
+        let op_slot_key_signature = context
+            .witness
+            .get_witness(
+                &self.ctx.id,
+                &double_indexed_name(SLOT_ID_KEY, op_index, slot_index),
+            )?
+            .unwrap()
+            .winternitz()?;
+
+        // Get OP Pegout Id signature
         let witness = context
             .witness
-            .get_witness(&self.ctx.id, &key_name)?
+            .get_witness(
+                &self.ctx.id,
+                &double_indexed_name(PEGOUT_ID_KEY, op_index, slot_index),
+            )?
             .unwrap();
-        let op_slot_key_signature = witness.winternitz()?;
 
+        let op_pegout_id_signature = witness.winternitz()?;
+        let pegout_id = witness.winternitz()?.message_bytes();
+        info!("Pegout ID: {:?}", pegout_id);
+
+        let wt_pegout_id_signatures = self.sign_pegout_id_words(
+            context,
+            &script,
+            WT_COSIGN_PEGOUT_ID_KEY,
+            op_index,
+            &self.vec_to_words(&pegout_id),
+        )?;
+
+        // Signatures are reversed in sign_pegout_id_words
+        for sig in wt_pegout_id_signatures {
+            input_args.push_winternitz_signature(sig);
+        }
+
+        input_args.push_winternitz_signature(op_pegout_id_signature);
         input_args.push_winternitz_signature(op_slot_key_signature);
         input_args.push_winternitz_signature(wt_slot_id_signature);
         input_args.push_taproot_signature(wt_dispute_key_signature)?;
@@ -1591,6 +1629,47 @@ impl DisputeCoreProtocol {
         );
 
         Ok((tx, Some(speedup_utxo.into())))
+    }
+
+    fn sign_pegout_id_words(
+        &self,
+        context: &ProgramContext,
+        script: &ProtocolScript,
+        key_prefix: &str,
+        op_index: usize,
+        pegout_id_words: &Vec<u32>,
+    ) -> Result<Vec<WinternitzSignature>, BitVMXError> {
+        let mut signatures = vec![];
+
+        for word in (0..PEGOUT_ID_KEY_WORDS).rev() {
+            let key_name = double_indexed_name(key_prefix, op_index, word);
+
+            let key = script.get_key(&key_name).ok_or_else(|| {
+                BitVMXError::InvalidParameter(format!(
+                    "Winternitz key '{}' not found in script.",
+                    key_name
+                ))
+            })?;
+
+            let signature = context.key_manager.sign_winternitz_message_by_index(
+                pegout_id_words[word].to_be_bytes().as_ref(),
+                WinternitzType::HASH160,
+                key.derivation_index(),
+            )?;
+
+            signatures.push(signature);
+        }
+        Ok(signatures)
+    }
+
+    fn vec_to_words(&self, data: &Vec<u8>) -> Vec<u32> {
+        data.chunks(4)
+            .map(|chunk| {
+                let mut word = [0u8; 4];
+                word[..chunk.len()].copy_from_slice(chunk);
+                u32::from_be_bytes(word)
+            })
+            .collect()
     }
 
     fn get_number(
@@ -1638,7 +1717,7 @@ impl DisputeCoreProtocol {
         Ok(committee)
     }
 
-    fn prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
+    fn is_prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
         match self.committee(context)?.members[self.ctx.my_idx].role {
             ParticipantRole::Prover => Ok(true),
             _ => Ok(false),
@@ -1766,24 +1845,14 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn handle_action_wins(
+    fn get_drp_op_index(
         &self,
-        program_context: &ProgramContext,
-        tx_name: &str,
-        role: ParticipantRole,
+        context: &ProgramContext,
         pid: Uuid,
-    ) -> Result<(), BitVMXError> {
-        // Need to load my_idx from storage because self.ctx.my_idx has my index on DRP
-        let my_idx = get_my_idx(program_context, self.ctx.id)?;
-
-        info!(
-            id = my_idx,
-            "Handling wins action {}. PID: {}", tx_name, pid
-        );
-
-        let committee_id = self.committee_id(program_context)?;
-        let committee = self.committee(program_context)?;
-        let wt_index = self.dispute_core_data(program_context)?.member_index;
+        wt_index: usize,
+    ) -> Result<Option<usize>, BitVMXError> {
+        let committee_id = self.committee_id(context)?;
+        let committee = self.committee(context)?;
 
         // Look for the operator index that matches the DisputeChannel program ID in the context
         let maybe_index = committee
@@ -1793,26 +1862,42 @@ impl DisputeCoreProtocol {
             .find(|(op_index, _)| get_dispute_channel_pid(committee_id, *op_index, wt_index) == pid)
             .map(|(op_index, _)| op_index);
 
-        let drp_op_index = match maybe_index {
-            Some(i) => i,
+        Ok(maybe_index)
+    }
+
+    fn handle_action_wins(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+        role: ParticipantRole,
+        pid: Uuid,
+    ) -> Result<(), BitVMXError> {
+        // Need to load my_idx from storage because self.ctx.my_idx has my index on DRP
+        let my_idx = get_my_idx(context, self.ctx.id)?;
+
+        info!(
+            id = my_idx,
+            "Handling wins action {}. PID: {}", tx_name, pid
+        );
+
+        let wt_index = self.dispute_core_data(context)?.member_index;
+        let drp_op_index = match self.get_drp_op_index(context, pid, wt_index)? {
+            Some(index) => index,
             None => {
-                error!(
-                    id = my_idx,
-                    "Could not find matching DisputeChannel program for PID: {}", pid
-                );
+                error!("PID {} do not match DisputeChannel program", pid);
                 return Ok(());
             }
         };
 
         info!(
-            id = my_idx,
-            "DisputeChannel operator index for PID {} is {}", pid, drp_op_index
+            "DisputeChannel operator index for PID {} is {}",
+            pid, drp_op_index
         );
 
         if role == ParticipantRole::Prover {
             if my_idx == drp_op_index {
                 self.dispatch_claim_gate(
-                    program_context,
+                    context,
                     ClaimGateAction::Start,
                     OP_CLAIM_GATE,
                     drp_op_index,
@@ -1821,7 +1906,7 @@ impl DisputeCoreProtocol {
         } else if role == ParticipantRole::Verifier {
             if my_idx == wt_index {
                 self.dispatch_claim_gate(
-                    program_context,
+                    context,
                     ClaimGateAction::Start,
                     WT_CLAIM_GATE,
                     drp_op_index,
@@ -1976,23 +2061,15 @@ impl DisputeCoreProtocol {
 
         let (tx, speedup) =
             self.claim_gate_tx(context, &tx_name, &action.inputs(), action.with_speedup())?;
-        let txid = tx.compute_txid();
 
-        context.bitcoin_coordinator.dispatch(
+        self.log_and_dispatch(
+            context,
+            &tx_name,
             tx,
             speedup,
-            Context::ProgramId(self.ctx.id).to_string()?,
             action.block_height(),
-            self.requested_confirmations(context),
+            self.ctx.id,
         )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} {} with txid: {}",
-            tx_name,
-            get_dispatch_action(action.block_height()),
-            txid
-        );
 
         Ok(())
     }
@@ -2014,29 +2091,37 @@ impl DisputeCoreProtocol {
         let settings = self.load_stream_setting(context)?;
         let (_, op_index) = extract_double_index(tx_name)?;
 
+        let protocol = self.load_protocol()?;
+        self.decode_witness_for_tx(
+            tx_name,
+            OP_COSIGN_INIT_CHALLENGE_INDEX as u32,
+            context,
+            &tx_status.tx,
+            Some(WT_INIT_CHALLENGE_TX_COSIGN_LEAF as u32),
+            Some(protocol),
+            None,
+        )?;
+
+        let witness = context
+            .witness
+            .get_witness(&self.ctx.id, &indexed_name(OP_COSIGN_SLOT_KEY, op_index))?
+            .unwrap();
+
+        // Re set witness with _0 postfix due to it's a single value
+        context.witness.set_witness(
+            &self.ctx.id,
+            &double_indexed_name(OP_COSIGN_SLOT_KEY, op_index, 0),
+            witness.clone(),
+        )?;
+
         if self.is_my_dispute_core(context)? {
             let drp_pid =
                 get_dispute_channel_pid(self.committee_id(context)?, op_index, self.ctx.my_idx);
             let drp_protocol = self.load_protocol_by_name(PROGRAM_TYPE_DRP, drp_pid)?;
 
-            let (tx, speedup) =
-                drp_protocol.get_transaction_by_name(&dispute::START_CH.to_string(), context)?;
-            let txid = tx.compute_txid();
+            let (tx, speedup) = drp_protocol.get_transaction_by_name(dispute::START_CH, context)?;
 
-            context.bitcoin_coordinator.dispatch(
-                tx,
-                speedup,
-                Context::ProgramId(drp_pid).to_string()?,
-                None,
-                self.requested_confirmations(context),
-            )?;
-
-            info!(
-                id = self.ctx.my_idx,
-                "{} dispatched with txid: {}",
-                dispute::START_CH.to_string(),
-                txid
-            );
+            self.log_and_dispatch(context, dispute::START_CH, tx, speedup, None, drp_pid)?;
         } else {
             let block_height =
                 Some(self.get_dispatch_height(tx_status, settings.wt_no_challenge_timelock)?);
@@ -2157,17 +2242,6 @@ impl DisputeCoreProtocol {
         // This protocol should not handle WT_INIT_CHALLENGE TXs from others OPs.
         self.set_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT, leaf.1)?;
 
-        let key_name = WT_COSIGN_KEY;
-        let witness = context
-            .witness
-            .get_witness(&self.ctx.id, key_name)?
-            .unwrap();
-
-        // Save witness
-        context
-            .witness
-            .set_witness(&self.ctx.id, key_name, witness)?;
-
         self.dispatch(
             context,
             DisputeCoreTxType::OperatorCosign { wt_index, op_index },
@@ -2264,6 +2338,7 @@ impl DisputeCoreProtocol {
 
         // This value is saved in handle_wt_init_challenge when OP receives WT_INIT_CHALLENGE tx
         let slot_index = self.get_number(context, &self.ctx.id, INIT_CHALLENGE_SLOT)? as usize;
+        let (_, op_index) = extract_double_index(name)?;
 
         // Prepare signatures
         let op_dispute_key_signature = protocol
@@ -2279,7 +2354,8 @@ impl DisputeCoreProtocol {
             input_index as u32,
             WT_INIT_CHALLENGE_TX_COSIGN_LEAF as u32,
         )?;
-        let op_key_name = OP_COSIGN_KEY.to_string();
+
+        let op_key_name = indexed_name(OP_COSIGN_SLOT_KEY, op_index);
 
         let key = script.get_key(&op_key_name).ok_or_else(|| {
                 BitVMXError::InvalidParameter(format!(
@@ -2288,8 +2364,18 @@ impl DisputeCoreProtocol {
                 ))
             })?;
 
+        // Get WT slot index signature
+        let wt_slot_witness = context
+            .witness
+            .get_witness(&self.ctx.id, &indexed_name(WT_COSIGN_SLOT_KEY, op_index))?
+            .unwrap();
+
+        let wt_slot = wt_slot_witness.winternitz()?.message_bytes();
+        let wt_slot_index_signature = wt_slot_witness.winternitz()?;
+
+        // OP Cosign slot
         let op_slot_index_signature = context.key_manager.sign_winternitz_message_by_index(
-            (slot_index as u32).to_be_bytes().as_slice(),
+            &wt_slot,
             WinternitzType::HASH160,
             key.derivation_index(),
         )?;
@@ -2298,13 +2384,34 @@ impl DisputeCoreProtocol {
         let mut input_args =
             InputArgs::new_taproot_script_args(WT_INIT_CHALLENGE_TX_COSIGN_LEAF as usize);
 
-        // Get WT slot index signature
-        let key_name = WT_COSIGN_KEY.to_string();
-        let witness = context
-            .witness
-            .get_witness(&self.ctx.id, &key_name)?
-            .unwrap();
-        let wt_slot_index_signature = witness.winternitz()?;
+        for word in (0..PEGOUT_ID_KEY_WORDS).rev() {
+            let wt_key_name = double_indexed_name(WT_COSIGN_PEGOUT_ID_KEY, op_index, word);
+            let wt_witness = context
+                .witness
+                .get_witness(&self.ctx.id, &wt_key_name)?
+                .unwrap();
+
+            let wt_word = wt_witness.winternitz()?.message_bytes();
+            let wt_word_signature = wt_witness.winternitz()?;
+
+            let op_key_name = double_indexed_name(OP_COSIGN_PEGOUT_ID_KEY, op_index, word);
+            let key = script.get_key(&op_key_name).ok_or_else(|| {
+                BitVMXError::InvalidParameter(format!(
+                    "Winternitz key '{}' not found in script. Tx name: {}. Input index: {}. Script index: {}",
+                    op_key_name, name, input_index, slot_index
+                ))
+            })?;
+
+            // OP Cosign pegout ID word signature
+            let op_word_cosign_signature = context.key_manager.sign_winternitz_message_by_index(
+                &wt_word,
+                WinternitzType::HASH160,
+                key.derivation_index(),
+            )?;
+
+            input_args.push_winternitz_signature(wt_word_signature);
+            input_args.push_winternitz_signature(op_word_cosign_signature);
+        }
 
         input_args.push_winternitz_signature(wt_slot_index_signature);
         input_args.push_winternitz_signature(op_slot_index_signature);
@@ -2397,18 +2504,17 @@ impl DisputeCoreProtocol {
             None,
         )?;
 
-        let key_name = SLOT_ID_KEY;
+        let key_name = &indexed_name(SLOT_ID_KEY, slot_index);
         let witness = context
             .witness
             .get_witness(&self.ctx.id, key_name)?
             .unwrap();
 
+        let key_name = double_indexed_name(SLOT_ID_KEY, data.member_index, slot_index);
         // Save witness in WT dispute core, indexed by operator index, so we can have multiple challenges in parallel if needed.
-        context.witness.set_witness(
-            &wt_dispute_core_id,
-            &indexed_name(key_name, data.member_index),
-            witness,
-        )?;
+        context
+            .witness
+            .set_witness(&wt_dispute_core_id, &key_name, witness)?;
 
         // Load wt dispute core and dispatch init challenge tx
         let protocol = self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, wt_dispute_core_id)?;
@@ -2416,20 +2522,16 @@ impl DisputeCoreProtocol {
             double_indexed_name(WT_INIT_CHALLENGE_TX, self.ctx.my_idx, data.member_index);
 
         let (tx, speedup) = protocol.get_transaction_by_name(&init_challenge_name, context)?;
-        let txid = tx.compute_txid();
 
-        context.bitcoin_coordinator.dispatch(
+        self.log_and_dispatch(
+            context,
+            &init_challenge_name,
             tx,
             speedup,
-            Context::ProgramId(wt_dispute_core_id).to_string()?,
             None,
-            self.requested_confirmations(context),
+            wt_dispute_core_id,
         )?;
 
-        info!(
-            id = self.ctx.my_idx,
-            "{} dispatched for slot: {} with txid: {}", init_challenge_name, slot_index, txid
-        );
         Ok(())
     }
 
@@ -2506,7 +2608,6 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
-
         let mut protocol = self.load_protocol()?;
         let slot_index = extract_index(name, REVEAL_INPUT_TX)? as u16;
 
@@ -2518,7 +2619,7 @@ impl DisputeCoreProtocol {
                 script_index: REVEAL_INPUT_TX_REVEAL_LEAF,
                 winternitz_data: Some(WinternitzData {
                     data: slot_index.to_be_bytes().to_vec(),
-                    key_name: SLOT_ID_KEY.to_string(),
+                    key_name: indexed_name(SLOT_ID_KEY, slot_index),
                     key_type: WinternitzType::HASH160,
                     key_manager: context.key_manager.as_ref(),
                 }),
@@ -2707,22 +2808,14 @@ impl DisputeCoreProtocol {
     ) -> Result<bool, BitVMXError> {
         // Handle challenge if needed
         let funds_advanced_var = self.funds_advanced(context, slot_index)?;
+        let data = self.dispute_core_data(context)?;
+        let committee = self.committee(context)?;
+        let wt_dispute_core_id = get_dispute_core_pid(
+            data.committee_id,
+            &committee.members[self.ctx.my_idx].take_key,
+        );
 
-        if funds_advanced_var.is_none() {
-            info!("Funds advanced is none");
-            // If funds were not advanced, we need to challenge the transaction
-            return Ok(false);
-        }
-
-        let funds_advanced = funds_advanced_var.unwrap();
-
-        // Compare if the monitored operator is the selected one
-        if funds_advanced.operator_pubkey != self.monitored_member_take_key(context)? {
-            info!("Unauthorized operator detected.");
-            return Ok(false);
-        }
-
-        // Validate pegout id signed on witness
+        // First decode the witness
         let protocol = self.load_protocol()?;
         self.decode_witness_for_tx(
             tx_name,
@@ -2736,10 +2829,32 @@ impl DisputeCoreProtocol {
 
         let witness = context
             .witness
-            .get_witness(&self.ctx.id, PEGOUT_ID_KEY)?
+            .get_witness(&self.ctx.id, &indexed_name(PEGOUT_ID_KEY, slot_index))?
             .unwrap();
 
         let pegout_id = witness.winternitz()?.message_bytes();
+
+        // Save witness in WT dispute core, indexed by operator index, so we can have multiple challenges in parallel if needed.
+        context.witness.set_witness(
+            &wt_dispute_core_id,
+            &double_indexed_name(PEGOUT_ID_KEY, data.member_index, slot_index),
+            witness,
+        )?;
+
+        // After saving the witness, check if need to initialize challenge
+        if funds_advanced_var.is_none() {
+            info!("Funds advanced is none");
+            // If funds were not advanced, we need to challenge the transaction
+            return Ok(false);
+        }
+
+        let funds_advanced = funds_advanced_var.unwrap();
+
+        // Compare if the monitored operator is the selected one
+        if funds_advanced.operator_pubkey != self.monitored_member_take_key(context)? {
+            info!("Unauthorized operator detected.");
+            return Ok(false);
+        }
 
         if funds_advanced.pegout_id != pegout_id {
             info!(
@@ -2890,24 +3005,14 @@ impl DisputeCoreProtocol {
             }
         };
 
-        let txid = tx.compute_txid();
-
-        // Dispatch the transaction through the bitcoin coordinator
-        context.bitcoin_coordinator.dispatch(
+        self.log_and_dispatch(
+            context,
+            &tx_name,
             tx,
             speedup,
-            Context::ProgramId(program_id).to_string()?,
             tx_type.block_height(),
-            self.requested_confirmations(context),
+            program_id,
         )?;
-
-        info!(
-            id = self.ctx.my_idx,
-            "{} {} with txid: {}",
-            tx_name,
-            get_dispatch_action(tx_type.block_height()),
-            txid
-        );
 
         Ok(())
     }
@@ -3000,7 +3105,7 @@ impl DisputeCoreProtocol {
             )?;
         }
 
-        // FIXME: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
+        // NOTE: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?
         // Maybe we should improve reimbursement_kickoff_utxos to be a vector of TXIDs, and save just once the amount and the output type
         // - Reimbursement: Multiples TXIDs with same amount and output type
         // - Initial Deposit: Single TXID and amount, with different output script. (output script is save in create_dispute_core function)
@@ -3255,18 +3360,79 @@ impl DisputeCoreProtocol {
         Ok((tx, speedout))
     }
 
-    fn slot_id_keys(
+    fn load_or_create_slot_id_keys(
         &self,
         context: &ProgramContext,
-        committee_id: Uuid,
+        committee_id: &Uuid,
+        committee: &Committee,
     ) -> Result<Vec<PublicKeyType>, BitVMXError> {
-        match context.globals.get_var(&committee_id, SLOT_ID_KEYS)? {
-            Some(var) => {
-                let slot_id_keys: Vec<PublicKeyType> = serde_json::from_str(&var.string()?)?;
-                Ok(slot_id_keys)
+        let mut slot_id_keys: Vec<PublicKeyType> =
+            match context.globals.get_var(&committee_id, SLOT_ID_KEYS)? {
+                Some(var) => serde_json::from_str(&var.string()?)?,
+                None => Vec::new(),
+            };
+
+        // Load SLOT_ID_KEYS if they were previously generated
+        // If not present, generate and store them
+        if slot_id_keys.is_empty() {
+            for _ in 0..committee.packet_size as usize {
+                slot_id_keys.push(PublicKeyType::Winternitz(
+                    context
+                        .key_manager
+                        .next_winternitz(2, WinternitzType::HASH160)?, // Sign 2 bytes of u16 slot id.
+                ));
             }
-            None => Ok(vec![]),
+
+            context.globals.set_var(
+                committee_id,
+                SLOT_ID_KEYS,
+                VariableTypes::String(serde_json::to_string(&slot_id_keys)?),
+            )?;
+        } else if slot_id_keys.len() != committee.packet_size as usize {
+            return Err(BitVMXError::InvalidParameter(format!(
+                "Expected {} slot_id_keys but found {}",
+                committee.packet_size,
+                slot_id_keys.len()
+            )));
         }
+
+        Ok(slot_id_keys)
+    }
+
+    fn load_or_create_pegout_id_keys(
+        &self,
+        context: &ProgramContext,
+        committee_id: &Uuid,
+        committee: &Committee,
+    ) -> Result<Vec<PublicKeyType>, BitVMXError> {
+        let mut pegout_id_keys: Vec<PublicKeyType> =
+            match context.globals.get_var(&committee_id, PEGOUT_ID_KEYS)? {
+                Some(var) => serde_json::from_str(&var.string()?)?,
+                None => Vec::new(),
+            };
+
+        if pegout_id_keys.is_empty() {
+            for _ in 0..committee.packet_size as usize {
+                pegout_id_keys.push(PublicKeyType::Winternitz(
+                    context
+                        .key_manager
+                        .next_winternitz(PEGOUT_ID_KEY_WORDS * 4, WinternitzType::HASH160)?,
+                ));
+            }
+
+            context.globals.set_var(
+                committee_id,
+                PEGOUT_ID_KEYS,
+                VariableTypes::String(serde_json::to_string(&pegout_id_keys)?),
+            )?;
+        } else if pegout_id_keys.len() != committee.packet_size as usize {
+            return Err(BitVMXError::InvalidParameter(format!(
+                "Expected {} pegout_id_keys but found {}",
+                committee.packet_size,
+                pegout_id_keys.len()
+            )));
+        }
+        Ok(pegout_id_keys)
     }
 
     fn get_dispute_pair_keys(
@@ -3327,6 +3493,7 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         committee_id: Uuid,
     ) -> Result<(), BitVMXError> {
+        // FIXME: Add pegout id key validation
         let committee = self.committee(context)?;
 
         if keys.len() != committee.members.len() {
@@ -3415,5 +3582,141 @@ impl DisputeCoreProtocol {
         } else {
             SignMode::Skip
         }
+    }
+
+    // Set DRP variables for union-verifier.yaml
+    fn set_drp_variables(
+        &self,
+        context: &ProgramContext,
+        committee_id: Uuid,
+        committee: &Committee,
+        keys: &Vec<ParticipantKeys>,
+    ) -> Result<(), BitVMXError> {
+        // Per input should set:
+        // - Prev protocol
+        // - Prefix
+        // - Pub keys per word
+
+        // # input_4
+        // # pegout id
+        //   - size: 32
+        //     owner: prover_prev
+
+        // # input_5
+        // # slot id
+        //   - size: 4
+        //     owner: prover_prev
+
+        let mut drp_pairs = vec![];
+        let data = self.dispute_core_data(context)?;
+
+        if data.member_index == self.ctx.my_idx {
+            // So my role is WT
+            for (op_index, member) in committee.members.iter().enumerate() {
+                if op_index == self.ctx.my_idx {
+                    continue;
+                }
+
+                if member.role == ParticipantRole::Prover {
+                    drp_pairs.push((self.ctx.my_idx, op_index));
+                }
+            }
+        } else {
+            if self.is_prover(context)? {
+                drp_pairs.push((data.member_index, self.ctx.my_idx));
+            }
+        }
+
+        for (wt_index, op_index) in drp_pairs {
+            let drp_pid = get_dispute_channel_pid(committee_id, op_index, wt_index);
+
+            // input_4: pegout id
+            // Set prev protocol
+            context.globals.set_var(
+                &drp_pid,
+                &program_input_prev_protocol(4),
+                VariableTypes::Uuid(self.ctx.id),
+            )?;
+
+            // Set input prefix
+            context.globals.set_var(
+                &drp_pid,
+                &program_input_prev_prefix(4),
+                VariableTypes::String(format!(
+                    "{}_",
+                    indexed_name(OP_COSIGN_PEGOUT_ID_KEY, op_index)
+                )),
+            )?;
+
+            // Set pegout id keys
+            for word in 0..PEGOUT_ID_KEY_WORDS {
+                let key_name = &double_indexed_name(OP_COSIGN_PEGOUT_ID_KEY, op_index, word);
+
+                let key = keys[op_index].get_winternitz(key_name)?;
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    key_name,
+                    VariableTypes::WinternitzPubKey(key.clone()),
+                )?;
+            }
+
+            // input_4: slot id
+            // Set prev protocol
+            context.globals.set_var(
+                &drp_pid,
+                &program_input_prev_protocol(5),
+                VariableTypes::Uuid(self.ctx.id),
+            )?;
+
+            // Set input prefix
+            context.globals.set_var(
+                &drp_pid,
+                &program_input_prev_prefix(5),
+                VariableTypes::String(format!("{}_", indexed_name(OP_COSIGN_SLOT_KEY, op_index))),
+            )?;
+
+            let key = keys[op_index].get_winternitz(OP_COSIGN_SLOT_KEY)?;
+
+            // Set slot id key
+            context.globals.set_var(
+                &self.ctx.id,
+                &double_indexed_name(OP_COSIGN_SLOT_KEY, op_index, 0),
+                VariableTypes::WinternitzPubKey(key.clone()),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn log_and_dispatch(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+        tx: Transaction,
+        speedup: Option<SpeedupData>,
+        block_height: Option<u32>,
+        program_id: Uuid,
+    ) -> Result<(), BitVMXError> {
+        let txid = tx.compute_txid();
+
+        // Dispatch the transaction through the bitcoin coordinator
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            speedup,
+            Context::ProgramId(program_id).to_string()?,
+            block_height,
+            self.requested_confirmations(context),
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "{} {} with txid: {}",
+            tx_name,
+            get_dispatch_action(block_height),
+            txid
+        );
+
+        Ok(())
     }
 }

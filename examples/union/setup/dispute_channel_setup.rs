@@ -41,7 +41,7 @@ pub enum DRPVerifier {
     Union,
 }
 
-pub const VERIFIER: DRPVerifier = DRPVerifier::Generic;
+pub const VERIFIER: DRPVerifier = DRPVerifier::Union;
 
 pub struct DisputeChannelSetup;
 
@@ -249,10 +249,14 @@ impl DisputeChannelSetup {
 
                 let elf_id = "589837bb0123b9d5854e0807a8b3ed2b15a848c19e2287ac585a31ec93d711b5"; // Placeholder for the actual ELF ID of the verifier
                 let elf_id_input = hex::decode(elf_id).unwrap();
+                let operator_id: [u8; 36] = [1; 36]; // Placeholder for the actual operator ID, should be a UUID
+                let input_6 = [1u8, 0, 1, 0]; // true + version 0 + padding
 
-                // Set DRP constants
+                // Set DRP constants defined in union-verifier.yaml
                 set_program_input(&bitvmx, drp_id, 0, journal_size_input.clone())?;
                 set_program_input(&bitvmx, drp_id, 1, elf_id_input.clone())?;
+                set_program_input(&bitvmx, drp_id, 3, operator_id.to_vec())?;
+                set_program_input(&bitvmx, drp_id, 6, input_6.to_vec())?;
             }
             DRPVerifier::Generic => {
                 let journal_size: u32 = 1;

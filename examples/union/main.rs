@@ -1126,7 +1126,11 @@ fn challenge(
         .keyring
         .take_pubkey
         .unwrap();
-    let pegout_id = vec![0; 32]; // Pegout ID should be get from contracts event.
+    let pegout_id: [u8; 32] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+        0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
+        0x1E, 0x1F,
+    ]; // Pegout ID should be get from contracts event.
 
     let user_pubkey = committee.members[operator_index]
         .keyring
@@ -1144,7 +1148,7 @@ fn challenge(
         committee_id,
         slot_index,
         user_pubkey,
-        vec![0; 32],
+        pegout_id.to_vec(),
         operator_pubkey,
         get_advance_funds_fee()?,
     )?;
@@ -1153,7 +1157,7 @@ fn challenge(
     let id = if chr.pegout_id {
         wrong_pegout_id.clone()
     } else {
-        pegout_id.clone()
+        pegout_id.to_vec()
     };
 
     let slot = if chr.slot_index {
@@ -1178,7 +1182,7 @@ fn challenge(
             committee_id,
             slot,
             user_pubkey.clone(),
-            pegout_id.clone(),
+            pegout_id.to_vec(),
             pubkey,
             0,
         )?;
@@ -1202,7 +1206,7 @@ fn challenge(
     )?;
 
     if should_wait {
-        let additional_blocks = committee.stream_settings.long_timelock + 250;
+        let additional_blocks = committee.stream_settings.long_timelock + 450;
 
         info!(
             "Starting mining {} blocks in loop to ensure challenges and DRP txs are dispatched...",
