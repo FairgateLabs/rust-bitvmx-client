@@ -81,4 +81,4 @@ else
 fi
 
 printf "\nRunning union example: $name...\n\n\n"
-RUST_BACKTRACE=full cargo run --release --example union $cmd 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"
+RUST_BACKTRACE=full EXAMPLE_LOG_DIR="$LOGS_DIR" cargo run --release --example union $cmd 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"

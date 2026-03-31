@@ -42,7 +42,7 @@ use protocol_builder::{
     builder::Protocol,
     graph::graph::GraphOptions,
     scripts::{
-        op_return, op_return_script, timelock, verify_signature,
+        op_return_script, timelock, verify_signature,
         verify_winternitz_signature_timelock, SignMode,
     },
     types::{
@@ -544,6 +544,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
             Ok(self.reimbursement_kickoff_tx(name, context)?)
         } else if name.starts_with(CHALLENGE_TX) {
             Ok(self.challenge_tx(name, context)?)
+        } else if name.starts_with(REVEAL_INPUT_TX) {
+            Ok(self.reveal_input_tx(name, context)?)
+        } else if name.starts_with(INPUT_NOT_REVEALED_TX) {
+            Ok(self.input_not_revealed_tx(name, context)?)
         } else if name == WT_SELF_DISABLER_TX || name == OP_SELF_DISABLER_TX {
             Ok(self.sign_aggregated_input(name, context, false)?)
         } else if name.starts_with(WT_INIT_CHALLENGE_TX) {
@@ -1254,12 +1258,6 @@ impl DisputeCoreProtocol {
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
             Some(settings.input_not_revealed_timelock),
             None,
-        )?;
-
-        // TODO: Should we remove this output? If so, need to update input_not_revealed_tx with correct speedup output index
-        protocol.add_transaction_output(
-            &input_not_revealed,
-            &OutputType::segwit_unspendable(op_return(vec![]))?,
         )?;
 
         self.add_dispute_core_speedup_outputs(
@@ -2506,11 +2504,11 @@ impl DisputeCoreProtocol {
         &self,
         name: &str,
         context: &ProgramContext,
-        slot_index: usize,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
         let mut protocol = self.load_protocol()?;
+        let slot_index = extract_index(name, REVEAL_INPUT_TX)? as u16;
 
         let args = collect_input_signatures(
             &mut protocol,
@@ -2519,7 +2517,7 @@ impl DisputeCoreProtocol {
                 input_index: REVEAL_INPUT_TX_REVEAL_INDEX,
                 script_index: REVEAL_INPUT_TX_REVEAL_LEAF,
                 winternitz_data: Some(WinternitzData {
-                    data: (slot_index as u16).to_be_bytes().to_vec(),
+                    data: slot_index.to_be_bytes().to_vec(),
                     key_name: SLOT_ID_KEY.to_string(),
                     key_type: WinternitzType::HASH160,
                     key_manager: context.key_manager.as_ref(),
@@ -2566,7 +2564,7 @@ impl DisputeCoreProtocol {
         // Speedup data
         let speedup_utxo = Utxo::new(
             tx.compute_txid(),
-            1 + self.ctx.my_idx as u32, //Speedup vout is member index + 1 (1 is because op return output)
+            self.ctx.my_idx as u32, //Speedup vout is member index
             SPEEDUP_VALUE,
             &self.my_speedup_key(context)?,
         );
@@ -2857,9 +2855,7 @@ impl DisputeCoreProtocol {
             DisputeCoreTxType::WatchtowerNoChallenge { .. } => self.wt_no_challenge_tx(&tx_name)?,
             DisputeCoreTxType::OperatorNoCosign { .. } => self.op_no_cosign_tx(&tx_name)?,
             DisputeCoreTxType::OperatorCosign { .. } => self.op_cosign_tx(&tx_name, context)?,
-            DisputeCoreTxType::RevealInput { slot_index } => {
-                self.reveal_input_tx(&tx_name, context, slot_index)?
-            }
+            DisputeCoreTxType::RevealInput { .. } => self.reveal_input_tx(&tx_name, context)?,
             DisputeCoreTxType::InputNotRevealed { .. } => {
                 self.input_not_revealed_tx(&tx_name, context)?
             }
@@ -3215,10 +3211,16 @@ impl DisputeCoreProtocol {
         context: &ProgramContext,
         slot_index: usize,
     ) -> Result<Vec<u8>, BitVMXError> {
+        let key = indexed_name(PEGOUT_ID, slot_index);
         context
             .globals
-            .get_var(&self.ctx.id, &indexed_name(PEGOUT_ID, slot_index))?
-            .unwrap()
+            .get_var(&self.ctx.id, &key)?
+            .ok_or_else(|| {
+                BitVMXError::InvalidParameter(format!(
+                    "Key {} not set in uuid: {}",
+                    key, self.ctx.id
+                ))
+            })?
             .input()
     }
 

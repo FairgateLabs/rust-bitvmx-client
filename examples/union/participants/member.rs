@@ -19,7 +19,7 @@ use bitvmx_client::{
         participant::{CommsAddress, ParticipantRole},
         protocols::union::{
             common::{
-                get_dispute_core_pid, get_dispute_pair_aggregated_key_pid,
+                get_advance_funds_pid, get_dispute_core_pid, get_dispute_pair_aggregated_key_pid,
                 get_dispute_pair_key_name, indexed_name,
             },
             dispute_core::PEGOUT_ID,
@@ -185,14 +185,6 @@ impl Member {
     //         communication_pubkey.to_string()
     //     );
 
-    //     if is_deterministic {
-    //         if crate::participants::common::DEBUG_TX {
-    //             info!("Deterministic key UUIDs used (for reproducibility):");
-    //             info!("  - Take key UUID: {}", take_key_id);
-    //             info!("  - Dispute key UUID: {}", dispute_key_id);
-    //             info!("  - Communication key UUID: {}", comm_key_id);
-    //         }
-    //     }
 
     //     Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     // }
@@ -385,7 +377,6 @@ impl Member {
 
     pub fn advance_funds(
         &mut self,
-        protocol_id: Uuid,
         committee_id: Uuid,
         slot_index: usize,
         user_pubkey: PublicKey,
@@ -398,6 +389,8 @@ impl Member {
             "Advancing funds to user public key {}",
             user_pubkey.to_string()
         );
+
+        let protocol_id = get_advance_funds_pid(committee_id, slot_index);
 
         AdvanceFunds::setup(
             &self.bitvmx,
