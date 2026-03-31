@@ -72,9 +72,5 @@ pub trait BitVMXApi {
 
     fn get_witness(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError>;
 
-    fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError>;
-
     fn get_spv_proof(&mut self, from: Identifier, txid: Txid) -> Result<(), BitVMXError>;
-
-    fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError>;
 }

@@ -14,6 +14,7 @@ use tracing::{debug, warn};
 pub(crate) enum JobDispatcherType {
     ZKP,
     Emulator,
+    Garbler,
 }
 
 pub(crate) struct PingHelper {

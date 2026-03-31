@@ -718,12 +718,126 @@ impl BitVMX {
         Ok(true)
     }
 
+    fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
+            self.ping_helper
+                .received_message(JobDispatcherType::ZKP, &message);
+        } else {
+            let result_message = ResultMessage::from_str(&msg)?;
+            let parsed: serde_json::Value = result_message.result_as_value()?;
+            let data = parsed.get("data").ok_or_else(|| {
+                warn!("Missing data field in result. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+            let id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+            // Extract status and vec from data
+            let status = data["status"].as_str().ok_or_else(|| {
+                warn!("Missing status field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+            let journal = data["journal"].as_array().ok_or_else(|| {
+                warn!("Missing journal field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+            let seal = data["seal"].as_array().ok_or_else(|| {
+                warn!("Missing seal field in data. Raw message: {}", msg);
+                BitVMXError::InvalidMessageFormat
+            })?;
+
+            // Convert seal to Vec<u8>
+            let seal: Vec<u8> = seal
+                .iter()
+                .filter_map(|v| v.as_u64())
+                .map(|v| v as u8)
+                .collect();
+
+            // Store the proof data and status
+            let transaction_id = self.store.begin_transaction();
+
+            self.store
+                .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
+
+            self.store.set(
+                StoreKey::ZKPJournal(id).get_key(),
+                journal,
+                Some(transaction_id),
+            )?;
+
+            self.store.set(
+                StoreKey::ZKPStatus(id).get_key(),
+                status.to_string(),
+                Some(transaction_id),
+            )?;
+
+            self.store.commit_transaction(transaction_id)?;
+
+            // Get the stored 'from' parameter
+            let from: Identifier = self
+                .store
+                .get(StoreKey::ZKPFrom(id).get_key())?
+                .ok_or_else(|| {
+                    warn!("Missing 'from' parameter for ZKP request: {}", id);
+                    BitVMXError::InvalidMessageFormat
+                })?;
+
+            self.proof_ready(from, id)?;
+        }
+        Ok(())
+    }
+
+    fn handle_garbler_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
+            self.ping_helper
+                .received_message(JobDispatcherType::Garbler, &message);
+        } else {
+        }
+        Ok(())
+    }
+
+    fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
+        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
+            self.ping_helper
+                .received_message(JobDispatcherType::Emulator, &message);
+        } else {
+            let result_message = ResultMessage::from_str(&msg)?;
+            let parsed: serde_json::Value = result_message.result_as_value()?;
+            let decoded = EmulatorResultType::from_value(parsed)?;
+            let job_id = Uuid::parse_str(&result_message.job_id)
+                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+            self.load_program(&job_id)?
+                .protocol
+                .dispute()?
+                .execution_result(&decoded, &self.program_context)?;
+        }
+        Ok(())
+    }
+
     pub fn process_api_messages(&mut self) -> Result<bool, BitVMXError> {
         if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
-            BitVMXApi::handle_message(self, msg, from)?;
-            return Ok(true);
+            let ret = match from {
+                identifier if identifier == self.config.components.garbler => {
+                    self.handle_garbler_message(&msg)?;
+                    Ok(true)
+                }
+                identifier if identifier == self.config.components.emulator => {
+                    self.handle_emulator_message(&msg)?;
+                    Ok(true)
+                }
+                identifier if identifier == self.config.components.prover => {
+                    self.handle_prover_message(msg)?;
+                    Ok(true)
+                }
+                _ => {
+                    BitVMXApi::handle_message(self, msg, from)?;
+                    Ok(true)
+                }
+            };
+            return ret;
         }
-
         Ok(false)
     }
 
@@ -1171,95 +1285,6 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
-        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper
-                .received_message(JobDispatcherType::ZKP, &message);
-        } else {
-            let result_message = ResultMessage::from_str(&msg)?;
-            let parsed: serde_json::Value = result_message.result_as_value()?;
-            let data = parsed.get("data").ok_or_else(|| {
-                warn!("Missing data field in result. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-            let id = Uuid::parse_str(&result_message.job_id)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-            // Extract status and vec from data
-            let status = data["status"].as_str().ok_or_else(|| {
-                warn!("Missing status field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-            let journal = data["journal"].as_array().ok_or_else(|| {
-                warn!("Missing journal field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-            let seal = data["seal"].as_array().ok_or_else(|| {
-                warn!("Missing seal field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-            // Convert seal to Vec<u8>
-            let seal: Vec<u8> = seal
-                .iter()
-                .filter_map(|v| v.as_u64())
-                .map(|v| v as u8)
-                .collect();
-
-            // Store the proof data and status
-            let transaction_id = self.store.begin_transaction();
-
-            self.store
-                .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
-
-            self.store.set(
-                StoreKey::ZKPJournal(id).get_key(),
-                journal,
-                Some(transaction_id),
-            )?;
-
-            self.store.set(
-                StoreKey::ZKPStatus(id).get_key(),
-                status.to_string(),
-                Some(transaction_id),
-            )?;
-
-            self.store.commit_transaction(transaction_id)?;
-
-            // Get the stored 'from' parameter
-            let from: Identifier = self
-                .store
-                .get(StoreKey::ZKPFrom(id).get_key())?
-                .ok_or_else(|| {
-                    warn!("Missing 'from' parameter for ZKP request: {}", id);
-                    BitVMXError::InvalidMessageFormat
-                })?;
-
-            self.proof_ready(from, id)?;
-        }
-        Ok(())
-    }
-
-    fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
-        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper
-                .received_message(JobDispatcherType::Emulator, &message);
-        } else {
-            let result_message = ResultMessage::from_str(&msg)?;
-            let parsed: serde_json::Value = result_message.result_as_value()?;
-            let decoded = EmulatorResultType::from_value(parsed)?;
-            let job_id = Uuid::parse_str(&result_message.job_id)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-            self.load_program(&job_id)?
-                .protocol
-                .dispute()?
-                .execution_result(&decoded, &self.program_context)?;
-        }
-        Ok(())
-    }
-
     fn get_spv_proof(&mut self, from: Identifier, txid: Txid) -> Result<(), BitVMXError> {
         let tx_info = self
             .program_context
@@ -1290,16 +1315,6 @@ impl BitVMXApi for BitVMX {
     }
 
     fn handle_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError> {
-        if from == self.config.components.emulator {
-            self.handle_emulator_message(&msg)?;
-            return Ok(());
-        }
-
-        if from == self.config.components.prover {
-            self.handle_prover_message(msg)?;
-            return Ok(());
-        }
-
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
         debug!("< {:?}", decoded);
 
