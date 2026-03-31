@@ -7,7 +7,6 @@ use crate::spv_proof::get_spv_proof;
 use crate::throttle::Throttle;
 use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
-    api::BitVMXApi,
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
@@ -826,7 +825,7 @@ impl BitVMX {
                     Ok(true)
                 }
                 _ => {
-                    BitVMXApi::handle_message(self, msg, from)?;
+                    self.handle_api_message(msg, from)?;
                     Ok(true)
                 }
             };
@@ -989,9 +988,7 @@ impl BitVMX {
             .bool()
             .unwrap_or(false)
     }
-}
 
-impl BitVMXApi for BitVMX {
     fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError> {
         self.reply(from, OutgoingBitVMXApiMessages::Pong(uuid))?;
         Ok(uuid)
@@ -1308,7 +1305,7 @@ impl BitVMXApi for BitVMX {
         Ok(())
     }
 
-    fn handle_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError> {
+    fn handle_api_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError> {
         let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
         debug!("< {:?}", decoded);
 
@@ -1334,7 +1331,7 @@ impl BitVMXApi for BitVMX {
                 self.reply(from, comm_info)?;
             }
             IncomingBitVMXApiMessages::Ping(uuid) => {
-                BitVMXApi::ping(self, from, uuid)?;
+                self.ping(from, uuid)?;
             }
             IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
                 debug!("Setting variable {}: {:?}", key, value);
@@ -1432,13 +1429,13 @@ impl BitVMXApi for BitVMX {
             }
 
             IncomingBitVMXApiMessages::GetVar(uuid, key) => {
-                BitVMXApi::get_var(self, from, uuid, &key)?;
+                self.get_var(from, uuid, &key)?;
             }
             IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
-                BitVMXApi::get_witness(self, from, uuid, &key)?;
+                self.get_witness(from, uuid, &key)?;
             }
             IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
-                BitVMXApi::get_transaction(self, from, id, txid)?
+                self.get_transaction(from, id, txid)?
             }
             IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
                 let response = match self.load_program(&id) {
@@ -1467,32 +1464,30 @@ impl BitVMXApi for BitVMX {
                 self.reply(from, response)?;
             }
             IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
-                BitVMXApi::setup(self, id, program_type, participants, leader)?
+                self.setup(id, program_type, participants, leader)?
             }
             IncomingBitVMXApiMessages::SubscribeToTransaction(
                 uuid,
                 txid,
                 confirmation_threshold,
-            ) => BitVMXApi::subscribe_to_tx(self, from, uuid, txid, confirmation_threshold)?,
+            ) => self.subscribe_to_tx(from, uuid, txid, confirmation_threshold)?,
             IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
-                BitVMXApi::subscribe_to_rsk_pegin(self, confirmation_threshold)?
+                self.subscribe_to_rsk_pegin(confirmation_threshold)?
             }
-            IncomingBitVMXApiMessages::GetSPVProof(txid) => {
-                BitVMXApi::get_spv_proof(self, from, txid)?
-            }
+            IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
 
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
-                BitVMXApi::dispatch_transaction_name(self, id, &tx)?
+                self.dispatch_transaction_name(id, &tx)?
             }
             IncomingBitVMXApiMessages::DispatchTransaction(id, tx, confirmation_threshold) => {
-                BitVMXApi::dispatch_transaction(self, from, id, tx, confirmation_threshold)?;
+                self.dispatch_transaction(from, id, tx, confirmation_threshold)?;
             }
             IncomingBitVMXApiMessages::SetupKey(
                 id,
                 participants,
                 participants_keys,
                 leader_idx,
-            ) => BitVMXApi::setup_key(self, id, participants, participants_keys, leader_idx)?,
+            ) => self.setup_key(id, participants, participants_keys, leader_idx)?,
             IncomingBitVMXApiMessages::GetKeyPair(id) => {
                 // Get aggregated key from globals (set by AggregatedKeyProtocol)
                 let aggregated = self
@@ -1572,14 +1567,14 @@ impl BitVMXApi for BitVMX {
                 )?;
             }
             IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
-                BitVMXApi::get_aggregated_pubkey(self, from, id)?
+                self.get_aggregated_pubkey(from, id)?
             }
             IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
-                BitVMXApi::generate_zkp(self, from, id, input, elf_file_path)?
+                self.generate_zkp(from, id, input, elf_file_path)?
             }
-            IncomingBitVMXApiMessages::ProofReady(id) => BitVMXApi::proof_ready(self, from, id)?,
+            IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(from, id)?,
             IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
-                BitVMXApi::get_zkp_execution_result(self, from, id)?
+                self.get_zkp_execution_result(from, id)?
             }
             IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
                 let encrypted = self
