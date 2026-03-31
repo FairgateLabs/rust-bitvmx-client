@@ -49,11 +49,6 @@ pub fn verify_winternitz(
     Ok(protocol_script)
 }
 
-// In order to init a challenge, script should:
-// 1. Verify WT dispute key.
-// 2. Verify WT slot id winternitz signature and keep signed value in stack for later validation.
-// 3. Verify OP slot id key signature (This is the one that OP will reveal in REVEAL_TX witness) (Discard this value from stack)
-// 4. Verify previous signed value against expected slot id value.
 pub fn init_challenge_script(
     wt_dispute_key: &PublicKey,
     sign_mode: SignMode,
@@ -108,11 +103,6 @@ pub fn init_challenge_script(
     Ok(protocol_script)
 }
 
-// In order to cosign a challenge, script should:
-// 1. Verify OP dispute key.
-// 3. Verify OP winternitz signature and keep signed value in stack for later validation.
-// 2. Verify WT winternitz signature and keep signed value in stack (This is the one that WT will reveal in INIT_CHALLENGE_TX witness)
-// 4. Verify both values in stack are equal
 pub fn cosign_script(
     op_dispute_key: &PublicKey,
     sign_mode: SignMode,
