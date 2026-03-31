@@ -21,7 +21,6 @@ use crate::{
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
-use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::rc::Rc;
@@ -376,11 +375,10 @@ impl Program {
             }
             JobDispatcherType::Emulator => {
                 debug!("Program::receive_dispatcher_result() - Received result from Emulator");
-                let decoded = EmulatorResultType::from_value(result)?;
                 return self
                     .protocol
                     .dispute()?
-                    .execution_result(&decoded, program_context);
+                    .execution_result(result, program_context);
             }
             _ => {
                 return Err(BitVMXError::InvalidMessage(format!(
