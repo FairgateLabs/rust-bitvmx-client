@@ -8,6 +8,7 @@ use crate::{
     comms_helper::CommsMessageType,
     config::ClientConfig,
     errors::{BitVMXError, ProgramError},
+    ping_helper::JobDispatcherType,
     program::{
         participant::get_comms_address_by_pubkey_hash,
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -20,7 +21,9 @@ use crate::{
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
+use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, info, warn};
@@ -360,11 +363,46 @@ impl Program {
         Ok(())
     }
 
+    /// Receives results from job dispatchers (Garbler, Emulator)
+    pub fn receive_dispatcher_result(
+        &mut self,
+        result: Value,
+        dispatcher: JobDispatcherType,
+        program_context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        match dispatcher {
+            JobDispatcherType::Garbler => {
+                debug!("Program::receive_dispatcher_result() - Received result from Garbler");
+            }
+            JobDispatcherType::Emulator => {
+                debug!("Program::receive_dispatcher_result() - Received result from Emulator");
+                let decoded = EmulatorResultType::from_value(result)?;
+                return self
+                    .protocol
+                    .dispute()?
+                    .execution_result(&decoded, program_context);
+            }
+            _ => {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Unknown dispatcher type: {:?}",
+                    dispatcher
+                )));
+            }
+        };
+
+        // Only handle setup data if we're in setup state
+        if matches!(self.state, ProgramState::Ready) {
+            debug!("Program::receive_dispatcher_result() - Not in SettingUp state, ignoring");
+            return Ok(());
+        }
+        Ok(())
+    }
+
     /// Receives setup data from another participant
     ///
     /// This is a public wrapper that delegates to SetupEngine when the program
     /// is in SettingUp state. The SetupEngine handles all the logic internally.
-    pub fn receive_setup_data(
+    fn receive_setup_data(
         &mut self,
         data: &[u8],
         from: &PubKeyHash,

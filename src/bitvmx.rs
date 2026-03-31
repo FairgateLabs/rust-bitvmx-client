@@ -47,7 +47,6 @@ use bitvmx_broker::{
     channel::channel::LocalChannel,
     rpc::{sync_server::BrokerSync, BrokerConfig},
 };
-use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
@@ -789,29 +788,24 @@ impl BitVMX {
         Ok(())
     }
 
-    fn handle_garbler_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
+    fn handle_dispatcher_message(
+        &mut self,
+        dispatcher: JobDispatcherType,
+        msg: &String,
+    ) -> Result<(), BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper
-                .received_message(JobDispatcherType::Garbler, &message);
-        } else {
-        }
-        Ok(())
-    }
-
-    fn handle_emulator_message(&mut self, msg: &String) -> Result<(), BitVMXError> {
-        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper
-                .received_message(JobDispatcherType::Emulator, &message);
+            self.ping_helper.received_message(dispatcher, &message);
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
-            let decoded = EmulatorResultType::from_value(parsed)?;
             let job_id = Uuid::parse_str(&result_message.job_id)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-            self.load_program(&job_id)?
-                .protocol
-                .dispute()?
-                .execution_result(&decoded, &self.program_context)?;
+
+            self.load_program(&job_id)?.receive_dispatcher_result(
+                parsed,
+                dispatcher,
+                &mut self.program_context,
+            )?;
         }
         Ok(())
     }
@@ -820,11 +814,11 @@ impl BitVMX {
         if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
             let ret = match from {
                 identifier if identifier == self.config.components.garbler => {
-                    self.handle_garbler_message(&msg)?;
+                    self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
                     Ok(true)
                 }
                 identifier if identifier == self.config.components.emulator => {
-                    self.handle_emulator_message(&msg)?;
+                    self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
                     Ok(true)
                 }
                 identifier if identifier == self.config.components.prover => {
