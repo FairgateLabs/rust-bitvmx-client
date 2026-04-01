@@ -1,7 +1,10 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError, Witness};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
-use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
+use bitvmx_broker::{
+    channel::retry_helper::RetryPolicyError, identification::errors::IdentificationError,
+    rpc::errors::BrokerError,
+};
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
@@ -235,6 +238,9 @@ pub enum BitVMXError {
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
+
+    #[error("Retry policy error: {0}")]
+    RetryPolicyError(#[from] RetryPolicyError),
 
     /* =========================
      * Timestamp / Replay

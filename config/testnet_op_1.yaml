@@ -32,6 +32,7 @@ bitvmx_throttle:
   idle_interval: 200
 
 broker:
+  settings: config/broker_settings.yaml
   allow_list: config/allow_list.yaml
   routing_table: config/routing_table.yaml
   port: 22222

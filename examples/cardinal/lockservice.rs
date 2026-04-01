@@ -96,7 +96,12 @@ pub fn get_all(channels: &Vec<DualChannel>) -> Result<Vec<(String, Identifier)>>
 pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-    let broker_config = BrokerConfig::new(config.broker.port, None, config.broker.get_pubk_hash()?);
+    let broker_config = BrokerConfig::new(
+        config.broker.port,
+        None,
+        config.broker.get_pubk_hash()?,
+        Some(config.broker.settings),
+    );
     let bridge_client = DualChannel::new(
         &broker_config,
         Cert::new_with_privk(

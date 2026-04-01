@@ -40,6 +40,7 @@ class OperatorConfigGenerator:
                 "mnemonic_passphrase": ""
             },
             "broker": {
+                "settings": "config/broker_settings.yaml",
                 "allow_list": "config/allow_list.yaml",
                 "routing_table": "config/routing_table.yaml", 
                 "ip": "127.0.0.1",
