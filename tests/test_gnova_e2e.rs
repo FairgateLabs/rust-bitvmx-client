@@ -23,11 +23,14 @@ mod common;
 use crate::common::{clear_db, config_trace};
 
 // circuit to test - use a compiled .circuit file
-const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-circuit-compiler/examples/simple.circuit";
+const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";
 const INPUT_BYTES: &[u8] = &[0, 0, 1];
 
 /// Check gnova binary exists
 fn check_gnova_built() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    let binary = "../rust-bitvmx-gc/target/release/gnova.exe";
+    #[cfg(not(target_os = "windows"))]
     let binary = "../rust-bitvmx-gc/target/release/gnova";
     if !Path::new(binary).exists() {
         return Err(anyhow::anyhow!(
@@ -198,7 +201,7 @@ fn init_broker_server(port: u16) -> Result<BrokerSync> {
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])?;
     let routing = RoutingTable::new();
     routing.lock().unwrap().allow_all();
-    let config = BrokerConfig::new(port, None, cert.get_pubk_hash()?);
+    let config = BrokerConfig::new(port, None, cert.get_pubk_hash()?, None);
 
     let storage = Arc::new(Mutex::new(MemStorage::new()));
     let server = BrokerSync::new(&config, storage, cert, allow_list, routing)?;
@@ -215,6 +218,7 @@ fn run_garbled_dispatcher(port: u16, stop_rx: Receiver<()>, storage_path: &str) 
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         cert.get_pubk_hash()?,
+        None,
     );
     let channel = DualChannel::new(&config, cert, Some(1), allow_list)?;
 
@@ -247,6 +251,7 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         cert.get_pubk_hash()?,
+        None,
     );
     let channel = DualChannel::new(&config, cert, Some(2), allow_list)?;
 
