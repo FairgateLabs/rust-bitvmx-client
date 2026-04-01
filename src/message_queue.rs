@@ -43,7 +43,7 @@ impl MessageQueue {
     }
 
     fn get_queue_ids(&self) -> Result<Vec<Uuid>, BitVMXError> {
-        let ids: Option<Vec<Uuid>> = self.storage.get(QUEUE_IDS_KEY)?;
+        let ids: Option<Vec<Uuid>> = self.storage.get(QUEUE_IDS_KEY, None)?;
         Ok(ids.unwrap_or_default())
     }
 
@@ -105,7 +105,7 @@ impl MessageQueue {
             let id = ids.remove(0);
             let key = format!("{}{}", MSG_KEY_PREFIX, id);
 
-            let queued_msg: Option<QueuedMessage> = self.storage.get(&key)?;
+            let queued_msg: Option<QueuedMessage> = self.storage.get(&key, None)?;
             let Some(msg) = queued_msg else {
                 continue; // Empty message, skip //TODO: Is this possible?
             };

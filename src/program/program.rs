@@ -172,7 +172,7 @@ impl Program {
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
         let key = format!("program/{}", program_id);
         let mut program: Program = storage
-            .get(&key)?
+            .get(&key, None)?
             .ok_or(ProgramError::ProgramNotFound(*program_id))?;
 
         debug!(
@@ -187,7 +187,7 @@ impl Program {
         program.setup_engine = Self::try_create_setup_engine(&program.protocol);
 
         program.state = storage
-            .get(&format!("program/{}/state", program_id))?
+            .get(&format!("program/{}/state", program_id), None)?
             .unwrap_or_default();
 
         // Restore SetupEngine state if it was saved
@@ -572,6 +572,6 @@ impl Program {
 
 pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
     let key = format!("program/{}/state", uuid);
-    let state: ProgramState = storage.get(&key)?.unwrap_or_default();
+    let state: ProgramState = storage.get(&key, None)?.unwrap_or_default();
     Ok(state.is_active())
 }
