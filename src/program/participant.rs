@@ -1,6 +1,6 @@
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::PubkHash;
-use key_manager::winternitz::WinternitzPublicKey;
+use key_manager::{lamport::LamportPublicKey, winternitz::WinternitzPublicKey};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 use tracing::warn;
@@ -64,6 +64,7 @@ impl fmt::Display for ParticipantRole {
 pub enum PublicKeyType {
     Public(PublicKey),
     Winternitz(WinternitzPublicKey),
+    Lamport(LamportPublicKey),
 }
 
 impl PublicKeyType {
@@ -79,6 +80,13 @@ impl PublicKeyType {
             _ => None,
         }
     }
+
+    pub fn lamport(&self) -> Option<&LamportPublicKey> {
+        match self {
+            PublicKeyType::Lamport(key) => Some(key),
+            _ => None,
+        }
+    }
 }
 
 impl Into<PublicKeyType> for PublicKey {
@@ -90,6 +98,12 @@ impl Into<PublicKeyType> for PublicKey {
 impl Into<PublicKeyType> for WinternitzPublicKey {
     fn into(self) -> PublicKeyType {
         PublicKeyType::Winternitz(self)
+    }
+}
+
+impl Into<PublicKeyType> for LamportPublicKey {
+    fn into(self) -> PublicKeyType {
+        PublicKeyType::Lamport(self)
     }
 }
 
@@ -126,6 +140,15 @@ impl ParticipantKeys {
                 warn!("Winternitz {} not found.", name);
                 BitVMXError::InvalidMessageFormat
             })?)
+    }
+
+    pub fn get_lamport(&self, name: &str) -> Result<&LamportPublicKey, BitVMXError> {
+        Ok(self
+            .mapping
+            .get(name)
+            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?
+            .lamport()
+            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?)
     }
 
     pub fn get_public(&self, name: &str) -> Result<&PublicKey, BitVMXError> {

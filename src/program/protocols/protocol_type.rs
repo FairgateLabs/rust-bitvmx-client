@@ -4,7 +4,7 @@ use crate::{
 };
 
 impl ProtocolType {
-    pub fn dispute(self) -> Result<DisputeResolutionProtocol, BitVMXError> {
+    pub fn dispute(&self) -> Result<&DisputeResolutionProtocol, BitVMXError> {
         match self {
             ProtocolType::DisputeResolutionProtocol(protocol) => Ok(protocol),
             _ => Err(BitVMXError::InvalidMessageType),

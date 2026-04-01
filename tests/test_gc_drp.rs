@@ -1,11 +1,20 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitcoin::Network;
-use bitvmx_client::{program::participant::CommsAddress, types::IncomingBitVMXApiMessages};
+use bitvmx_client::{
+    program::{
+        participant::{CommsAddress, ParticipantRole},
+        protocols::{
+            gc_drp::{GCDisputeConfiguration, START_CH},
+            protocol_handler::action_wins,
+        },
+    },
+    types::IncomingBitVMXApiMessages,
+};
 use bitvmx_wallet::{Destination, RegtestWallet};
 use protocol_builder::{
     scripts::{self, SignMode},
-    types::Utxo,
+    types::{OutputType, Utxo},
 };
 use tracing::info;
 use uuid::Uuid;
@@ -99,7 +108,7 @@ pub fn test_protocol() -> Result<()> {
     )];
 
     let pegin_amount = 100_000;
-    let (_utxo_pegin, _pegin_output_type) = init_utxo_new(
+    let (utxo_pegin, pegin_output_type) = init_utxo_new(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
@@ -113,8 +122,8 @@ pub fn test_protocol() -> Result<()> {
         SignMode::Aggregate,
     )];
 
-    let protocol_cost = 50_000;
-    let (_utxo, _initial_out_type) = init_utxo_new(
+    let protocol_cost = 15_000;
+    let (utxo, initial_out_type) = init_utxo_new(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
@@ -122,6 +131,66 @@ pub fn test_protocol() -> Result<()> {
     )?;
 
     // Now configure the protocol itself
+
+    let pair_0_1_channels = vec![
+        helper.id_channel_pairs[0].clone(),
+        helper.id_channel_pairs[1].clone(),
+    ];
+
+    let prog_id = Uuid::new_v4();
+
+    let test_enabler = OutputType::segwit_key(540, &pair_0_1_agg_pub_key).unwrap();
+
+    let gc_drp_config = GCDisputeConfiguration::new(
+        prog_id,
+        (
+            utxo.txid,
+            utxo.vout,
+            Some(utxo.amount),
+            Some(initial_out_type),
+        ),
+        pair_0_1_agg_pub_key,
+        15,
+        vec![(
+            (
+                utxo_pegin.txid,
+                utxo_pegin.vout,
+                Some(utxo_pegin.amount),
+                Some(pegin_output_type.clone()),
+            ),
+            vec![0],
+        )],
+        vec![test_enabler.clone()],
+        vec![(
+            (
+                utxo_pegin.txid,
+                utxo_pegin.vout,
+                Some(utxo_pegin.amount),
+                Some(pegin_output_type.clone()),
+            ),
+            vec![0],
+        )],
+        vec![test_enabler.clone(), test_enabler],
+        vec![],
+    );
+
+    info!("Setup start");
+    gc_drp_config.setup(&pair_0_1_channels, pair_0_1, 1)?;
+
+    let msg = helper.wait_msg(0)?;
+    info!("Setup dispute done: {:?}", msg);
+    let msg = helper.wait_msg(1)?;
+    info!("Setup dispute done: {:?}", msg);
+
+    helper.id_channel_pairs[1].channel.send(
+        &helper.id_channel_pairs[1].id,
+        IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, START_CH.to_string())
+            .to_string()?,
+    )?;
+
+    info!("Waiting for start");
+    helper.wait_tx_name(1, &action_wins(&ParticipantRole::Verifier, 1))?;
+    helper.stop()?;
 
     Ok(())
 }

@@ -1,4 +1,5 @@
-use bitcoin::{hashes::Hash, PublicKey, Sequence};
+use bitcoin::{hashes::Hash, PublicKey, Sequence, Txid};
+use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
     scripts::{self, SignMode},
@@ -8,8 +9,22 @@ use protocol_builder::{
         OutputType,
     },
 };
+use tracing::info;
 
-use crate::errors::BitVMXError;
+use crate::{
+    bitvmx::Context,
+    errors::BitVMXError,
+    program::{
+        participant::ParticipantRole,
+        protocols::{
+            dispute,
+            protocol_handler::{
+                ClaimGateConfig, ProtocolHandler, WithClaimGateConfig, action_wins, action_wins_prefix, get_tx_name_from_timeout
+            },
+            timeouts::TxOwnershipTable,
+        },
+    }, types::ProgramContext,
+};
 
 pub const CLAIM_GATE_START: &str = "START";
 pub const CLAIM_GATE_STOP: &str = "STOP";
@@ -272,4 +287,164 @@ impl ClaimGate {
 
         Ok(())
     }
+}
+
+fn get_claim_name<T: ProtocolHandler + WithClaimGateConfig>(
+    protocol_handler: &T,
+    other: bool,
+) -> String {
+    let (role, other_role) = match protocol_handler.role() {
+        ParticipantRole::Prover => (dispute::PROVER_WINS, dispute::VERIFIER_WINS),
+        ParticipantRole::Verifier => (dispute::VERIFIER_WINS, dispute::PROVER_WINS),
+    };
+    if other {
+        other_role.to_string()
+    } else {
+        role.to_string()
+    }
+}
+
+pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig>(
+    protocol_handler: &T,
+    name: &str,
+    vout: Option<u32>,
+    program_context: &ProgramContext,
+    ownership_table: &TxOwnershipTable,
+) -> Result<(), BitVMXError> {
+    if vout.is_some() {
+        return Ok(());
+    }
+
+    if let Some(orig_tx) = get_tx_name_from_timeout(name) {
+        if ownership_table.is_other_tx(&orig_tx, protocol_handler.role()) {
+            let claim_name = ClaimGate::tx_start(&get_claim_name(protocol_handler, false));
+            let tx = protocol_handler.get_signed(program_context, &claim_name, vec![0.into()])?;
+            let speedup_data =
+                protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
+            info!("{claim_name}: {:?}", tx);
+            protocol_handler.dispatch(
+                program_context,
+                tx,
+                Some(speedup_data),
+                None,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
+    protocol_handler: &T,
+    tx_id: Txid,
+    name: &str,
+    vout: Option<u32>,
+    tx_status: TransactionStatus,
+    program_context: &ProgramContext,
+    current_height: u32,
+    timelock_blocks: u32,
+) -> Result<(), BitVMXError> {
+    if vout.is_some() {
+        return Ok(());
+    }
+    let my_claim = get_claim_name(protocol_handler, false);
+    let other_claim = get_claim_name(protocol_handler, true);
+    // start claim
+    if name == ClaimGate::tx_start(dispute::PROVER_WINS)
+        || name == ClaimGate::tx_start(dispute::VERIFIER_WINS)
+    {
+        // my start
+        if name == ClaimGate::tx_start(&my_claim) {
+            info!("{my_claim} SUCCESS dispatch");
+
+            let tx = protocol_handler.get_signed(
+                program_context,
+                &ClaimGate::tx_success(&my_claim),
+                vec![1.into()],
+            )?;
+            let speedup_data =
+                protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
+            let height = Some(current_height + timelock_blocks);
+            protocol_handler.dispatch(
+                program_context,
+                tx,
+                Some(speedup_data),
+                height,
+            )?;
+        }
+        //other start
+        else {
+            info!("{other_claim} STOP dispatch attempt");
+            let tx = protocol_handler.get_signed(
+                program_context,
+                &ClaimGate::tx_stop(&other_claim, 0),
+                vec![0.into()],
+            )?;
+            let speedup_data =
+                protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
+            protocol_handler.dispatch(
+                program_context,
+                tx,
+                Some(speedup_data),
+                None,
+            )?;
+        }
+    }
+
+    if (name == ClaimGate::tx_success(dispute::PROVER_WINS)
+        && protocol_handler.role() == ParticipantRole::Prover)
+        || (name == ClaimGate::tx_success(dispute::VERIFIER_WINS)
+            && protocol_handler.role() == ParticipantRole::Verifier)
+    {
+        let config = T::Config::load(&protocol_handler.context().id, &program_context.globals)?;
+        let actions = match protocol_handler.role() {
+            ParticipantRole::Prover => &config.get_prover_actions(),
+            ParticipantRole::Verifier => &config.get_verifier_actions(),
+        };
+
+        for (i, action) in actions.iter().enumerate() {
+            info!("{}. Execute Action {}", protocol_handler.role(), i);
+            let tx = protocol_handler.get_signed(
+                program_context,
+                &action_wins(&protocol_handler.role(), 1),
+                vec![0.into(), (action.1[0] as u32).into()],
+            )?;
+            let speedup_data =
+                protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
+
+            protocol_handler.dispatch(
+                program_context,
+                tx,
+                Some(speedup_data),
+                None,
+            )?;
+        }
+    }
+
+    if name.starts_with(&action_wins_prefix(&ParticipantRole::Prover))
+        || name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier))
+    {
+        let config = T::Config::load(&protocol_handler.context().id, &program_context.globals)?;
+
+        for (protocol_name, protocol_id) in config.get_notify_protocol() {
+            let protocol = protocol_handler.load_protocol_by_name(&protocol_name, *protocol_id)?;
+            info!(
+                "Notifying protocol {} about tx {}:{:?} seen on-chain",
+                protocol_name, tx_id, vout
+            );
+            protocol.notify_external_news(
+                tx_id,
+                vout,
+                tx_status.clone(),
+                Context::Protocol(protocol_handler.context().id, T::PROGRAM_TYPE.to_string())
+                    .to_string()?,
+                program_context,
+            )?;
+            info!(
+                "Notified protocol {} about tx {}:{:?} seen on-chain",
+                protocol_name, tx_id, vout
+            );
+        }
+    }
+
+    Ok(())
 }

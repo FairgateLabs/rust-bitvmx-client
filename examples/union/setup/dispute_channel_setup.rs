@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bitcoin::PublicKey;
+use bitcoin::{Network, PublicKey};
 use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use std::collections::HashMap;
 use tracing::info;
@@ -10,7 +10,7 @@ use key_manager::winternitz::{
     WinternitzType,
 };
 
-use crate::{participants::common::set_program_input, wait_until_msg};
+use crate::{participants::common::set_program_input, wait_until_msg, NETWORK};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -223,7 +223,7 @@ impl DisputeChannelSetup {
         let timelock_blocks = match VERIFIER {
             DRPVerifier::Demo => DRP_TIMELOCK_BLOCKS,
             DRPVerifier::Generic => DRP_TIMELOCK_BLOCKS * 4,
-            DRPVerifier::Union => DRP_TIMELOCK_BLOCKS * 4, // Finetune this value. It also depend on the block's minning frequency (on regtest)
+            DRPVerifier::Union => DRP_TIMELOCK_BLOCKS * 4, // Finetune this value. It also depend on the block's minning frequency (on regtest, testnet or mainnet)
         };
 
         let dispute_configuration = DisputeConfiguration::new(
@@ -319,6 +319,10 @@ impl DisputeChannelSetup {
 
 // Just for testing purposes, DO NOT USE THIS IN PRODUCTION.
 pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> WinternitzPublicKey {
+    if NETWORK != Network::Regtest {
+        panic!("This function is only for testing purposes on regtest");
+    }
+
     let message_digits_length = winternitz::message_digits_length(message_size_in_bytes);
     let checksum_size = checksum_length(message_digits_length);
 
@@ -343,6 +347,9 @@ pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> Winternitz
 
 // Just for testing purposes, DO NOT USE THIS IN PRODUCTION.
 pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSignature {
+    if NETWORK != Network::Regtest {
+        panic!("This function is only for testing purposes on regtest");
+    }
     let message_digits_length = winternitz::message_digits_length(message_bytes.len());
     let checksummed_message = to_checksummed_message(message_bytes);
     let checksum_size = checksum_length(message_digits_length);
