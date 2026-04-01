@@ -6,7 +6,7 @@ use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
-    errors::{KeyManagerError, WinternitzError},
+    errors::{KeyManagerError, LamportError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
@@ -86,6 +86,12 @@ pub enum BitVMXError {
 
     #[error("Failed to process a Winternitz signature: {0}")]
     WinternitzError(#[from] WinternitzError),
+
+    #[error("Failed to process a Lamport signature: {0}")]
+    LamportError(#[from] LamportError),
+
+    #[error("Expected script signature not found: {0}")]
+    ScriptSignatureMissing(String),
 
     #[error("Invalid RSA signature from peer {peer} for message type {msg_type:?} in program {program_id}")]
     InvalidSignature {

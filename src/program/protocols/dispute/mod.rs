@@ -18,14 +18,13 @@ use bitcoin_script_riscv::riscv::{
     },
 };
 use bitcoin_script_stack::stack::StackTracker;
-use console::style;
 use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
     loader::program_definition::ProgramDefinition,
 };
 use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
 use protocol_builder::{
-    builder::{Protocol, ProtocolBuilder},
+    builder::ProtocolBuilder,
     graph::graph::GraphOptions,
     scripts::{self, ProtocolScript, SignMode},
     types::{
@@ -53,11 +52,13 @@ use crate::{
                     get_required_keys, get_txs_configuration, set_inputs, split_input,
                 },
             },
-            protocol_handler::{ProtocolContext, ProtocolHandler},
+            protocol_handler::{
+                ProtocolContext, ProtocolHandler, WithClaimGateConfig, timeout_input_tx
+            },
         },
-        variables::{PartialUtxo, VariableTypes},
+        variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{PROGRAM_TYPE_DRP, ProgramContext},
 };
 
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
@@ -240,24 +241,6 @@ fn get_role(my_idx: usize) -> ParticipantRole {
     }
 }
 
-pub fn action_wins_prefix(role: &ParticipantRole) -> String {
-    match role {
-        ParticipantRole::Prover => "ACTION_PROVER_WINS_".to_string(),
-        ParticipantRole::Verifier => "ACTION_VERIFIER_WINS_".to_string(),
-    }
-}
-
-pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
-    format!("{}{}", action_wins_prefix(role), n)
-}
-
-pub fn external_action(role: &ParticipantRole, n: u32) -> String {
-    match role {
-        ParticipantRole::Prover => format!("EXTERNAL_ACTION_PROVER_{n}"),
-        ParticipantRole::Verifier => format!("EXTERNAL_ACTION_VERIFIER_{n}"),
-    }
-}
-
 pub fn input_tx_name(index: u32) -> String {
     format!("INPUT_{}", index)
 }
@@ -279,24 +262,6 @@ pub fn program_input_prev_prefix(index: u32) -> String {
 
 pub fn program_input_word(index: u32, word: u32) -> String {
     format!("program_input_{}_{}", index, word)
-}
-
-pub fn timeout_tx(name: &str) -> String {
-    format!("{}_TO", name)
-}
-
-pub fn timeout_input_tx(name: &str) -> String {
-    format!("{}_INPUT_TO", name)
-}
-
-pub fn get_tx_name_from_timeout(name: &str) -> Option<String> {
-    if name.ends_with("_INPUT_TO") {
-        Some(name.strip_suffix("_INPUT_TO")?.to_string())
-    } else if name.ends_with("_TO") {
-        Some(name.strip_suffix("_TO")?.to_string())
-    } else {
-        None
-    }
 }
 
 impl ProtocolHandler for DisputeResolutionProtocol {
@@ -1084,78 +1049,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     }
 }
 
+impl WithClaimGateConfig for DisputeResolutionProtocol {
+    type Config = DisputeConfiguration;
+    const PROGRAM_TYPE: &str = PROGRAM_TYPE_DRP;
+
+    fn role(&self) -> ParticipantRole {
+        get_role(self.ctx.my_idx)
+    }
+}
+
 impl DisputeResolutionProtocol {
     pub fn new(context: ProtocolContext) -> Self {
         Self { ctx: context }
-    }
-
-    pub fn role(&self) -> ParticipantRole {
-        get_role(self.ctx.my_idx)
-    }
-
-    fn partial_utxo_from(&self, tx: &Transaction, vout: u32) -> (Txid, u32, u64) {
-        let txid = tx.compute_txid();
-        let amount = tx.output[vout as usize].value.to_sat();
-        (txid, vout, amount)
-    }
-
-    fn add_action(
-        &self,
-        protocol: &mut Protocol,
-        utxo_action: &PartialUtxo,
-        leaves: &Vec<usize>,
-        speedup_pub: &PublicKey,
-        role: &ParticipantRole,
-        claim: &str,
-        action_number: u32,
-    ) -> Result<(), BitVMXError> {
-        let speedup_dust = OutputType::generic_dust_limit(None).to_sat();
-        protocol.add_transaction(&action_wins(role, action_number))?;
-        protocol.add_connection(
-            &format!("{:?}_ACTION_{action_number}", role),
-            &ClaimGate::tx_success(claim),
-            0.into(),
-            &action_wins(role, action_number),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::All {
-                    key_path_sign: SignMode::Aggregate,
-                },
-            ),
-            None,
-            None,
-        )?;
-
-        let output_type = utxo_action.3.as_ref().ok_or_else(|| {
-            BitVMXError::MissingParameter("UTXO output type is required".to_string())
-        })?;
-        protocol.add_external_transaction(&external_action(role, action_number))?;
-        protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
-        protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
-        protocol.add_connection(
-            &format!("EXTERNAL_ACTION__{:?}_WINS", role),
-            &external_action(role, action_number),
-            (utxo_action.1 as usize).into(),
-            &action_wins(role, action_number),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Scripts {
-                    leaves: leaves.clone(),
-                },
-            ),
-            None,
-            Some(utxo_action.0),
-        )?;
-
-        let pb = ProtocolBuilder {};
-        pb.add_speedup_output(
-            protocol,
-            &action_wins(role, action_number),
-            speedup_dust,
-            &speedup_pub,
-        )?;
-
-        Ok(())
     }
 
     pub fn get_tx_with_speedup_data(
@@ -1603,143 +1508,6 @@ impl DisputeResolutionProtocol {
         };
 
         Ok(winternitz_check_list)
-    }
-
-    pub fn add_connection_with_scripts(
-        &self,
-        context: &ProgramContext,
-        aggregated: &PublicKey,
-        protocol: &mut Protocol,
-        timelock_blocks: u16,
-        amount: u64,
-        amount_speedup: u64,
-        from: &str,
-        to: &str,
-        claim_gate: &ClaimGate,
-        mut leaves: Vec<ProtocolScript>,
-        speedup_keys: (&PublicKey, &PublicKey),
-    ) -> Result<(), BitVMXError> {
-        //TODO:
-        // - Support multiple inputs
-        // - check if input is prover of verifier and use proper keys[n]
-        // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
-
-        info!(
-            "Adding winternitz check for {} to {}. Amount: {}. Leaves {}",
-            style(from).green(),
-            style(to).green(),
-            style(amount).green(),
-            style(leaves.len()).yellow()
-        );
-
-        let (_mine_speedup, other_speedup) = speedup_keys;
-
-        //add a tiemouet leaf to the possible leaves
-        let timeout_input = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
-        leaves.push(timeout_input);
-        for (pos, leave) in leaves.iter_mut().enumerate() {
-            leave.set_assert_leaf_id(pos as u32);
-        }
-
-        //creates the connector output with the connection and timeout leaves
-        //the connector needs two times the timelock, because it needs to give time to the input in speedup timeout
-        let mut connection_leaf = scripts::check_signature(aggregated, SignMode::Aggregate);
-        connection_leaf.set_assert_leaf_id(0);
-        let mut timeout_leaf =
-            scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
-        timeout_leaf.set_assert_leaf_id(1);
-        let connector_leaves = vec![connection_leaf, timeout_leaf];
-
-        let output_type = OutputType::taproot(amount, aggregated, &connector_leaves)?;
-
-        // connector from -> to
-        protocol.add_connection(
-            &format!("{}__{}", from, to),
-            from,
-            output_type.clone().into(),
-            to,
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-            None,
-            None,
-        )?;
-
-        // creates the speedup output where the input will be commited
-        let output_type = OutputType::taproot(amount_speedup, &aggregated, &leaves)?;
-        protocol.add_transaction_output(to, &output_type)?;
-        let last = protocol.get_output_count(to)? - 1;
-        self.add_vout_to_monitor(context, to, last)?;
-
-        // store the input and leaf for the timeout tx
-        context.globals.set_var(
-            &self.ctx.id,
-            &timeout_tx(to),
-            VariableTypes::VecNumber(vec![1, timelock_blocks as u32 * 2]),
-        )?;
-
-        // add the timeout tx to penalize the non-acting party
-        protocol.add_connection(
-            &format!("{}_TL_{}_{}_TO", from, 2 * timelock_blocks, to),
-            from,
-            OutputSpec::Last,
-            &timeout_tx(to),
-            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
-            Some(2 * timelock_blocks),
-            None,
-        )?;
-
-        // if the previous party does not present the input in time, the other party can also consume the connector output of the connection
-        // so is not forced to reply (as the reply will have a timelock that would allow the dihonest party to start a claim)
-        if from != START_CH {
-            protocol.add_connection(
-                &format!("{}__CONNECTOR__INPUT_TO", from),
-                from,
-                OutputSpec::Last,
-                &timeout_input_tx(from),
-                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-                None, //There is no timelock here as the timelock is already enforced by the other input of the timeout_input_tx
-                None,
-            )?;
-        }
-
-        //connect the opositte party claim gate to the timeout tx
-        claim_gate.add_claimer_win_connection(protocol, &timeout_tx(to))?;
-        let pb = ProtocolBuilder {};
-        pb.add_speedup_output(protocol, &timeout_tx(to), amount_speedup, other_speedup)?;
-
-        // store the input and leaf for the timeout tx
-        context.globals.set_var(
-            &self.ctx.id,
-            &timeout_input_tx(to),
-            VariableTypes::VecNumber(vec![leaves.len() as u32 - 1, timelock_blocks as u32]),
-        )?;
-
-        // add the timeout tx to penalize the party for not commiting the input
-        protocol.add_connection(
-            &format!("{}_TL_{}_INPUT_TO", to, timelock_blocks),
-            to,
-            OutputSpec::Last,
-            &timeout_input_tx(to),
-            InputSpec::Auto(
-                SighashType::taproot_all(),
-                SpendMode::Script {
-                    leaf: leaves.len() - 1,
-                },
-            ),
-            Some(timelock_blocks),
-            None,
-        )?;
-
-        //connect the opositte party claim gate to the timeout tx
-        claim_gate.add_claimer_win_connection(protocol, &timeout_input_tx(to))?;
-        let pb = ProtocolBuilder {};
-        pb.add_speedup_output(
-            protocol,
-            &timeout_input_tx(to),
-            amount_speedup,
-            other_speedup,
-        )?;
-
-        Ok(())
     }
 
     pub fn execution_result(

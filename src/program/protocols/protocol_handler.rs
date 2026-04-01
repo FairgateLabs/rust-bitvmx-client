@@ -1,13 +1,21 @@
 use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
+use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
+use bitvmx_broker::identification::identifier::Identifier;
+use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
+use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::key_manager::KeyManager;
+use key_manager::lamport::{HashFunction, LamportSignature};
 use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
-use protocol_builder::scripts::ProtocolScript;
-use protocol_builder::types::output::SpeedupData;
+use protocol_builder::builder::ProtocolBuilder;
+use protocol_builder::scripts::{self, ProtocolScript, SignMode};
+use protocol_builder::types::connection::{InputSpec, OutputSpec};
+use protocol_builder::types::input::{SighashType, SpendMode};
+use protocol_builder::types::output::{AmountType, SpeedupData};
 use protocol_builder::types::{InputArgs, OutputType, Utxo};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
@@ -19,14 +27,19 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use super::super::participant::ParticipantKeys;
+use crate::bitvmx::Context;
 use crate::errors::BitVMXError;
+use crate::program::participant::ParticipantRole;
+use crate::program::protocols::claim::ClaimGate;
 #[cfg(feature = "union")]
 use crate::program::protocols::union::full_penalization::FullPenalizationProtocol;
+use crate::program::protocols::{dispute, gc_drp};
 
 use super::aggregated_key::AggregatedKeyProtocol;
 #[cfg(feature = "cardinal")]
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
+use super::gc_drp::GCDisputeResolutionProtocol;
 
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
@@ -38,8 +51,8 @@ use crate::program::protocols::union::{
 #[cfg(feature = "union")]
 use crate::types::{
     PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
-    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_REJECT_PEGIN,
-    PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
+    PROGRAM_TYPE_REJECT_PEGIN, PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -48,8 +61,8 @@ use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
 
 use crate::program::setup::steps::SetupStepName;
-use crate::program::variables::WitnessTypes;
-use crate::program::{variables::VariableTypes, witness};
+use crate::program::variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes};
+use crate::program::witness;
 
 const REQUESTED_CONFIRMATIONS_VAR: &str = "requested_confirmations";
 
@@ -314,6 +327,56 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
+    fn get_lamport_signature_for_script(
+        &self,
+        protocol_script: &ProtocolScript,
+        program_context: &ProgramContext,
+    ) -> Result<Vec<LamportSignature>, BitVMXError> {
+        let keys = protocol_script.get_keys();
+        let mut lamp_sigs = Vec::with_capacity(keys.len());
+
+        for key in keys.iter().rev() {
+            if let Some(var) = program_context
+                .globals
+                .get_var(&self.context().id, key.name())?
+            {
+                let message = var.input()?;
+
+                info!(
+                    "Signing message: {}",
+                    style(hex::encode(message.clone())).yellow()
+                );
+                info!("With lamport key: {:?}", key);
+
+                let lamport_signature =
+                    program_context.key_manager.sign_lamport_message_by_pubkey(
+                        &message,
+                        key.key_type().lamport_public_key()?,
+                    )?;
+
+                lamp_sigs.push(lamport_signature);
+            } else {
+                if let Some(witness) = program_context
+                    .witness
+                    .get_witness(&self.context().id, key.name())?
+                {
+                    let sigs = witness.lamport()?;
+                    info!(
+                        "Lamport signature found in witness for key: {}, with msg: {}",
+                        key.name(),
+                        hex::encode(sigs.to_bytes())
+                    );
+                    lamp_sigs.push(sigs);
+                } else {
+                    error!("No Lamport signature found for key: {}", key.name());
+                    return Err(BitVMXError::KeysNotFound(self.context().id));
+                }
+            }
+        }
+
+        Ok(lamp_sigs)
+    }
+
     fn get_winternitz_signature_for_script(
         &self,
         protocol_script: &ProtocolScript,
@@ -509,6 +572,46 @@ pub trait ProtocolHandler {
         Ok((names, leaf))
     }
 
+    fn decode_lamport_for_speedup(
+        &self,
+        prev_tx_id: Txid,
+        prev_vout: u32,
+        prev_name: &str,
+        transaction: &Transaction,
+    ) -> Result<Vec<(Vec<u8>, u8)>, BitVMXError> {
+        let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
+        let protocol = self.load_protocol()?;
+        let script = &protocol.get_script_from_output(prev_name, prev_vout)?.1[0];
+
+        let witness = transaction.input[idx as usize].witness.clone();
+        let mut iter = witness.iter();
+
+        let mut hashes = vec![];
+
+        for key in script.get_keys().iter() {
+            let key_type = key.key_type();
+            let public_key = key_type.lamport_public_key()?;
+            let (hashes_0, hashes_1) = public_key.to_hashes();
+
+            for (hash_0, hash_1) in hashes_0.iter().zip(hashes_1.iter()) {
+                let signature = iter
+                    .next()
+                    .ok_or(BitVMXError::ScriptSignatureMissing(key.name().to_string()))?;
+                let hash = public_key.hash_type().hash(signature).to_bytes();
+
+                if &hash == hash_0 {
+                    hashes.push((hash, 0));
+                } else if &hash == hash_1 {
+                    hashes.push((hash, 1));
+                } else {
+                    error!("Found invalid lamport signature");
+                }
+            }
+        }
+
+        Ok(hashes)
+    }
+
     fn decode_witness_from_speedup(
         &self,
         prev_tx_id: Txid,
@@ -631,6 +734,290 @@ pub trait ProtocolHandler {
             SetupStepName::Signatures,
         ])
     }
+
+    fn add_connection_with_scripts<V: Into<AmountType> + std::fmt::Debug + std::clone::Clone>(
+        &self,
+        context: &ProgramContext,
+        aggregated: &PublicKey,
+        protocol: &mut Protocol,
+        timelock_blocks: u16,
+        amount: V,
+        amount_speedup: u64,
+        from: &str,
+        to: &str,
+        claim_gate: &ClaimGate,
+        mut leaves: Vec<ProtocolScript>,
+        speedup_keys: (&PublicKey, &PublicKey),
+    ) -> Result<(), BitVMXError> {
+        //TODO:
+        // - Support multiple inputs
+        // - check if input is prover of verifier and use proper keys[n]
+        // - the prover needs to re-sign any verifier provided input (so the equivocation is possible on reads)
+
+        info!(
+            "Adding winternitz check for {} to {}. Amount: {:?}. Leaves {}",
+            style(from).green(),
+            style(to).green(),
+            style(amount.clone()).green(),
+            style(leaves.len()).yellow()
+        );
+
+        let (_mine_speedup, other_speedup) = speedup_keys;
+
+        //add a tiemouet leaf to the possible leaves
+        let timeout_input = scripts::timelock(timelock_blocks, &aggregated, SignMode::Aggregate);
+        leaves.push(timeout_input);
+        for (pos, leave) in leaves.iter_mut().enumerate() {
+            leave.set_assert_leaf_id(pos as u32);
+        }
+
+        //creates the connector output with the connection and timeout leaves
+        //the connector needs two times the timelock, because it needs to give time to the input in speedup timeout
+        let mut connection_leaf = scripts::check_signature(aggregated, SignMode::Aggregate);
+        connection_leaf.set_assert_leaf_id(0);
+        let mut timeout_leaf =
+            scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
+        timeout_leaf.set_assert_leaf_id(1);
+        let connector_leaves = vec![connection_leaf, timeout_leaf];
+
+        let output_type = OutputType::taproot(amount, aggregated, &connector_leaves)?;
+
+        // connector from -> to
+        protocol.add_connection(
+            &format!("{}__{}", from, to),
+            from,
+            output_type.clone().into(),
+            to,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+            None,
+            None,
+        )?;
+
+        // creates the speedup output where the input will be commited
+        let output_type = OutputType::taproot(amount_speedup, &aggregated, &leaves)?;
+        protocol.add_transaction_output(to, &output_type)?;
+        let last = protocol.get_output_count(to)? - 1;
+        self.add_vout_to_monitor(context, to, last)?;
+
+        // store the input and leaf for the timeout tx
+        context.globals.set_var(
+            &self.context().id,
+            &timeout_tx(to),
+            VariableTypes::VecNumber(vec![1, timelock_blocks as u32 * 2]),
+        )?;
+
+        // add the timeout tx to penalize the non-acting party
+        protocol.add_connection(
+            &format!("{}_TL_{}_{}_TO", from, 2 * timelock_blocks, to),
+            from,
+            OutputSpec::Last,
+            &timeout_tx(to),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            Some(2 * timelock_blocks),
+            None,
+        )?;
+
+        // if the previous party does not present the input in time, the other party can also consume the connector output of the connection
+        // so is not forced to reply (as the reply will have a timelock that would allow the dihonest party to start a claim)
+        if from != dispute::START_CH && from != gc_drp::START_CH {
+            protocol.add_connection(
+                &format!("{}__CONNECTOR__INPUT_TO", from),
+                from,
+                OutputSpec::Last,
+                &timeout_input_tx(from),
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                None, //There is no timelock here as the timelock is already enforced by the other input of the timeout_input_tx
+                None,
+            )?;
+        }
+
+        //connect the opositte party claim gate to the timeout tx
+        claim_gate.add_claimer_win_connection(protocol, &timeout_tx(to))?;
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(protocol, &timeout_tx(to), amount_speedup, other_speedup)?;
+
+        // store the input and leaf for the timeout tx
+        context.globals.set_var(
+            &self.context().id,
+            &timeout_input_tx(to),
+            VariableTypes::VecNumber(vec![leaves.len() as u32 - 1, timelock_blocks as u32]),
+        )?;
+
+        // add the timeout tx to penalize the party for not commiting the input
+        protocol.add_connection(
+            &format!("{}_TL_{}_INPUT_TO", to, timelock_blocks),
+            to,
+            OutputSpec::Last,
+            &timeout_input_tx(to),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script {
+                    leaf: leaves.len() - 1,
+                },
+            ),
+            Some(timelock_blocks),
+            None,
+        )?;
+
+        //connect the opositte party claim gate to the timeout tx
+        claim_gate.add_claimer_win_connection(protocol, &timeout_input_tx(to))?;
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            protocol,
+            &timeout_input_tx(to),
+            amount_speedup,
+            other_speedup,
+        )?;
+
+        Ok(())
+    }
+
+    fn add_action(
+        &self,
+        protocol: &mut Protocol,
+        utxo_action: &PartialUtxo,
+        leaves: &Vec<usize>,
+        speedup_pub: &PublicKey,
+        role: &ParticipantRole,
+        claim: &str,
+        action_number: u32,
+    ) -> Result<(), BitVMXError> {
+        let speedup_dust = OutputType::generic_dust_limit(None).to_sat();
+        protocol.add_transaction(&action_wins(role, action_number))?;
+        protocol.add_connection(
+            &format!("{:?}_ACTION_{action_number}", role),
+            &ClaimGate::tx_success(claim),
+            0.into(),
+            &action_wins(role, action_number),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        let output_type = utxo_action.3.as_ref().ok_or_else(|| {
+            BitVMXError::MissingParameter("UTXO output type is required".to_string())
+        })?;
+        protocol.add_external_transaction(&external_action(role, action_number))?;
+        protocol.add_unknown_outputs(&external_action(role, action_number), utxo_action.1)?;
+        protocol.add_transaction_output(&external_action(role, action_number), &output_type)?;
+        protocol.add_connection(
+            &format!("EXTERNAL_ACTION__{:?}_WINS", role),
+            &external_action(role, action_number),
+            (utxo_action.1 as usize).into(),
+            &action_wins(role, action_number),
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Scripts {
+                    leaves: leaves.clone(),
+                },
+            ),
+            None,
+            Some(utxo_action.0),
+        )?;
+
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(
+            protocol,
+            &action_wins(role, action_number),
+            speedup_dust,
+            &speedup_pub,
+        )?;
+
+        Ok(())
+    }
+
+    fn partial_utxo_from(&self, tx: &Transaction, vout: u32) -> (Txid, u32, u64) {
+        let txid = tx.compute_txid();
+        let amount = tx.output[vout as usize].value.to_sat();
+        (txid, vout, amount)
+    }
+
+    fn dispatch(
+        &self,
+        program_context: &ProgramContext,
+        tx: Transaction,
+        sp: Option<SpeedupData>,
+        block_height: Option<u32>,
+    ) -> Result<(), BitVMXError> {
+        Ok(program_context.bitcoin_coordinator.dispatch(
+            tx,
+            sp,
+            Context::ProgramId(self.context().id).to_string()?,
+            block_height,
+            self.requested_confirmations(program_context),
+        )?)
+    }
+
+    fn execute_job<J: Serialize + DispatcherMessage>(
+        &self,
+        program_context: &ProgramContext,
+        dest: &Identifier,
+        job_type: J,
+    ) -> Result<(), BitVMXError> {
+        let msg = serde_json::to_string(&DispatcherJob {
+            job_id: self.context().id.to_string(),
+            job_type: job_type,
+        })?;
+        program_context
+            .broker_channel
+            .send(dest, msg)?;
+        Ok(())
+    }
+}
+
+pub trait WithClaimGateConfig {
+    type Config: ClaimGateConfig;
+    const PROGRAM_TYPE: &'static str;
+
+    fn role(&self) -> ParticipantRole;
+}
+
+pub trait ClaimGateConfig: Sized {
+    fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError>;
+    fn get_notify_protocol(&self) -> &Vec<(String, Uuid)>;
+    fn get_prover_actions(&self) -> &Vec<(PartialUtxo, Vec<usize>)>;
+    fn get_verifier_actions(&self) -> &Vec<(PartialUtxo, Vec<usize>)>;
+}
+
+pub fn timeout_tx(name: &str) -> String {
+    format!("{}_TO", name)
+}
+
+pub fn timeout_input_tx(name: &str) -> String {
+    format!("{}_INPUT_TO", name)
+}
+
+pub fn get_tx_name_from_timeout(name: &str) -> Option<String> {
+    if name.ends_with("_INPUT_TO") {
+        Some(name.strip_suffix("_INPUT_TO")?.to_string())
+    } else if name.ends_with("_TO") {
+        Some(name.strip_suffix("_TO")?.to_string())
+    } else {
+        None
+    }
+}
+
+pub fn action_wins_prefix(role: &ParticipantRole) -> String {
+    match role {
+        ParticipantRole::Prover => "ACTION_PROVER_WINS_".to_string(),
+        ParticipantRole::Verifier => "ACTION_VERIFIER_WINS_".to_string(),
+    }
+}
+
+pub fn action_wins(role: &ParticipantRole, n: u32) -> String {
+    format!("{}{}", action_wins_prefix(role), n)
+}
+
+pub fn external_action(role: &ParticipantRole, n: u32) -> String {
+    match role {
+        ParticipantRole::Prover => format!("EXTERNAL_ACTION_PROVER_{n}"),
+        ParticipantRole::Verifier => format!("EXTERNAL_ACTION_VERIFIER_{n}"),
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -658,6 +1045,7 @@ impl ProtocolContext {
 pub enum ProtocolType {
     AggregatedKeyProtocol,
     DisputeResolutionProtocol,
+    GCDisputeResolutionProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
     #[cfg(feature = "cardinal")]
@@ -695,6 +1083,9 @@ pub fn new_protocol_type(
         )),
         PROGRAM_TYPE_DRP => Ok(ProtocolType::DisputeResolutionProtocol(
             DisputeResolutionProtocol::new(ctx),
+        )),
+        PROGRAM_TYPE_GC_DRP => Ok(ProtocolType::GCDisputeResolutionProtocol(
+            GCDisputeResolutionProtocol::new(ctx),
         )),
         #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
