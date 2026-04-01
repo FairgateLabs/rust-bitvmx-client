@@ -7,9 +7,9 @@ use bitvmx_client::program::participant::{
     ParticipantRole::{self, Verifier},
 };
 use bitvmx_client::program::protocols::dispute::{
-    action_wins, program_input, program_input_prev_prefix, program_input_prev_protocol,
-    protocol_cost,
+    program_input, program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
 };
+use bitvmx_client::program::protocols::protocol_handler::action_wins;
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet};
@@ -55,7 +55,7 @@ pub fn test_all_aux(
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, independent, Some(3000))?;
+    let mut helper = TestHelper::new(network, independent, Some(3500))?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
     helper.send_all(command)?;

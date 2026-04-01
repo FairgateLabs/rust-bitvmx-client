@@ -6,6 +6,7 @@ use bitvmx_cpu_definitions::challenge::{
     ChallengeType, EmulatorResultType, ProverFinalTraceType, ProverHashesAndStepType,
 };
 use emulator::constants::REGISTERS_BASE_ADDRESS;
+use serde_json::Value;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -15,9 +16,8 @@ use crate::{
     program::{
         protocols::{
             dispute::{
-                challenge::get_challenge_leaf, input_handler::*, tx_news::dispatch,
-                DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE,
-                GET_HASHES_AND_STEP,
+                challenge::get_challenge_leaf, input_handler::*, DisputeResolutionProtocol,
+                CHALLENGE, CHALLENGE_READ, COMMITMENT, EXECUTE, GET_HASHES_AND_STEP,
             },
             protocol_handler::ProtocolHandler,
         },
@@ -29,10 +29,11 @@ use crate::{
 pub fn execution_result(
     id: &Uuid,
     drp: &DisputeResolutionProtocol,
-    result: &EmulatorResultType,
+    result: Value,
     context: &ProgramContext,
 ) -> Result<(), BitVMXError> {
-    match result {
+    let result = EmulatorResultType::from_value(result)?;
+    match &result {
         EmulatorResultType::ProverExecuteResult {
             last_step,
             last_hash,
@@ -52,7 +53,7 @@ pub fn execution_result(
             )?;
 
             let (tx, sp) = drp.get_tx_with_speedup_data(context, COMMITMENT, 0, 0, true)?;
-            dispatch(context, drp, tx, Some(sp), None)?;
+            drp.dispatch(context, tx, Some(sp), None)?;
         }
         EmulatorResultType::VerifierCheckExecutionResult { step } => {
             info!("Verifier execution result: Step: {:?}", step);
@@ -118,7 +119,7 @@ pub fn execution_result(
 
             info!("Dispatching tx {:?}", tx);
 
-            dispatch(context, drp, tx, Some(sp), None)?;
+            drp.dispatch(context, tx, Some(sp), None)?;
         }
         EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
             let save_round = context
@@ -156,7 +157,7 @@ pub fn execution_result(
                 true,
             )?;
 
-            dispatch(context, drp, tx, Some(sp), None)?;
+            drp.dispatch(context, tx, Some(sp), None)?;
         }
         EmulatorResultType::ProverFinalTraceResult { prover_final_trace } => {
             info!("Final trace: {:?}", prover_final_trace);
@@ -164,7 +165,7 @@ pub fn execution_result(
                 info!("Prover will challenge the selected step");
                 let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, 0, true)?;
 
-                dispatch(context, drp, tx, Some(sp), None)?;
+                drp.dispatch(context, tx, Some(sp), None)?;
             } else {
                 let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
                     prover_final_trace.as_final_trace_with_hashes_and_step()?;
@@ -214,7 +215,7 @@ pub fn execution_result(
                 let (tx, sp) =
                     drp.get_tx_with_speedup_data(context, EXECUTE, 0, (index + 1) as u32, true)?;
 
-                dispatch(context, drp, tx, Some(sp), None)?;
+                drp.dispatch(context, tx, Some(sp), None)?;
             }
         }
         EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
@@ -246,7 +247,7 @@ pub fn execution_result(
             };
 
             let (tx, sp) = drp.get_tx_with_speedup_data(context, name, 0, leaf as u32, true)?;
-            dispatch(context, drp, tx, Some(sp), None)?;
+            drp.dispatch(context, tx, Some(sp), None)?;
         }
         EmulatorResultType::ProverGetHashesAndStepResult {
             prover_hashes_and_step,
@@ -284,7 +285,7 @@ pub fn execution_result(
                 let (tx, sp) =
                     drp.get_tx_with_speedup_data(context, GET_HASHES_AND_STEP, 0, 1, true)?;
 
-                dispatch(context, drp, tx, Some(sp), None)?;
+                drp.dispatch(context, tx, Some(sp), None)?;
             }
         }
     }

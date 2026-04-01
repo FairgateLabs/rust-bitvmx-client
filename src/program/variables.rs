@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 use bitcoin::{PublicKey, Txid};
-use key_manager::winternitz::{WinternitzPublicKey, WinternitzSignature};
+use key_manager::{lamport::LamportSignature, winternitz::{WinternitzPublicKey, WinternitzSignature}};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -158,6 +158,7 @@ impl Globals {
 pub enum WitnessTypes {
     Secret(Vec<u8>),
     Winternitz(WinternitzSignature),
+    Lamport(LamportSignature),
 }
 
 impl WitnessTypes {
@@ -171,6 +172,13 @@ impl WitnessTypes {
     pub fn winternitz(&self) -> Result<WinternitzSignature, BitVMXError> {
         match self {
             WitnessTypes::Winternitz(winternitz) => Ok(winternitz.clone()),
+            _ => Err(BitVMXError::InvalidWitnessType),
+        }
+    }
+
+    pub fn lamport(&self) -> Result<LamportSignature, BitVMXError> {
+        match self {
+            WitnessTypes::Lamport(lamport) => Ok(lamport.clone()),
             _ => Err(BitVMXError::InvalidWitnessType),
         }
     }

@@ -1,0 +1,13 @@
+rate_limiter_config:
+  rate_limit_capacity: 10000 # Max requests
+  rate_limit_refill_rate: 100.0 # Tokens per second
+  tokens_per_message: 2 # 1 for ping + 1 for message
+
+queue_channel_config:
+  max_msgs_per_tick_utilization: 0.5 # 50% of capacity
+  max_send_attempts: 5 # Max attempts to send a message before moving to dead letter queue
+  retry_min_delay_msecs: 100 # Minimum delay before retrying a message send
+  retry_max_delay_msecs: 10000 # Maximum delay before retrying a message send
+
+msg_size_config:
+  max_frame_size_kb: 8192 # 1024*8 - Maximum frame size in kilobytes (entire message)

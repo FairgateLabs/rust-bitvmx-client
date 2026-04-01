@@ -75,4 +75,12 @@ pub trait SetupStep {
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
+
+    fn generate_async(&self) -> bool {
+        false
+    }
+
+    fn verify_async(&self) -> bool {
+        false
+    }
 }

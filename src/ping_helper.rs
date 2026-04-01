@@ -11,9 +11,10 @@ use std::{
 use tracing::{debug, warn};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
-pub(crate) enum JobDispatcherType {
+pub enum JobDispatcherType {
     ZKP,
     Emulator,
+    Garbler,
 }
 
 pub(crate) struct PingHelper {

@@ -4,7 +4,7 @@ use bitcoin_coordinator::config::CoordinatorSettingsConfig;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{
     identification::identifier::{Identifier, PubkHash},
-    rpc::tls_helper::Cert,
+    rpc::{config::BrokerSettings, tls_helper::Cert},
 };
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::config::WalletConfig;
@@ -40,6 +40,9 @@ pub struct ClientConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct BrokerConfig {
+    #[serde(deserialize_with = "load_broker_settings")]
+    pub settings: BrokerSettings,
+
     pub allow_list: String,
     pub routing_table: String,
     pub priv_key: String,
@@ -70,6 +73,7 @@ pub struct TestConfig {
     pub l2: ComponentConfig,
     pub emulator: ComponentConfig,
     pub prover: ComponentConfig,
+    pub garbler: ComponentConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -78,6 +82,7 @@ pub struct ComponentsConfig {
     pub bitvmx: Identifier,
     pub emulator: Identifier,
     pub prover: Identifier,
+    pub garbler: Identifier,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -142,4 +147,12 @@ impl Config {
     pub fn comms_key(&self) -> &str {
         self.comms.priv_key.as_str()
     }
+}
+
+fn load_broker_settings<'de, D>(d: D) -> Result<BrokerSettings, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let path = String::deserialize(d)?;
+    BrokerSettings::new(&path).map_err(serde::de::Error::custom)
 }

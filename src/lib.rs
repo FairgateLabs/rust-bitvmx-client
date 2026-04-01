@@ -1,4 +1,3 @@
-pub mod api;
 pub mod bitvmx;
 pub mod client;
 pub mod comms_helper;

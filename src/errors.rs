@@ -1,12 +1,15 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError, Witness};
 use bitcoin_coordinator::errors::BitcoinCoordinatorError;
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
-use bitvmx_broker::{identification::errors::IdentificationError, rpc::errors::BrokerError};
+use bitvmx_broker::{
+    channel::retry_helper::RetryPolicyError, identification::errors::IdentificationError,
+    rpc::errors::BrokerError,
+};
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;
 use bitvmx_job_dispatcher::dispatcher_error::DispatcherError;
 use emulator::{loader::program_definition::ProgramDefinitionError, EmulatorError};
 use key_manager::{
-    errors::{KeyManagerError, WinternitzError},
+    errors::{KeyManagerError, LamportError, WinternitzError},
     musig2::errors::Musig2SignerError,
 };
 use protocol_builder::errors::{ProtocolBuilderError, ScriptError, UnspendableKeyError};
@@ -86,6 +89,12 @@ pub enum BitVMXError {
 
     #[error("Failed to process a Winternitz signature: {0}")]
     WinternitzError(#[from] WinternitzError),
+
+    #[error("Failed to process a Lamport signature: {0}")]
+    LamportError(#[from] LamportError),
+
+    #[error("Expected script signature not found: {0}")]
+    ScriptSignatureMissing(String),
 
     #[error("Invalid RSA signature from peer {peer} for message type {msg_type:?} in program {program_id}")]
     InvalidSignature {
@@ -229,6 +238,9 @@ pub enum BitVMXError {
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] IdentificationError),
+
+    #[error("Retry policy error: {0}")]
+    RetryPolicyError(#[from] RetryPolicyError),
 
     /* =========================
      * Timestamp / Replay
