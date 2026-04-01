@@ -13,8 +13,6 @@ use crate::errors::BitVMXError;
 use crate::program::participant::CommsAddress;
 use crate::program::protocols::protocol_handler::ProtocolType;
 use crate::types::ProgramContext;
-use std::fmt;
-use std::str::FromStr;
 
 /// Enum representing the available setup step types.
 ///
@@ -34,34 +32,6 @@ impl SetupStepName {
             SetupStepName::Nonces => "nonces",
             SetupStepName::Signatures => "signatures",
         }
-    }
-}
-
-impl fmt::Display for SetupStepName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl FromStr for SetupStepName {
-    type Err = BitVMXError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "keys" => Ok(SetupStepName::Keys),
-            "nonces" => Ok(SetupStepName::Nonces),
-            "signatures" => Ok(SetupStepName::Signatures),
-            _ => Err(BitVMXError::InvalidMessage(format!(
-                "Unknown setup step name: '{}'. Valid names are: 'keys', 'nonces', 'signatures'",
-                s
-            ))),
-        }
-    }
-}
-
-impl From<SetupStepName> for String {
-    fn from(name: SetupStepName) -> Self {
-        name.as_str().to_string()
     }
 }
 
