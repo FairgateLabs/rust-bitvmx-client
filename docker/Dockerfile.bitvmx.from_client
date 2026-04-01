@@ -13,10 +13,9 @@ RUN mkdir -p /root/.ssh && \
 
 WORKDIR /app
 
-# Workspace should be cloned before running the build in the tag/branch you want
-COPY . /app/
+COPY . /app/rust-bitvmx-workspace/rust-bitvmx-client
 
-WORKDIR /app/rust-bitvmx-client
+WORKDIR /app/rust-bitvmx-workspace/rust-bitvmx-client
 
 # Remove configs (mounted later at runtime)
 RUN rm -rf ./config && mkdir ./config
@@ -39,8 +38,8 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy compiled binary and run script from builder stage
-COPY --from=builder /app/rust-bitvmx-client/target/release/bitvmx-client /app/
-COPY --from=builder /app/rust-bitvmx-client/run.sh /app/
+COPY --from=builder /app/rust-bitvmx-workspace/rust-bitvmx-client/target/release/bitvmx-client /app/
+COPY --from=builder /app/rust-bitvmx-workspace/rust-bitvmx-client/run.sh /app/
 
 # Ensure run.sh is executable
 RUN chmod +x /app/run.sh
