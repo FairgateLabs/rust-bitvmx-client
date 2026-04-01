@@ -3,6 +3,7 @@ use bitvmx_broker::identification::identifier::PubkHash;
 use key_manager::{lamport::LamportPublicKey, winternitz::WinternitzPublicKey};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
+use tracing::warn;
 
 use crate::errors::BitVMXError;
 
@@ -130,9 +131,15 @@ impl ParticipantKeys {
         Ok(self
             .mapping
             .get(name)
-            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?
+            .ok_or_else(|| {
+                warn!("Winternitz {} not found.", name);
+                BitVMXError::InvalidMessageFormat
+            })?
             .winternitz()
-            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?)
+            .ok_or_else(|| {
+                warn!("Winternitz {} not found.", name);
+                BitVMXError::InvalidMessageFormat
+            })?)
     }
 
     pub fn get_lamport(&self, name: &str) -> Result<&LamportPublicKey, BitVMXError> {

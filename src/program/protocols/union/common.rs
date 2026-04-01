@@ -46,6 +46,17 @@ pub fn get_accept_pegin_pid(committee_id: Uuid, slot_index: usize) -> Uuid {
     return Uuid::from_bytes(hash[0..16].try_into().unwrap());
 }
 
+pub fn get_advance_funds_pid(committee_id: Uuid, slot_index: usize) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(committee_id.as_bytes());
+    hasher.update(&slot_index.to_be_bytes());
+    hasher.update("advance_funds");
+
+    // Get the result as a byte array
+    let hash = hasher.finalize();
+    return Uuid::from_bytes(hash[0..16].try_into().unwrap());
+}
+
 pub fn get_user_take_pid(committee_id: Uuid, slot_index: usize) -> Uuid {
     let mut hasher = Sha256::new();
     hasher.update(committee_id.as_bytes());

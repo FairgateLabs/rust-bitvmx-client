@@ -1,37 +1,22 @@
 bitcoin:
   network: regtest
-  url: http://127.0.0.1:18443
+  url: http://127.0.0.1:18443/
   username: foo
   password: rpcpassword
   wallet: test_wallet
-
 key_manager:
   network: regtest
   key_derivation_path: m/101/1/0/0/
-  mnemonic_sentence: "legal winner thank year wave sausage worth useful legal winner thank yellow"
-  mnemonic_passphrase: ""
-
-key_storage:
-  password: SeCrEt_p4ssw0rd_4!
-  path: /tmp/regtest/op_3/keys.db
-
-storage:
-  path: /tmp/regtest/op_3/storage.db
-
-comms:
-  address: 127.0.0.1:61182
-  priv_key: config/keys/op_3.key
-  storage_path: /tmp/regtest/op_3/comms.db
-
+  mnemonic_passphrase: ''
+  mnemonic_sentence: ''
 broker:
   allow_list: config/allow_list.yaml
   routing_table: config/routing_table.yaml
-  port: 44444
   ip: 127.0.0.1
   priv_key: config/keys/services.key
-  storage: 
-    path: /tmp/regtest/op_3/broker.db
-
+  port: 20777
+  storage:
+    path: /tmp/regtest/op_6/broker.db
 components:
   l2:
     pubkey_hash: 7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f
@@ -48,7 +33,6 @@ components:
   garbler:
     pubkey_hash: cca0b69255be0d66bc92fdc219425c51fffc15d90f4cc75574e77a284646bcf2
     id: 0
-
 testing:
   l2:
     priv_key: config/keys/l2.key
@@ -62,23 +46,25 @@ testing:
   garbler:
     priv_key: config/keys/garbler.key
     id: 0
-
 coordinator_throttle:
   init_interval: 10
   busy_interval: 50
   idle_interval: 200
-
 bitvmx_throttle:
   busy_interval: 20
   idle_interval: 200
-
-
-client: 
-  # Number of retries for requests
+client:
   retry: 1
-  # Delay between retries in milliseconds
   retry_delay: 1000
-
 wallet:
-  db_path: /tmp/regtest/op_3/wallet.db
   start_height: 0
+  db_path: /tmp/regtest/op_6/wallet.db
+key_storage:
+  password: SeCrEt_p4ssw0rd_7!
+  path: /tmp/regtest/op_6/keys.db
+storage:
+  path: /tmp/regtest/op_6/storage.db
+comms:
+  address: 127.0.0.1:61185
+  priv_key: config/keys/op_6.key
+  storage_path: /tmp/regtest/op_6/comms.db

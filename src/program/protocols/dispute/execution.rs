@@ -6,6 +6,7 @@ use bitvmx_cpu_definitions::challenge::{
     ChallengeType, EmulatorResultType, ProverFinalTraceType, ProverHashesAndStepType,
 };
 use emulator::constants::REGISTERS_BASE_ADDRESS;
+use serde_json::Value;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -28,10 +29,11 @@ use crate::{
 pub fn execution_result(
     id: &Uuid,
     drp: &DisputeResolutionProtocol,
-    result: &EmulatorResultType,
+    result: Value,
     context: &ProgramContext,
 ) -> Result<(), BitVMXError> {
-    match result {
+    let result = EmulatorResultType::from_value(result)?;
+    match &result {
         EmulatorResultType::ProverExecuteResult {
             last_step,
             last_hash,

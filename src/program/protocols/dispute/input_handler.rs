@@ -301,6 +301,12 @@ pub fn unify_inputs(
                     .copy_witness(&previous_protocol, &id, &key)?;
                 full_input.extend_from_slice(&signature.message_bytes());
             }
+            info!(
+                "Unifying input from tx {}_0-{}: {}",
+                previous_prefix,
+                input_txs_sizes[idx],
+                hex::encode(&full_input)
+            );
             continue;
         }
 

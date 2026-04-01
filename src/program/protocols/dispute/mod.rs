@@ -18,7 +18,6 @@ use bitcoin_script_riscv::riscv::{
     },
 };
 use bitcoin_script_stack::stack::StackTracker;
-use bitvmx_cpu_definitions::challenge::EmulatorResultType;
 use emulator::{
     constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
     loader::program_definition::ProgramDefinition,
@@ -36,6 +35,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tracing::{info, warn};
 
 use crate::{
@@ -1512,7 +1512,7 @@ impl DisputeResolutionProtocol {
 
     pub fn execution_result(
         &self,
-        result: &EmulatorResultType,
+        result: Value,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
         execution_result(&self.ctx.id, &self, result, context)

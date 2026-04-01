@@ -5,7 +5,12 @@ use std::collections::HashMap;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::wait_until_msg;
+use key_manager::winternitz::{
+    self, checksum_length, to_checksummed_message, WinternitzPublicKey, WinternitzSignature,
+    WinternitzType,
+};
+
+use crate::{participants::common::set_program_input, wait_until_msg};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -13,6 +18,7 @@ use bitvmx_client::{
         protocols::{
             dispute::{
                 config::{ConfigResult, DisputeConfiguration, ForceFailConfiguration},
+                program_input_prev_prefix, program_input_prev_protocol,
                 TIMELOCK_BLOCKS as DRP_TIMELOCK_BLOCKS,
             },
             union::{
@@ -27,7 +33,15 @@ use bitvmx_client::{
     types::{OutgoingBitVMXApiMessages, PROGRAM_TYPE_DISPUTE_CORE, PROGRAM_TYPE_DRP},
 };
 
-const DRP_PROGRAM_DEFINITION: &str = "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml"; // TODO move to config?
+#[allow(dead_code)]
+#[derive(Debug)]
+pub enum DRPVerifier {
+    Demo,
+    Generic,
+    Union,
+}
+
+pub const VERIFIER: DRPVerifier = DRPVerifier::Union;
 
 pub struct DisputeChannelSetup;
 
@@ -40,6 +54,12 @@ impl DisputeChannelSetup {
         committee_id: Uuid,
         addresses: &Vec<CommsAddress>,
     ) -> Result<usize> {
+        let drp_program_definition = match VERIFIER {
+            DRPVerifier::Demo => "../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world.yaml",
+            DRPVerifier::Generic => "../rust-bitvmx-client/verifiers/generic-verifier.yaml", // This should be accessible from client and from job dispatcher
+            DRPVerifier::Union => "../rust-bitvmx-client/verifiers/union-verifier.yaml", // This should be accessible from client and from job dispatcher
+        };
+
         let mut total_setups = 0;
         let my_address = addresses[my_index].clone();
         let prover = members[my_index].role == ParticipantRole::Prover;
@@ -92,6 +112,7 @@ impl DisputeChannelSetup {
                     partner_stoppers.op_stopper,
                     partner_op_cosign_utxos[my_index].clone().unwrap(),
                     wt_takekey,
+                    drp_program_definition,
                 )?;
 
                 total_setups += 1;
@@ -116,6 +137,7 @@ impl DisputeChannelSetup {
                     my_stoppers.op_stopper,
                     my_op_cosign_utxos[partner_index].clone().unwrap(),
                     wt_takekey,
+                    drp_program_definition,
                 )?;
 
                 total_setups += 1;
@@ -168,6 +190,7 @@ impl DisputeChannelSetup {
         op_stopper: PartialUtxo,
         op_cosign: PartialUtxo,
         wt_takekey: &PublicKey,
+        drp_program_definition: &str,
     ) -> Result<()> {
         let drp_id = get_dispute_channel_pid(committee_id, op_index, wt_index);
         let dispute_core_pid = get_dispute_core_pid(committee_id, wt_takekey);
@@ -190,6 +213,19 @@ impl DisputeChannelSetup {
             read: ConfigResult::default(),
         };
 
+        // First transaction that it should dispatch automatically.
+        let auto_dispatch = match VERIFIER {
+            DRPVerifier::Demo => Some(0),
+            DRPVerifier::Generic => Some(2),
+            DRPVerifier::Union => Some(2),
+        };
+
+        let timelock_blocks = match VERIFIER {
+            DRPVerifier::Demo => DRP_TIMELOCK_BLOCKS,
+            DRPVerifier::Generic => DRP_TIMELOCK_BLOCKS * 4,
+            DRPVerifier::Union => DRP_TIMELOCK_BLOCKS * 4, // Finetune this value. It also depend on the block's minning frequency (on regtest)
+        };
+
         let dispute_configuration = DisputeConfiguration::new(
             drp_id,
             pair_key,
@@ -198,12 +234,69 @@ impl DisputeChannelSetup {
             vec![],
             vec![(wt_stopper, vec![1])], // Consume leaf 1
             vec![],
-            DRP_TIMELOCK_BLOCKS,
-            DRP_PROGRAM_DEFINITION.to_string(),
+            timelock_blocks,
+            drp_program_definition.to_string(),
             Some(dispute_config), // FIXME: Remove this setting for production, use 'None' instead.
             vec![(PROGRAM_TYPE_DISPUTE_CORE.to_string(), dispute_core_pid)],
-            Some(0),
+            auto_dispatch,
         );
+
+        match VERIFIER {
+            DRPVerifier::Union => {
+                let journal_size: u32 = 76 / 4;
+                let journal_size_input = journal_size.to_le_bytes().to_vec();
+                info!("journal_size_input: {:?}", journal_size_input);
+
+                let elf_id = "589837bb0123b9d5854e0807a8b3ed2b15a848c19e2287ac585a31ec93d711b5"; // Placeholder for the actual ELF ID of the verifier
+                let elf_id_input = hex::decode(elf_id).unwrap();
+                let operator_id: [u8; 36] = [1; 36]; // Placeholder for the actual operator ID, should be a UUID
+                let input_6 = [1u8, 0, 1, 0]; // true + version 0 + padding
+
+                // Set DRP constants defined in union-verifier.yaml
+                set_program_input(&bitvmx, drp_id, 0, journal_size_input.clone())?;
+                set_program_input(&bitvmx, drp_id, 1, elf_id_input.clone())?;
+                set_program_input(&bitvmx, drp_id, 3, operator_id.to_vec())?;
+                set_program_input(&bitvmx, drp_id, 6, input_6.to_vec())?;
+            }
+            DRPVerifier::Generic => {
+                let journal_size: u32 = 1;
+                let journal_size_input = journal_size.to_le_bytes().to_vec();
+                info!("journal_size_input: {:?}", journal_size_input);
+
+                let elf_id = "311021d9b7a1a876e7fa25caabaa0ebc9c944782d530521059113caefa0b81d1"; // Placeholder for the actual ELF ID of the verifier
+                let elf_id_input = hex::decode(elf_id).unwrap();
+
+                // Fake data generation. DO NOT USE IN PRODUCTION.
+                let pub_key = derive_winternitz(4, 0);
+
+                // name the variables in a way that can be indexed by word
+                bitvmx.set_var(
+                    dispute_core_pid,
+                    &"previous_input_0".to_string(),
+                    VariableTypes::WinternitzPubKey(pub_key),
+                )?;
+
+                //configure the dispute so is able to retrive the data from previous protocols
+                bitvmx.set_var(
+                    drp_id,
+                    &program_input_prev_protocol(3),
+                    VariableTypes::Uuid(dispute_core_pid),
+                )?;
+
+                bitvmx.set_var(
+                    drp_id,
+                    &program_input_prev_prefix(3),
+                    VariableTypes::String("previous_input_".to_string()),
+                )?;
+
+                // Set DRP constants
+                set_program_input(&bitvmx, drp_id, 0, journal_size_input.clone())?;
+                set_program_input(&bitvmx, drp_id, 1, elf_id_input.clone())?;
+            }
+            DRPVerifier::Demo => {
+                // No specific input needed for the demo verifier
+            }
+        }
 
         bitvmx.set_var(
             drp_id,
@@ -222,4 +315,58 @@ impl DisputeChannelSetup {
             "Setting up DisputeChannel between OP {} and WT {}", op_index, wt_index
         );
     }
+}
+
+// Just for testing purposes, DO NOT USE THIS IN PRODUCTION.
+pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> WinternitzPublicKey {
+    let message_digits_length = winternitz::message_digits_length(message_size_in_bytes);
+    let checksum_size = checksum_length(message_digits_length);
+
+    let winternitz = winternitz::Winternitz::new();
+    let master_secret = vec![
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+
+    let public_key = winternitz
+        .generate_public_key(
+            &master_secret,
+            WinternitzType::HASH160,
+            message_digits_length,
+            checksum_size,
+            index,
+        )
+        .unwrap();
+
+    public_key
+}
+
+// Just for testing purposes, DO NOT USE THIS IN PRODUCTION.
+pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSignature {
+    let message_digits_length = winternitz::message_digits_length(message_bytes.len());
+    let checksummed_message = to_checksummed_message(message_bytes);
+    let checksum_size = checksum_length(message_digits_length);
+    let message_size = checksummed_message.len() - checksum_size;
+
+    assert!(message_size == message_digits_length);
+
+    let master_secret = vec![
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+    let winternitz = winternitz::Winternitz::new();
+    let private_key = winternitz
+        .generate_private_key(
+            &master_secret,
+            WinternitzType::HASH160,
+            message_size,
+            checksum_size,
+            index,
+        )
+        .unwrap();
+
+    let signature =
+        winternitz.sign_message(message_digits_length, &checksummed_message, &private_key);
+
+    signature
 }

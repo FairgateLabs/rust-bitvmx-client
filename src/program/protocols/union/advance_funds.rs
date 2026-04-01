@@ -158,7 +158,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         )?;
 
         // Add op return output
-        let script_op_return = op_return_script(request.pegout_id)?;
+        let script_op_return = op_return_script(request.pegout_id.clone())?;
         protocol.add_transaction_output(
             ADVANCE_FUNDS_TX,
             &OutputType::segwit_unspendable(script_op_return.get_script().clone())?,
@@ -192,6 +192,16 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 },
             )?;
         }
+
+        let dispute_protocol_id =
+            get_dispute_core_pid(request.committee_id, &request.my_take_pubkey);
+
+        self.save_pegout_id(
+            context,
+            dispute_protocol_id,
+            request.pegout_id,
+            request.slot_index,
+        )?;
 
         protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -243,13 +253,6 @@ impl ProtocolHandler for AdvanceFundsProtocol {
 
             let dispute_protocol_id =
                 get_dispute_core_pid(request.committee_id, &request.my_take_pubkey);
-
-            self.save_pegout_id(
-                context,
-                dispute_protocol_id,
-                request.pegout_id,
-                request.slot_index,
-            )?;
 
             self.dispatch_reimbursement_tx(
                 context,

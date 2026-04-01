@@ -62,6 +62,26 @@ pub struct TestHelper {
 }
 
 impl TestHelper {
+    pub fn clear_regtest_dbs() -> Result<()> {
+        let network = Network::Regtest;
+        let config_path = match network {
+            Network::Regtest => "config/wallet_regtest.yaml",
+            Network::Testnet => "config/wallet_testnet.yaml",
+            _ => panic!("Not supported network {}", network),
+        };
+
+        let wallet_config = bitvmx_settings::settings::load_config_file::<
+            bitvmx_wallet::wallet::config::Config,
+        >(Some(config_path.to_string()))?;
+
+        assert!(network == Network::Regtest);
+        clear_db(&wallet_config.storage.path);
+        clear_db(&wallet_config.key_storage.path);
+        Wallet::clear_db(&wallet_config.wallet)?;
+
+        Ok(())
+    }
+
     pub fn new(network: Network, independent: bool, auto_mine: Option<u64>) -> Result<Self> {
         info!(
             "Initializing TestHelper for network: {:?} {}",
