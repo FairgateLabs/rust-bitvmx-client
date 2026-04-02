@@ -371,7 +371,8 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         match dispatcher {
             JobDispatcherType::Garbler => {
-                debug!("Program::receive_dispatcher_result() - Received result from Garbler");
+                info!("Program::receive_dispatcher_result() - Received result from Garbler");
+                info!("Result: {:?}", result);
             }
             JobDispatcherType::Emulator => {
                 debug!("Program::receive_dispatcher_result() - Received result from Emulator");

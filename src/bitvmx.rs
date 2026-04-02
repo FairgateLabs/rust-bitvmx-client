@@ -809,6 +809,8 @@ impl BitVMX {
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
+            info!("Received result from dispatcher {}", parsed);
+            //TODO: Use context to route the messages
             let job_id = Uuid::parse_str(&result_message.job_id)
                 .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
