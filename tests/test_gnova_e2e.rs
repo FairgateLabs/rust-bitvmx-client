@@ -3,7 +3,7 @@ use anyhow::Result;
 use bitvmx_broker::{
     broker_memstorage::MemStorage,
     channel::channel::DualChannel,
-    identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
+    identification::{allow_list::AllowList, routing::RoutingTable},
     rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
 };
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
@@ -11,7 +11,6 @@ use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
@@ -20,26 +19,11 @@ use std::time::Duration;
 use tracing::info;
 
 mod common;
-use crate::common::{clear_db, config_trace};
+use crate::common::{check_gnova_built, clear_db, config_trace, helper::get_configs};
 
 // circuit to test - use a compiled .circuit file
 const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";
 const INPUT_BYTES: &[u8] = &[0, 0, 1];
-
-/// Check gnova binary exists
-fn check_gnova_built() -> Result<()> {
-    #[cfg(target_os = "windows")]
-    let binary = "../rust-bitvmx-gc/target/release/gnova.exe";
-    #[cfg(not(target_os = "windows"))]
-    let binary = "../rust-bitvmx-gc/target/release/gnova";
-    if !Path::new(binary).exists() {
-        return Err(anyhow::anyhow!(
-            "gnova binary not found at {}. Build with: cd ../rust-bitvmx-gc && cargo build --release --bin gnova",
-            binary
-        ));
-    }
-    Ok(())
-}
 
 /// Check that the test circuit file exists
 fn check_circuit_file() -> Result<()> {
@@ -150,9 +134,6 @@ pub fn test_gnova_commands() -> Result<()> {
     Ok(())
 }
 
-const E2E_PORT: u16 = 10500;
-const PRIVK_PATH: &str = "../rust-bitvmx-broker/certs/services.key";
-
 #[ignore]
 #[test]
 pub fn test_gnova_e2e() -> Result<()> {
@@ -167,22 +148,19 @@ pub fn test_gnova_e2e() -> Result<()> {
     clear_db(&storage_path);
 
     // Start broker server
-    info!("Starting broker server on port {}...", E2E_PORT);
-    let mut server = init_broker_server(E2E_PORT)?;
+    let mut server = init_broker_server()?;
 
     // Start garbled dispatcher
     info!("Starting garbled dispatcher...");
     let (disp_stop_tx, disp_stop_rx) = channel::<()>();
-    let storage_path_clone = storage_path.clone();
-    let disp_handle =
-        thread::spawn(move || run_garbled_dispatcher(E2E_PORT, disp_stop_rx, &storage_path_clone));
+    let disp_handle = thread::spawn(move || run_garbled_dispatcher(disp_stop_rx));
 
     // Give dispatcher time to connect
     thread::sleep(Duration::from_secs(1));
 
     // Run client test
     info!("Running client test...");
-    let client_result = run_garbled_client_test(E2E_PORT);
+    let client_result = run_garbled_client_test();
 
     // Cleanup
     info!("Shutting down...");
@@ -194,36 +172,50 @@ pub fn test_gnova_e2e() -> Result<()> {
     client_result
 }
 
-fn init_broker_server(port: u16) -> Result<BrokerSync> {
-    let privk = fs::read_to_string(PRIVK_PATH)?;
-    let cert = Cert::new_with_privk(&privk)?;
-    let allow_list =
-        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])?;
+fn init_broker_server() -> Result<BrokerSync> {
+    let configs = get_configs(bitcoin::Network::Regtest)?;
+    let config = &configs[0]; // Use the first config for the dispatcher
+
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+
+    let broker_cert = Cert::from_key_file(&config.broker.priv_key)?;
     let routing = RoutingTable::new();
     routing.lock().unwrap().allow_all();
-    let config = BrokerConfig::new(port, None, cert.get_pubk_hash()?, None);
+    let broker_config = BrokerConfig::new(
+        config.broker.port,
+        None,
+        config.broker.get_pubk_hash()?,
+        Some(config.broker.settings.clone()),
+    );
 
     let storage = Arc::new(Mutex::new(MemStorage::new()));
-    let server = BrokerSync::new(&config, storage, cert, allow_list, routing)?;
+    let server = BrokerSync::new(&broker_config, storage, broker_cert, allow_list, routing)?;
     Ok(server)
 }
 
-fn run_garbled_dispatcher(port: u16, stop_rx: Receiver<()>, storage_path: &str) -> Result<()> {
-    let privk = fs::read_to_string(PRIVK_PATH)?;
-    let cert = Cert::new_with_privk(&privk)?;
-    let allow_list =
-        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])?;
+fn run_garbled_dispatcher(stop_rx: Receiver<()>) -> Result<()> {
+    let configs = get_configs(bitcoin::Network::Regtest)?;
+    let config = &configs[0]; // Use the first config for the dispatcher
 
-    let config = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        cert.get_pubk_hash()?,
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+    let broker_config = BrokerConfig::new(
+        config.broker.port,
         None,
+        config.broker.get_pubk_hash()?,
+        Some(config.broker.settings.clone()),
     );
-    let channel = DualChannel::new(&config, cert, Some(1), allow_list)?;
+    let channel = DualChannel::new(
+        &broker_config,
+        Cert::from_key_file(&config.testing.garbler.priv_key)?,
+        Some(config.testing.garbler.id), // Use different ID to avoid conflicts
+        allow_list.clone(),
+    )?;
 
+    //TODO: this is temporal until there are separated storages
+    let storage_path = format!("/tmp/garbled_storage_0.db");
+    clear_db(&storage_path);
     let mut dispatcher =
-        DispatcherHandler::<GarbledJobType>::new_with_path(channel, storage_path, None, true)?;
+        DispatcherHandler::<GarbledJobType>::new_with_path(channel, &storage_path, None, true)?;
 
     loop {
         if stop_rx.try_recv().is_ok() {
@@ -236,24 +228,23 @@ fn run_garbled_dispatcher(port: u16, stop_rx: Receiver<()>, storage_path: &str) 
     Ok(())
 }
 
-fn run_garbled_client_test(port: u16) -> Result<()> {
-    let privk = fs::read_to_string(PRIVK_PATH)?;
-    let cert = Cert::new_with_privk(&privk)?;
-    let allow_list =
-        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])?;
+fn run_garbled_client_test() -> Result<()> {
+    let configs = get_configs(bitcoin::Network::Regtest)?;
+    let config = &configs[0]; // Use the first config for the dispatcher
 
-    let dispatcher_id = Identifier {
-        pubkey_hash: cert.get_pubk_hash()?,
-        id: 1,
-    };
-
-    let config = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        cert.get_pubk_hash()?,
+    let allow_list = AllowList::from_file(&config.broker.allow_list)?;
+    let broker_config = BrokerConfig::new(
+        config.broker.port,
         None,
+        config.broker.get_pubk_hash()?,
+        Some(config.broker.settings.clone()),
     );
-    let channel = DualChannel::new(&config, cert, Some(2), allow_list)?;
+    let channel = DualChannel::new(
+        &broker_config,
+        Cert::from_key_file(&config.testing.l2.priv_key)?,
+        Some(config.testing.l2.id), // Use different ID to avoid conflicts
+        allow_list.clone(),
+    )?;
 
     let output_dir = "/tmp/gnova_e2e_test";
     let _ = fs::remove_dir_all(output_dir);
@@ -270,7 +261,7 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
     };
 
     let msg = serde_json::to_string(&prove_job)?;
-    channel.send(&dispatcher_id, msg)?;
+    channel.send(&config.components.garbler, msg)?;
 
     info!("Waiting for Prove result...");
     let (prove_result, _) = wait_for_dispatcher_result(&channel, "ProveResult", 600)?;
@@ -301,7 +292,7 @@ fn run_garbled_client_test(port: u16) -> Result<()> {
     };
 
     let msg = serde_json::to_string(&verify_job)?;
-    channel.send(&dispatcher_id, msg)?;
+    channel.send(&config.components.garbler, msg)?;
 
     info!("Waiting for Verify result...");
     let (verify_result, _) = wait_for_dispatcher_result(&channel, "VerifyResult", 120)?;

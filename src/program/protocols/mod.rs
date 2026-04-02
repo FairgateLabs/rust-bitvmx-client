@@ -4,6 +4,7 @@ pub mod cardinal;
 pub mod claim;
 pub mod dispute;
 pub mod gc_drp;
+pub mod gc_generation;
 pub mod protocol_handler;
 pub mod protocol_type;
 pub mod timeouts;

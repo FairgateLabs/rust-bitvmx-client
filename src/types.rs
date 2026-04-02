@@ -371,3 +371,4 @@ pub const PROGRAM_TYPE_PAIRWISE_PENALIZATION: &str = "pairwise_penalization";
 pub const PROGRAM_TYPE_FULL_PENALIZATION: &str = "full_penalization";
 pub const PROGRAM_TYPE_PACKET: &str = "packet";
 pub const PROGRAM_TYPE_GC_DRP: &str = "gc_drp";
+pub const PROGRAM_TYPE_GC_GENERATION: &str = "gc_generation";

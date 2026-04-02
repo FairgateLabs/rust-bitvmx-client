@@ -1,25 +1,43 @@
+use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
+use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::CommsAddress,
+        participant::{CommsAddress, ParticipantRole},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
+        variables::{Globals, VariableTypes},
     },
     types::ProgramContext,
 };
 
-/// Template step for exchanging public keys in MuSig2 protocols.
-///
-/// This step orchestrates the key generation and exchange process by:
-/// 1. Calling the protocol's `generate_keys()` method to create protocol-specific keys
-/// 2. Serializing and exchanging the keys with other participants
-/// 3. Verifying and storing received keys from all participants
-/// 4. Aggregating all keys when the step completes
-///
-/// The generated keys are stored in globals with the following conventions:
-/// - Own keys: "my_keys"
-/// - Participant i keys: "participant_{i}_keys"
-/// - All keys aggregated: "all_participant_keys"
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct GCConfiguration {
+    pub id: Uuid,
+    pub role: ParticipantRole,
+    pub circuit: String,
+}
+
+impl GCConfiguration {
+    pub const NAME: &'static str = "gc_configuration";
+
+    pub fn new(id: Uuid, role: ParticipantRole, circuit: String) -> Self {
+        Self { id, role, circuit }
+    }
+
+    pub fn load(id: &Uuid, globals: &Globals) -> Result<Self, BitVMXError> {
+        let gc_dispute_configuration = globals.get_var_or_err(id, Self::NAME)?.string()?;
+        Ok(serde_json::from_str(&gc_dispute_configuration)?)
+    }
+
+    pub fn get_setup_message(&self) -> Result<String, BitVMXError> {
+        Ok(VariableTypes::String(serde_json::to_string(&self)?).set_msg(self.id, Self::NAME)?)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GarblerStep;
 
@@ -37,9 +55,34 @@ impl SetupStep for GarblerStep {
     fn generate_data(
         &self,
         protocol: &mut ProtocolType,
-        _context: &mut ProgramContext,
+        context: &mut ProgramContext,
     ) -> Result<Option<Vec<u8>>, BitVMXError> {
-        let _protocol_id = protocol.context().id;
+        let protocol_id = protocol.context().id;
+
+        let config = GCConfiguration::load(&protocol_id, &context.globals)?;
+
+        if config.role != ParticipantRole::Prover {
+            return Ok(None);
+        }
+
+        let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
+        std::fs::create_dir_all(&output_dir)?;
+
+        //TODO: Input bytes will be removed
+        const INPUT_BYTES: &[u8] = &[0, 0, 1];
+        let prove_job = DispatcherJob {
+            job_id: format!("prove_job_{}", protocol_id),
+            job_type: GarbledJobType::Prove(
+                INPUT_BYTES.to_vec(),
+                config.circuit.clone(),
+                output_dir.clone(),
+            ),
+        };
+
+        let msg = serde_json::to_string(&prove_job)?;
+        context
+            .broker_channel
+            .send(&context.components_config.garbler, msg)?;
 
         Ok(None)
     }

@@ -385,6 +385,21 @@ fn config_trace_aux() {
         .init();
 }
 
+/// Check gnova binary exists
+pub fn check_gnova_built() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    let binary = "../rust-bitvmx-gc/target/release/gnova.exe";
+    #[cfg(not(target_os = "windows"))]
+    let binary = "../rust-bitvmx-gc/target/release/gnova";
+    if !Path::new(binary).exists() {
+        return Err(anyhow::anyhow!(
+            "gnova binary not found at {}. Build with: cd ../rust-bitvmx-gc && cargo build --release --bin gnova",
+            binary
+        ));
+    }
+    Ok(())
+}
+
 /// Checks if BitVMX-CPU is properly built and required files exist
 /// Returns an error if dependencies are missing
 pub fn check_bitvmx_cpu_built() -> Result<()> {

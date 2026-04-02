@@ -559,8 +559,8 @@ fn run_garbled(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<
         );
         let channel = DualChannel::new(
             &broker_config,
-            Cert::from_key_file(&config.testing.prover.priv_key)?,
-            Some(config.testing.prover.id + 10), // Use different ID to avoid conflicts
+            Cert::from_key_file(&config.testing.garbler.priv_key)?,
+            Some(config.testing.garbler.id), // Use different ID to avoid conflicts
             allow_list.clone(),
         )?;
 

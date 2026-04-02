@@ -40,6 +40,7 @@ use super::aggregated_key::AggregatedKeyProtocol;
 use super::cardinal::{lock::LockProtocol, slot::SlotProtocol, transfer::TransferProtocol};
 use super::dispute::DisputeResolutionProtocol;
 use super::gc_drp::GCDisputeResolutionProtocol;
+use super::gc_generation::GCGenerationProtocol;
 
 #[cfg(feature = "union")]
 use crate::program::protocols::union::{
@@ -58,7 +59,9 @@ use crate::types::{
 #[cfg(feature = "cardinal")]
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
-use crate::types::{ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP};
+use crate::types::{
+    ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP, PROGRAM_TYPE_GC_GENERATION,
+};
 
 use crate::program::setup::steps::SetupStepName;
 use crate::program::variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes};
@@ -963,9 +966,7 @@ pub trait ProtocolHandler {
             job_id: self.context().id.to_string(),
             job_type: job_type,
         })?;
-        program_context
-            .broker_channel
-            .send(dest, msg)?;
+        program_context.broker_channel.send(dest, msg)?;
         Ok(())
     }
 }
@@ -1046,6 +1047,7 @@ pub enum ProtocolType {
     AggregatedKeyProtocol,
     DisputeResolutionProtocol,
     GCDisputeResolutionProtocol,
+    GCGenerationProtocol,
     #[cfg(feature = "cardinal")]
     LockProtocol,
     #[cfg(feature = "cardinal")]
@@ -1086,6 +1088,9 @@ pub fn new_protocol_type(
         )),
         PROGRAM_TYPE_GC_DRP => Ok(ProtocolType::GCDisputeResolutionProtocol(
             GCDisputeResolutionProtocol::new(ctx),
+        )),
+        PROGRAM_TYPE_GC_GENERATION => Ok(ProtocolType::GCGenerationProtocol(
+            GCGenerationProtocol::new(ctx),
         )),
         #[cfg(feature = "cardinal")]
         PROGRAM_TYPE_LOCK => Ok(ProtocolType::LockProtocol(LockProtocol::new(ctx))),
