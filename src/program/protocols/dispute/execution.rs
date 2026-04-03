@@ -5,6 +5,7 @@ use bitcoin_script_riscv::riscv::instruction_mapping::{
 use bitvmx_cpu_definitions::challenge::{
     ChallengeType, EmulatorResultType, ProverFinalTraceType, ProverHashesAndStepType,
 };
+use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use emulator::constants::REGISTERS_BASE_ADDRESS;
 use serde_json::Value;
 use tracing::{error, info};
@@ -62,9 +63,8 @@ pub fn execution_result(
                 .set_var(id, "execution-check-ready", VariableTypes::Number(1))?;
             if let Some(msg) = context.globals.get_var(id, "choose-segment-msg")? {
                 info!("The msg to choose segment was ready. Sending it");
-                context
-                    .broker_channel
-                    .send(&context.components_config.emulator, msg.string()?)?;
+                let job = serde_json::from_str::<EmulatorJobType>(&msg.string()?)?;
+                drp.execute_job(context, &context.components_config.emulator, job)?;
             } else {
                 info!("The msg to choose segment was not ready");
             }

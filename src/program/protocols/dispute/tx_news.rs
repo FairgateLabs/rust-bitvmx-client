@@ -25,7 +25,6 @@ use crate::{
 use bitcoin::{script::read_scriptint, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
 use emulator::{decision::nary_search::NArySearchType, executor::utils::FailConfiguration};
@@ -829,40 +828,34 @@ fn handle_nary_prover(
         })
         .collect::<Result<_, _>>()?;
 
-    let msg = serde_json::to_string(&DispatcherJob {
-        job_id: drp.ctx.id.to_string(),
-        job_type: EmulatorJobType::VerifierChooseSegment(
-            pdf,
-            execution_path.clone(),
-            round as u8,
-            hashes,
-            format!("{}/{}", execution_path, "execution.json").to_string(),
-            fail_config,
-            nary_search_type,
-        ),
-    })?;
+    let job = EmulatorJobType::VerifierChooseSegment(
+        pdf,
+        execution_path.clone(),
+        round as u8,
+        hashes,
+        format!("{}/{}", execution_path, "execution.json").to_string(),
+        fail_config,
+        nary_search_type,
+    );
 
-    if round > 1 {
-        program_context
-            .broker_channel
-            .send(&program_context.components_config.emulator, msg)?;
+    let ready = program_context
+        .globals
+        .contains_var(&drp.ctx.id, "execution-check-ready")?;
+
+    if round > 1 || ready {
+        drp.execute_job(
+            program_context,
+            &program_context.components_config.emulator,
+            job,
+        )?;
     } else {
-        if let Some(_ready) = program_context
-            .globals
-            .get_var(&drp.ctx.id, "execution-check-ready")?
-        {
-            info!("The execution is ready. Sending the choose segment message");
-            program_context
-                .broker_channel
-                .send(&program_context.components_config.emulator, msg)?;
-        } else {
-            info!("The execution is not ready. Saving the message.");
-            program_context.globals.set_var(
-                &drp.ctx.id,
-                "choose-segment-msg",
-                VariableTypes::String(msg),
-            )?;
-        }
+        info!("The execution is not ready. Saving the message.");
+        let msg = serde_json::to_string(&job)?;
+        program_context.globals.set_var(
+            &drp.ctx.id,
+            "choose-segment-msg",
+            VariableTypes::String(msg),
+        )?;
     }
 
     Ok(())

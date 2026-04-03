@@ -809,12 +809,20 @@ impl BitVMX {
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
+            let context = Context::from_string(&result_message.job_id)?;
             info!("Received result from dispatcher {}", parsed);
-            //TODO: Use context to route the messages
-            let job_id = Uuid::parse_str(&result_message.job_id)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+            let program_id = match context {
+                Context::ProgramId(program_id) => program_id,
+                _ => {
+                    warn!(
+                        "Invalid context for dispatcher result: {:?}. Expected ProgramId.",
+                        context
+                    );
+                    return Err(BitVMXError::InvalidMessageFormat);
+                }
+            };
 
-            self.load_program(&job_id)?.receive_dispatcher_result(
+            self.load_program(&program_id)?.receive_dispatcher_result(
                 parsed,
                 dispatcher,
                 &mut self.program_context,

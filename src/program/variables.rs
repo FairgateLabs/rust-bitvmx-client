@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 use bitcoin::{PublicKey, Txid};
-use key_manager::{lamport::LamportSignature, winternitz::{WinternitzPublicKey, WinternitzSignature}};
+use key_manager::{
+    lamport::LamportSignature,
+    winternitz::{WinternitzPublicKey, WinternitzSignature},
+};
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -124,6 +127,11 @@ pub struct Globals {
 impl Globals {
     pub fn new(storage: Rc<Storage>) -> Self {
         Self { storage }
+    }
+
+    pub fn contains_var(&self, uuid: &Uuid, key: &str) -> Result<bool, BitVMXError> {
+        let key = format!("{}:var:{}", uuid, key);
+        Ok(self.storage.has_key(&key, None)?)
     }
 
     pub fn set_var(&self, uuid: &Uuid, key: &str, value: VariableTypes) -> Result<(), BitVMXError> {
