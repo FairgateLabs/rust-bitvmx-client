@@ -47,6 +47,7 @@ pub trait SetupStep {
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext,
+        your_data: bool,
     ) -> Result<(), BitVMXError>;
 
     /// **VERIFY ADVANCE** - Verifies if all participants have completed this step.
@@ -74,6 +75,15 @@ pub trait SetupStep {
         _context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         Ok(())
+    }
+
+    fn receive_dispatcher_result(
+        &self,
+        _result: serde_json::Value,
+        _sub_step: &str,
+        _program_context: &mut ProgramContext,
+    ) -> Result<Vec<u8>, BitVMXError> {
+        Ok(Vec::new())
     }
 
     fn generate_async(&self) -> bool {

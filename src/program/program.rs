@@ -366,13 +366,51 @@ impl Program {
     pub fn receive_dispatcher_result(
         &mut self,
         result: Value,
+        context: Context,
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext,
     ) -> Result<(), BitVMXError> {
         match dispatcher {
             JobDispatcherType::Garbler => {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
-                info!("Result: {:?}", result);
+                match &context {
+                    Context::SetupStep(_, _, _) => {
+                        if let Some(engine) = &mut self.setup_engine {
+                            if engine.receive_dispatcher_result(
+                                result,
+                                &context,
+                                self.my_idx,
+                                &self.program_id,
+                                self.leader,
+                                &self.participants,
+                                program_context,
+                            )? {
+                                if engine.state().current_step_state.clone()
+                                    == StepState::WaitingForParticipants
+                                {
+                                    self.state = ProgramState::WaitingData;
+                                } else {
+                                    self.state = ProgramState::SettingUp;
+                                }
+                                self.save()?;
+                                info!("Program::receive_dispatcher_result() - SetupEngine state changed, saved program with state {:?}", self.state);
+                            }
+                        }
+                    }
+                    Context::ProgramId(_) => {
+                        //TODO: Connect with GC DRP
+                        /*return self
+                        .protocol
+                        .gc_drp()?
+                        .execution_result(result, program_context);*/
+                    }
+                    _ => {
+                        return Err(BitVMXError::InvalidMessage(format!(
+                            "Invalid context for Garbler result: {:?}. Expected SetupStep.",
+                            context
+                        )));
+                    }
+                }
             }
             JobDispatcherType::Emulator => {
                 debug!("Program::receive_dispatcher_result() - Received result from Emulator");

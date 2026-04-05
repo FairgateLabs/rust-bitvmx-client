@@ -569,7 +569,7 @@ impl BitVMX {
                         .to_string()?,
                 )?;
             }
-            Context::Protocol(_, _) => {}
+            _ => {}
         }
         Ok(true)
     }
@@ -813,6 +813,7 @@ impl BitVMX {
             info!("Received result from dispatcher {}", parsed);
             let program_id = match context {
                 Context::ProgramId(program_id) => program_id,
+                Context::SetupStep(program_id, _, _) => program_id,
                 _ => {
                     warn!(
                         "Invalid context for dispatcher result: {:?}. Expected ProgramId.",
@@ -824,6 +825,7 @@ impl BitVMX {
 
             self.load_program(&program_id)?.receive_dispatcher_result(
                 parsed,
+                context,
                 dispatcher,
                 &mut self.program_context,
             )?;
@@ -1666,6 +1668,7 @@ pub enum Context {
     ProgramId(Uuid),
     RequestId(Uuid, Identifier),
     Protocol(Uuid, String),
+    SetupStep(Uuid, String, String), // protocol_id, step_name, optional sub_step
 }
 
 impl Context {

@@ -81,6 +81,7 @@ impl SetupStep for KeysStep {
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext,
+        _your_data: bool,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;
 

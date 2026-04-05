@@ -1,4 +1,5 @@
 use crate::{
+    bitvmx::Context,
     comms_helper::{prepare_message, request, CommsMessageType},
     errors::BitVMXError,
     leader_broadcast::{get_non_leader_participants, OriginalMessage},
@@ -10,6 +11,7 @@ use crate::{
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -84,8 +86,6 @@ impl SetupEngineState {
 /// Result of a SetupEngine tick operation.
 #[derive(Debug)]
 pub struct SetupTickResult {
-    /// Data to send to other participants (if any)
-    pub data_to_send: Option<Vec<u8>>,
     /// Whether the engine state changed during this tick
     pub state_changed: bool,
 }
@@ -223,11 +223,10 @@ impl SetupEngine {
         // Now get the step and generate data
         let step = &self.steps[self.state.current_step_index];
         let data = step.generate_data(protocol, context)?;
-        //TODO: for steps that generate data asyn, instead of moving to waiting, move to a new state "WaitingGeneration"
-        //that will be handled with another external call and would allow the transition
 
-        if total_participants == 1
-            || self.state.participants_completed.len() == total_participants - 1
+        if (total_participants == 1
+            || self.state.participants_completed.len() == total_participants - 1)
+            && !step.generate_async()
         {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
         } else {
@@ -241,6 +240,59 @@ impl SetupEngine {
         );
 
         Ok(data)
+    }
+
+    pub fn receive_dispatcher_result(
+        &mut self,
+        result: Value,
+        context: &Context,
+        my_idx: usize,
+        program_id: &Uuid,
+        leader: usize,
+        participants: &[CommsAddress],
+        program_context: &mut ProgramContext,
+    ) -> Result<bool, BitVMXError> {
+        self.if_not_completed()?;
+
+        let current_step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
+
+        let sub_step = match context {
+            Context::SetupStep(_, step_name, sub_step) => {
+                if step_name != &current_step_name {
+                    return Err(BitVMXError::InvalidMessage(format!(
+                        "Dispatcher result for step '{}', but current step is '{}'",
+                        step_name, current_step_name
+                    )));
+                }
+                info!(
+                    "SetupEngine::receive_dispatcher_result() - Received dispatcher result for step '{}', sub_step '{}'",
+                    step_name, sub_step
+                );
+                sub_step
+            }
+            _ => {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Invalid context for dispatcher result: {:?}. Expected SetupStep.",
+                    context
+                )));
+            }
+        };
+
+        let step = &self.steps[self.state.current_step_index];
+        let data = step.receive_dispatcher_result(result, sub_step, program_context)?;
+        self.process_produced_data(
+            &data,
+            my_idx,
+            leader,
+            participants,
+            program_id,
+            program_context,
+        )?;
+        if self.state.participants_completed.len() == participants.len() {
+            self.state.current_step_state = StepState::AllParticipantsCompleted;
+        }
+
+        Ok(true)
     }
 
     /// Receives and verifies data from a participant for the current step.
@@ -284,7 +336,14 @@ impl SetupEngine {
 
         // Verify and store the data
         let step = &self.steps[self.state.current_step_index];
-        step.verify_received(data, from_participant, protocol, participants, context)?;
+        step.verify_received(
+            data,
+            from_participant,
+            protocol,
+            participants,
+            context,
+            false,
+        )?;
 
         // Mark participant as completed
         self.state.mark_participant_completed(participant_idx);
@@ -601,7 +660,6 @@ impl SetupEngine {
         if self.is_complete() {
             debug!("SetupEngine::tick() - Setup already complete");
             return Ok(SetupTickResult {
-                data_to_send: None,
                 state_changed: false,
             });
         }
@@ -641,6 +699,7 @@ impl SetupEngine {
                         protocol,
                         participants,
                         context,
+                        true,
                     )?;
                     info!(
                             "SetupEngine::tick() - Stored our own data (participant {}) in globals for step '{}'",
@@ -694,43 +753,52 @@ impl SetupEngine {
 
         // If we have data to send, broadcast it and mark as sent
         if let Some(data) = &data_to_send {
-            info!(
-                "SetupEngine::tick() - Broadcasting {} bytes for step '{}' to {} participants",
-                data.len(),
-                step_name,
-                participants.len() - 1
-            );
-
-            // Broadcast the data if it's not leader
-            // if leader stores its own message
-            self.broadcast_setup_data(
-                data.clone(),
-                program_id,
-                my_idx,
-                leader,
-                participants,
-                context,
-            )?;
-
-            self.state.mark_participant_completed(my_idx);
-            info!(
-                "SetupEngine::tick() - Marked ourselves (participant {}) as completed for step '{}'",
-                my_idx,
-                step_name
-            );
-
-            if my_idx == leader {
-                // If we're the leader and have all messages, broadcast to non-leaders
-                self.send_broadcast_data_to_non_leaders(context, program_id, participants)?;
-            }
-
+            self.process_produced_data(data, my_idx, leader, participants, program_id, context)?;
             state_changed = true;
         }
 
-        Ok(SetupTickResult {
-            data_to_send,
-            state_changed,
-        })
+        Ok(SetupTickResult { state_changed })
+    }
+
+    fn process_produced_data(
+        &mut self,
+        data: &Vec<u8>,
+        my_idx: usize,
+        leader: usize,
+        participants: &[CommsAddress],
+        program_id: &Uuid,
+        context: &mut ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let step_name = self.current_step_name().to_string();
+        info!(
+            "SetupEngine::tick() - Broadcasting {} bytes for step '{}' to {} participants",
+            data.len(),
+            &step_name,
+            participants.len() - 1
+        );
+
+        // Broadcast the data if it's not leader
+        // if leader stores its own message
+        self.broadcast_setup_data(
+            data.clone(),
+            program_id,
+            my_idx,
+            leader,
+            participants,
+            context,
+        )?;
+
+        self.state.mark_participant_completed(my_idx);
+        info!(
+            "SetupEngine::tick() - Marked ourselves (participant {}) as completed for step '{}'",
+            my_idx, step_name
+        );
+
+        if my_idx == leader {
+            // If we're the leader and have all messages, broadcast to non-leaders
+            self.send_broadcast_data_to_non_leaders(context, program_id, participants)?;
+        }
+        Ok(())
     }
 }
 

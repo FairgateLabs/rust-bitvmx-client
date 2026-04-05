@@ -125,6 +125,7 @@ impl SetupStep for NoncesStep {
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext,
+        _your_data: bool,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;
 
