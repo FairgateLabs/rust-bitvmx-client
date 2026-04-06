@@ -17,13 +17,15 @@ use crate::{
     program::{
         participant::ParticipantRole,
         protocols::{
-            dispute,
+            dispute::{self, START_CH},
             protocol_handler::{
-                ClaimGateConfig, ProtocolHandler, WithClaimGateConfig, action_wins, action_wins_prefix, get_tx_name_from_timeout
+                action_wins, action_wins_prefix, get_tx_name_from_timeout, ClaimGateConfig,
+                ProtocolHandler, WithClaimGateConfig,
             },
             timeouts::TxOwnershipTable,
         },
-    }, types::ProgramContext,
+    },
+    types::ProgramContext,
 };
 
 pub const CLAIM_GATE_START: &str = "START";
@@ -322,12 +324,7 @@ pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig>(
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
             info!("{claim_name}: {:?}", tx);
-            protocol_handler.dispatch(
-                program_context,
-                tx,
-                Some(speedup_data),
-                None,
-            )?;
+            protocol_handler.dispatch(program_context, tx, Some(speedup_data), None)?;
         }
     }
     Ok(())
@@ -364,12 +361,7 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
             let height = Some(current_height + timelock_blocks);
-            protocol_handler.dispatch(
-                program_context,
-                tx,
-                Some(speedup_data),
-                height,
-            )?;
+            protocol_handler.dispatch(program_context, tx, Some(speedup_data), height)?;
         }
         //other start
         else {
@@ -381,12 +373,7 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
             )?;
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
-            protocol_handler.dispatch(
-                program_context,
-                tx,
-                Some(speedup_data),
-                None,
-            )?;
+            protocol_handler.dispatch(program_context, tx, Some(speedup_data), None)?;
         }
     }
 
@@ -411,12 +398,7 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
             let speedup_data =
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
 
-            protocol_handler.dispatch(
-                program_context,
-                tx,
-                Some(speedup_data),
-                None,
-            )?;
+            protocol_handler.dispatch(program_context, tx, Some(speedup_data), None)?;
         }
     }
 
