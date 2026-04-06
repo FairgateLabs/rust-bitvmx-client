@@ -404,6 +404,7 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
 
     if name.starts_with(&action_wins_prefix(&ParticipantRole::Prover))
         || name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier))
+        || name == START_CH
     {
         let config = T::Config::load(&protocol_handler.context().id, &program_context.globals)?;
 

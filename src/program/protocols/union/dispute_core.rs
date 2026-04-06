@@ -608,6 +608,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        info!(
+            "Notified of external transaction: {}, Context: {}",
+            tx_id, context
+        );
+
         let (pid, name) = match Context::from_string(&context)? {
             Context::Protocol(program_id, name) => (program_id, name),
             _ => {
@@ -620,10 +625,14 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let protocol = self.load_protocol_by_name(&name, pid)?;
         let tx_name = protocol.get_transaction_name_by_id(tx_id)?;
 
+        info!("Notified of external transaction: {}", tx_name);
+
         if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Prover)) {
             self.handle_action_wins(program_context, &tx_name, ParticipantRole::Prover, pid)?;
         } else if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier)) {
             self.handle_action_wins(program_context, &tx_name, ParticipantRole::Verifier, pid)?;
+        } else if tx_name == dispute::START_CH {
+            self.handle_start_challenge(program_context, pid)?;
         }
 
         Ok(())
@@ -1860,6 +1869,43 @@ impl DisputeCoreProtocol {
         Ok(maybe_index)
     }
 
+    fn handle_start_challenge(
+        &self,
+        context: &ProgramContext,
+        pid: Uuid,
+    ) -> Result<(), BitVMXError> {
+        info!("Handling start challenge. PID: {}", pid);
+
+        // Need to load my_idx from storage because self.ctx.my_idx has my index on DRP
+        let my_idx = get_my_idx(context, self.ctx.id)?;
+        let wt_index = self.dispute_core_data(context)?.member_index;
+
+        if wt_index == my_idx {
+            info!("Start challenge triggered by watchtower for PID {}. Ignoring since I'm the watchtower.", pid);
+            return Ok(());
+        }
+
+        let drp_op_index = match self.get_drp_op_index(context, pid, wt_index)? {
+            Some(index) => index,
+            None => {
+                error!("PID {} do not match DisputeChannel program", pid);
+                return Ok(());
+            }
+        };
+
+        info!(
+            "DisputeChannel operator index for PID {} is {}",
+            pid, drp_op_index
+        );
+
+        self.cancel_dispatch(
+            context,
+            &double_indexed_name(WT_NO_CHALLENGE_TX, wt_index, drp_op_index),
+            None,
+        );
+        Ok(())
+    }
+
     fn handle_action_wins(
         &self,
         context: &ProgramContext,
@@ -2084,7 +2130,7 @@ impl DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         info!(id = self.ctx.my_idx, "Handling {}", tx_name);
         let settings = self.load_stream_setting(context)?;
-        let (_, op_index) = extract_double_index(tx_name)?;
+        let (wt_index, op_index) = extract_double_index(tx_name)?;
 
         let protocol = self.load_protocol()?;
         self.decode_witness_for_tx(
@@ -2110,6 +2156,12 @@ impl DisputeCoreProtocol {
         )?;
 
         if self.is_my_dispute_core(context)? {
+            self.cancel_dispatch(
+                context,
+                &double_indexed_name(OP_NO_COSIGN_TX, wt_index, op_index),
+                None,
+            );
+
             let drp_pid =
                 get_dispute_channel_pid(self.committee_id(context)?, op_index, self.ctx.my_idx);
             let drp_protocol = self.load_protocol_by_name(PROGRAM_TYPE_DRP, drp_pid)?;
@@ -2117,7 +2169,7 @@ impl DisputeCoreProtocol {
             let (tx, speedup) = drp_protocol.get_transaction_by_name(dispute::START_CH, context)?;
 
             self.log_and_dispatch(context, dispute::START_CH, tx, speedup, None, drp_pid)?;
-        } else {
+        } else if op_index == self.ctx.my_idx {
             let block_height =
                 Some(self.get_dispatch_height(tx_status, settings.wt_no_challenge_timelock)?);
             let data = self.dispute_core_data(context)?;
@@ -2452,6 +2504,12 @@ impl DisputeCoreProtocol {
             return Ok(());
         }
 
+        self.cancel_dispatch(
+            context,
+            &indexed_name(INPUT_NOT_REVEALED_TX, slot_index),
+            None,
+        );
+
         let data = self.dispute_core_data(context)?;
 
         // WT: Dispatch disabler if operator is already penalized.
@@ -2578,6 +2636,8 @@ impl DisputeCoreProtocol {
                 "This is my dispute_core, checking for operator take dispatch for slot {}",
                 slot_index
             );
+
+            self.cancel_operator_take(context, slot_index);
             self.dispatch(context, DisputeCoreTxType::RevealInput { slot_index })?;
         } else {
             // Schedule input not revealed dispatch transaction
@@ -2595,6 +2655,27 @@ impl DisputeCoreProtocol {
         }
 
         Ok(())
+    }
+
+    fn cancel_operator_take(&self, context: &ProgramContext, slot_index: usize) {
+        let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
+
+        let committee_id = match self.committee_id(context) {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(
+                id = self.ctx.my_idx,
+                "Failed to get committee ID, cannot cancel operator take for slot {}. Error: {}",
+                slot_index,
+                e
+            );
+                return;
+            }
+        };
+
+        let pid = get_accept_pegin_pid(committee_id, slot_index);
+
+        self.cancel_dispatch(context, &tx_name, Some((PROGRAM_TYPE_ACCEPT_PEGIN, pid)));
     }
 
     fn reveal_input_tx(
@@ -3713,5 +3794,79 @@ impl DisputeCoreProtocol {
         );
 
         Ok(())
+    }
+
+    fn get_txid(&self, tx_name: &str, protocol_info: Option<(&str, Uuid)>) -> Option<Txid> {
+        let protocol = match protocol_info {
+            Some((protocol_type, pid)) => {
+                let ptype = match self.load_protocol_by_name(protocol_type, pid) {
+                    Ok(ptype) => ptype,
+                    Err(e) => {
+                        warn!(
+                            "Unable to load protocol by name. {}. {:?}",
+                            protocol_type, e
+                        );
+                        return None;
+                    }
+                };
+                ptype.load_protocol()
+            }
+            None => self.load_protocol(),
+        };
+
+        if protocol.is_err() {
+            warn!(
+                "Unable to get Txid. Tx name: {}. {:?}",
+                tx_name,
+                protocol.err()
+            );
+            return None;
+        }
+        let protocol = protocol.unwrap();
+        let result = protocol.transaction_by_name(tx_name);
+        let txid = match result {
+            Ok(tx) => Some(tx.compute_txid()),
+            Err(e) => {
+                warn!("Error retrieving transaction for {}: {:?}", tx_name, e);
+                None
+            }
+        };
+        txid
+    }
+
+    fn cancel_dispatch(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+        protocol_info: Option<(&str, Uuid)>,
+    ) {
+        let pid = match protocol_info {
+            Some((_, pid)) => pid,
+            None => self.ctx.id,
+        };
+        info!("Cancel dispatch of {} for PID {}", tx_name, pid);
+
+        let txid = match self.get_txid(tx_name, protocol_info) {
+            Some(txid) => txid,
+            None => {
+                warn!(
+                    "Transaction name {} has no associated txid for cancellation",
+                    tx_name
+                );
+                return;
+            }
+        };
+        info!("Cancelling dispatch of {} for txid {}", tx_name, txid);
+
+        context
+            .bitcoin_coordinator
+            .cancel(bitcoin_coordinator::TypesToMonitor::Transactions(
+                vec![txid],
+                String::default(),
+                None,
+            ))
+            .unwrap_or_else(|e| {
+                warn!("Failed to cancel monitoring for txid {}: {:?}", txid, e);
+            });
     }
 }
