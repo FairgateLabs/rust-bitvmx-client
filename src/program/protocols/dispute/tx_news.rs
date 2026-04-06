@@ -352,6 +352,7 @@ fn claim_state_handle(
 
     if name.starts_with(&action_wins_prefix(&ParticipantRole::Prover))
         || name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier))
+        || name == START_CH
     {
         let config = DisputeConfiguration::load(&drp.ctx.id, &program_context.globals)?;
         for (protocol_name, protocol_id) in config.notify_protocol {
