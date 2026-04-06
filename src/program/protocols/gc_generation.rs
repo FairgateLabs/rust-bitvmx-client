@@ -53,10 +53,8 @@ impl ProtocolHandler for GCGenerationProtocol {
         Ok(())
     }
 
-    // AggregatedKeyProtocol is used internally by SetupKey, which only expects
-    // the AggregatedPubkey response. Suppress SetupCompleted to maintain backward compatibility.
     fn send_setup_completed(&self) -> bool {
-        false
+        true
     }
 
     // Override setup_steps to only use KeysStep

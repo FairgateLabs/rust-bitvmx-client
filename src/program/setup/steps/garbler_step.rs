@@ -100,7 +100,7 @@ impl SetupStep for GarblerStep {
         result: Value,
         sub_step: &str,
         _program_context: &mut ProgramContext,
-    ) -> Result<Vec<u8>, BitVMXError> {
+    ) -> Result<Option<Vec<u8>>, BitVMXError> {
         if sub_step == "generate" {
             let gc_proof_path = result["proof_path"].as_str().unwrap().to_string();
             info!("[prover] Proof generated at path: {}", gc_proof_path);
@@ -108,12 +108,24 @@ impl SetupStep for GarblerStep {
             info!("  digest_io: {}", result["digest_io"]);
             info!("  digest_labels: {}", result["digest_labels"]);
             info!("  digest_lamport: {}", result["digest_lamport"]);
+
+            //covnert result into vec<u8>
+            let result_bytes = serde_json::to_vec(&result)?;
+            return Ok(Some(result_bytes));
         }
 
-        //covnert result into vec<u8>
-        let result_bytes = serde_json::to_vec(&result)?;
+        if sub_step == "verify" {
+            info!(" result[\"status\"]: {}", result["status"]);
+            info!(" result[\"type\"]: {}", result["type"]);
+            info!(" result[\"valid\"]: {}", result["valid"]);
+            info!(" result[\"proofs_linked\"]: {}", result["proofs_linked"]);
+            return Ok(None);
+        }
 
-        Ok(result_bytes)
+        return Err(BitVMXError::InvalidState(format!(
+            "Unknown sub_step for GarblerStep result: {}",
+            sub_step
+        )));
     }
 
     fn verify_received(
@@ -124,11 +136,11 @@ impl SetupStep for GarblerStep {
         _participants: &[CommsAddress],
         context: &mut ProgramContext,
         your_data: bool,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         if your_data {
-            return Ok(());
+            return Ok(true);
         }
 
         let config = GCConfiguration::load(&protocol_id, &context.globals)?;
@@ -140,7 +152,7 @@ impl SetupStep for GarblerStep {
                 )));
             }
             info!( "Received expected empty message from Garbler step for non-prover role. Protocol ID: {}", protocol_id);
-            return Ok(());
+            return Ok(true);
         }
 
         info!(
@@ -151,9 +163,39 @@ impl SetupStep for GarblerStep {
             BitVMXError::InvalidMessage(format!("Failed to deserialize garbler data: {}", e))
         })?;
 
+        let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
+        std::fs::create_dir_all(&output_dir)?;
+
+        info!("[verifier] Verifying GC + Lamport proofs...");
+        let gc_proof_path = value["proof_path"].as_str().unwrap().to_string();
+
+        //TODO: files should be transmitted via broker instead of using file paths
+        let prove_json_path = format!("runs/gc/Prover/{}/output.json", protocol_id);
+        let verify_job = GarbledJobType::Verify(
+            gc_proof_path,
+            config.circuit.clone(),
+            prove_json_path,
+            output_dir.clone(),
+        );
+
+        let prove_job = DispatcherJob {
+            job_id: Context::SetupStep(
+                protocol_id,
+                self.step_name().to_string(),
+                "verify".to_string(),
+            )
+            .to_string()?,
+            job_type: verify_job,
+        };
+
+        let msg = serde_json::to_string(&prove_job)?;
+        context
+            .broker_channel
+            .send(&context.components_config.garbler, msg)?;
+
         info!("Data content (hex): {:?}", value);
 
-        Ok(())
+        Ok(false)
     }
 
     fn can_advance(
@@ -170,17 +212,8 @@ impl SetupStep for GarblerStep {
             return Ok(true);
         }
 
-        Ok(false)
-    }
-
-    fn on_step_complete(
-        &self,
-        protocol: &ProtocolType,
-        _participants: &[CommsAddress],
-        _context: &mut ProgramContext,
-    ) -> Result<(), BitVMXError> {
-        let _protocol_id = protocol.context().id;
-        Ok(())
+        //Check some result conditions for verifiers
+        Ok(true)
     }
 
     fn generate_async(&self) -> bool {

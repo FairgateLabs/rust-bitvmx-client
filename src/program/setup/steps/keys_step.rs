@@ -82,7 +82,7 @@ impl SetupStep for KeysStep {
         participants: &[CommsAddress],
         context: &mut ProgramContext,
         _your_data: bool,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -116,7 +116,7 @@ impl SetupStep for KeysStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(())
+        Ok(true)
     }
 
     fn can_advance(

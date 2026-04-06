@@ -134,7 +134,7 @@ impl SetupStep for SignaturesStep {
         participants: &[CommsAddress],
         context: &mut ProgramContext,
         _your_data: bool,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -174,7 +174,7 @@ impl SetupStep for SignaturesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(())
+        Ok(true)
     }
 
     fn can_advance(

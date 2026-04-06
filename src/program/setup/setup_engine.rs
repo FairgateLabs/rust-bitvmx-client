@@ -279,15 +279,22 @@ impl SetupEngine {
         };
 
         let step = &self.steps[self.state.current_step_index];
-        let data = step.receive_dispatcher_result(result, sub_step, program_context)?;
-        self.process_produced_data(
-            &data,
-            my_idx,
-            leader,
-            participants,
-            program_id,
-            program_context,
-        )?;
+
+        //TODO: Handle error
+        if let Some(data) = step.receive_dispatcher_result(result, sub_step, program_context)? {
+            self.process_produced_data(
+                &data,
+                my_idx,
+                leader,
+                participants,
+                program_id,
+                program_context,
+            )?;
+        } else {
+            // If not produced data but did not error, we still want to mark the participant as completed for this step
+            //TODO: obtain participant index from context instead of assuming it's always the other participant (in 2-party case)
+            self.state.mark_participant_completed(1 - my_idx);
+        }
         if self.state.participants_completed.len() == participants.len() {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
         }
@@ -336,7 +343,7 @@ impl SetupEngine {
 
         // Verify and store the data
         let step = &self.steps[self.state.current_step_index];
-        step.verify_received(
+        let verified = step.verify_received(
             data,
             from_participant,
             protocol,
@@ -344,6 +351,22 @@ impl SetupEngine {
             context,
             false,
         )?;
+
+        if step.verify_async() && !verified {
+            info!(
+                "SetupEngine: Step '{}' is async and data from participant {} is not verified yet, waiting for async verification to complete",
+                step_name, participant_idx
+             );
+            return Ok(true);
+        }
+
+        if !verified {
+            warn!(
+                "SetupEngine: Data from participant {} for step '{}' did not verify, ignoring",
+                participant_idx, step_name
+            );
+            return Ok(false);
+        }
 
         // Mark participant as completed
         self.state.mark_participant_completed(participant_idx);
