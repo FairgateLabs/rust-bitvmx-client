@@ -10,12 +10,20 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
+use bitvmx_settings::settings::decrypt_or_read_file_bytes;
+use key_manager::{
+    config::KeyManagerConfig,
+    create_key_manager_from_config,
+    lamport::{HashFunction, LamportType},
+};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use storage_backend::storage_config::StorageConfig;
 use tracing::info;
 
 mod common;
@@ -23,7 +31,7 @@ use crate::common::{check_gnova_built, clear_db, config_trace, helper::get_confi
 
 // circuit to test - use a compiled .circuit file
 const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";
-const INPUT_BYTES: &[u8] = &[0, 0, 1];
+const INPUT_BITS: &[u8] = &[0, 0, 1];
 
 /// Check that the test circuit file exists
 fn check_circuit_file() -> Result<()> {
@@ -52,7 +60,7 @@ pub fn test_gnova_commands() -> Result<()> {
 
     // --- Step 1: Prove (generates both GC and Lamport proofs) ---
     let prove_job = GarbledJobType::Prove(
-        INPUT_BYTES.to_vec(),
+        INPUT_BITS.to_vec(),
         TEST_CIRCUIT_PATH.to_string(),
         format!("{}/prove", output_dir),
     );
@@ -254,7 +262,7 @@ fn run_garbled_client_test() -> Result<()> {
     let prove_job = DispatcherJob {
         job_id: "prove_e2e".to_string(),
         job_type: GarbledJobType::Prove(
-            INPUT_BYTES.to_vec(),
+            INPUT_BITS.to_vec(),
             TEST_CIRCUIT_PATH.to_string(),
             format!("{}/prove", output_dir),
         ),
@@ -354,6 +362,15 @@ fn wait_for_dispatcher_result(
     }
 }
 
+fn compute_sha256(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&digest[..]);
+    result
+}
+
 /// Full protocol test: prover generates proofs, verifier verifies with public data
 ///
 /// Verifier has access to:
@@ -395,7 +412,7 @@ pub fn test_full_protocol() -> Result<()> {
     // 1. Generate GC + Lamport proofs
     info!("[prover] Generating GC and Lamport proofs...");
     let prove_job = GarbledJobType::Prove(
-        INPUT_BYTES.to_vec(),
+        INPUT_BITS.to_vec(),
         TEST_CIRCUIT_PATH.to_string(),
         format!("{}/prove", output_dir),
     );
@@ -424,7 +441,7 @@ pub fn test_full_protocol() -> Result<()> {
     let verify_job = GarbledJobType::Verify(
         gc_proof_path,
         TEST_CIRCUIT_PATH.to_string(),
-        prove_json_path,
+        prove_json_path.clone(),
         format!("{}/verify", output_dir),
     );
 
@@ -475,6 +492,110 @@ pub fn test_full_protocol() -> Result<()> {
     // Overall validity (all checks passed)
     assert_eq!(verify_json["valid"], true, "Full verification failed");
     info!("[verifier] ✓ ALL CHECKS PASSED");
+
+    let key_manager_config = KeyManagerConfig {
+        network: "regtest".to_string(),
+        mnemonic_sentence: None,
+        mnemonic_passphrase: None,
+    };
+    
+    let key_storage_config =
+    StorageConfig::new(format!("{}/storage.db", output_dir).to_string(), None);
+    
+    let key_manager = create_key_manager_from_config(&key_manager_config, &key_storage_config)?;
+    
+    let io_inputs_path = format!("{}/prove/io_inputs.bin", output_dir);
+    let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
+    
+    let hash_type = LamportType::SHA256;
+    let chunks = io_inputs.chunks(hash_type.hash_size());
+    let message_bit_length = chunks.len() / 2;
+    
+    let mut bytes_0s: Vec<u8> = Vec::new();
+    let mut bytes_1s: Vec<u8> = Vec::new();
+
+    for (i, chunk) in chunks.enumerate() {
+        if i % 2 == 0 {
+            bytes_0s.extend_from_slice(chunk);
+        } else {
+            bytes_1s.extend_from_slice(chunk);
+        }
+    }
+    
+    // Import io_input_labels to KeyManager to sign input
+    let public_key = key_manager.import_lamport_private_key(
+        &bytes_0s,
+        &bytes_1s,
+        message_bit_length,
+        hash_type,
+    )?;
+
+    info!("[Prover] ✓ Lamport keys imported successfully");
+
+    let signature = key_manager.sign_lamport_message_by_pubkey(
+        &INPUT_BITS.iter().map(|&b| b == 1).collect::<Vec<bool>>(),
+        &public_key,
+    )?;
+
+    info!("[Prover] ✓ Lamport signature generated successfully for the input message. Signature: {:?}", signature);
+
+    // Evaluate circuit with Prover's input 
+    info!("[Verifier] ✓ Evaluating circuit...");
+
+    let eval_job = GarbledJobType::Evaluate(
+        TEST_CIRCUIT_PATH.to_string(),
+        prove_json_path.clone(),
+        signature.to_array_hashes()?,
+        format!("{}/evaluate", output_dir),
+    );
+
+    let (cmd, args, json_path) = eval_job.command()?;
+    let output = std::process::Command::new(&cmd).args(&args).output()?;
+
+    assert!(
+        output.status.success(),
+        "evaluation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    info!("[Verifier] ✓ Circuit evaluation finished");
+    
+    let evaluate_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
+
+    let output = evaluate_json["output"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_u64().unwrap() as u8)
+        .collect::<Vec<u8>>();
+
+    let sha_output = compute_sha256(&output);
+    let prove_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&prove_json_path)?)?;
+
+    let expected_lamport = prove_json["sha256_commitments"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["h1"]
+        .as_str()
+        .map(|str| hex::decode(str).ok().unwrap())
+        .unwrap();
+
+    
+    
+    assert_eq!(
+        expected_lamport,
+        sha_output.as_slice(),
+        "Evaluation failed, sha256(output) != expected_lamport"
+    );
+
+    info!("[Verifier] ✓ Circuit output matched expected public lamport");
 
     info!("Full protocol test completed successfully!");
     Ok(())
