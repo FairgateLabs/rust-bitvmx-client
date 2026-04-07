@@ -8,7 +8,7 @@ use bitvmx_cpu_definitions::challenge::{
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use emulator::constants::REGISTERS_BASE_ADDRESS;
 use serde_json::Value;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -31,8 +31,21 @@ pub fn execution_result(
     id: &Uuid,
     drp: &DisputeResolutionProtocol,
     result: Value,
+    job_context: &Context,
     context: &ProgramContext,
 ) -> Result<(), BitVMXError> {
+    // Dedup guard: if this step was already processed, skip it
+    let dedup_key = if let Context::ProgramStep(_, ref step) = job_context {
+        let key = format!("job_done:{}", step);
+        if context.globals.contains_var(id, &key)? {
+            warn!("Duplicate job result for step '{}', skipping", step);
+            return Ok(());
+        }
+        Some(key)
+    } else {
+        None
+    };
+
     let result = EmulatorResultType::from_value(result)?;
     match &result {
         EmulatorResultType::ProverExecuteResult {
@@ -64,7 +77,12 @@ pub fn execution_result(
             if let Some(msg) = context.globals.get_var(id, "choose-segment-msg")? {
                 info!("The msg to choose segment was ready. Sending it");
                 let job = serde_json::from_str::<EmulatorJobType>(&msg.string()?)?;
-                drp.execute_job(context, &context.components_config.emulator, job)?;
+                drp.execute_job(
+                    context,
+                    &context.components_config.emulator,
+                    job,
+                    "verifier_choose_segment_conflict_step_round_1",
+                )?;
             } else {
                 info!("The msg to choose segment was not ready");
             }
@@ -289,5 +307,13 @@ pub fn execution_result(
             }
         }
     }
+
+    // Mark this step as processed to prevent duplicate handling
+    if let Some(key) = dedup_key {
+        context
+            .globals
+            .set_var(id, &key, VariableTypes::Bool(true))?;
+    }
+
     Ok(())
 }

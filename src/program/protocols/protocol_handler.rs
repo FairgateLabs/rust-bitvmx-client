@@ -961,9 +961,10 @@ pub trait ProtocolHandler {
         program_context: &ProgramContext,
         dest: &Identifier,
         job_type: J,
+        step: &str,
     ) -> Result<(), BitVMXError> {
         let msg = serde_json::to_string(&DispatcherJob {
-            job_id: Context::ProgramId(self.context().id).to_string()?,
+            job_id: Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
             job_type: job_type,
         })?;
         program_context.broker_channel.send(dest, msg)?;

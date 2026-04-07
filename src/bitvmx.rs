@@ -811,9 +811,10 @@ impl BitVMX {
             let parsed: serde_json::Value = result_message.result_as_value()?;
             let context = Context::from_string(&result_message.job_id)?;
             info!("Received result from dispatcher {}", parsed);
-            let program_id = match context {
-                Context::ProgramId(program_id) => program_id,
-                Context::SetupStep(program_id, _, _) => program_id,
+            let program_id = match &context {
+                Context::ProgramId(program_id) => *program_id,
+                Context::SetupStep(program_id, _, _) => *program_id,
+                Context::ProgramStep(program_id, _) => *program_id,
                 _ => {
                     warn!(
                         "Invalid context for dispatcher result: {:?}. Expected ProgramId.",
@@ -1669,6 +1670,7 @@ pub enum Context {
     RequestId(Uuid, Identifier),
     Protocol(Uuid, String),
     SetupStep(Uuid, String, String), // protocol_id, step_name, optional sub_step
+    ProgramStep(Uuid, String),       // program_id, step identifier (for job deduplication)
 }
 
 impl Context {

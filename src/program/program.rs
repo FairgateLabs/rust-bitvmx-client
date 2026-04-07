@@ -414,10 +414,11 @@ impl Program {
             }
             JobDispatcherType::Emulator => {
                 debug!("Program::receive_dispatcher_result() - Received result from Emulator");
-                return self
-                    .protocol
-                    .dispute()?
-                    .execution_result(result, program_context);
+                return self.protocol.dispute()?.execution_result(
+                    result,
+                    &context,
+                    program_context,
+                );
             }
             _ => {
                 return Err(BitVMXError::InvalidMessage(format!(

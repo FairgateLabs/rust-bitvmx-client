@@ -282,6 +282,7 @@ pub fn handle_tx_news(
                                 execution_file.clone(),
                                 fail_force_config.main.fail_config_prover.clone(),
                             ),
+                            "prover_execute",
                         )?;
                     }
 
@@ -326,6 +327,7 @@ pub fn handle_tx_news(
                                 fail_force_config.main.force_condition.clone(),
                                 fail_force_config.main.fail_config_verifier.clone(),
                             ),
+                            "verifier_check_execution",
                         )?;
 
                         let (tx, sp) = drp.get_tx_with_speedup_data(
@@ -466,6 +468,7 @@ pub fn handle_tx_news(
                                 fail_force_config.main.fail_config_verifier.clone(),
                                 fail_force_config.main.force_challenge.clone(),
                             ),
+                            "verifier_choose_challenge",
                         )?;
                     }
 
@@ -609,6 +612,7 @@ pub fn handle_tx_news(
                             program_context,
                             &program_context.components_config.emulator,
                             msg,
+                            "verifier_choose_challenge_for_read",
                         )?;
                     }
 
@@ -737,32 +741,45 @@ fn handle_nary_verifier(
 
     let execution_path = drp.get_execution_path()?;
     let execution_file = format!("{}/{}", execution_path, "execution.json").to_string();
-    let job_type = if round <= nary.total_rounds() as u32 {
-        EmulatorJobType::ProverGetHashesForRound(
-            pdf,
-            execution_path.clone(),
-            round as u8,
-            decision,
-            execution_file.clone(),
-            fail_config,
-            nary_search_type,
+    let nary_type_str = match nary_search_type {
+        NArySearchType::ConflictStep => "conflict_step",
+        NArySearchType::ReadValueChallenge => "read_value",
+    };
+    let (job_type, step_name) = if round <= nary.total_rounds() as u32 {
+        (
+            EmulatorJobType::ProverGetHashesForRound(
+                pdf,
+                execution_path.clone(),
+                round as u8,
+                decision,
+                execution_file.clone(),
+                fail_config,
+                nary_search_type,
+            ),
+            format!("prover_get_hashes_{}_round_{}", nary_type_str, round),
         )
     } else {
         match nary_search_type {
-            NArySearchType::ConflictStep => EmulatorJobType::ProverFinalTrace(
-                pdf,
-                execution_path.clone(),
-                (decision + 1) as u32,
-                execution_file.clone(),
-                fail_force_config.main.fail_config_prover.clone(),
+            NArySearchType::ConflictStep => (
+                EmulatorJobType::ProverFinalTrace(
+                    pdf,
+                    execution_path.clone(),
+                    (decision + 1) as u32,
+                    execution_file.clone(),
+                    fail_force_config.main.fail_config_prover.clone(),
+                ),
+                "prover_final_trace".to_string(),
             ),
 
-            NArySearchType::ReadValueChallenge => EmulatorJobType::ProverGetHashesAndStep(
-                pdf,
-                execution_path.clone(),
-                (decision) as u32,
-                execution_file.clone(),
-                fail_force_config.read.fail_config_prover.clone(),
+            NArySearchType::ReadValueChallenge => (
+                EmulatorJobType::ProverGetHashesAndStep(
+                    pdf,
+                    execution_path.clone(),
+                    (decision) as u32,
+                    execution_file.clone(),
+                    fail_force_config.read.fail_config_prover.clone(),
+                ),
+                "prover_get_hashes_and_step".to_string(),
             ),
         }
     };
@@ -770,6 +787,7 @@ fn handle_nary_verifier(
         program_context,
         &program_context.components_config.emulator,
         job_type,
+        &step_name,
     )?;
 
     Ok(())
@@ -838,6 +856,12 @@ fn handle_nary_prover(
         nary_search_type,
     );
 
+    let nary_type_str = match nary_search_type {
+        NArySearchType::ConflictStep => "conflict_step",
+        NArySearchType::ReadValueChallenge => "read_value",
+    };
+    let step_name = format!("verifier_choose_segment_{}_round_{}", nary_type_str, round);
+
     let ready = program_context
         .globals
         .contains_var(&drp.ctx.id, "execution-check-ready")?;
@@ -847,6 +871,7 @@ fn handle_nary_prover(
             program_context,
             &program_context.components_config.emulator,
             job,
+            &step_name,
         )?;
     } else {
         info!("The execution is not ready. Saving the message.");
