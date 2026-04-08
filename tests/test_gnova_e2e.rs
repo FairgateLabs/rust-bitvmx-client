@@ -9,7 +9,9 @@ use bitvmx_broker::{
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use bitvmx_job_dispatcher::DispatcherHandler;
-use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
+use bitvmx_job_dispatcher_types::garbled_messages::{
+    GCJobEvaluationResult, GCJobProveResult, GarbledJobType, ProofBlob,
+};
 use bitvmx_settings::settings::decrypt_or_read_file_bytes;
 use key_manager::{
     config::KeyManagerConfig,
@@ -94,12 +96,24 @@ pub fn test_gnova_commands() -> Result<()> {
     info!("  digest_labels: {}", prove_json["digest_labels"]);
     info!("  digest_lamport: {}", prove_json["digest_lamport"]);
 
+    let prove_result: GCJobProveResult = serde_json::from_value(prove_json.clone())?;
+
+    let gc_proof_path = &prove_result.proof_path;
+    let lamport_proof_path = &prove_result.lamport_proof_path;
+
+    let gc_proof = std::fs::read(gc_proof_path)?;
+    let lamport_proof = std::fs::read(lamport_proof_path)?;
+
+    let proof_blob = ProofBlob {
+        prove_result,
+        gc_proof,
+        lamport_proof,
+    };
+
     // --- Step 2: Verify (verifies both GC and Lamport proofs) ---
-    let prove_json_path = format!("{}/prove/output.json", output_dir);
     let verify_job = GarbledJobType::Verify(
-        proof_path,
+        proof_blob,
         TEST_CIRCUIT_PATH.to_string(),
-        prove_json_path,
         format!("{}/verify", output_dir),
     );
 
@@ -288,13 +302,25 @@ fn run_garbled_client_test() -> Result<()> {
     // --- Step 2: Send Verify job (verifies both GC + Lamport proofs) ---
     info!("Sending Verify job...");
 
-    let prove_json_path = format!("{}/prove/output.json", output_dir);
+    let prove_parsed: GCJobProveResult = serde_json::from_value(prove_result.clone())?;
+
+    let gc_proof_path = &prove_parsed.proof_path;
+    let lamport_proof_path = &prove_parsed.lamport_proof_path;
+
+    let gc_proof = std::fs::read(gc_proof_path)?;
+    let lamport_proof = std::fs::read(lamport_proof_path)?;
+
+    let proof_blob = ProofBlob {
+        prove_result: prove_parsed,
+        gc_proof,
+        lamport_proof,
+    };
+
     let verify_job = DispatcherJob {
         job_id: "verify_e2e".to_string(),
         job_type: GarbledJobType::Verify(
-            proof_path,
+            proof_blob,
             TEST_CIRCUIT_PATH.to_string(),
-            prove_json_path,
             format!("{}/verify", output_dir),
         ),
     };
@@ -426,7 +452,6 @@ pub fn test_full_protocol() -> Result<()> {
 
     let prove_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
-    let gc_proof_path = prove_json["proof_path"].as_str().unwrap().to_string();
     info!("[prover] Proofs generated");
     info!("  digest_io: {}", prove_json["digest_io"]);
     info!("  digest_labels: {}", prove_json["digest_labels"]);
@@ -437,11 +462,24 @@ pub fn test_full_protocol() -> Result<()> {
 
     // 1. Verify both proofs (gnova verify now does full digest verification)
     info!("[verifier] Verifying GC + Lamport proofs...");
-    let prove_json_path = format!("{}/prove/output.json", output_dir);
+
+    let prove_result: GCJobProveResult = serde_json::from_value(prove_json.clone())?;
+
+    let gc_proof_path = &prove_result.proof_path;
+    let lamport_proof_path = &prove_result.lamport_proof_path;
+
+    let gc_proof = std::fs::read(gc_proof_path)?;
+    let lamport_proof = std::fs::read(lamport_proof_path)?;
+
+    let proof_blob = ProofBlob {
+        prove_result: prove_result.clone(),
+        gc_proof,
+        lamport_proof,
+    };
+
     let verify_job = GarbledJobType::Verify(
-        gc_proof_path,
+        proof_blob,
         TEST_CIRCUIT_PATH.to_string(),
-        prove_json_path.clone(),
         format!("{}/verify", output_dir),
     );
 
@@ -498,19 +536,19 @@ pub fn test_full_protocol() -> Result<()> {
         mnemonic_sentence: None,
         mnemonic_passphrase: None,
     };
-    
+
     let key_storage_config =
-    StorageConfig::new(format!("{}/storage.db", output_dir).to_string(), None);
-    
+        StorageConfig::new(format!("{}/storage.db", output_dir).to_string(), None);
+
     let key_manager = create_key_manager_from_config(&key_manager_config, &key_storage_config)?;
-    
+
     let io_inputs_path = format!("{}/prove/io_inputs.bin", output_dir);
     let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
-    
+
     let hash_type = LamportType::SHA256;
     let chunks = io_inputs.chunks(hash_type.hash_size());
     let message_bit_length = chunks.len() / 2;
-    
+
     let mut bytes_0s: Vec<u8> = Vec::new();
     let mut bytes_1s: Vec<u8> = Vec::new();
 
@@ -521,7 +559,7 @@ pub fn test_full_protocol() -> Result<()> {
             bytes_1s.extend_from_slice(chunk);
         }
     }
-    
+
     // Import io_input_labels to KeyManager to sign input
     let public_key = key_manager.import_lamport_private_key(
         &bytes_0s,
@@ -539,12 +577,12 @@ pub fn test_full_protocol() -> Result<()> {
 
     info!("[Prover] ✓ Lamport signature generated successfully for the input message. Signature: {:?}", signature);
 
-    // Evaluate circuit with Prover's input 
+    // Evaluate circuit with Prover's input
     info!("[Verifier] ✓ Evaluating circuit...");
 
     let eval_job = GarbledJobType::Evaluate(
         TEST_CIRCUIT_PATH.to_string(),
-        prove_json_path.clone(),
+        prove_result.clone(),
         signature.to_array_hashes()?,
         format!("{}/evaluate", output_dir),
     );
@@ -559,36 +597,21 @@ pub fn test_full_protocol() -> Result<()> {
     );
 
     info!("[Verifier] ✓ Circuit evaluation finished");
-    
-    let evaluate_json: serde_json::Value =
+
+    let evaluation_result: GCJobEvaluationResult =
         serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
 
-    let output = evaluate_json["output"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|value| value.as_u64().unwrap() as u8)
-        .collect::<Vec<u8>>();
+    let output = evaluation_result.output.last().unwrap();
 
-    let sha_output = compute_sha256(&output);
-    let prove_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&prove_json_path)?)?;
+    let sha_output = compute_sha256(output);
 
-    let expected_lamport = prove_json["sha256_commitments"]
-        .as_array()
-        .unwrap()
+    let expected_lamport = prove_result
+        .sha256_commitments
         .last()
-        .unwrap()["h1"]
-        .as_str()
-        .map(|str| hex::decode(str).ok().unwrap())
+        .map(|commitment| hex::decode(&commitment.h1).ok())
+        .flatten()
         .unwrap();
 
-    
-    
     assert_eq!(
         expected_lamport,
         sha_output.as_slice(),

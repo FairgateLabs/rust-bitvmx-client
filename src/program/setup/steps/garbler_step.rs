@@ -1,5 +1,7 @@
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
+use bitvmx_job_dispatcher_types::garbled_messages::{GCJobProveResult, GarbledJobType, ProofBlob};
+use bitvmx_settings::settings::decrypt_or_read_file_bytes;
+use key_manager::lamport::{HashFunction, LamportType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::info;
@@ -102,15 +104,33 @@ impl SetupStep for GarblerStep {
         _program_context: &mut ProgramContext,
     ) -> Result<Option<Vec<u8>>, BitVMXError> {
         if sub_step == "generate" {
-            let gc_proof_path = result["proof_path"].as_str().unwrap().to_string();
+            let prove_result: GCJobProveResult =
+                serde_json::from_value(result.clone()).map_err(|e| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Failed to deserialize garbler data: {}",
+                        e
+                    ))
+                })?;
+
+            let gc_proof_path = &prove_result.proof_path;
+            let lamport_proof_path = &prove_result.lamport_proof_path;
+
             info!("[prover] Proof generated at path: {}", gc_proof_path);
             info!("[prover] Proofs generated");
-            info!("  digest_io: {}", result["digest_io"]);
-            info!("  digest_labels: {}", result["digest_labels"]);
-            info!("  digest_lamport: {}", result["digest_lamport"]);
+            info!("  digest_io: {}", &prove_result.digest_io);
+            info!("  digest_labels: {}", &prove_result.digest_labels);
+            info!("  digest_lamport: {}", &prove_result.digest_lamport);
 
-            //covnert result into vec<u8>
-            let result_bytes = serde_json::to_vec(&result)?;
+            let gc_proof = std::fs::read(gc_proof_path)?;
+            let lamport_proof = std::fs::read(lamport_proof_path)?;
+
+            let proof_blob = ProofBlob {
+                prove_result,
+                gc_proof,
+                lamport_proof,
+            };
+
+            let result_bytes = serde_json::to_vec(&proof_blob)?;
             return Ok(Some(result_bytes));
         }
 
@@ -138,12 +158,52 @@ impl SetupStep for GarblerStep {
         your_data: bool,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
+        let config = GCConfiguration::load(&protocol_id, &context.globals)?;
 
         if your_data {
+            if config.role == ParticipantRole::Prover {
+                let proof_blob: ProofBlob = serde_json::from_slice(data).map_err(|e| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Failed to deserialize garbler data: {}",
+                        e
+                    ))
+                })?;
+
+                let io_inputs_path = proof_blob.prove_result.io_inputs_path;
+                let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
+                let hash_type = LamportType::SHA256;
+                let chunks = io_inputs.chunks(hash_type.hash_size());
+                let message_bit_length = chunks.len() / 2;
+
+                let mut bytes_0s: Vec<u8> = Vec::new();
+                let mut bytes_1s: Vec<u8> = Vec::new();
+
+                for (i, chunk) in chunks.enumerate() {
+                    if i % 2 == 0 {
+                        bytes_0s.extend_from_slice(chunk);
+                    } else {
+                        bytes_1s.extend_from_slice(chunk);
+                    }
+                }
+
+                let public_key = context.key_manager.import_lamport_private_key(
+                    &bytes_0s,
+                    &bytes_1s,
+                    message_bit_length,
+                    hash_type,
+                )?;
+
+                context.globals.set_var(
+                    &protocol_id,
+                    "gc_input_pk",
+                    VariableTypes::LamportPubKey(public_key),
+                )?;
+
+                info!("Saved Garbled Circuit Public Key");
+            }
             return Ok(true);
         }
 
-        let config = GCConfiguration::load(&protocol_id, &context.globals)?;
         if config.role == ParticipantRole::Prover {
             if data.len() != 0 {
                 return Err(BitVMXError::InvalidMessage(format!(
@@ -159,7 +219,7 @@ impl SetupStep for GarblerStep {
             "Received data for Garbler step. Protocol ID: {}",
             protocol_id
         );
-        let value: Value = serde_json::from_slice(data).map_err(|e| {
+        let proof_blob: ProofBlob = serde_json::from_slice(data).map_err(|e| {
             BitVMXError::InvalidMessage(format!("Failed to deserialize garbler data: {}", e))
         })?;
 
@@ -167,16 +227,8 @@ impl SetupStep for GarblerStep {
         std::fs::create_dir_all(&output_dir)?;
 
         info!("[verifier] Verifying GC + Lamport proofs...");
-        let gc_proof_path = value["proof_path"].as_str().unwrap().to_string();
-
-        //TODO: files should be transmitted via broker instead of using file paths
-        let prove_json_path = format!("runs/gc/Prover/{}/output.json", protocol_id);
-        let verify_job = GarbledJobType::Verify(
-            gc_proof_path,
-            config.circuit.clone(),
-            prove_json_path,
-            output_dir.clone(),
-        );
+        let verify_job =
+            GarbledJobType::Verify(proof_blob, config.circuit.clone(), output_dir.clone());
 
         let prove_job = DispatcherJob {
             job_id: Context::SetupStep(
@@ -192,8 +244,6 @@ impl SetupStep for GarblerStep {
         context
             .broker_channel
             .send(&context.components_config.garbler, msg)?;
-
-        info!("Data content (hex): {:?}", value);
 
         Ok(false)
     }

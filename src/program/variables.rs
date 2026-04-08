@@ -3,7 +3,7 @@ use std::rc::Rc;
 use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 use bitcoin::{PublicKey, Txid};
 use key_manager::{
-    lamport::LamportSignature,
+    lamport::{LamportPublicKey, LamportSignature},
     winternitz::{WinternitzPublicKey, WinternitzSignature},
 };
 use protocol_builder::types::OutputType;
@@ -25,6 +25,7 @@ pub enum VariableTypes {
     Secret(Vec<u8>),
     PubKey(PublicKey),
     WinternitzPubKey(WinternitzPublicKey),
+    LamportPubKey(LamportPublicKey),
     Utxo(PartialUtxo),
     Number(u32),
     Amount(u64),
