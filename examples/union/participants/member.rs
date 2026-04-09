@@ -11,7 +11,7 @@ use crate::{
 use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
-use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
+// use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
