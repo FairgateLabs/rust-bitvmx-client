@@ -9,11 +9,12 @@ use crate::{
             protocol_handler::{action_wins_prefix, ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    collect_input_signatures, create_transaction_reference, double_indexed_name,
-                    estimate_fee, extract_double_index, extract_index,
+                    add_speedups, collect_input_signatures, create_transaction_reference,
+                    double_indexed_name, estimate_fee, extract_double_index, extract_index,
                     extract_index_from_claim_gate, get_accept_pegin_pid, get_dispatch_action,
                     get_dispute_channel_pid, get_dispute_core_pid, get_dispute_pair_key_name,
                     get_full_penalization_pid, get_initial_deposit_output_type, get_my_idx,
+                    get_op_disabler_directory_output_value, get_reveal_output_value,
                     get_stream_setting, indexed_name, load_penalized_member, load_union_settings,
                     set_my_idx, triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
@@ -442,7 +443,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         );
 
         let mut reveal_output: OutputType = OutputType::taproot(
-            AmountType::Auto,
+            get_reveal_output_value(committee.members.len()),
             &committee.dispute_aggregated_key,
             &[operator_won_script],
         )?;
@@ -471,11 +472,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     &settings,
                 )?;
 
-                self.create_two_dispute_penalization(
-                    &mut protocol,
-                    i,
-                    &committee.take_aggregated_key,
-                )?;
+                self.create_two_dispute_penalization(&mut protocol, i, &committee)?;
             }
         }
 
@@ -1288,7 +1285,7 @@ impl DisputeCoreProtocol {
         &self,
         protocol: &mut Protocol,
         dispute_core_index: usize,
-        take_aggregated_key: &PublicKey,
+        committee: &Committee,
     ) -> Result<(), BitVMXError> {
         let last_reveal = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
 
@@ -1299,10 +1296,8 @@ impl DisputeCoreProtocol {
 
         for i in 0..dispute_core_index {
             let prev_reveal = indexed_name(REVEAL_INPUT_TX, i);
-            let two_dispute_penalization = format!(
-                "{}_{}_{}",
-                TWO_DISPUTE_PENALIZATION_TX, i, dispute_core_index
-            );
+            let two_dispute_penalization =
+                double_indexed_name(TWO_DISPUTE_PENALIZATION_TX, i, dispute_core_index);
 
             protocol.add_connection(
                 "prev_reveal",
@@ -1334,10 +1329,7 @@ impl DisputeCoreProtocol {
                 None,
             )?;
 
-            protocol.add_transaction_output(
-                &two_dispute_penalization,
-                &OutputType::taproot(AmountType::Auto, &take_aggregated_key, &[])?,
-            )?;
+            add_speedups(protocol, &two_dispute_penalization, committee)?;
         }
 
         Ok(())
@@ -1363,8 +1355,9 @@ impl DisputeCoreProtocol {
             // Operator output for disabler directory
             // NOTE: 1 additional outputs: speedup.
             let directory_fee = estimate_fee(2, committee.packet_size as usize + 1, 1);
-            let disabler_directory_amount =
-                committee.packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
+            let disabler_directory_amount = committee.packet_size as u64 * get_op_disabler_directory_output_value(committee.members.len()) // The other half of SPEEDUP_VALUE came from REVEAL_INPUT_TX
+                    + SPEEDUP_VALUE
+                    + directory_fee;
             protocol.add_transaction_output(
                 &OP_INITIAL_DEPOSIT_TX,
                 &OutputType::taproot(
@@ -2798,9 +2791,10 @@ impl DisputeCoreProtocol {
             (slot_index_last, slot_index_prev) = (slot_index_prev, slot_index_last);
         }
 
-        let name = format!(
-            "{}_{}_{}",
-            TWO_DISPUTE_PENALIZATION_TX, slot_index_prev, slot_index_last
+        let name = double_indexed_name(
+            TWO_DISPUTE_PENALIZATION_TX,
+            slot_index_prev,
+            slot_index_last,
         );
 
         let mut protocol = self.load_protocol()?;

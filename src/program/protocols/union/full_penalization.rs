@@ -27,8 +27,9 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    collect_input_signatures, create_transaction_reference, double_indexed_name,
-                    extract_double_index, get_dispute_core_pid, get_initial_deposit_output_type,
+                    add_speedups, collect_input_signatures, create_transaction_reference,
+                    double_indexed_name, extract_double_index, get_dispute_core_pid,
+                    get_initial_deposit_output_type, get_op_disabler_directory_output_value,
                     get_stream_setting, indexed_name, load_union_settings, save_penalized_member,
                     triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
@@ -359,10 +360,17 @@ impl FullPenalizationProtocol {
 
             // Connect disabler directory to OP_DISABLER
             debug!("{} to {}", op_disabler_directory_name, op_disabler_name);
+            let disabler_directory_output_value =
+                get_op_disabler_directory_output_value(committee.members.len());
             protocol.add_connection(
                 "from_disabler_directory",
                 &op_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+                OutputType::taproot(
+                    disabler_directory_output_value,
+                    &committee.dispute_aggregated_key,
+                    &[],
+                )?
+                .into(),
                 &op_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
@@ -375,16 +383,7 @@ impl FullPenalizationProtocol {
             )?;
 
             // OP DISABLER output
-            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
-            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
-            debug!("Output for {}", op_disabler_name);
-            protocol.add_transaction_output(
-                &op_disabler_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
-            )?;
+            add_speedups(protocol, &op_disabler_name, committee)?;
 
             // Create Lazy Operator disablers
             // Operator take transaction data
@@ -429,16 +428,7 @@ impl FullPenalizationProtocol {
             )?;
 
             // OP LAZY DISABLER output
-            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
-            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
-            debug!("Output for {}", op_lazy_disabler_name);
-            protocol.add_transaction_output(
-                &op_lazy_disabler_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
-            )?;
+            add_speedups(protocol, &op_lazy_disabler_name, committee)?;
 
             // Create STOP OPERATOR WON TX
             let reveal_name = &double_indexed_name(REVEAL_INPUT_TX, op_index, slot_index);
@@ -477,13 +467,7 @@ impl FullPenalizationProtocol {
                 Some(operator_won_enablers[slot_index].0),
             )?;
 
-            protocol.add_transaction_output(
-                &stop_op_won_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
-            )?;
+            add_speedups(protocol, &stop_op_won_name, committee)?;
         }
 
         // OP DISABLER DIRECTORY output
