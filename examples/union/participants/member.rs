@@ -84,7 +84,8 @@ impl Member {
             allow_list,
         )?;
 
-        bitvmx.set_global_var(SEND_NEW_BLOCK_NEWS, VariableTypes::Bool(true))?;
+        // Uncomment if NewBlock messages to L2 are required
+        // bitvmx.set_global_var(SEND_NEW_BLOCK_NEWS, VariableTypes::Bool(true))?;
 
         Ok(Self {
             id: id.to_string(),
