@@ -657,5 +657,5 @@ pub fn get_reveal_output_value(members_count: usize) -> u64 {
 }
 
 pub fn get_op_disabler_directory_output_value(members_count: usize) -> u64 {
-    SPEEDUP_VALUE * (members_count as u64 / 2)
+    (SPEEDUP_VALUE * members_count as u64 + estimate_fee(2, members_count, 1)) / 2
 }
