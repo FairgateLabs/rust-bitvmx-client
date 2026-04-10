@@ -167,6 +167,7 @@ impl SetupStep for GarblerStep {
             )?;
 
             info!("[prover] Proof generated at path: {}", gc_proof_path);
+            info!("[prover] Lamport proof generated at path: {}", lamport_proof_path);
             info!("[prover] Proofs generated");
             info!("  digest_io: {}", &prove_result.digest_io);
             info!("  digest_labels: {}", &prove_result.digest_labels);
