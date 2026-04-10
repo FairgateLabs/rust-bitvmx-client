@@ -866,7 +866,7 @@ impl DisputeCoreProtocol {
                     protocol,
                     &init_challenge_name,
                     &wt_claim_name,
-                    (wt_dispute_key, self.get_sign_mode(data.member_index)),
+                    (wt_speedup_key, self.get_sign_mode(data.member_index)),
                     &committee.dispute_aggregated_key,
                     CLAIM_GATE_FEE,
                     DUST_VALUE,
@@ -890,7 +890,7 @@ impl DisputeCoreProtocol {
                     protocol,
                     &init_challenge_name,
                     &op_claim_name,
-                    (op_dispute_key, self.get_sign_mode(op_index)),
+                    (op_speedup_key, self.get_sign_mode(op_index)),
                     &committee.dispute_aggregated_key,
                     CLAIM_GATE_FEE,
                     DUST_VALUE,
@@ -1729,10 +1729,10 @@ impl DisputeCoreProtocol {
             .pubkey()?)
     }
 
-    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        let committee = self.committee(context)?;
-        Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
-    }
+    // fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    //     let committee = self.committee(context)?;
+    //     Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
+    // }
 
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
         Ok(self.dispute_core_data(context)?.committee_id)
@@ -2054,7 +2054,7 @@ impl DisputeCoreProtocol {
                     tx.compute_txid(),
                     tx.output.len() as u32 - 1,
                     SPEEDUP_VALUE,
-                    &self.my_dispute_key(context)?,
+                    &self.my_speedup_key(context)?,
                 )
                 .into(),
             )
@@ -2091,7 +2091,7 @@ impl DisputeCoreProtocol {
         let data = self.dispute_core_data(context)?;
         let base = double_indexed_name(prefix, data.member_index, op_index);
         let tx_name = action.tx_name(&base);
-        info!(id = self.ctx.my_idx, "Auto-dispatching {}", tx_name);
+        info!(id = self.ctx.my_idx, "Claim gate dispatching {}", tx_name);
 
         let (tx, speedup) =
             self.claim_gate_tx(context, &tx_name, &action.inputs(), action.with_speedup())?;
