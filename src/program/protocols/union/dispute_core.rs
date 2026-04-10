@@ -1026,10 +1026,10 @@ impl DisputeCoreProtocol {
             .filter(|m| m.role == ParticipantRole::Prover)
             .count() as u64;
 
-        let wt_disabler_directory_fee = estimate_fee(2, op_count as usize * 2, 1);
+        let wt_disabler_directory_fee = estimate_fee(2, op_count as usize * 2 + 1, 1);
 
         let disabler_directory_funds_output = OutputType::taproot(
-            DUST_VALUE * op_count * 2 as u64 + wt_disabler_directory_fee,
+            SPEEDUP_VALUE * op_count * 2 as u64 + wt_disabler_directory_fee,
             &committee.dispute_aggregated_key,
             &[],
         )?;

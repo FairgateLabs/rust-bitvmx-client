@@ -136,10 +136,10 @@ impl ProtocolHandler for FullPenalizationProtocol {
             Ok(self.op_disabler_tx(name, context)?)
         } else if name.starts_with(WT_DISABLER_TX) {
             Ok(self.wt_disabler_tx(name, context)?)
-        } else if name.starts_with(OP_DISABLER_DIRECTORY_TX)
-            || name.starts_with(WT_DISABLER_DIRECTORY_TX)
-        {
-            Ok(self.disabler_directory_tx(name, context)?)
+        } else if name.starts_with(OP_DISABLER_DIRECTORY_TX) {
+            Ok(self.disabler_directory_tx(name, context, ParticipantRole::Prover)?)
+        } else if name.starts_with(WT_DISABLER_DIRECTORY_TX) {
+            Ok(self.disabler_directory_tx(name, context, ParticipantRole::Verifier)?)
         } else if name.starts_with(WT_COSIGN_DISABLER_TX) {
             Ok(self.wt_cosign_disabler_tx(name, context)?)
         } else {
@@ -717,11 +717,20 @@ impl FullPenalizationProtocol {
         &self,
         name: &str,
         context: &ProgramContext,
+        role: ParticipantRole,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
+        let (wt_index, op_index) = extract_double_index(name)?;
+
+        let speedup = if role == ParticipantRole::Prover {
+            // WT is responsible for speedup OP disabler directory.
+            wt_index == self.ctx.my_idx
+        } else {
+            // OP is responsible for speedup WT disabler directory.
+            op_index == self.ctx.my_idx
+        };
 
         let mut protocol = self.load_protocol()?;
-
         let args = collect_input_signatures(
             &mut protocol,
             name,
@@ -737,17 +746,21 @@ impl FullPenalizationProtocol {
         let committee =
             self.committee(context, self.full_penalization_data(context)?.committee_id)?;
 
-        // Speedup data
-        let speedup_utxo = Utxo::new(
-            txid,
-            tx.output.len() as u32 - 1,
-            SPEEDUP_VALUE,
-            &committee.members[self.ctx.my_idx].dispute_key,
-        );
+        let speedup_data = if speedup {
+            // Speedup data
+            let speedup_utxo = Utxo::new(
+                txid,
+                tx.output.len() as u32 - 1,
+                SPEEDUP_VALUE,
+                &committee.members[self.ctx.my_idx].dispute_key,
+            );
+            Some(speedup_utxo.into())
+        } else {
+            None
+        };
 
-        info!(id = self.ctx.my_idx, "Signed {} with txid: {} ", name, txid,);
-
-        Ok((tx, Some(speedup_utxo.into())))
+        info!(id = self.ctx.my_idx, "Signed {} with txid: {} ", name, txid);
+        Ok((tx, speedup_data))
     }
 
     fn create_operator_disablers(
