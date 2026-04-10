@@ -348,7 +348,7 @@ pub fn get_default_union_settings() -> UnionSettings {
         StreamSettings {
             short_timelock: PEGIN_CONFIRMATIONS,
             long_timelock: PEGIN_CONFIRMATIONS + 6,
-            op_won_timelock: 150,
+            op_won_timelock: 250,
             claim_gate_timelock: 6,
             input_not_revealed_timelock: 14,
             op_no_cosign_timelock: 12,
@@ -362,7 +362,7 @@ pub fn get_default_union_settings() -> UnionSettings {
         StreamSettings {
             short_timelock: PEGIN_CONFIRMATIONS,
             long_timelock: PEGIN_CONFIRMATIONS + 6,
-            op_won_timelock: 150,
+            op_won_timelock: 250,
             claim_gate_timelock: 6,
             input_not_revealed_timelock: 14,
             op_no_cosign_timelock: 12,
@@ -376,7 +376,7 @@ pub fn get_default_union_settings() -> UnionSettings {
         StreamSettings {
             short_timelock: PEGIN_CONFIRMATIONS,
             long_timelock: PEGIN_CONFIRMATIONS + 6,
-            op_won_timelock: 150,
+            op_won_timelock: 250,
             claim_gate_timelock: 6,
             input_not_revealed_timelock: 14,
             op_no_cosign_timelock: 12,
