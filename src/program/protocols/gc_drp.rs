@@ -2,8 +2,15 @@ use std::collections::HashMap;
 
 use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_script_stack::stack::StackTracker;
+use bitvmx_job_dispatcher_types::garbled_messages::{
+    GCJobEvaluationResult, GCJobProveResult, GarbledJobType,
+};
 use console::style;
-use key_manager::{key_type::BitcoinKeyType, lamport::LamportType};
+use key_manager::{
+    key_type::BitcoinKeyType,
+    lamport::{LamportSignature, LamportType},
+};
 use protocol_builder::{
     builder::ProtocolBuilder,
     graph::graph::GraphOptions,
@@ -16,6 +23,7 @@ use protocol_builder::{
     },
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -30,9 +38,13 @@ use crate::{
         },
         protocols::{
             claim::{auto_claim_start, claim_state_handle, ClaimGate},
-            dispute::{self, input_handler::set_inputs},
+            dispute::{self},
             protocol_handler::{timeout_input_tx, ClaimGateConfig, WithClaimGateConfig},
             timeouts::{auto_dispatch_timeout, cancel_timeout, TxOwnershipTable},
+        },
+        setup::steps::{
+            garbler_step::{GCConfiguration, GC_INPUT_PK, GC_OUTPUT_PK, GC_PUBLIC_DATA},
+            SetupStepName,
         },
         variables::{Globals, PartialUtxo, VariableTypes},
     },
@@ -197,36 +209,10 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             VariableTypes::PubKey(speedup),
         )?;
 
-        let mut keys: Vec<(String, PublicKeyType)> = vec![
+        let keys: Vec<(String, PublicKeyType)> = vec![
             (AGGREGATED_KEY.to_string(), aggregated_1.into()),
             (SPEEDUP_KEY.to_string(), speedup.into()),
         ];
-
-        if self.role() == ParticipantRole::Prover {
-            set_inputs(
-                &self.ctx.id,
-                &program_context,
-                vec![("prover_input", 0u8).into()],
-            )?;
-        } else {
-            set_inputs(
-                &self.ctx.id,
-                &program_context,
-                vec![("verifier_preimage", 0u8).into()],
-            )?;
-        }
-
-        let key_manager = &mut program_context.key_manager;
-
-        // TODO: import them via the job dispatcher(?)
-        if self.role() == ParticipantRole::Prover {
-            let pub_key = key_manager.next_lamport(8, LamportType::SHA256)?;
-            keys.push(("prover_input".to_string(), pub_key.into()));
-        } else {
-            let pub_key = key_manager.next_lamport(8, LamportType::SHA256)?;
-
-            keys.push(("verifier_preimage".to_string(), pub_key.into()));
-        }
 
         Ok(ParticipantKeys::new(keys, vec![AGGREGATED_KEY.to_string()]))
     }
@@ -380,6 +366,11 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
+        let gc_input_pk = context
+            .globals
+            .get_var_or_err(&self.context().id, GC_INPUT_PK)?
+            .lamport_pubkey()?;
+
         self.add_connection_with_scripts(
             context,
             aggregated,
@@ -390,15 +381,19 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             CHALLENGE,
             INPUT,
             &claim_verifier,
-            Self::lamport_check(
+            vec![scripts::verify_lamport_signatures(
                 prover_speedup_pub,
+                &vec![("prover_input", &gc_input_pk)],
                 SignMode::Single,
-                &keys[0],
-                &vec!["prover_input"],
                 None,
-            )?,
+            )?],
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
+
+        let gc_output_pk = context
+            .globals
+            .get_var_or_err(&self.context().id, GC_OUTPUT_PK)?
+            .lamport_pubkey()?;
 
         self.add_connection_with_scripts(
             context,
@@ -410,13 +405,12 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             INPUT,
             EQUIVOCATION,
             &claim_prover,
-            Self::lamport_check(
+            vec![scripts::verify_lamport_signatures(
                 verifier_speedup_pub,
+                &vec![("circuit_output", &gc_output_pk)],
                 SignMode::Single,
-                &keys[1],
-                &vec!["verifier_preimage"],
-                None,
-            )?,
+                Some(vec![Self::get_expects_false_script()]),
+            )?],
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
@@ -603,15 +597,25 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                         self.dispatch(program_context, tx, Some(speedup), None)?;
                     }
                     (INPUT, ParticipantRole::Verifier) => {
-                        let (tx, speedup) =
-                            self.get_tx_with_speedup_data(program_context, EQUIVOCATION)?;
-
                         let sigs =
                             self.decode_lamport_for_speedup(tx_id, vout, &name, transaction)?;
-                        println!("{:?}", sigs);
-                        // TODO: evaluate garbled circuit and get output
 
-                        self.dispatch(program_context, tx, Some(speedup), None)?;
+                        let protocol_id = &self.ctx.id;
+                        let config = GCConfiguration::load(protocol_id, &program_context.globals)?;
+                        let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
+
+                        let public_data: GCJobProveResult = serde_json::from_str(
+                            &program_context
+                                .globals
+                                .get_var_or_err(protocol_id, GC_PUBLIC_DATA)?
+                                .string()?,
+                        )?;
+
+                        self.execute_job(
+                            program_context,
+                            &program_context.components_config.garbler,
+                            GarbledJobType::Evaluate(config.circuit, public_data, sigs, output_dir),
+                        )?;
                     }
                     (EQUIVOCATION, ParticipantRole::Verifier) => {
                         let tx = self.get_signed(
@@ -635,6 +639,15 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
     fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
         Ok(())
     }
+
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+        Some(vec![
+            SetupStepName::Garbler,
+            SetupStepName::Keys,
+            SetupStepName::Nonces,
+            SetupStepName::Signatures,
+        ])
+    }
 }
 
 impl WithClaimGateConfig for GCDisputeResolutionProtocol {
@@ -653,6 +666,33 @@ impl WithClaimGateConfig for GCDisputeResolutionProtocol {
 impl GCDisputeResolutionProtocol {
     pub fn new(ctx: ProtocolContext) -> Self {
         Self { ctx }
+    }
+
+    pub fn execution_result(
+        &self,
+        result: Value,
+        context: &ProgramContext,
+    ) -> Result<(), BitVMXError> {
+        let result: GCJobEvaluationResult = serde_json::from_value(result)?;
+
+        // TODO: don't send if output is correct
+        // We assume there is a single output
+        let signature = LamportSignature::from_bytes(&result.output[0], 1, LamportType::SHA256)?;
+        let tx = self.get_signed(context, EQUIVOCATION, vec![(0, true).into()])?;
+        let protocol = self.load_protocol()?;
+        let (output_type, _) = protocol.get_script_from_output(EQUIVOCATION, 0)?;
+
+        let sp = SpeedupData::new_with_input(
+            self.partial_utxo_from(&tx, 0),
+            output_type,
+            vec![signature],
+            0,
+            true,
+        );
+
+        self.dispatch(context, tx, Some(sp), None)?;
+
+        Ok(())
     }
 
     fn lamport_check<T: AsRef<str> + std::fmt::Debug>(
@@ -714,5 +754,14 @@ impl GCDisputeResolutionProtocol {
         table.add(VERIFIER_FINAL, Verifier);
 
         table
+    }
+
+    fn get_expects_false_script() -> ScriptBuf {
+        let mut stack = StackTracker::new();
+        stack.define(1, "bit");
+        stack.op_not();
+        stack.op_verify();
+
+        stack.get_script()
     }
 }
