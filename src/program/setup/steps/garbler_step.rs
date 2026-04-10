@@ -192,6 +192,12 @@ impl SetupStep for GarblerStep {
             info!(" result[\"valid\"]: {}", result["valid"]);
             info!(" result[\"proofs_linked\"]: {}", result["proofs_linked"]);
 
+            if !result["valid"].as_bool().unwrap_or(false) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "The provided proof is invalid: {result}"
+                )));
+            }
+
             context
                 .globals
                 .set_var(protocol_id, GC_CAN_CONTINUE, VariableTypes::Bool(true))?;
