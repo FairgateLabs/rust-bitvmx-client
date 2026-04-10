@@ -24,7 +24,7 @@ pub fn test_gc_generation() -> Result<()> {
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, true, None)?;
+    let mut helper = TestHelper::new(network, false, None)?;
 
     // Obtain communication addresses from all participants
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
