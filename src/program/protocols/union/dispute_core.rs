@@ -3781,10 +3781,11 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "{} {} with txid: {}",
+            "{} {} with txid: {}. Block height: {:?}",
             tx_name,
             get_dispatch_action(block_height),
-            txid
+            txid,
+            block_height
         );
 
         Ok(())
