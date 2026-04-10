@@ -185,7 +185,6 @@ impl Member {
     //         communication_pubkey.to_string()
     //     );
 
-
     //     Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     // }
 
@@ -263,6 +262,13 @@ impl Member {
             committee_id,
             addresses,
         )?;
+
+        let wait_time = total_setups as u64 * 20; // Assuming each setup takes around 5 seconds, adjust as needed
+        info!(
+            "Waiting {} seconds to complete {} dispute channel setups...",
+            wait_time, total_setups
+        );
+        thread::sleep(std::time::Duration::from_secs(wait_time));
 
         for i in 0..total_setups {
             info!(
