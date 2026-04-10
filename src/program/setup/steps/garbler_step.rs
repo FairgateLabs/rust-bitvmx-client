@@ -239,6 +239,9 @@ impl SetupStep for GarblerStep {
             }
             info!("Received expected empty message from Garbler step for non-prover role. Protocol ID: {}", protocol_id);
 
+            // The prover MUST NOT continue until the verifier has finished verifying the proof.
+            // The verifier MUST signal completion by returning an empty successful result from receive_dispatcher_result.
+            // The verifier MUST NOT produce any data in generate_data, it MUST only generate data after successful verification.
             if config.role == ParticipantRole::Prover {
                 context.globals.set_var(
                     &protocol_id,
