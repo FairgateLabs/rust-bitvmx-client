@@ -30,7 +30,7 @@ use bitvmx_client::{
         variables::PartialUtxo,
     },
     spv_proof::BtcTxSPVProof,
-    types::OutgoingBitVMXApiMessages::*,
+    types::{OutgoingBitVMXApiMessages::*, OutputPatternFilter, RSK_PEGIN_TAG},
 };
 
 const KEY_SPEND_FEE: u64 = 135;
@@ -106,9 +106,16 @@ impl User {
     ) -> Result<(Txid, Transaction)> {
         info!(id = self.id, "Requesting pegin");
 
-        // Enable RSK pegin monitoring using the public API
+        // Enable output pattern monitoring for RSK pegin transactions
         //TOOD: Define proper confirmation threshold
-        self.bitvmx.subscribe_to_rsk_pegin(Some(1))?;
+        self.bitvmx.subscribe_to_output_pattern(
+            OutputPatternFilter {
+                output_index: 1,
+                tag: RSK_PEGIN_TAG.to_vec(),
+                max_outputs: None,
+            },
+            Some(1),
+        )?;
 
         // Create a proper RSK pegin transaction and send it as if it was a user transaction
         let packet_number = 0;
@@ -145,8 +152,8 @@ impl User {
             request_pegin_txid
         );
 
-        // Wait for Bitvmx news PeginTransactionFound message
-        let (_, _) = wait_until_msg!(&self.bitvmx, PeginTransactionFound(_txid, _tx_status) => (_txid, _tx_status));
+        // Wait for Bitvmx news OutputPatternTransactionFound message
+        let (_, _, _) = wait_until_msg!(&self.bitvmx, OutputPatternTransactionFound(_txid, _tx_status, _tag) => (_txid, _tx_status, _tag));
         info!("RSK request pegin completed");
         info!("Waiting for SPV proof...");
 
