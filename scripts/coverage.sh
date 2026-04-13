@@ -9,12 +9,20 @@
 #   --nightly           Run all tests including #[ignore] ones (test_full, test_drp)
 #                       Requires bitcoind running via docker-compose
 #   --test <name>       Run a single #[ignore] test by name (e.g. --test test_full)
+#                       Use file:name syntax to target a specific test file:
+#                         --test fulltest:test_full   (runs test_full from fulltest.rs only)
+#                         --test test_full            (runs any test matching "test_full")
 #   --open              Open HTML report in browser after generation (default: true)
 #   --no-open           Do not open the browser
 #   --out <dir>         Output directory for the report (default: target/coverage)
 #   --exclude <regex>   Additional paths to exclude (appended to defaults)
 #   --summary           Print text summary to stdout (in addition to HTML)
 #   --help              Show this help
+#
+# EXAMPLES:
+#   ./scripts/coverage.sh                                    # unit tests coverage
+#   ./scripts/coverage.sh --test fulltest:test_full --summary  # test_full with summary
+#   ./scripts/coverage.sh --no-open --summary                # unit tests, no browser
 
 set -euo pipefail
 
@@ -145,19 +153,32 @@ run_nightly() {
 }
 
 run_single() {
-    require_bitcoind
-    info "Mode: single test — ${SINGLE_TEST}"
+    # Parse optional file:name syntax (e.g. "fulltest:test_full")
+    local test_file=""
+    local test_name="$SINGLE_TEST"
+    if [[ "$SINGLE_TEST" == *:* ]]; then
+        test_file="${SINGLE_TEST%%:*}"
+        test_name="${SINGLE_TEST##*:}"
+    fi
+
+    info "Mode: single test — ${test_name}${test_file:+ (from $test_file)}"
     info "Exclude regex: ${EXCLUDE_REGEX}"
     info "Output: ${REAL_DIR}/${OUT_DIR}/html/index.html"
     echo ""
 
-    export GITHUB_ACTIONS=true
-
     cd "$REAL_DIR"
-    cargo llvm-cov \
-        "${BASE_FLAGS[@]}" \
-        --html \
-        -- "$SINGLE_TEST" --ignored --test-threads=1 --nocapture
+    if [[ -n "$test_file" ]]; then
+        cargo llvm-cov \
+            "${BASE_FLAGS[@]}" \
+            --html \
+            --test "$test_file" \
+            -- "$test_name" --ignored --test-threads=1 --nocapture
+    else
+        cargo llvm-cov \
+            "${BASE_FLAGS[@]}" \
+            --html \
+            -- "$test_name" --ignored --test-threads=1 --nocapture
+    fi
 }
 
 restart_bitcoind() {
