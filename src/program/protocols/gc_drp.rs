@@ -615,6 +615,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                             program_context,
                             &program_context.components_config.garbler,
                             GarbledJobType::Evaluate(config.circuit, public_data, sigs, output_dir),
+                            "verifier_evaluate_circuit"
                         )?;
                     }
                     (EQUIVOCATION, ParticipantRole::Verifier) => {
