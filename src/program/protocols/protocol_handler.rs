@@ -607,7 +607,6 @@ pub trait ProtocolHandler {
                     .next()
                     .ok_or(BitVMXError::ScriptSignatureMissing(key.name().to_string()))?;
 
-                // TODO: Should we pad the signature? will it always be 32 bytes long? even if starts with 0s?
                 signatures.push(signature.try_into()?);
             }
         }
