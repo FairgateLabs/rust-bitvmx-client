@@ -19,7 +19,7 @@ use crate::{
     signature_verifier::SignatureVerifier,
     types::{
         IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        RSK_PEGIN_TAG, PROGRAM_TYPE_AGGREGATED_KEY,
+        PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -611,7 +611,10 @@ impl BitVMX {
                 }
                 MonitorNews::OutputPatternTransaction(tx_id, tx_status, tag) => {
                     if tag == RSK_PEGIN_TAG {
-                        let legacy = OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status.clone());
+                        let legacy = OutgoingBitVMXApiMessages::PeginTransactionFound(
+                            tx_id,
+                            tx_status.clone(),
+                        );
                         let data = serde_json::to_string(&legacy)?;
                         self.program_context
                             .broker_channel
@@ -1251,7 +1254,10 @@ impl BitVMX {
     ) -> Result<(), BitVMXError> {
         self.program_context
             .bitcoin_coordinator
-            .monitor(TypesToMonitor::OutputPattern(filter, confirmation_threshold))?;
+            .monitor(TypesToMonitor::OutputPattern(
+                filter,
+                confirmation_threshold,
+            ))?;
         Ok(())
     }
 
@@ -1511,16 +1517,15 @@ impl BitVMX {
             IncomingBitVMXApiMessages::SubscribeToOutputPattern(filter, confirmation_threshold) => {
                 self.subscribe_to_output_pattern(filter, confirmation_threshold)?
             }
-            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
-                self.subscribe_to_output_pattern(
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => self
+                .subscribe_to_output_pattern(
                     bitcoin_coordinator::OutputPatternFilter {
                         output_index: 1,
                         tag: RSK_PEGIN_TAG.to_vec(),
                         max_outputs: None,
                     },
                     confirmation_threshold,
-                )?
-            }
+                )?,
             IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
 
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
