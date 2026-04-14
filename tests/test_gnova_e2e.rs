@@ -62,7 +62,6 @@ pub fn test_gnova_commands() -> Result<()> {
 
     // --- Step 1: Prove (generates both GC and Lamport proofs) ---
     let prove_job = GarbledJobType::Prove(
-        INPUT_BITS.to_vec(),
         TEST_CIRCUIT_PATH.to_string(),
         format!("{}/prove", output_dir),
     );
@@ -276,7 +275,6 @@ fn run_garbled_client_test() -> Result<()> {
     let prove_job = DispatcherJob {
         job_id: "prove_e2e".to_string(),
         job_type: GarbledJobType::Prove(
-            INPUT_BITS.to_vec(),
             TEST_CIRCUIT_PATH.to_string(),
             format!("{}/prove", output_dir),
         ),
@@ -438,7 +436,6 @@ pub fn test_full_protocol() -> Result<()> {
     // 1. Generate GC + Lamport proofs
     info!("[prover] Generating GC and Lamport proofs...");
     let prove_job = GarbledJobType::Prove(
-        INPUT_BITS.to_vec(),
         TEST_CIRCUIT_PATH.to_string(),
         format!("{}/prove", output_dir),
     );

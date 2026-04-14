@@ -80,8 +80,6 @@ impl SetupStep for GarblerStep {
         let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
         std::fs::create_dir_all(&output_dir)?;
 
-        //TODO: Input bytes will be removed
-        const INPUT_BYTES: &[u8] = &[0, 0, 1];
         let prove_job = DispatcherJob {
             job_id: Context::SetupStep(
                 protocol_id,
@@ -90,7 +88,6 @@ impl SetupStep for GarblerStep {
             )
             .to_string()?,
             job_type: GarbledJobType::Prove(
-                INPUT_BYTES.to_vec(),
                 config.circuit.clone(),
                 output_dir.clone(),
             ),
