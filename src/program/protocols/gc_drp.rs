@@ -615,7 +615,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                             program_context,
                             &program_context.components_config.garbler,
                             GarbledJobType::Evaluate(config.circuit, public_data, sigs, output_dir),
-                            "verifier_evaluate_circuit"
+                            "verifier_evaluate_circuit",
                         )?;
                     }
                     (EQUIVOCATION, ParticipantRole::Verifier) => {
@@ -672,8 +672,21 @@ impl GCDisputeResolutionProtocol {
     pub fn execution_result(
         &self,
         result: Value,
+        job_context: &Context,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        // Dedup guard: if this step was already processed, skip it
+        let dedup_key = if let Context::ProgramStep(_, ref step) = job_context {
+            let key = format!("job_done:{}", step);
+            if context.globals.contains_var(&self.ctx.id, &key)? {
+                warn!("Duplicate job result for step '{}', skipping", step);
+                return Ok(());
+            }
+            Some(key)
+        } else {
+            None
+        };
+
         let result: GCJobEvaluationResult = serde_json::from_value(result)?;
 
         // TODO: don't send if output is correct
@@ -692,6 +705,13 @@ impl GCDisputeResolutionProtocol {
         );
 
         self.dispatch(context, tx, Some(sp), None)?;
+
+        // Mark this step as processed to prevent duplicate handling
+        if let Some(key) = dedup_key {
+            context
+                .globals
+                .set_var(&self.ctx.id, &key, VariableTypes::Bool(true))?;
+        }
 
         Ok(())
     }
