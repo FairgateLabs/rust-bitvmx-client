@@ -8,10 +8,12 @@
 #   --unit              Run only unit/doc tests (default, fast, no bitcoind needed)
 #   --nightly           Run all tests including #[ignore] ones (test_full, test_drp)
 #                       Requires bitcoind running via docker-compose
-#   --test <name>       Run a single #[ignore] test by name (e.g. --test test_full)
-#                       Use file:name syntax to target a specific test file:
-#                         --test fulltest:test_full   (runs test_full from fulltest.rs only)
-#                         --test test_full            (runs any test matching "test_full")
+#   --test <spec>       Run one or more #[ignore] tests. Repeatable. Use file:name syntax:
+#                         --test fulltest:test_full
+#                         --test union_test:test_union_fund
+#                         --test fulltest:test_full --test union_test:test_union_fund
+#                       Coverage is merged across all specified tests.
+#                       Without file: prefix, matches any test with that name.
 #   --open              Open HTML report in browser after generation (default: true)
 #   --no-open           Do not open the browser
 #   --out <dir>         Output directory for the report (default: target/coverage)
@@ -20,9 +22,15 @@
 #   --help              Show this help
 #
 # EXAMPLES:
-#   ./scripts/coverage.sh                                    # unit tests coverage
-#   ./scripts/coverage.sh --test fulltest:test_full --summary  # test_full with summary
-#   ./scripts/coverage.sh --no-open --summary                # unit tests, no browser
+#   ./scripts/coverage.sh                                           # unit tests coverage
+#   ./scripts/coverage.sh --test fulltest:test_full --summary       # 1 client test
+#   ./scripts/coverage.sh --test union_test:test_union_fund         # 1 union test
+#   ./scripts/coverage.sh \
+#     --test fulltest:test_full \
+#     --test integration:test_drp \
+#     --test union_test:test_union_fund \
+#     --summary                                                      # N tests merged
+#   ./scripts/coverage.sh --no-open --summary                       # unit tests, no browser
 
 set -euo pipefail
 
@@ -32,18 +40,20 @@ OPEN=true
 OUT_DIR="target/coverage"
 EXTRA_EXCLUDE=""
 SUMMARY=false
-SINGLE_TEST=""
+TESTS=()  # accumulates multiple --test specs
 
-# Paths excluded from coverage measurement (mirrors CI coverage_exclude)
-# Regex passed to --ignore-filename-regex
-DEFAULT_EXCLUDE="tests/|examples/|build\.rs|src/main\.rs"
+# Paths excluded from coverage measurement.
+# Regex passed to --ignore-filename-regex (LLVM regex: matching files are excluded).
+# Excludes: test/example files, workspace dependencies (all workspace members except
+# rust-bitvmx-client itself), and crates.io registry deps.
+DEFAULT_EXCLUDE="tests/|examples/|build\.rs|src/main\.rs|BitVMX-CPU/|rust-bitcoin-coordinator/|rust-bitcoin-indexer/|rust-bitcoind/|rust-bitvmx-bitcoin-rpc/|rust-bitvmx-broker/|rust-bitvmx-job-dispatcher/|rust-bitvmx-key-manager/|rust-bitvmx-protocol-builder/|rust-bitvmx-settings/|rust-bitvmx-storage-backend/|rust-bitvmx-transaction-monitor/|rust-bitvmx-wallet/|rust-bitvmx-gc/|\.cargo/registry/"
 
 # ── Arg parsing ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --unit)       MODE="unit"        ; shift ;;
         --nightly)    MODE="nightly"     ; shift ;;
-        --test)       MODE="single"; SINGLE_TEST="$2"; shift 2 ;;
+        --test)       MODE="multi"; TESTS+=("$2"); shift 2 ;;
         --open)       OPEN=true          ; shift ;;
         --no-open)    OPEN=false         ; shift ;;
         --out)        OUT_DIR="$2"       ; shift 2 ;;
@@ -152,33 +162,61 @@ run_nightly() {
     generate_report
 }
 
-run_single() {
-    # Parse optional file:name syntax (e.g. "fulltest:test_full")
-    local test_file=""
-    local test_name="$SINGLE_TEST"
-    if [[ "$SINGLE_TEST" == *:* ]]; then
-        test_file="${SINGLE_TEST%%:*}"
-        test_name="${SINGLE_TEST##*:}"
+run_multi() {
+    local total=${#TESTS[@]}
+
+    if [[ $total -eq 0 ]]; then
+        warn "No tests specified. Use --test <file:name>"
+        exit 1
     fi
 
-    info "Mode: single test — ${test_name}${test_file:+ (from $test_file)}"
+    info "Mode: ${total} test(s) — coverage merged"
     info "Exclude regex: ${EXCLUDE_REGEX}"
     info "Output: ${REAL_DIR}/${OUT_DIR}/html/index.html"
     echo ""
 
-    cd "$REAL_DIR"
-    if [[ -n "$test_file" ]]; then
-        cargo llvm-cov \
-            "${BASE_FLAGS[@]}" \
-            --html \
-            --test "$test_file" \
-            -- "$test_name" --ignored --test-threads=1 --nocapture
-    else
-        cargo llvm-cov \
-            "${BASE_FLAGS[@]}" \
-            --html \
-            -- "$test_name" --ignored --test-threads=1 --nocapture
-    fi
+    local count=0
+    for spec in "${TESTS[@]}"; do
+        local test_file=""
+        local test_name="$spec"
+        if [[ "$spec" == *:* ]]; then
+            test_file="${spec%%:*}"
+            test_name="${spec##*:}"
+        fi
+        count=$((count + 1))
+
+        info "($count/$total) Running ${test_name}${test_file:+ (from $test_file)}..."
+
+        cd "$REAL_DIR"
+        local extra_flags=()
+        [[ -n "$test_file" ]] && extra_flags+=(--test "$test_file")
+
+        if [[ $total -eq 1 ]]; then
+            # Single test: generate report directly
+            cargo llvm-cov \
+                "${BASE_FLAGS[@]}" \
+                --html \
+                "${extra_flags[@]}" \
+                -- "$test_name" --ignored --test-threads=1 --nocapture
+        elif [[ $count -lt $total ]]; then
+            # Not the last: accumulate profdata only
+            cargo llvm-cov \
+                "${BASE_FLAGS[@]}" \
+                --no-report \
+                "${extra_flags[@]}" \
+                -- "$test_name" --ignored --test-threads=1 --nocapture
+        else
+            # Last test: accumulate then generate report
+            cargo llvm-cov \
+                "${BASE_FLAGS[@]}" \
+                --no-report \
+                "${extra_flags[@]}" \
+                -- "$test_name" --ignored --test-threads=1 --nocapture
+            generate_report
+        fi
+
+        success "  ${test_name} done"
+    done
 }
 
 restart_bitcoind() {
@@ -239,9 +277,9 @@ echo ""
 mkdir -p "${REAL_DIR}/${OUT_DIR}"
 
 case "$MODE" in
-    unit)    run_unit   ;;
+    unit)    run_unit    ;;
     nightly) run_nightly ;;
-    single)  run_single  ;;
+    multi)   run_multi   ;;
 esac
 
 if [[ "$SUMMARY" == "true" ]]; then
