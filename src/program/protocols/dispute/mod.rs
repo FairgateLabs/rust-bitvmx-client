@@ -39,6 +39,7 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
@@ -53,12 +54,12 @@ use crate::{
                 },
             },
             protocol_handler::{
-                ProtocolContext, ProtocolHandler, WithClaimGateConfig, timeout_input_tx
+                timeout_input_tx, ProtocolContext, ProtocolHandler, WithClaimGateConfig,
             },
         },
         variables::VariableTypes,
     },
-    types::{PROGRAM_TYPE_DRP, ProgramContext},
+    types::{ProgramContext, PROGRAM_TYPE_DRP},
 };
 
 pub const EXTERNAL_START: &str = "EXTERNAL_START";
@@ -1513,9 +1514,10 @@ impl DisputeResolutionProtocol {
     pub fn execution_result(
         &self,
         result: Value,
+        job_context: &Context,
         context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
-        execution_result(&self.ctx.id, &self, result, context)
+        execution_result(&self.ctx.id, &self, result, job_context, context)
     }
 
     fn get_execution_path(&self) -> Result<String, BitVMXError> {

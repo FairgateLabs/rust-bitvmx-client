@@ -69,7 +69,7 @@ impl Drop for BitcoindGuard {
     }
 }
 
-pub const LOCAL_SLEEP_MS: u64 = 40;
+pub const LOCAL_SLEEP_MS: u64 = 100;
 
 pub const CI_SLEEP_MS: u64 = 1000;
 

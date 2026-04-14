@@ -16,8 +16,8 @@ use crate::{
     program::{
         participant::ParticipantRole,
         protocols::union::types::{
-            PenalizedMember, StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID, MY_IDX,
-            OP_CLAIM_GATE, PAIRWISE_DISPUTE_KEY, WT_CLAIM_GATE,
+            Committee, PenalizedMember, StreamSettings, UnionSettings, GLOBAL_SETTINGS_UUID,
+            MY_IDX, OP_CLAIM_GATE, PAIRWISE_DISPUTE_KEY, SPEEDUP_VALUE, WT_CLAIM_GATE,
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -632,4 +632,30 @@ pub fn get_my_idx(context: &ProgramContext, pid: Uuid) -> Result<usize, BitVMXEr
             pid
         ))),
     }
+}
+
+pub fn add_speedups(
+    protocol: &mut protocol_builder::builder::Protocol,
+    tx_name: &str,
+    committee: &Committee,
+) -> Result<(), BitVMXError> {
+    for member in &committee.members {
+        protocol.add_transaction_output(
+            tx_name,
+            &OutputType::segwit_key(SPEEDUP_VALUE, &member.dispute_key)?,
+        )?;
+    }
+    Ok(())
+}
+
+pub fn get_reveal_output_value(members_count: usize) -> u64 {
+    let two_dispute_penalization_fee = estimate_fee(2, members_count, 1); // All speed up outputs
+    let reveal_output_value =
+        (SPEEDUP_VALUE * members_count as u64 + two_dispute_penalization_fee) / 2;
+    // With two reveal outputs should be able to cover the fees of the TWO_DISPUTE_PENALIZATION_TX and its speed up outputs
+    reveal_output_value
+}
+
+pub fn get_op_disabler_directory_output_value(members_count: usize) -> u64 {
+    (SPEEDUP_VALUE * members_count as u64 + estimate_fee(2, members_count, 1)) / 2
 }

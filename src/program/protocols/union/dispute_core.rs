@@ -9,11 +9,12 @@ use crate::{
             protocol_handler::{action_wins_prefix, ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    collect_input_signatures, create_transaction_reference, double_indexed_name,
-                    estimate_fee, extract_double_index, extract_index,
+                    add_speedups, collect_input_signatures, create_transaction_reference,
+                    double_indexed_name, estimate_fee, extract_double_index, extract_index,
                     extract_index_from_claim_gate, get_accept_pegin_pid, get_dispatch_action,
                     get_dispute_channel_pid, get_dispute_core_pid, get_dispute_pair_key_name,
                     get_full_penalization_pid, get_initial_deposit_output_type, get_my_idx,
+                    get_op_disabler_directory_output_value, get_reveal_output_value,
                     get_stream_setting, indexed_name, load_penalized_member, load_union_settings,
                     set_my_idx, triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
@@ -442,7 +443,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         );
 
         let mut reveal_output: OutputType = OutputType::taproot(
-            AmountType::Auto,
+            get_reveal_output_value(committee.members.len()),
             &committee.dispute_aggregated_key,
             &[operator_won_script],
         )?;
@@ -471,11 +472,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                     &settings,
                 )?;
 
-                self.create_two_dispute_penalization(
-                    &mut protocol,
-                    i,
-                    &committee.take_aggregated_key,
-                )?;
+                self.create_two_dispute_penalization(&mut protocol, i, &committee)?;
             }
         }
 
@@ -608,6 +605,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
         context: String,
         program_context: &ProgramContext,
     ) -> Result<(), BitVMXError> {
+        info!(
+            "Notified of external transaction: {}, Context: {}",
+            tx_id, context
+        );
+
         let (pid, name) = match Context::from_string(&context)? {
             Context::Protocol(program_id, name) => (program_id, name),
             _ => {
@@ -620,10 +622,14 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let protocol = self.load_protocol_by_name(&name, pid)?;
         let tx_name = protocol.get_transaction_name_by_id(tx_id)?;
 
+        info!("Notified of external transaction: {}", tx_name);
+
         if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Prover)) {
             self.handle_action_wins(program_context, &tx_name, ParticipantRole::Prover, pid)?;
         } else if tx_name.starts_with(&action_wins_prefix(&ParticipantRole::Verifier)) {
             self.handle_action_wins(program_context, &tx_name, ParticipantRole::Verifier, pid)?;
+        } else if tx_name == dispute::START_CH {
+            self.handle_start_challenge(program_context, pid)?;
         }
 
         Ok(())
@@ -860,7 +866,7 @@ impl DisputeCoreProtocol {
                     protocol,
                     &init_challenge_name,
                     &wt_claim_name,
-                    (wt_dispute_key, self.get_sign_mode(data.member_index)),
+                    (wt_speedup_key, self.get_sign_mode(data.member_index)),
                     &committee.dispute_aggregated_key,
                     CLAIM_GATE_FEE,
                     DUST_VALUE,
@@ -884,7 +890,7 @@ impl DisputeCoreProtocol {
                     protocol,
                     &init_challenge_name,
                     &op_claim_name,
-                    (op_dispute_key, self.get_sign_mode(op_index)),
+                    (op_speedup_key, self.get_sign_mode(op_index)),
                     &committee.dispute_aggregated_key,
                     CLAIM_GATE_FEE,
                     DUST_VALUE,
@@ -1020,10 +1026,10 @@ impl DisputeCoreProtocol {
             .filter(|m| m.role == ParticipantRole::Prover)
             .count() as u64;
 
-        let wt_disabler_directory_fee = estimate_fee(2, op_count as usize * 2, 1);
+        let wt_disabler_directory_fee = estimate_fee(2, op_count as usize * 2 + 1, 1);
 
         let disabler_directory_funds_output = OutputType::taproot(
-            DUST_VALUE * op_count * 2 as u64 + wt_disabler_directory_fee,
+            SPEEDUP_VALUE * op_count * 2 as u64 + wt_disabler_directory_fee,
             &committee.dispute_aggregated_key,
             &[],
         )?;
@@ -1279,7 +1285,7 @@ impl DisputeCoreProtocol {
         &self,
         protocol: &mut Protocol,
         dispute_core_index: usize,
-        take_aggregated_key: &PublicKey,
+        committee: &Committee,
     ) -> Result<(), BitVMXError> {
         let last_reveal = indexed_name(REVEAL_INPUT_TX, dispute_core_index);
 
@@ -1290,10 +1296,8 @@ impl DisputeCoreProtocol {
 
         for i in 0..dispute_core_index {
             let prev_reveal = indexed_name(REVEAL_INPUT_TX, i);
-            let two_dispute_penalization = format!(
-                "{}_{}_{}",
-                TWO_DISPUTE_PENALIZATION_TX, i, dispute_core_index
-            );
+            let two_dispute_penalization =
+                double_indexed_name(TWO_DISPUTE_PENALIZATION_TX, i, dispute_core_index);
 
             protocol.add_connection(
                 "prev_reveal",
@@ -1325,10 +1329,7 @@ impl DisputeCoreProtocol {
                 None,
             )?;
 
-            protocol.add_transaction_output(
-                &two_dispute_penalization,
-                &OutputType::taproot(AmountType::Auto, &take_aggregated_key, &[])?,
-            )?;
+            add_speedups(protocol, &two_dispute_penalization, committee)?;
         }
 
         Ok(())
@@ -1354,8 +1355,9 @@ impl DisputeCoreProtocol {
             // Operator output for disabler directory
             // NOTE: 1 additional outputs: speedup.
             let directory_fee = estimate_fee(2, committee.packet_size as usize + 1, 1);
-            let disabler_directory_amount =
-                committee.packet_size as u64 * DUST_VALUE + SPEEDUP_VALUE + directory_fee;
+            let disabler_directory_amount = committee.packet_size as u64 * get_op_disabler_directory_output_value(committee.members.len()) // The other half of SPEEDUP_VALUE came from REVEAL_INPUT_TX
+                    + SPEEDUP_VALUE
+                    + directory_fee;
             protocol.add_transaction_output(
                 &OP_INITIAL_DEPOSIT_TX,
                 &OutputType::taproot(
@@ -1727,10 +1729,10 @@ impl DisputeCoreProtocol {
             .pubkey()?)
     }
 
-    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
-        let committee = self.committee(context)?;
-        Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
-    }
+    // fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    //     let committee = self.committee(context)?;
+    //     Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
+    // }
 
     fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
         Ok(self.dispute_core_data(context)?.committee_id)
@@ -1858,6 +1860,43 @@ impl DisputeCoreProtocol {
             .map(|(op_index, _)| op_index);
 
         Ok(maybe_index)
+    }
+
+    fn handle_start_challenge(
+        &self,
+        context: &ProgramContext,
+        pid: Uuid,
+    ) -> Result<(), BitVMXError> {
+        info!("Handling start challenge. PID: {}", pid);
+
+        // Need to load my_idx from storage because self.ctx.my_idx has my index on DRP
+        let my_idx = get_my_idx(context, self.ctx.id)?;
+        let wt_index = self.dispute_core_data(context)?.member_index;
+
+        if wt_index == my_idx {
+            info!("Start challenge triggered by watchtower for PID {}. Ignoring since I'm the watchtower.", pid);
+            return Ok(());
+        }
+
+        let drp_op_index = match self.get_drp_op_index(context, pid, wt_index)? {
+            Some(index) => index,
+            None => {
+                error!("PID {} do not match DisputeChannel program", pid);
+                return Ok(());
+            }
+        };
+
+        info!(
+            "DisputeChannel operator index for PID {} is {}",
+            pid, drp_op_index
+        );
+
+        self.cancel_dispatch(
+            context,
+            &double_indexed_name(WT_NO_CHALLENGE_TX, wt_index, drp_op_index),
+            None,
+        );
+        Ok(())
     }
 
     fn handle_action_wins(
@@ -2015,7 +2054,7 @@ impl DisputeCoreProtocol {
                     tx.compute_txid(),
                     tx.output.len() as u32 - 1,
                     SPEEDUP_VALUE,
-                    &self.my_dispute_key(context)?,
+                    &self.my_speedup_key(context)?,
                 )
                 .into(),
             )
@@ -2052,7 +2091,7 @@ impl DisputeCoreProtocol {
         let data = self.dispute_core_data(context)?;
         let base = double_indexed_name(prefix, data.member_index, op_index);
         let tx_name = action.tx_name(&base);
-        info!(id = self.ctx.my_idx, "Auto-dispatching {}", tx_name);
+        info!(id = self.ctx.my_idx, "Claim gate dispatching {}", tx_name);
 
         let (tx, speedup) =
             self.claim_gate_tx(context, &tx_name, &action.inputs(), action.with_speedup())?;
@@ -2084,7 +2123,7 @@ impl DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         info!(id = self.ctx.my_idx, "Handling {}", tx_name);
         let settings = self.load_stream_setting(context)?;
-        let (_, op_index) = extract_double_index(tx_name)?;
+        let (wt_index, op_index) = extract_double_index(tx_name)?;
 
         let protocol = self.load_protocol()?;
         self.decode_witness_for_tx(
@@ -2110,6 +2149,12 @@ impl DisputeCoreProtocol {
         )?;
 
         if self.is_my_dispute_core(context)? {
+            self.cancel_dispatch(
+                context,
+                &double_indexed_name(OP_NO_COSIGN_TX, wt_index, op_index),
+                None,
+            );
+
             let drp_pid =
                 get_dispute_channel_pid(self.committee_id(context)?, op_index, self.ctx.my_idx);
             let drp_protocol = self.load_protocol_by_name(PROGRAM_TYPE_DRP, drp_pid)?;
@@ -2117,7 +2162,7 @@ impl DisputeCoreProtocol {
             let (tx, speedup) = drp_protocol.get_transaction_by_name(dispute::START_CH, context)?;
 
             self.log_and_dispatch(context, dispute::START_CH, tx, speedup, None, drp_pid)?;
-        } else {
+        } else if op_index == self.ctx.my_idx {
             let block_height =
                 Some(self.get_dispatch_height(tx_status, settings.wt_no_challenge_timelock)?);
             let data = self.dispute_core_data(context)?;
@@ -2452,6 +2497,12 @@ impl DisputeCoreProtocol {
             return Ok(());
         }
 
+        self.cancel_dispatch(
+            context,
+            &indexed_name(INPUT_NOT_REVEALED_TX, slot_index),
+            None,
+        );
+
         let data = self.dispute_core_data(context)?;
 
         // WT: Dispatch disabler if operator is already penalized.
@@ -2578,6 +2629,8 @@ impl DisputeCoreProtocol {
                 "This is my dispute_core, checking for operator take dispatch for slot {}",
                 slot_index
             );
+
+            self.cancel_operator_take(context, slot_index);
             self.dispatch(context, DisputeCoreTxType::RevealInput { slot_index })?;
         } else {
             // Schedule input not revealed dispatch transaction
@@ -2595,6 +2648,27 @@ impl DisputeCoreProtocol {
         }
 
         Ok(())
+    }
+
+    fn cancel_operator_take(&self, context: &ProgramContext, slot_index: usize) {
+        let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
+
+        let committee_id = match self.committee_id(context) {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(
+                id = self.ctx.my_idx,
+                "Failed to get committee ID, cannot cancel operator take for slot {}. Error: {}",
+                slot_index,
+                e
+            );
+                return;
+            }
+        };
+
+        let pid = get_accept_pegin_pid(committee_id, slot_index);
+
+        self.cancel_dispatch(context, &tx_name, Some((PROGRAM_TYPE_ACCEPT_PEGIN, pid)));
     }
 
     fn reveal_input_tx(
@@ -2717,9 +2791,10 @@ impl DisputeCoreProtocol {
             (slot_index_last, slot_index_prev) = (slot_index_prev, slot_index_last);
         }
 
-        let name = format!(
-            "{}_{}_{}",
-            TWO_DISPUTE_PENALIZATION_TX, slot_index_prev, slot_index_last
+        let name = double_indexed_name(
+            TWO_DISPUTE_PENALIZATION_TX,
+            slot_index_prev,
+            slot_index_last,
         );
 
         let mut protocol = self.load_protocol()?;
@@ -3706,12 +3781,87 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "{} {} with txid: {}",
+            "{} {} with txid: {}. Block height: {:?}",
             tx_name,
             get_dispatch_action(block_height),
-            txid
+            txid,
+            block_height
         );
 
         Ok(())
+    }
+
+    fn get_txid(&self, tx_name: &str, protocol_info: Option<(&str, Uuid)>) -> Option<Txid> {
+        let protocol = match protocol_info {
+            Some((protocol_type, pid)) => {
+                let ptype = match self.load_protocol_by_name(protocol_type, pid) {
+                    Ok(ptype) => ptype,
+                    Err(e) => {
+                        warn!(
+                            "Unable to load protocol by name. {}. {:?}",
+                            protocol_type, e
+                        );
+                        return None;
+                    }
+                };
+                ptype.load_protocol()
+            }
+            None => self.load_protocol(),
+        };
+
+        if protocol.is_err() {
+            warn!(
+                "Unable to get Txid. Tx name: {}. {:?}",
+                tx_name,
+                protocol.err()
+            );
+            return None;
+        }
+        let protocol = protocol.unwrap();
+        let result = protocol.transaction_by_name(tx_name);
+        let txid = match result {
+            Ok(tx) => Some(tx.compute_txid()),
+            Err(e) => {
+                warn!("Error retrieving transaction for {}: {:?}", tx_name, e);
+                None
+            }
+        };
+        txid
+    }
+
+    fn cancel_dispatch(
+        &self,
+        context: &ProgramContext,
+        tx_name: &str,
+        protocol_info: Option<(&str, Uuid)>,
+    ) {
+        let pid = match protocol_info {
+            Some((_, pid)) => pid,
+            None => self.ctx.id,
+        };
+        info!("Cancel dispatch of {} for PID {}", tx_name, pid);
+
+        let txid = match self.get_txid(tx_name, protocol_info) {
+            Some(txid) => txid,
+            None => {
+                warn!(
+                    "Transaction name {} has no associated txid for cancellation",
+                    tx_name
+                );
+                return;
+            }
+        };
+        info!("Cancelling dispatch of {} for txid {}", tx_name, txid);
+
+        context
+            .bitcoin_coordinator
+            .cancel(bitcoin_coordinator::TypesToMonitor::Transactions(
+                vec![txid],
+                String::default(),
+                None,
+            ))
+            .unwrap_or_else(|e| {
+                warn!("Failed to cancel monitoring for txid {}: {:?}", txid, e);
+            });
     }
 }

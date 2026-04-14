@@ -28,6 +28,8 @@ use crate::{
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
     },
 };
+pub use bitcoin_coordinator::OutputPatternFilter;
+pub const RSK_PEGIN_TAG: &[u8] = b"RSK_PEGIN";
 
 pub struct ProgramContext {
     pub key_manager: Rc<KeyManager>,
@@ -93,6 +95,7 @@ pub enum IncomingBitVMXApiMessages {
     GetHashedMessage(Uuid, String, u32, u32),
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
+    SubscribeToOutputPattern(OutputPatternFilter, Option<u32>),
     SubscribeToRskPegin(Option<u32>),
     GetSPVProof(Txid),
     DispatchTransaction(Uuid, Transaction, Option<u32>),
@@ -131,7 +134,9 @@ pub enum OutgoingBitVMXApiMessages {
     Pong(Uuid),
     // response for transaction get and dispatch
     Transaction(Uuid, TransactionStatus, Option<String>),
-    // Represents when pegin transactions is found
+    // Represents when a transaction matching a generic output pattern is found
+    OutputPatternTransactionFound(Txid, TransactionStatus, Vec<u8>),
+    // Represents when a RSK pegin transaction is found (kept for backward compatibility)
     PeginTransactionFound(Txid, TransactionStatus),
     // Represents when a spending utxo transaction is found
     SpendingUTXOTransactionFound(Uuid, Txid, u32, TransactionStatus),
@@ -285,6 +290,9 @@ impl OutgoingBitVMXApiMessages {
         match self {
             OutgoingBitVMXApiMessages::Pong(_) => "Pong".to_string(),
             OutgoingBitVMXApiMessages::Transaction(_, _, _) => "Transaction".to_string(),
+            OutgoingBitVMXApiMessages::OutputPatternTransactionFound(_, _, _) => {
+                "OutputPatternTransactionFound".to_string()
+            }
             OutgoingBitVMXApiMessages::PeginTransactionFound(_, _) => {
                 "PeginTransactionFound".to_string()
             }
