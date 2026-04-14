@@ -11,7 +11,7 @@ use crate::{
 use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
-use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
+// use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
@@ -84,7 +84,8 @@ impl Member {
             allow_list,
         )?;
 
-        bitvmx.set_global_var(SEND_NEW_BLOCK_NEWS, VariableTypes::Bool(true))?;
+        // Uncomment if NewBlock messages to L2 are required
+        // bitvmx.set_global_var(SEND_NEW_BLOCK_NEWS, VariableTypes::Bool(true))?;
 
         Ok(Self {
             id: id.to_string(),

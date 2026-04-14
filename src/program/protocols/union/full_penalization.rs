@@ -1,7 +1,7 @@
 use core::convert::Into;
 use std::{collections::HashMap, vec};
 
-use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
@@ -10,8 +10,8 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::{AmountType, SpeedupData},
-        OutputType,
+        output::SpeedupData,
+        OutputType, Utxo,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -27,8 +27,9 @@ use crate::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
-                    collect_input_signatures, create_transaction_reference, double_indexed_name,
-                    extract_double_index, get_dispute_core_pid, get_initial_deposit_output_type,
+                    add_speedups, collect_input_signatures, create_transaction_reference,
+                    double_indexed_name, extract_double_index, get_dispute_core_pid,
+                    get_initial_deposit_output_type, get_op_disabler_directory_output_value,
                     get_stream_setting, indexed_name, load_union_settings, save_penalized_member,
                     triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
@@ -135,12 +136,12 @@ impl ProtocolHandler for FullPenalizationProtocol {
             Ok(self.op_disabler_tx(name, context)?)
         } else if name.starts_with(WT_DISABLER_TX) {
             Ok(self.wt_disabler_tx(name, context)?)
-        } else if name.starts_with(OP_DISABLER_DIRECTORY_TX)
-            || name.starts_with(WT_DISABLER_DIRECTORY_TX)
-        {
-            Ok(self.disabler_directory_tx(name)?)
+        } else if name.starts_with(OP_DISABLER_DIRECTORY_TX) {
+            Ok(self.disabler_directory_tx(name, context, ParticipantRole::Prover)?)
+        } else if name.starts_with(WT_DISABLER_DIRECTORY_TX) {
+            Ok(self.disabler_directory_tx(name, context, ParticipantRole::Verifier)?)
         } else if name.starts_with(WT_COSIGN_DISABLER_TX) {
-            Ok(self.wt_cosign_disabler(name)?)
+            Ok(self.wt_cosign_disabler_tx(name, context)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -359,10 +360,17 @@ impl FullPenalizationProtocol {
 
             // Connect disabler directory to OP_DISABLER
             debug!("{} to {}", op_disabler_directory_name, op_disabler_name);
+            let disabler_directory_output_value =
+                get_op_disabler_directory_output_value(committee.members.len());
             protocol.add_connection(
                 "from_disabler_directory",
                 &op_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+                OutputType::taproot(
+                    disabler_directory_output_value,
+                    &committee.dispute_aggregated_key,
+                    &[],
+                )?
+                .into(),
                 &op_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
@@ -375,16 +383,7 @@ impl FullPenalizationProtocol {
             )?;
 
             // OP DISABLER output
-            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
-            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
-            debug!("Output for {}", op_disabler_name);
-            protocol.add_transaction_output(
-                &op_disabler_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
-            )?;
+            add_speedups(protocol, &op_disabler_name, committee)?;
 
             // Create Lazy Operator disablers
             // Operator take transaction data
@@ -429,16 +428,7 @@ impl FullPenalizationProtocol {
             )?;
 
             // OP LAZY DISABLER output
-            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
-            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
-            debug!("Output for {}", op_lazy_disabler_name);
-            protocol.add_transaction_output(
-                &op_lazy_disabler_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
-            )?;
+            add_speedups(protocol, &op_lazy_disabler_name, committee)?;
 
             // Create STOP OPERATOR WON TX
             let reveal_name = &double_indexed_name(REVEAL_INPUT_TX, op_index, slot_index);
@@ -477,20 +467,10 @@ impl FullPenalizationProtocol {
                 Some(operator_won_enablers[slot_index].0),
             )?;
 
-            protocol.add_transaction_output(
-                &stop_op_won_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
-            )?;
+            add_speedups(protocol, &stop_op_won_name, committee)?;
         }
 
         // OP DISABLER DIRECTORY output
-        // Maybe this speedup here could be removed.
-        // Right not it's needed to make all disable directory tx different, if not they all have same txid for a particular operator.
-        // Soon they will be connected to dispute channels
-        // Probably it's not needed to speedup DISABLER DIRECTORY due to OP DISABLER pay a lot of fees.
         protocol.add_transaction_output(
             &op_disabler_directory_name,
             &OutputType::segwit_key(SPEEDUP_VALUE, &committee.members[wt_index].dispute_key)?,
@@ -654,7 +634,7 @@ impl FullPenalizationProtocol {
     fn wt_disabler_tx(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         debug!(id = self.ctx.my_idx, "Loading {} tx", name);
 
@@ -676,14 +656,26 @@ impl FullPenalizationProtocol {
         let tx = protocol.transaction_to_send(&name, &args)?;
         let txid = tx.compute_txid();
 
+        let committee =
+            self.committee(context, self.full_penalization_data(context)?.committee_id)?;
+
+        // Speedup data
+        let speedup_utxo = Utxo::new(
+            txid,
+            0,
+            SPEEDUP_VALUE,
+            &committee.members[self.ctx.my_idx].dispute_key,
+        );
+
         debug!(id = self.ctx.my_idx, "Signed {}, txid: {}.", name, txid);
 
-        Ok((tx, None))
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn wt_cosign_disabler(
+    fn wt_cosign_disabler_tx(
         &self,
         name: &str,
+        context: &ProgramContext,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         debug!(id = self.ctx.my_idx, "Loading {} tx", name);
 
@@ -705,19 +697,40 @@ impl FullPenalizationProtocol {
         let tx = protocol.transaction_to_send(&name, &args)?;
         let txid = tx.compute_txid();
 
+        let committee =
+            self.committee(context, self.full_penalization_data(context)?.committee_id)?;
+
+        // Speedup data
+        let speedup_utxo = Utxo::new(
+            txid,
+            self.ctx.my_idx as u32,
+            SPEEDUP_VALUE,
+            &committee.members[self.ctx.my_idx].dispute_key,
+        );
+
         debug!(id = self.ctx.my_idx, "Signed {}, txid: {}.", name, txid);
 
-        Ok((tx, None))
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn disabler_directory_tx(
         &self,
         name: &str,
+        context: &ProgramContext,
+        role: ParticipantRole,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
+        let (wt_index, op_index) = extract_double_index(name)?;
+
+        let speedup = if role == ParticipantRole::Prover {
+            // WT is responsible for speedup OP disabler directory.
+            wt_index == self.ctx.my_idx
+        } else {
+            // OP is responsible for speedup WT disabler directory.
+            op_index == self.ctx.my_idx
+        };
 
         let mut protocol = self.load_protocol()?;
-
         let args = collect_input_signatures(
             &mut protocol,
             name,
@@ -730,9 +743,24 @@ impl FullPenalizationProtocol {
         let tx = protocol.transaction_to_send(&name, &args)?;
         let txid = tx.compute_txid();
 
-        info!(id = self.ctx.my_idx, "Signed {} with txid: {} ", name, txid,);
+        let committee =
+            self.committee(context, self.full_penalization_data(context)?.committee_id)?;
 
-        Ok((tx, None))
+        let speedup_data = if speedup {
+            // Speedup data
+            let speedup_utxo = Utxo::new(
+                txid,
+                tx.output.len() as u32 - 1,
+                SPEEDUP_VALUE,
+                &committee.members[self.ctx.my_idx].dispute_key,
+            );
+            Some(speedup_utxo.into())
+        } else {
+            None
+        };
+
+        info!(id = self.ctx.my_idx, "Signed {} with txid: {} ", name, txid);
+        Ok((tx, speedup_data))
     }
 
     fn create_operator_disablers(
@@ -1054,14 +1082,10 @@ impl FullPenalizationProtocol {
             )?;
 
             // WT DISABLER output
-            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
-            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
+            // Challenged operator is the only one interested on speed up this disabler.
             protocol.add_transaction_output(
                 &wt_disabler_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
+                &OutputType::segwit_key(SPEEDUP_VALUE, &committee.members[op_index].dispute_key)?,
             )?;
 
             // WT_COSIGN_DISABLER_TX
@@ -1103,16 +1127,14 @@ impl FullPenalizationProtocol {
             )?;
 
             // WT_COSIGN_DISABLER_TX output
-            // Output is unspendable. Everything is paid in fees to make sure this TXs is mined.
-            // If output goes to challenger WT it could decided no to dispatch or no to speedup it.
-            protocol.add_transaction_output(
-                &wt_cosign_disabler_name,
-                &OutputType::SegwitUnspendable {
-                    value: AmountType::Return,
-                    script_pubkey: ScriptBuf::new_op_return(&[0u8; 0]),
-                },
-            )?;
+            add_speedups(protocol, &wt_cosign_disabler_name, committee)?;
         }
+
+        // Add speed up value
+        protocol.add_transaction_output(
+            &wt_disabler_directory_name,
+            &OutputType::segwit_key(SPEEDUP_VALUE, &committee.members[op_index].dispute_key)?,
+        )?;
 
         Ok(())
     }
