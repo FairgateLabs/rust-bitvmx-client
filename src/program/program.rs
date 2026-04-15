@@ -397,12 +397,13 @@ impl Program {
                             }
                         }
                     }
-                    Context::ProgramId(_) => {
+                    Context::ProgramStep(_, _) => {
                         //TODO: Connect with GC DRP
-                        /*return self
-                        .protocol
-                        .gc_drp()?
-                        .execution_result(result, program_context);*/
+                        return self.protocol.gc_drp()?.execution_result(
+                            result,
+                            &context,
+                            program_context,
+                        );
                     }
                     _ => {
                         return Err(BitVMXError::InvalidMessage(format!(

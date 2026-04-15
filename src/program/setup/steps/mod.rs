@@ -9,6 +9,7 @@ pub use nonces_step::NoncesStep;
 pub use signatures_step::SignaturesStep;
 
 use enum_dispatch::enum_dispatch;
+use uuid::Uuid;
 
 use super::SetupStep;
 use crate::errors::BitVMXError;

@@ -9,7 +9,7 @@ use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::key_manager::KeyManager;
-use key_manager::lamport::{HashFunction, LamportSignature};
+use key_manager::lamport::{LamportSignature};
 use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::builder::ProtocolBuilder;
 use protocol_builder::scripts::{self, ProtocolScript, SignMode};
@@ -343,12 +343,19 @@ pub trait ProtocolHandler {
                 .globals
                 .get_var(&self.context().id, key.name())?
             {
-                let message = var.input()?;
+                let message = var.gc_input()?;
 
                 info!(
                     "Signing message: {}",
-                    style(hex::encode(message.clone())).yellow()
+                    style(
+                        message
+                            .iter()
+                            .map(|&b| if b { '1' } else { '0' })
+                            .collect::<String>()
+                    )
+                    .yellow()
                 );
+
                 info!("With lamport key: {:?}", key);
 
                 let lamport_signature =
@@ -581,7 +588,7 @@ pub trait ProtocolHandler {
         prev_vout: u32,
         prev_name: &str,
         transaction: &Transaction,
-    ) -> Result<Vec<(Vec<u8>, u8)>, BitVMXError> {
+    ) -> Result<Vec<[u8; 32]>, BitVMXError> {
         let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
         let protocol = self.load_protocol()?;
         let script = &protocol.get_script_from_output(prev_name, prev_vout)?.1[0];
@@ -589,30 +596,22 @@ pub trait ProtocolHandler {
         let witness = transaction.input[idx as usize].witness.clone();
         let mut iter = witness.iter();
 
-        let mut hashes = vec![];
+        let mut signatures = vec![];
 
         for key in script.get_keys().iter() {
             let key_type = key.key_type();
             let public_key = key_type.lamport_public_key()?;
-            let (hashes_0, hashes_1) = public_key.to_hashes();
 
-            for (hash_0, hash_1) in hashes_0.iter().zip(hashes_1.iter()) {
+            for _ in 0..public_key.len() {
                 let signature = iter
                     .next()
                     .ok_or(BitVMXError::ScriptSignatureMissing(key.name().to_string()))?;
-                let hash = public_key.hash_type().hash(signature).to_bytes();
 
-                if &hash == hash_0 {
-                    hashes.push((hash, 0));
-                } else if &hash == hash_1 {
-                    hashes.push((hash, 1));
-                } else {
-                    error!("Found invalid lamport signature");
-                }
+                signatures.push(signature.try_into()?);
             }
         }
 
-        Ok(hashes)
+        Ok(signatures)
     }
 
     fn decode_witness_from_speedup(

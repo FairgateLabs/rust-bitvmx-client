@@ -3,7 +3,7 @@ use std::rc::Rc;
 use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
 use bitcoin::{PublicKey, Txid};
 use key_manager::{
-    lamport::LamportSignature,
+    lamport::{LamportPublicKey, LamportSignature},
     winternitz::{WinternitzPublicKey, WinternitzSignature},
 };
 use protocol_builder::types::OutputType;
@@ -25,6 +25,7 @@ pub enum VariableTypes {
     Secret(Vec<u8>),
     PubKey(PublicKey),
     WinternitzPubKey(WinternitzPublicKey),
+    LamportPubKey(LamportPublicKey),
     Utxo(PartialUtxo),
     Number(u32),
     Amount(u64),
@@ -32,6 +33,7 @@ pub enum VariableTypes {
     VecStr(Vec<String>),
     VecNumber(Vec<u32>),
     Input(Vec<u8>),
+    GcInput(Vec<bool>),
     Uuid(Uuid),
     Bool(bool),
 }
@@ -56,6 +58,12 @@ impl VariableTypes {
     pub fn wots_pubkey(&self) -> Result<WinternitzPublicKey, BitVMXError> {
         match self {
             VariableTypes::WinternitzPubKey(key) => Ok(key.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+    pub fn lamport_pubkey(&self) -> Result<LamportPublicKey, BitVMXError> {
+        match self {
+            VariableTypes::LamportPubKey(key) => Ok(key.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
@@ -98,6 +106,12 @@ impl VariableTypes {
     pub fn input(&self) -> Result<Vec<u8>, BitVMXError> {
         match self {
             VariableTypes::Input(input) => Ok(input.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+    pub fn gc_input(&self) -> Result<Vec<bool>, BitVMXError> {
+        match self {
+            VariableTypes::GcInput(input) => Ok(input.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
