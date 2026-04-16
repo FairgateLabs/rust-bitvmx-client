@@ -18,7 +18,7 @@ permissions:
   actions: read
   checks: write
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
@@ -34,4 +34,5 @@ jobs:
       cargo_lock_path: 'rust-bitvmx-client/Cargo.lock'
       target_path: 'rust-bitvmx-client/target'
       cargo_features: 'testpanic'
+      coverage_exclude: 'tests/,examples/,build.rs,src/main.rs'
     secrets: inherit
