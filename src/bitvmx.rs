@@ -19,7 +19,7 @@ use crate::{
     signature_verifier::SignatureVerifier,
     types::{
         IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        PROGRAM_TYPE_AGGREGATED_KEY,
+        PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -609,14 +609,28 @@ impl BitVMX {
                         context_data,
                     ));
                 }
-                MonitorNews::RskPeginTransaction(tx_id, tx_status) => {
-                    let data = serde_json::to_string(
-                        &OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status),
-                    )?;
+                MonitorNews::OutputPatternTransaction(tx_id, tx_status, tag) => {
+                    if tag == RSK_PEGIN_TAG {
+                        let legacy = OutgoingBitVMXApiMessages::PeginTransactionFound(
+                            tx_id,
+                            tx_status.clone(),
+                        );
+                        let data = serde_json::to_string(&legacy)?;
+                        self.program_context
+                            .broker_channel
+                            .send(&self.config.components.l2, data)?;
+                    }
+                    let outgoing = OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
+                        tx_id,
+                        tx_status,
+                        tag.clone(),
+                    );
+                    let data = serde_json::to_string(&outgoing)?;
                     self.program_context
                         .broker_channel
                         .send(&self.config.components.l2, data)?;
-                    ack_news = AckNews::Monitor(AckMonitorNews::RskPeginTransaction(tx_id));
+                    ack_news =
+                        AckNews::Monitor(AckMonitorNews::OutputPatternTransaction(tx_id, tag));
                 }
                 MonitorNews::NewBlock(block_height, block_hash) => {
                     debug!("New block: {} {}", block_height, block_hash);
@@ -811,9 +825,10 @@ impl BitVMX {
             let parsed: serde_json::Value = result_message.result_as_value()?;
             let context = Context::from_string(&result_message.job_id)?;
             info!("Received result from dispatcher {}", parsed);
-            let program_id = match context {
-                Context::ProgramId(program_id) => program_id,
-                Context::SetupStep(program_id, _, _) => program_id,
+            let program_id = match &context {
+                Context::ProgramId(program_id) => *program_id,
+                Context::SetupStep(program_id, _, _) => *program_id,
+                Context::ProgramStep(program_id, _) => *program_id,
                 _ => {
                     warn!(
                         "Invalid context for dispatcher result: {:?}. Expected ProgramId.",
@@ -1232,14 +1247,17 @@ impl BitVMX {
         Ok(())
     }
 
-    fn subscribe_to_rsk_pegin(
+    fn subscribe_to_output_pattern(
         &mut self,
+        filter: bitcoin_coordinator::OutputPatternFilter,
         confirmation_threshold: Option<u32>,
     ) -> Result<(), BitVMXError> {
-        // Enable RSK pegin transaction monitoring
         self.program_context
             .bitcoin_coordinator
-            .monitor(TypesToMonitor::RskPegin(confirmation_threshold))?;
+            .monitor(TypesToMonitor::OutputPattern(
+                filter,
+                confirmation_threshold,
+            ))?;
         Ok(())
     }
 
@@ -1496,9 +1514,18 @@ impl BitVMX {
                 txid,
                 confirmation_threshold,
             ) => self.subscribe_to_tx(from, uuid, txid, confirmation_threshold)?,
-            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
-                self.subscribe_to_rsk_pegin(confirmation_threshold)?
+            IncomingBitVMXApiMessages::SubscribeToOutputPattern(filter, confirmation_threshold) => {
+                self.subscribe_to_output_pattern(filter, confirmation_threshold)?
             }
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => self
+                .subscribe_to_output_pattern(
+                    bitcoin_coordinator::OutputPatternFilter {
+                        output_index: 1,
+                        tag: RSK_PEGIN_TAG.to_vec(),
+                        max_outputs: None,
+                    },
+                    confirmation_threshold,
+                )?,
             IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
 
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
@@ -1669,6 +1696,7 @@ pub enum Context {
     RequestId(Uuid, Identifier),
     Protocol(Uuid, String),
     SetupStep(Uuid, String, String), // protocol_id, step_name, optional sub_step
+    ProgramStep(Uuid, String),       // program_id, step identifier (for job deduplication)
 }
 
 impl Context {

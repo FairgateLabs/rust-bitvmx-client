@@ -1,5 +1,9 @@
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
-use bitvmx_job_dispatcher_types::garbled_messages::GarbledJobType;
+use bitvmx_job_dispatcher_types::garbled_messages::{
+    GCJobProveResult, GarbledJobType, ProofBlob, Sha256CommitmentHex,
+};
+use bitvmx_settings::settings::decrypt_or_read_file_bytes;
+use key_manager::lamport::{ExtraData, HashFunction, LamportPublicKey, LamportType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::info;
@@ -16,6 +20,11 @@ use crate::{
     },
     types::ProgramContext,
 };
+
+pub const GC_INPUT_PK: &str = "GC_INPUT_PK";
+pub const GC_OUTPUT_PK: &str = "GC_OUTPUT_PK";
+pub const GC_PUBLIC_DATA: &str = "GC_PUBLIC_DATA";
+pub const GC_CAN_CONTINUE: &str = "GC_CAN_CONTINUE";
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GCConfiguration {
@@ -65,14 +74,12 @@ impl SetupStep for GarblerStep {
         let config = GCConfiguration::load(&protocol_id, &context.globals)?;
 
         if config.role != ParticipantRole::Prover {
-            return Ok(Some(Vec::new()));
+            return Ok(None);
         }
 
         let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
         std::fs::create_dir_all(&output_dir)?;
 
-        //TODO: Input bytes will be removed
-        const INPUT_BYTES: &[u8] = &[0, 0, 1];
         let prove_job = DispatcherJob {
             job_id: Context::SetupStep(
                 protocol_id,
@@ -81,7 +88,6 @@ impl SetupStep for GarblerStep {
             )
             .to_string()?,
             job_type: GarbledJobType::Prove(
-                INPUT_BYTES.to_vec(),
                 config.circuit.clone(),
                 output_dir.clone(),
             ),
@@ -99,18 +105,82 @@ impl SetupStep for GarblerStep {
         &self,
         result: Value,
         sub_step: &str,
-        _program_context: &mut ProgramContext,
+        context: &mut ProgramContext,
+        protocol_id: &Uuid,
     ) -> Result<Option<Vec<u8>>, BitVMXError> {
         if sub_step == "generate" {
-            let gc_proof_path = result["proof_path"].as_str().unwrap().to_string();
-            info!("[prover] Proof generated at path: {}", gc_proof_path);
-            info!("[prover] Proofs generated");
-            info!("  digest_io: {}", result["digest_io"]);
-            info!("  digest_labels: {}", result["digest_labels"]);
-            info!("  digest_lamport: {}", result["digest_lamport"]);
+            let prove_result: GCJobProveResult =
+                serde_json::from_value(result.clone()).map_err(|e| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Failed to deserialize garbler data: {}",
+                        e
+                    ))
+                })?;
 
-            //covnert result into vec<u8>
-            let result_bytes = serde_json::to_vec(&result)?;
+            let gc_proof_path = &prove_result.proof_path;
+            let lamport_proof_path = &prove_result.lamport_proof_path;
+
+            let io_inputs_path = &prove_result.io_inputs_path;
+            let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
+            let hash_type = LamportType::SHA256;
+            let chunks = io_inputs.chunks(hash_type.hash_size());
+            let message_bit_length = chunks.len() / 2;
+
+            let mut bytes_0s: Vec<u8> = Vec::new();
+            let mut bytes_1s: Vec<u8> = Vec::new();
+
+            for (i, chunk) in chunks.enumerate() {
+                if i % 2 == 0 {
+                    bytes_0s.extend_from_slice(chunk);
+                } else {
+                    bytes_1s.extend_from_slice(chunk);
+                }
+            }
+
+            context.key_manager.import_lamport_private_key(
+                &bytes_0s,
+                &bytes_1s,
+                message_bit_length,
+                hash_type,
+            )?;
+
+            info!("[Prover] Imported Garbled Circuit Input Private Key");
+
+            let mut commitments = prove_result.sha256_commitments.clone();
+            commitments.dedup_by(|a, b| a.h0 == b.h0 && a.h1 == b.h1);
+            let num_inputs = prove_result.num_inputs;
+
+            import_public_lamport(
+                &commitments[..num_inputs],
+                GC_INPUT_PK,
+                &context,
+                protocol_id,
+            )?;
+            import_public_lamport(
+                &commitments[num_inputs..],
+                GC_OUTPUT_PK,
+                &context,
+                protocol_id,
+            )?;
+
+            info!("[prover] Proof generated at path: {}", gc_proof_path);
+            info!("[prover] Lamport proof generated at path: {}", lamport_proof_path);
+            info!("[prover] Proofs generated");
+            info!("  digest_io: {}", &prove_result.digest_io);
+            info!("  digest_labels: {}", &prove_result.digest_labels);
+            info!("  digest_lamport: {}", &prove_result.digest_lamport);
+
+            let gc_proof = std::fs::read(gc_proof_path)?;
+            let lamport_proof = std::fs::read(lamport_proof_path)?;
+
+            let proof_blob = ProofBlob {
+                prove_result,
+                gc_proof,
+                lamport_proof,
+            };
+
+            let result_bytes = serde_json::to_vec(&proof_blob)?;
+
             return Ok(Some(result_bytes));
         }
 
@@ -119,7 +189,17 @@ impl SetupStep for GarblerStep {
             info!(" result[\"type\"]: {}", result["type"]);
             info!(" result[\"valid\"]: {}", result["valid"]);
             info!(" result[\"proofs_linked\"]: {}", result["proofs_linked"]);
-            return Ok(None);
+
+            if !result["valid"].as_bool().unwrap_or(false) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "The provided proof is invalid: {result}"
+                )));
+            }
+
+            context
+                .globals
+                .set_var(protocol_id, GC_CAN_CONTINUE, VariableTypes::Bool(true))?;
+            return Ok(Some(Vec::new()));
         }
 
         return Err(BitVMXError::InvalidState(format!(
@@ -138,64 +218,97 @@ impl SetupStep for GarblerStep {
         your_data: bool,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
-
-        if your_data {
-            return Ok(true);
-        }
-
         let config = GCConfiguration::load(&protocol_id, &context.globals)?;
-        if config.role == ParticipantRole::Prover {
+        let is_prover_data = (config.role == ParticipantRole::Prover && your_data)
+            || (!your_data && config.role == ParticipantRole::Verifier);
+
+        info!(
+            "role: {:?}, your_data: {your_data}, is_prover_data: {is_prover_data}",
+            config.role
+        );
+
+        if !is_prover_data {
             if data.len() != 0 {
                 return Err(BitVMXError::InvalidMessage(format!(
                     "Expected empty data for non-prover role, but got: {:?}",
                     data
                 )));
             }
-            info!( "Received expected empty message from Garbler step for non-prover role. Protocol ID: {}", protocol_id);
+            info!("Received expected empty message from Garbler step for non-prover role. Protocol ID: {}", protocol_id);
+
+            // The prover MUST NOT continue until the verifier has finished verifying the proof.
+            // The verifier MUST signal completion by returning an empty successful result from receive_dispatcher_result.
+            // The verifier MUST NOT produce any data in generate_data, it MUST only generate data after successful verification.
+            if config.role == ParticipantRole::Prover {
+                context.globals.set_var(
+                    &protocol_id,
+                    GC_CAN_CONTINUE,
+                    VariableTypes::Bool(true),
+                )?;
+            }
+
             return Ok(true);
         }
 
-        info!(
-            "Received data for Garbler step. Protocol ID: {}",
-            protocol_id
-        );
-        let value: Value = serde_json::from_slice(data).map_err(|e| {
-            BitVMXError::InvalidMessage(format!("Failed to deserialize garbler data: {}", e))
+        let proof_blob: ProofBlob = serde_json::from_slice(data).map_err(|e| {
+            BitVMXError::InvalidMessage(format!(
+                "Failed to deserialize garbler data: {} \n {:?}",
+                e,
+                serde_json::to_value(data)
+            ))
         })?;
 
-        let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
-        std::fs::create_dir_all(&output_dir)?;
+        let mut commitments = proof_blob.prove_result.sha256_commitments.clone();
+        commitments.dedup_by(|a, b| a.h0 == b.h0 && a.h1 == b.h1);
+        let num_inputs = proof_blob.prove_result.num_inputs;
 
-        info!("[verifier] Verifying GC + Lamport proofs...");
-        let gc_proof_path = value["proof_path"].as_str().unwrap().to_string();
+        import_public_lamport(
+            &commitments[..num_inputs],
+            GC_INPUT_PK,
+            &context,
+            &protocol_id,
+        )?;
+        import_public_lamport(
+            &commitments[num_inputs..],
+            GC_OUTPUT_PK,
+            &context,
+            &protocol_id,
+        )?;
 
-        //TODO: files should be transmitted via broker instead of using file paths
-        let prove_json_path = format!("runs/gc/Prover/{}/output.json", protocol_id);
-        let verify_job = GarbledJobType::Verify(
-            gc_proof_path,
-            config.circuit.clone(),
-            prove_json_path,
-            output_dir.clone(),
-        );
+        if config.role == ParticipantRole::Prover {
+            Ok(false)
+        } else {
+            // role == Verifier
 
-        let prove_job = DispatcherJob {
-            job_id: Context::SetupStep(
-                protocol_id,
-                self.step_name().to_string(),
-                "verify".to_string(),
-            )
-            .to_string()?,
-            job_type: verify_job,
-        };
+            context.globals.set_var(
+                &protocol_id,
+                GC_PUBLIC_DATA,
+                VariableTypes::String(serde_json::to_string(&proof_blob.prove_result)?),
+            )?;
 
-        let msg = serde_json::to_string(&prove_job)?;
-        context
-            .broker_channel
-            .send(&context.components_config.garbler, msg)?;
+            let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
 
-        info!("Data content (hex): {:?}", value);
+            info!("[verifier] Verifying GC + Lamport proofs...");
+            let verify_job =
+                GarbledJobType::Verify(proof_blob, config.circuit.clone(), output_dir.clone());
 
-        Ok(false)
+            let prove_job = DispatcherJob {
+                job_id: Context::SetupStep(
+                    protocol_id,
+                    self.step_name().to_string(),
+                    "verify".to_string(),
+                )
+                .to_string()?,
+                job_type: verify_job,
+            };
+
+            let msg = serde_json::to_string(&prove_job)?;
+            context
+                .broker_channel
+                .send(&context.components_config.garbler, msg)?;
+
+            Ok(true)
+        }
     }
 
     fn can_advance(
@@ -206,14 +319,13 @@ impl SetupStep for GarblerStep {
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
-        let config = GCConfiguration::load(&protocol_id, &context.globals)?;
-        if config.role == ParticipantRole::Prover {
-            // Prover can advance immediately after generating the proof
-            return Ok(true);
-        }
+        let can_continue = context
+            .globals
+            .get_var(&protocol_id, GC_CAN_CONTINUE)?
+            .and_then(|v| v.bool().ok())
+            .unwrap_or(false);
 
-        //Check some result conditions for verifiers
-        Ok(true)
+        Ok(can_continue)
     }
 
     fn generate_async(&self) -> bool {
@@ -223,4 +335,55 @@ impl SetupStep for GarblerStep {
     fn verify_async(&self) -> bool {
         true
     }
+}
+
+fn import_public_lamport(
+    commitments: &[Sha256CommitmentHex],
+    name: &str,
+    context: &ProgramContext,
+    protocol_id: &Uuid,
+) -> Result<(), BitVMXError> {
+    let h0s = commitments
+        .into_iter()
+        .map(|c| {
+            hex::decode(&c.h0).map_err(|_| {
+                BitVMXError::InvalidMessage(
+                    "Could not parse commitment, invalid hex value".to_string(),
+                )
+            })
+        })
+        .collect::<Result<Vec<Vec<u8>>, BitVMXError>>()?
+        .concat();
+
+    let h1s = commitments
+        .into_iter()
+        .map(|c| {
+            hex::decode(&c.h1).map_err(|_| {
+                BitVMXError::InvalidMessage(
+                    "Could not parse commitment, invalid hex value".to_string(),
+                )
+            })
+        })
+        .collect::<Result<Vec<Vec<u8>>, BitVMXError>>()?
+        .concat();
+
+    // FIXME: it's invalid to have a derivation index for an imported key, but the current
+    // implementation of the ProtocolScript needs the ScriptKey to have one, even if it's not used.
+    let extra_data = ExtraData::new(commitments.len(), Some(0));
+    let public_key = LamportPublicKey::from_bytes_splitted(
+        &h0s,
+        &h1s,
+        commitments.len(),
+        LamportType::SHA256,
+        true,
+        Some(extra_data),
+    )?;
+
+    context
+        .globals
+        .set_var(&protocol_id, name, VariableTypes::LamportPubKey(public_key))?;
+
+    info!("Lamport imported successfully ({:?})", name);
+
+    Ok(())
 }

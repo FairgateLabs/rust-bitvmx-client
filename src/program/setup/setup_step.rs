@@ -1,4 +1,5 @@
 use enum_dispatch::enum_dispatch;
+use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
@@ -82,6 +83,7 @@ pub trait SetupStep {
         _result: serde_json::Value,
         _sub_step: &str,
         _program_context: &mut ProgramContext,
+        _protocol_id: &Uuid,
     ) -> Result<Option<Vec<u8>>, BitVMXError> {
         Ok(Some(Vec::new()))
     }

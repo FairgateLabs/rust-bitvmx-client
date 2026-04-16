@@ -11,7 +11,7 @@ use crate::{
 use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
-use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
+// use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
 use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
@@ -84,7 +84,8 @@ impl Member {
             allow_list,
         )?;
 
-        bitvmx.set_global_var(SEND_NEW_BLOCK_NEWS, VariableTypes::Bool(true))?;
+        // Uncomment if NewBlock messages to L2 are required
+        // bitvmx.set_global_var(SEND_NEW_BLOCK_NEWS, VariableTypes::Bool(true))?;
 
         Ok(Self {
             id: id.to_string(),
@@ -185,7 +186,6 @@ impl Member {
     //         communication_pubkey.to_string()
     //     );
 
-
     //     Ok((take_pubkey, dispute_pubkey, communication_pubkey))
     // }
 
@@ -263,6 +263,13 @@ impl Member {
             committee_id,
             addresses,
         )?;
+
+        let wait_time = total_setups as u64 * 20; // Assuming each setup takes around 5 seconds, adjust as needed
+        info!(
+            "Waiting {} seconds to complete {} dispute channel setups...",
+            wait_time, total_setups
+        );
+        thread::sleep(std::time::Duration::from_secs(wait_time));
 
         for i in 0..total_setups {
             info!(

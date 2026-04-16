@@ -8,6 +8,8 @@ use bitvmx_client::{
             gc_drp::{GCDisputeConfiguration, START_CH},
             protocol_handler::action_wins,
         },
+        setup::steps::garbler_step::GCConfiguration,
+        variables::VariableTypes,
     },
     types::IncomingBitVMXApiMessages,
 };
@@ -19,7 +21,7 @@ use protocol_builder::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::{check_bitvmx_cpu_built, config_trace, helper::TestHelper, init_utxo_new};
+use crate::common::{check_gnova_built, config_trace, helper::TestHelper, init_utxo_new};
 
 mod common;
 
@@ -29,8 +31,7 @@ pub fn test_protocol() -> Result<()> {
     let independent = false;
     let network = Network::Regtest;
 
-    // Check if BitVMX-CPU is built before running the test
-    check_bitvmx_cpu_built()?;
+    check_gnova_built()?;
 
     config_trace();
 
@@ -174,6 +175,27 @@ pub fn test_protocol() -> Result<()> {
         vec![],
     );
 
+    const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";
+    let gc_config_prover = GCConfiguration::new(
+        prog_id,
+        ParticipantRole::Prover,
+        TEST_CIRCUIT_PATH.to_string(),
+    );
+    let gc_config_verifier = GCConfiguration::new(
+        prog_id,
+        ParticipantRole::Verifier,
+        TEST_CIRCUIT_PATH.to_string(),
+    );
+
+    pair_0_1_channels[0].channel.send(
+        &pair_0_1_channels[0].id,
+        gc_config_prover.get_setup_message()?,
+    )?;
+    pair_0_1_channels[1].channel.send(
+        &pair_0_1_channels[1].id,
+        gc_config_verifier.get_setup_message()?,
+    )?;
+
     info!("Setup start");
     gc_drp_config.setup(&pair_0_1_channels, pair_0_1, 1)?;
 
@@ -181,6 +203,12 @@ pub fn test_protocol() -> Result<()> {
     info!("Setup dispute done: {:?}", msg);
     let msg = helper.wait_msg(1)?;
     info!("Setup dispute done: {:?}", msg);
+
+    let set_input = VariableTypes::GcInput(vec![false, true, false]).set_msg(prog_id, "prover_input")?;
+
+    pair_0_1_channels[0]
+        .channel
+        .send(&pair_0_1_channels[0].id, set_input)?;
 
     helper.id_channel_pairs[1].channel.send(
         &helper.id_channel_pairs[1].id,

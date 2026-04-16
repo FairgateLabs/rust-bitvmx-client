@@ -374,8 +374,9 @@ impl Committee {
     }
 
     fn get_funding_op_disabler_directory_value(&self) -> u64 {
-        // Considerate each OP disabler directory output
-        return DUST_VALUE * PACKET_SIZE as u64
+        let members_count = self.members.iter().len();
+
+        return (SPEEDUP_VALUE * members_count as u64 / 2) * PACKET_SIZE as u64
             + SPEEDUP_VALUE
             + estimate_fee(2, PACKET_SIZE as usize + 1, 1);
     }

@@ -281,7 +281,7 @@ impl SetupEngine {
         let step = &self.steps[self.state.current_step_index];
 
         //TODO: Handle error
-        if let Some(data) = step.receive_dispatcher_result(result, sub_step, program_context)? {
+        if let Some(data) = step.receive_dispatcher_result(result, sub_step, program_context, program_id)? {
             self.process_produced_data(
                 &data,
                 my_idx,

@@ -6,7 +6,7 @@ use crate::{
         participant::CommsAddress,
         variables::{VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, OutputPatternFilter},
 };
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -154,6 +154,17 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToTransaction(
             request_id,
             txid,
+            confirmation_threshold,
+        ))
+    }
+
+    pub fn subscribe_to_output_pattern(
+        &self,
+        filter: OutputPatternFilter,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToOutputPattern(
+            filter,
             confirmation_threshold,
         ))
     }
