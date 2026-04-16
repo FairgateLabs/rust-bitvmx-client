@@ -1,8 +1,8 @@
 # ubuntu:focal (20.04) - Has GLIBC 2.31 which is required for Bitcoin Core 29.1
-FROM ubuntu:focal AS build
+FROM ubuntu:focal as build
 
-ENV VERSION=29.1
-ENV ARCH=x86_64-linux-gnu
+ENV VERSION 29.1
+ENV ARCH x86_64-linux-gnu
 
 ARG BITCOIND_RPC_NETWORK
 ARG BITCOIND_RPC_PORT
@@ -14,9 +14,9 @@ ENV BITCOIND_RPC_PORT=18443
 ENV BITCOIND_RPC_USERNAME=foo
 ENV BITCOIND_RPC_PASSWORD=rpcpassword
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget curl && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt update
+RUN apt install -y wget
+RUN apt install -y curl
 
 RUN mkdir -p /app/data
 WORKDIR /app
