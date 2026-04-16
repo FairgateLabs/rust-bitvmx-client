@@ -66,7 +66,7 @@ pub fn test_gnova_commands() -> Result<()> {
         format!("{}/prove", output_dir),
     );
 
-    let (cmd, args, json_path) = prove_job.command()?;
+    let (cmd, args, json_path, _) = prove_job.command()?;
     info!("Running prove: {} {:?}", cmd, args);
 
     let output = std::process::Command::new(&cmd)
@@ -116,7 +116,7 @@ pub fn test_gnova_commands() -> Result<()> {
         format!("{}/verify", output_dir),
     );
 
-    let (cmd, args, json_path) = verify_job.command()?;
+    let (cmd, args, json_path, _) = verify_job.command()?;
     info!("Running verify: {} {:?}", cmd, args);
 
     let output = std::process::Command::new(&cmd)
@@ -440,7 +440,7 @@ pub fn test_full_protocol() -> Result<()> {
         format!("{}/prove", output_dir),
     );
 
-    let (cmd, args, json_path) = prove_job.command()?;
+    let (cmd, args, json_path, _) = prove_job.command()?;
     let output = std::process::Command::new(&cmd)
         .args(&args)
         .env("RUST_MIN_STACK", "67108864")
@@ -480,7 +480,7 @@ pub fn test_full_protocol() -> Result<()> {
         format!("{}/verify", output_dir),
     );
 
-    let (cmd, args, json_path) = verify_job.command()?;
+    let (cmd, args, json_path, _) = verify_job.command()?;
     let output = std::process::Command::new(&cmd)
         .args(&args)
         .env("RUST_MIN_STACK", "67108864")
@@ -584,7 +584,7 @@ pub fn test_full_protocol() -> Result<()> {
         format!("{}/evaluate", output_dir),
     );
 
-    let (cmd, args, json_path) = eval_job.command()?;
+    let (cmd, args, json_path, _) = eval_job.command()?;
     let output = std::process::Command::new(&cmd).args(&args).output()?;
 
     assert!(
