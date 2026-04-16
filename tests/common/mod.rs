@@ -515,7 +515,12 @@ pub fn mine_and_wait_blocks(
         for instance in instances.iter_mut() {
             instance.tick()?;
         }
-        std::thread::sleep(std::time::Duration::from_millis(LOCAL_SLEEP_MS));
+        let sleep_ms = if std::env::var("GITHUB_ACTIONS").is_ok() {
+            CI_SLEEP_MS
+        } else {
+            LOCAL_SLEEP_MS
+        };
+        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }
     let msgs = get_all(&channels, instances, false)?;
 
