@@ -15,7 +15,7 @@ ENV BITCOIND_RPC_USERNAME=foo
 ENV BITCOIND_RPC_PASSWORD=rpcpassword
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget curl && \
+    apt-get install -y --no-install-recommends wget curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/data
