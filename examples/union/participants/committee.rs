@@ -26,7 +26,7 @@ use crate::wallet::helper::non_regtest_warning;
 
 const FUNDING_AMOUNT_PER_SLOT: u64 = 12_000; // an approximation in satoshis
 const DISPUTE_CHANNEL_FUNDING_PER_MEMBER: u64 = 50_000;
-pub const PACKET_SIZE: u32 = 3; // number of slots per packet
+pub const PACKET_SIZE: u32 = 6; // number of slots per packet
 
 pub struct Committee {
     pub members: Vec<Member>,

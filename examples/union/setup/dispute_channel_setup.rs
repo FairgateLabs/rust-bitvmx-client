@@ -34,7 +34,7 @@ use bitvmx_client::{
 };
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum DRPVerifier {
     Demo,
     Generic,
@@ -247,9 +247,14 @@ impl DisputeChannelSetup {
                 let journal_size_input = journal_size.to_le_bytes().to_vec();
                 info!("journal_size_input: {:?}", journal_size_input);
 
-                let elf_id = "589837bb0123b9d5854e0807a8b3ed2b15a848c19e2287ac585a31ec93d711b5"; // Placeholder for the actual ELF ID of the verifier
+                let elf_id = "0bef5ad87b9c1fa0d1b61b17db019b7af7fb3050fec33afdef0c698ef54d7a0b"; // Placeholder for the actual ELF ID of the verifier
                 let elf_id_input = hex::decode(elf_id).unwrap();
-                let operator_id: [u8; 36] = [1; 36]; // Placeholder for the actual operator ID, should be a UUID
+
+                let operator_id_hex =
+                    "1111111111111111111111111111111111111111111111111111111111111111"; // Placeholder for the actual operator ID, should be a UUID
+                let mut operator_id = hex::decode(operator_id_hex).unwrap();
+                operator_id.extend_from_slice(&[0u8; 4]); // 0 padding
+
                 let input_6 = [1u8, 0, 1, 0]; // true + version 0 + padding
 
                 // Set DRP constants defined in union-verifier.yaml

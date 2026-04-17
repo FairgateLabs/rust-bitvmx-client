@@ -1,7 +1,7 @@
 use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
     participants::{
-        committee::Committee,
+        committee::{Committee, PACKET_SIZE},
         common::{
             calculate_taproot_key_path_sighash, format_solidity_data_file, get_user_take_tx,
             set_program_input, PEGIN_CONFIRMATIONS,
@@ -63,6 +63,12 @@ mod wallet;
 pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 100_000;
 
+// Challenge tests settings
+const GROTH16_PROOF: &str = "391c2bcb0ce5ee75955a9f934e6fe3f8741df14c24e5aa3047967350299a331df71c0b8404abd565633d37910b29e014b624b9899fa527d085e729e283e7650475bd3e656c62d1dd87125db42326522d09f93c74600e32bb685f23f75425a2aa04eb448e3a8cca6181eebcdf6a96d1a216ea93c11b61f6424928ecf2a6992e95";
+const PEGOUT_ID_CHALLENGED: &str =
+    "da4ecdaa161ab0bd912d53d26f632aab38ad114d092187d12bd422ccc1504d5f";
+const SLOT_ID_CHALLENGED: usize = 4; // It should be set in the journal
+
 // Fixed pegout ID used for testing (equivalent to bytes32(uint256(1)) in Solidity)
 pub const TESTING_PEGOUT_ID: [u8; 32] = {
     let mut id = [0u8; 32];
@@ -74,6 +80,10 @@ static mut SLOT_INDEX_COUNTER: usize = 0;
 
 pub fn main() -> Result<()> {
     log::configure_tracing();
+
+    if PACKET_SIZE < SLOT_ID_CHALLENGED as u32 {
+        panic!("Invalid PACKET_SIZE and SLOT_ID_CHALLENGED");
+    }
 
     let args: Vec<String> = env::args().collect();
     let command = args.get(1);
@@ -479,7 +489,20 @@ pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
         }
     };
 
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let total_slots = match VERIFIER {
+        DRPVerifier::Union => SLOT_ID_CHALLENGED + 1,
+        _ => 1,
+    };
+
+    let (mut committee, mut user, _) = pegin_setup(total_slots, NETWORK == Network::Regtest)?;
+
+    if VERIFIER == DRPVerifier::Union {
+        // Accept slots until reach the challenged slot
+        for _ in 0..SLOT_ID_CHALLENGED {
+            request_and_accept_pegin(&mut committee, &mut user)?;
+        }
+    }
+
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
@@ -520,7 +543,12 @@ pub fn cli_challenge_reason(input: Option<&String>) -> Result<()> {
 
     info!("Starting challenge with reason: {:?}", challenge_reason);
 
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let total_slots = match VERIFIER {
+        DRPVerifier::Union => SLOT_ID_CHALLENGED + 1,
+        _ => 1,
+    };
+
+    let (mut committee, mut user, _) = pegin_setup(total_slots, NETWORK == Network::Regtest)?;
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
@@ -1126,11 +1154,11 @@ fn challenge(
         .keyring
         .take_pubkey
         .unwrap();
-    let pegout_id: [u8; 32] = [
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-        0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
-        0x1E, 0x1F,
-    ]; // Pegout ID should be get from contracts event.
+
+    let pegout_id: [u8; 32] = hex::decode(PEGOUT_ID_CHALLENGED) // Pegout ID should be get from contracts event.
+        .unwrap()
+        .try_into()
+        .unwrap();
 
     let user_pubkey = committee.members[operator_index]
         .keyring
@@ -1206,7 +1234,7 @@ fn challenge(
     )?;
 
     if should_wait {
-        let additional_blocks = committee.stream_settings.long_timelock + 450;
+        let additional_blocks = committee.stream_settings.long_timelock + 1300;
 
         info!(
             "Starting mining {} blocks in loop to ensure challenges and DRP txs are dispatched...",
@@ -1244,25 +1272,7 @@ fn set_drp_input(
                 info!("Setting DRP inputs for Watchtower {} and Operator {} for the union verifier. DRP PID: {}", wt_index, op_index, drp_pid);
 
                 // Proover set the groth16 proof as input. This came from the job operator dispatcher. Only the operator should set it as input
-                let proof = [
-                    2, 122, 118, 228, 22, 60, 175, 181, 249, 89, 229, 172, 144, 254, 182, 91, 15,
-                    108, 119, 149, 17, 179, 220, 161, 114, 21, 35, 38, 47, 198, 118, 127, 8, 206,
-                    198, 71, 229, 208, 112, 188, 249, 136, 172, 197, 114, 252, 194, 246, 127, 85,
-                    83, 77, 122, 146, 125, 123, 38, 57, 81, 42, 135, 223, 188, 40, 13, 170, 101,
-                    90, 249, 184, 125, 122, 121, 54, 203, 51, 149, 149, 116, 217, 92, 123, 223, 9,
-                    11, 67, 183, 74, 254, 182, 92, 108, 181, 114, 199, 197, 40, 150, 20, 46, 47,
-                    253, 239, 167, 88, 156, 41, 192, 118, 245, 178, 181, 53, 13, 137, 186, 251,
-                    114, 247, 130, 74, 238, 211, 61, 97, 252, 64, 214, 29, 58, 123, 118, 176, 240,
-                    36, 107, 112, 122, 132, 203, 255, 86, 214, 65, 56, 63, 254, 46, 70, 174, 232,
-                    28, 145, 232, 88, 36, 80, 205, 15, 223, 21, 169, 142, 21, 15, 209, 88, 107, 23,
-                    207, 104, 41, 18, 162, 117, 93, 226, 147, 171, 23, 38, 3, 185, 11, 139, 92,
-                    131, 150, 243, 59, 223, 41, 41, 239, 38, 53, 112, 137, 102, 165, 91, 35, 136,
-                    202, 43, 139, 190, 74, 197, 78, 144, 55, 18, 231, 172, 142, 209, 7, 180, 158,
-                    197, 84, 87, 251, 4, 188, 23, 147, 15, 134, 248, 92, 60, 56, 103, 112, 160, 60,
-                    103, 178, 22, 250, 43, 252, 81, 213, 199, 102, 61, 202, 64, 162, 200, 173, 175,
-                    253,
-                ];
-                let proof_input = proof.to_vec();
+                let proof_input = hex::decode(GROTH16_PROOF)?;
 
                 // Operator is the only one that set the proof input.
                 set_program_input(&operator.bitvmx, drp_pid, 2, proof_input)?;
