@@ -194,5 +194,23 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig>(
         )?;
     }
 
+    let Some(orig_tx) = name.strip_suffix("_INPUT_TO") else {
+        return Ok(());
+    };
+
+    let Some((_, Some(next))) = ownership_table.get_tx_and_next(&orig_tx) else {
+        return Ok(());
+    };
+
+    if next.owner != protocol_handler.role() {
+        let tx_to_cancel = timeout_tx(&next.tx_name);
+        info!("Cancel timeout tx: {}", tx_to_cancel);
+        let tx_id = protocol_handler.get_transaction_id_by_name(&tx_to_cancel)?;
+
+        program_context.bitcoin_coordinator.cancel(
+            bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default(), None),
+        )?;
+    }
+
     Ok(())
 }
