@@ -577,10 +577,16 @@ pub fn test_full_protocol() -> Result<()> {
     // Evaluate circuit with Prover's input
     info!("[Verifier] ✓ Evaluating circuit...");
 
+    let circuit_input = signature
+        .to_array_hashes()?
+        .into_iter()
+        .zip(INPUT_BITS.iter().copied())
+        .collect();
+
     let eval_job = GarbledJobType::Evaluate(
         TEST_CIRCUIT_PATH.to_string(),
         prove_result.clone(),
-        signature.to_array_hashes()?,
+        circuit_input,
         format!("{}/evaluate", output_dir),
     );
 

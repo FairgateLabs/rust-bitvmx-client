@@ -554,7 +554,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
 
                 match (name.as_str(), self.role()) {
                     (INPUT, ParticipantRole::Verifier) => {
-                        let sigs =
+                        let circuit_input =
                             self.decode_lamport_for_speedup(tx_id, vout, &name, transaction)?;
 
                         let protocol_id = &self.ctx.id;
@@ -571,7 +571,12 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                         self.execute_job(
                             program_context,
                             &program_context.components_config.garbler,
-                            GarbledJobType::Evaluate(config.circuit, public_data, sigs, output_dir),
+                            GarbledJobType::Evaluate(
+                                config.circuit,
+                                public_data,
+                                circuit_input,
+                                output_dir,
+                            ),
                             "verifier_evaluate_circuit",
                         )?;
                     }
