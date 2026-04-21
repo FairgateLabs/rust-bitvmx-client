@@ -176,15 +176,21 @@ pub fn test_protocol() -> Result<()> {
     );
 
     const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";
+    // let wrong_circuit_public_input = vec![false, false];
+    let circuit_public_input = vec![true, false];
+    let circuit_input = vec![false];
+
     let gc_config_prover = GCConfiguration::new(
         prog_id,
         ParticipantRole::Prover,
         TEST_CIRCUIT_PATH.to_string(),
+        circuit_public_input.clone(),
     );
     let gc_config_verifier = GCConfiguration::new(
         prog_id,
         ParticipantRole::Verifier,
         TEST_CIRCUIT_PATH.to_string(),
+        circuit_public_input,
     );
 
     pair_0_1_channels[0].channel.send(
@@ -204,7 +210,7 @@ pub fn test_protocol() -> Result<()> {
     let msg = helper.wait_msg(1)?;
     info!("Setup dispute done: {:?}", msg);
 
-    let set_input = VariableTypes::GcInput(vec![false, true, false]).set_msg(prog_id, "prover_input")?;
+    let set_input = VariableTypes::GcInput(circuit_input).set_msg(prog_id, "prover_input")?;
 
     pair_0_1_channels[0]
         .channel
