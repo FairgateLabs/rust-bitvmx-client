@@ -71,7 +71,9 @@ impl Drop for BitcoindGuard {
 
 pub const LOCAL_SLEEP_MS: u64 = 100;
 
-pub const CI_SLEEP_MS: u64 = 1000;
+// Slightly higher in CI to absorb shared-runner variability. Kept as a
+// separate constant so the CI value can be tuned independently.
+pub const CI_SLEEP_MS: u64 = 150;
 
 pub fn clear_db(path: &str) {
     // Only try to remove if the path exists

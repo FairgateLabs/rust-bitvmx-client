@@ -107,20 +107,27 @@ impl TestHelper {
             clear_db(&wallet_config.key_storage.path);
             Wallet::clear_db(&wallet_config.wallet)?;
 
-            let bitcoind_instance = Bitcoind::new(
-                BitcoindConfig::default(),
-                wallet_config.bitcoin.clone(),
-                Some(BitcoindFlags {
-                    min_relay_tx_fee: 0.00001,
-                    block_min_tx_fee: 0.00001 * MIN_TX_FEE,
-                    debug: 1,
-                    fallback_fee: 0.0002,
-                    maxmempool: None,
-                }),
-            );
+            // In CI, bitcoind is provided by docker-compose on the same port.
+            // Spawning another container would collide on 0.0.0.0:18443.
+            if std::env::var("GITHUB_ACTIONS").is_ok() {
+                info!("Running in CI - using external bitcoind from docker-compose");
+                None
+            } else {
+                let bitcoind_instance = Bitcoind::new(
+                    BitcoindConfig::default(),
+                    wallet_config.bitcoin.clone(),
+                    Some(BitcoindFlags {
+                        min_relay_tx_fee: 0.00001,
+                        block_min_tx_fee: 0.00001 * MIN_TX_FEE,
+                        debug: 1,
+                        fallback_fee: 0.0002,
+                        maxmempool: None,
+                    }),
+                );
 
-            bitcoind_instance.start()?;
-            Some(bitcoind_instance)
+                bitcoind_instance.start()?;
+                Some(bitcoind_instance)
+            }
         };
 
         let mut wallet =
@@ -132,7 +139,11 @@ impl TestHelper {
                 &wallet_config.bitcoin.password,
             )?;
             let address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
-            bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
+            if std::env::var("GITHUB_ACTIONS").is_err() {
+                // Locally we control bitcoind; in CI the shared bitcoind is already
+                // funded by the test harness, so skip the extra mining.
+                bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
+            }
             bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
             wallet.sync_wallet()?;
         }
@@ -605,6 +616,13 @@ fn run_auto_mine(
     let address = bitcoin_client.init_wallet("test_wallet");
     let address = address.unwrap();
 
+    // Track how many blocks *this* auto_mine has produced, not the absolute
+    // chain height. The chain may already be tall when tests run sequentially
+    // in CI (previous test binaries share the same bitcoind), so comparing
+    // against absolute height would abort immediately.
+    let start_height = bitcoin_client.get_blockchain_info()?.blocks;
+    let mut mined: u64 = 0;
+
     // Main processing loop
     loop {
         if rx.try_recv().is_ok() {
@@ -612,11 +630,14 @@ fn run_auto_mine(
             break;
         }
         bitcoin_client.mine_blocks_to_address(1, &address)?;
+        mined += 1;
         tx.send(())?;
         if let Some(limit) = max_mined_blocks {
-            let current = bitcoin_client.get_blockchain_info()?.blocks;
-            if current >= limit {
-                error!("Max mined blocks reached!");
+            if mined >= limit {
+                error!(
+                    "Max mined blocks reached! (mined {} since start_height {})",
+                    mined, start_height
+                );
                 std::process::abort();
             }
         }
