@@ -616,6 +616,13 @@ fn run_auto_mine(
     let address = bitcoin_client.init_wallet("test_wallet");
     let address = address.unwrap();
 
+    // Track how many blocks *this* auto_mine has produced, not the absolute
+    // chain height. The chain may already be tall when tests run sequentially
+    // in CI (previous test binaries share the same bitcoind), so comparing
+    // against absolute height would abort immediately.
+    let start_height = bitcoin_client.get_blockchain_info()?.blocks;
+    let mut mined: u64 = 0;
+
     // Main processing loop
     loop {
         if rx.try_recv().is_ok() {
@@ -623,11 +630,14 @@ fn run_auto_mine(
             break;
         }
         bitcoin_client.mine_blocks_to_address(1, &address)?;
+        mined += 1;
         tx.send(())?;
         if let Some(limit) = max_mined_blocks {
-            let current = bitcoin_client.get_blockchain_info()?.blocks;
-            if current >= limit {
-                error!("Max mined blocks reached!");
+            if mined >= limit {
+                error!(
+                    "Max mined blocks reached! (mined {} since start_height {})",
+                    mined, start_height
+                );
                 std::process::abort();
             }
         }
