@@ -39,7 +39,7 @@ use protocol_builder::types::{OutputType, Utxo};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::common::{mine_and_wait_blocks, mine_and_wait_with_dispatcher};
+use crate::common::{mine_and_wait_blocks, mine_and_wait_with_dispatcher, CI_SLEEP_MS, LOCAL_SLEEP_MS};
 
 use super::{mine_and_wait, send_all, wait_message_from_channel};
 
@@ -424,7 +424,12 @@ pub fn process_dispatcher(
                 return Ok(());
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        let sleep_ms = if std::env::var("GITHUB_ACTIONS").is_ok() {
+            CI_SLEEP_MS
+        } else {
+            LOCAL_SLEEP_MS
+        };
+        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }
 }
 
