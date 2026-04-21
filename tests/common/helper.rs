@@ -107,20 +107,27 @@ impl TestHelper {
             clear_db(&wallet_config.key_storage.path);
             Wallet::clear_db(&wallet_config.wallet)?;
 
-            let bitcoind_instance = Bitcoind::new(
-                BitcoindConfig::default(),
-                wallet_config.bitcoin.clone(),
-                Some(BitcoindFlags {
-                    min_relay_tx_fee: 0.00001,
-                    block_min_tx_fee: 0.00001 * MIN_TX_FEE,
-                    debug: 1,
-                    fallback_fee: 0.0002,
-                    maxmempool: None,
-                }),
-            );
+            // In CI, bitcoind is provided by docker-compose on the same port.
+            // Spawning another container would collide on 0.0.0.0:18443.
+            if std::env::var("GITHUB_ACTIONS").is_ok() {
+                info!("Running in CI - using external bitcoind from docker-compose");
+                None
+            } else {
+                let bitcoind_instance = Bitcoind::new(
+                    BitcoindConfig::default(),
+                    wallet_config.bitcoin.clone(),
+                    Some(BitcoindFlags {
+                        min_relay_tx_fee: 0.00001,
+                        block_min_tx_fee: 0.00001 * MIN_TX_FEE,
+                        debug: 1,
+                        fallback_fee: 0.0002,
+                        maxmempool: None,
+                    }),
+                );
 
-            bitcoind_instance.start()?;
-            Some(bitcoind_instance)
+                bitcoind_instance.start()?;
+                Some(bitcoind_instance)
+            }
         };
 
         let mut wallet =
@@ -132,7 +139,11 @@ impl TestHelper {
                 &wallet_config.bitcoin.password,
             )?;
             let address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
-            bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
+            if std::env::var("GITHUB_ACTIONS").is_err() {
+                // Locally we control bitcoind; in CI the shared bitcoind is already
+                // funded by the test harness, so skip the extra mining.
+                bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
+            }
             bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
             wallet.sync_wallet()?;
         }
