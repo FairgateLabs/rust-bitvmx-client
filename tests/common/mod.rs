@@ -71,7 +71,7 @@ impl Drop for BitcoindGuard {
 
 pub const LOCAL_SLEEP_MS: u64 = 100;
 
-pub const CI_SLEEP_MS: u64 = 1000;
+pub const CI_SLEEP_MS: u64 = 200;
 
 pub fn clear_db(path: &str) {
     // Only try to remove if the path exists
