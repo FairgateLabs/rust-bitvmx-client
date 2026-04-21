@@ -9,10 +9,10 @@ use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use console::style;
 use enum_dispatch::enum_dispatch;
 use key_manager::key_manager::KeyManager;
-use key_manager::lamport::{LamportSignature};
+use key_manager::lamport::{HashFunction, LamportSignature};
 use key_manager::winternitz::{message_bytes_length, WinternitzSignature, WinternitzType};
 use protocol_builder::builder::ProtocolBuilder;
-use protocol_builder::scripts::{self, ProtocolScript, SignMode};
+use protocol_builder::scripts::{self, KeyType, ProtocolScript, SignMode};
 use protocol_builder::types::connection::{InputSpec, OutputSpec};
 use protocol_builder::types::input::{SighashType, SpendMode};
 use protocol_builder::types::output::{AmountType, SpeedupData};
@@ -339,6 +339,9 @@ pub trait ProtocolHandler {
         let mut lamp_sigs = Vec::with_capacity(keys.len());
 
         for key in keys.iter().rev() {
+            if !matches!(key.key_type(), KeyType::LamportKey { .. }) {
+                continue;
+            }
             if let Some(var) = program_context
                 .globals
                 .get_var(&self.context().id, key.name())?
@@ -395,6 +398,9 @@ pub trait ProtocolHandler {
         let mut wots_sigs = vec![];
 
         for k in protocol_script.get_keys().iter().rev() {
+            if !matches!(k.key_type(), KeyType::WinternitzKey { .. }) {
+                continue;
+            }
             //info!("Getting winternitz signature for key: {}", k.name());
             if let Some(var) = program_context
                 .globals
@@ -458,6 +464,9 @@ pub trait ProtocolHandler {
             let spend = protocol.get_script_to_spend(name, input_index as u32, input.leaf_index)?;
             for sig in self.get_winternitz_signature_for_script(&spend, context)? {
                 spending_args.push_winternitz_signature(sig);
+            }
+            for sig in self.get_lamport_signature_for_script(&spend, context)? {
+                spending_args.push_lamport_signature(sig);
             }
 
             let signature = protocol
@@ -588,7 +597,7 @@ pub trait ProtocolHandler {
         prev_vout: u32,
         prev_name: &str,
         transaction: &Transaction,
-    ) -> Result<Vec<[u8; 32]>, BitVMXError> {
+    ) -> Result<Vec<([u8; 32], u8)>, BitVMXError> {
         let idx = self.find_prevout(prev_tx_id, prev_vout, transaction)?;
         let protocol = self.load_protocol()?;
         let script = &protocol.get_script_from_output(prev_name, prev_vout)?.1[0];
@@ -601,13 +610,17 @@ pub trait ProtocolHandler {
         for key in script.get_keys().iter() {
             let key_type = key.key_type();
             let public_key = key_type.lamport_public_key()?;
+            let (hashes_0, _) = public_key.to_hashes();
 
-            for _ in 0..public_key.len() {
+            for hash_0 in hashes_0 {
                 let signature = iter
                     .next()
                     .ok_or(BitVMXError::ScriptSignatureMissing(key.name().to_string()))?;
 
-                signatures.push(signature.try_into()?);
+                let hash = public_key.hash_type().hash(signature).to_bytes();
+                let bit = if hash == hash_0 { 0 } else { 1 };
+
+                signatures.push((signature.try_into()?, bit));
             }
         }
 

@@ -1,20 +1,22 @@
 use std::collections::HashMap;
 
-use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid, XOnlyPublicKey};
 use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_script::script;
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_job_dispatcher_types::garbled_messages::{
     GCJobEvaluationResult, GCJobProveResult, GarbledJobType,
 };
 use console::style;
 use key_manager::{
+    errors::LamportError,
     key_type::BitcoinKeyType,
-    lamport::{LamportSignature, LamportType},
+    lamport::{LamportPublicKey, LamportSignature, LamportType},
 };
 use protocol_builder::{
     builder::ProtocolBuilder,
     graph::graph::GraphOptions,
-    scripts::{self, ProtocolScript, SignMode},
+    scripts::{self, KeyType, ProtocolScript, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -39,14 +41,16 @@ use crate::{
         protocols::{
             claim::{auto_claim_start, claim_state_handle, ClaimGate},
             dispute::{self},
-            protocol_handler::{timeout_input_tx, ClaimGateConfig, WithClaimGateConfig},
+            protocol_handler::{
+                timeout_input_tx, timeout_tx, ClaimGateConfig, WithClaimGateConfig,
+            },
             timeouts::{auto_dispatch_timeout, cancel_timeout, TxOwnershipTable},
         },
         setup::steps::{
             garbler_step::{GCConfiguration, GC_INPUT_PK, GC_OUTPUT_PK, GC_PUBLIC_DATA},
             SetupStepName,
         },
-        variables::{Globals, PartialUtxo, VariableTypes},
+        variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes},
     },
     types::{IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP},
 };
@@ -62,10 +66,7 @@ pub const TIMELOCK_BLOCKS: &str = "timelock_blocks";
 
 pub const EXTERNAL_START: &str = dispute::EXTERNAL_START;
 pub const START_CH: &str = dispute::START_CH;
-pub const COMMITMENT: &str = dispute::COMMITMENT;
-pub const CHALLENGE: &str = "CHALLENGE_TX";
 pub const INPUT: &str = "INPUT_TX";
-pub const EQUIVOCATION: &str = "EQUIVOCATION_TX";
 pub const VERIFIER_FINAL: &str = dispute::VERIFIER_FINAL;
 pub const PROVER_WINS: &str = dispute::PROVER_WINS;
 pub const VERIFIER_WINS: &str = dispute::VERIFIER_WINS;
@@ -326,46 +327,6 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             )?;
         }
 
-        self.add_connection_with_scripts(
-            context,
-            aggregated,
-            &mut protocol,
-            timelock_blocks,
-            AmountType::Auto,
-            speedup_dust,
-            START_CH,
-            COMMITMENT,
-            &claim_verifier,
-            Self::lamport_check(
-                prover_speedup_pub,
-                SignMode::Single,
-                &keys[0],
-                &Vec::<&str>::new(),
-                None,
-            )?,
-            (&prover_speedup_pub, &verifier_speedup_pub),
-        )?;
-
-        self.add_connection_with_scripts(
-            context,
-            aggregated,
-            &mut protocol,
-            timelock_blocks,
-            AmountType::Auto,
-            speedup_dust,
-            COMMITMENT,
-            CHALLENGE,
-            &claim_prover,
-            Self::lamport_check(
-                verifier_speedup_pub,
-                SignMode::Single,
-                &keys[1],
-                &Vec::<&str>::new(),
-                None,
-            )?,
-            (&verifier_speedup_pub, &prover_speedup_pub),
-        )?;
-
         let gc_input_pk = context
             .globals
             .get_var_or_err(&self.context().id, GC_INPUT_PK)?
@@ -378,7 +339,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             timelock_blocks,
             AmountType::Auto,
             speedup_dust,
-            CHALLENGE,
+            START_CH,
             INPUT,
             &claim_verifier,
             vec![scripts::verify_lamport_signatures(
@@ -395,58 +356,51 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             .get_var_or_err(&self.context().id, GC_OUTPUT_PK)?
             .lamport_pubkey()?;
 
-        self.add_connection_with_scripts(
-            context,
-            aggregated,
-            &mut protocol,
-            timelock_blocks,
-            AmountType::Auto,
-            speedup_dust,
-            INPUT,
-            EQUIVOCATION,
-            &claim_prover,
-            vec![scripts::verify_lamport_signatures(
-                verifier_speedup_pub,
-                &vec![("circuit_output", &gc_output_pk)],
-                SignMode::Single,
-                Some(vec![Self::get_expects_false_script()]),
-            )?],
-            (&verifier_speedup_pub, &prover_speedup_pub),
-        )?;
+        let mut connection_leaf = scripts::check_signature(aggregated, SignMode::Aggregate);
+        connection_leaf.set_assert_leaf_id(0);
 
-        let mut speedup_timeout =
-            scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
-        speedup_timeout.set_assert_leaf_id(0);
-        let mut verifier_final =
-            scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
-        verifier_final.set_assert_leaf_id(1);
+        let mut timeout = scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
+        timeout.set_assert_leaf_id(1);
+
+        let mut script = Self::lamport_check_false(
+            aggregated,
+            SignMode::Aggregate,
+            &gc_output_pk,
+            "circuit_output",
+        )?;
+        script.set_assert_leaf_id(2);
 
         let output_type = OutputType::taproot(
             AmountType::Auto,
             aggregated,
-            &vec![speedup_timeout, verifier_final],
+            &vec![connection_leaf, timeout, script],
         )?;
 
         protocol.add_connection(
-            &format!(
-                "{}_TL_{}_{}",
-                EQUIVOCATION,
-                2 * timelock_blocks,
-                VERIFIER_FINAL
-            ),
-            EQUIVOCATION,
-            output_type.into(),
+            &format!("{}__{}", INPUT, VERIFIER_FINAL),
+            INPUT,
+            output_type.clone().into(),
             VERIFIER_FINAL,
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 2 }),
+            None,
+            None,
+        )?;
+
+        protocol.add_connection(
+            &format!("{}_TL_{}_{}_TO", INPUT, 2 * timelock_blocks, VERIFIER_FINAL),
+            INPUT,
+            OutputSpec::Last,
+            &timeout_tx(VERIFIER_FINAL),
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             Some(2 * timelock_blocks),
             None,
         )?;
 
         protocol.add_connection(
-            &format!("{}__CONNECTOR__INPUT_TO", EQUIVOCATION),
-            EQUIVOCATION,
+            &format!("{}__CONNECTOR__INPUT_TO", INPUT),
+            INPUT,
             OutputSpec::Last,
-            &timeout_input_tx(EQUIVOCATION),
+            &timeout_input_tx(INPUT),
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
             None,
             None,
@@ -459,7 +413,21 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             &verifier_speedup_pub,
         )?;
 
+        context.globals.set_var(
+            &self.context().id,
+            &timeout_tx(VERIFIER_FINAL),
+            VariableTypes::VecNumber(vec![1, 2 * timelock_blocks as u32]),
+        )?;
+
+        pb.add_speedup_output(
+            &mut protocol,
+            &timeout_tx(VERIFIER_FINAL),
+            speedup_dust,
+            &prover_speedup_pub,
+        )?;
+
         claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;
+        claim_prover.add_claimer_win_connection(&mut protocol, &timeout_tx(VERIFIER_FINAL))?;
         protocol.compute_minimum_output_values()?;
         protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
 
@@ -544,8 +512,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         match vout {
             None => match (name.as_str(), self.role()) {
                 (START_CH, ParticipantRole::Prover) => {
-                    let (tx, speedup) =
-                        self.get_tx_with_speedup_data(program_context, COMMITMENT)?;
+                    let (tx, speedup) = self.get_tx_with_speedup_data(program_context, INPUT)?;
                     self.dispatch(program_context, tx, Some(speedup), None)?;
                 }
                 (VERIFIER_FINAL, ParticipantRole::Verifier) => {
@@ -586,18 +553,8 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                 }
 
                 match (name.as_str(), self.role()) {
-                    (COMMITMENT, ParticipantRole::Verifier) => {
-                        let (tx, speedup) =
-                            self.get_tx_with_speedup_data(program_context, CHALLENGE)?;
-                        self.dispatch(program_context, tx, Some(speedup), None)?;
-                    }
-                    (CHALLENGE, ParticipantRole::Prover) => {
-                        let (tx, speedup) =
-                            self.get_tx_with_speedup_data(program_context, INPUT)?;
-                        self.dispatch(program_context, tx, Some(speedup), None)?;
-                    }
                     (INPUT, ParticipantRole::Verifier) => {
-                        let sigs =
+                        let circuit_input =
                             self.decode_lamport_for_speedup(tx_id, vout, &name, transaction)?;
 
                         let protocol_id = &self.ctx.id;
@@ -614,20 +571,14 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                         self.execute_job(
                             program_context,
                             &program_context.components_config.garbler,
-                            GarbledJobType::Evaluate(config.circuit, public_data, sigs, output_dir),
+                            GarbledJobType::Evaluate(
+                                config.circuit,
+                                public_data,
+                                circuit_input,
+                                output_dir,
+                            ),
                             "verifier_evaluate_circuit",
                         )?;
-                    }
-                    (EQUIVOCATION, ParticipantRole::Verifier) => {
-                        let tx = self.get_signed(
-                            program_context,
-                            &VERIFIER_FINAL,
-                            vec![(1, true).into()],
-                        )?;
-                        let speedup_data =
-                            self.get_speedup_data_from_tx(&tx, program_context, None)?;
-                        let height = Some(current_height + 2 * timelock_blocks as u32);
-                        self.dispatch(program_context, tx, Some(speedup_data), height)?;
                     }
                     _ => {}
                 }
@@ -692,19 +643,14 @@ impl GCDisputeResolutionProtocol {
         // TODO: don't send if output is correct
         // We assume there is a single output
         let signature = LamportSignature::from_bytes(&result.output[0], 1, LamportType::SHA256)?;
-        let tx = self.get_signed(context, EQUIVOCATION, vec![(0, true).into()])?;
-        let protocol = self.load_protocol()?;
-        let (output_type, _) = protocol.get_script_from_output(EQUIVOCATION, 0)?;
+        context.witness.set_witness(
+            &self.ctx.id,
+            "circuit_output",
+            WitnessTypes::Lamport(signature),
+        )?;
 
-        let sp = SpeedupData::new_with_input(
-            self.partial_utxo_from(&tx, 0),
-            output_type,
-            vec![signature],
-            0,
-            true,
-        );
-
-        self.dispatch(context, tx, Some(sp), None)?;
+        let tx = self.get_signed(context, VERIFIER_FINAL, vec![(2, true).into()])?;
+        self.dispatch(context, tx, None, None)?;
 
         // Mark this step as processed to prevent duplicate handling
         if let Some(key) = dedup_key {
@@ -716,28 +662,55 @@ impl GCDisputeResolutionProtocol {
         Ok(())
     }
 
-    fn lamport_check<T: AsRef<str> + std::fmt::Debug>(
+    fn lamport_check_false(
         aggregated: &PublicKey,
         sign_mode: SignMode,
-        keys: &ParticipantKeys,
-        var_names: &Vec<T>,
-        extra_check_scripts: Option<Vec<ScriptBuf>>,
-    ) -> Result<Vec<ProtocolScript>, BitVMXError> {
-        info!("lamport check for variables: {:?}", &var_names);
+        key: &LamportPublicKey,
+        key_name: &str,
+    ) -> Result<ProtocolScript, BitVMXError> {
+        let script = script!(
+            {XOnlyPublicKey::from(*aggregated).serialize().to_vec()}
+            OP_CHECKSIGVERIFY
+            { Self::ots_check_false_lamport(key) }
+            OP_PUSHNUM_1
+        )
+        .compile();
 
-        let names_and_keys = var_names
-            .iter()
-            .map(|v| Ok::<_, BitVMXError>((v, keys.get_lamport(v.as_ref())?)))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let lamport_check = scripts::verify_lamport_signatures(
-            aggregated,
-            &names_and_keys,
-            sign_mode,
-            extra_check_scripts,
+        let mut lamport_check = ProtocolScript::new(script, aggregated, sign_mode);
+        lamport_check.add_key(
+            key_name,
+            key.derivation_index()
+                .ok_or(LamportError::ExtraDataMissing(
+                    "derivation_index".to_string(),
+                ))?,
+            KeyType::lamport(key)?,
+            0,
         )?;
 
-        Ok(vec![lamport_check])
+        Ok(lamport_check)
+    }
+
+    fn ots_check_false_lamport(key: &LamportPublicKey) -> ScriptBuf {
+        let mut stack = StackTracker::new();
+
+        for i in 0..key.len() {
+            stack.define(1, format!("signature_{}", i).as_str());
+        }
+
+        let (zeros, _ones) = key.to_hashes_string();
+
+        const OTS_SIZE: u32 = 32;
+        for idx in (0..key.len()).rev() {
+            stack.op_size();
+            stack.number(OTS_SIZE);
+            stack.op_equalverify();
+
+            stack.op_sha256();
+            stack.hexstr(&zeros[idx]);
+            stack.op_equalverify();
+        }
+
+        stack.get_script()
     }
 
     fn get_tx_with_speedup_data(
@@ -768,21 +741,9 @@ impl GCDisputeResolutionProtocol {
         table.add_ignored(VERIFIER_FINAL.to_string());
 
         table.add(START_CH, Verifier);
-        table.add(COMMITMENT, Prover);
-        table.add(CHALLENGE, Verifier);
         table.add(INPUT, Prover);
-        table.add(EQUIVOCATION, Verifier);
         table.add(VERIFIER_FINAL, Verifier);
 
         table
-    }
-
-    fn get_expects_false_script() -> ScriptBuf {
-        let mut stack = StackTracker::new();
-        stack.define(1, "bit");
-        stack.op_not();
-        stack.op_verify();
-
-        stack.get_script()
     }
 }

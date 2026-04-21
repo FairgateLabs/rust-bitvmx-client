@@ -9,7 +9,7 @@ use protocol_builder::{
         OutputType,
     },
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     bitvmx::Context,
@@ -22,8 +22,9 @@ use crate::{
                 action_wins, action_wins_prefix, get_tx_name_from_timeout, ClaimGateConfig,
                 ProtocolHandler, WithClaimGateConfig,
             },
-            timeouts::TxOwnershipTable,
+            timeouts::{TxOwnership, TxOwnershipTable},
         },
+        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -325,8 +326,26 @@ pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig>(
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
             info!("{claim_name}: {:?}", tx);
             protocol_handler.dispatch(program_context, tx, Some(speedup_data), None)?;
+        } else {
+            program_context.globals.set_var(
+                &protocol_handler.context().id,
+                "our_claim_gate_consumed",
+                VariableTypes::Bool(true),
+            )?;
         }
     }
+
+    // at least for now, in every protocol, the last tx in the ownership table consumes the claim gate 
+    if let Some(TxOwnership { tx_name, owner }) = ownership_table.txs.last() {
+        if tx_name == name && owner != &protocol_handler.role() {
+            program_context.globals.set_var(
+                &protocol_handler.context().id,
+                "our_claim_gate_consumed",
+                VariableTypes::Bool(true),
+            )?;
+        }
+    };
+
     Ok(())
 }
 
@@ -349,6 +368,12 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
     if name == ClaimGate::tx_start(dispute::PROVER_WINS)
         || name == ClaimGate::tx_start(dispute::VERIFIER_WINS)
     {
+        let our_claim_gate_consumed = program_context
+            .globals
+            .get_var(&protocol_handler.context().id, "our_claim_gate_consumed")?
+            .and_then(|var| var.bool().ok())
+            .unwrap_or(false);
+
         // my start
         if name == ClaimGate::tx_start(&my_claim) {
             info!("{my_claim} SUCCESS dispatch");
@@ -362,6 +387,8 @@ pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
                 protocol_handler.get_speedup_data_from_tx(&tx, program_context, None)?;
             let height = Some(current_height + timelock_blocks);
             protocol_handler.dispatch(program_context, tx, Some(speedup_data), height)?;
+        } else if our_claim_gate_consumed {
+            warn!("Can't stop {other_claim}, claim gate was consumed by the opposing party.");
         }
         //other start
         else {
