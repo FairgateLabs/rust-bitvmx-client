@@ -65,6 +65,12 @@ impl GCConfiguration {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct ProverGarblerData {
+    pub proof_blob: ProofBlob,
+    pub public_input_signature: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GarblerStep;
 
@@ -207,10 +213,12 @@ impl SetupStep for GarblerStep {
                 prove_result,
                 gc_proof,
                 lamport_proof,
-                public_input_signature: public_input_signature.to_bytes(),
             };
 
-            let result_bytes = serde_json::to_vec(&proof_blob)?;
+            let result_bytes = serde_json::to_vec(&ProverGarblerData {
+                proof_blob,
+                public_input_signature: public_input_signature.to_bytes(),
+            })?;
 
             return Ok(Some(result_bytes));
         }
@@ -281,7 +289,10 @@ impl SetupStep for GarblerStep {
             return Ok(true);
         }
 
-        let proof_blob: ProofBlob = serde_json::from_slice(data).map_err(|e| {
+        let ProverGarblerData {
+            proof_blob,
+            public_input_signature,
+        } = serde_json::from_slice(data).map_err(|e| {
             BitVMXError::InvalidMessage(format!(
                 "Failed to deserialize garbler data: {} \n {:?}",
                 e,
@@ -303,8 +314,14 @@ impl SetupStep for GarblerStep {
             &protocol_id,
         )?;
 
+        context.globals.set_var(
+            &protocol_id,
+            GC_PUBLIC_INPUT_SIGNATURE,
+            VariableTypes::Input(public_input_signature.clone()),
+        )?;
+
         let public_input_signature = LamportSignature::from_bytes(
-            &proof_blob.public_input_signature,
+            &public_input_signature,
             public_input_size,
             LamportType::SHA256,
         )?;
@@ -322,12 +339,6 @@ impl SetupStep for GarblerStep {
                     .to_string(),
             ));
         }
-
-        context.globals.set_var(
-            &protocol_id,
-            GC_PUBLIC_INPUT_SIGNATURE,
-            VariableTypes::Input(proof_blob.public_input_signature.clone()),
-        )?;
 
         context.globals.set_var(
             &protocol_id,

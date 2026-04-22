@@ -107,7 +107,6 @@ pub fn test_gnova_commands() -> Result<()> {
         prove_result,
         gc_proof,
         lamport_proof,
-        public_input_signature: vec![],
     };
 
     // --- Step 2: Verify (verifies both GC and Lamport proofs) ---
@@ -313,7 +312,6 @@ fn run_garbled_client_test() -> Result<()> {
         prove_result: prove_parsed,
         gc_proof,
         lamport_proof,
-        public_input_signature: vec![],
     };
 
     let verify_job = DispatcherJob {
@@ -474,7 +472,6 @@ pub fn test_full_protocol() -> Result<()> {
         prove_result: prove_result.clone(),
         gc_proof,
         lamport_proof,
-        public_input_signature: vec![],
     };
 
     let verify_job = GarbledJobType::Verify(

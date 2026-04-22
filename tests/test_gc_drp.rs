@@ -1,6 +1,7 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitcoin::Network;
+use bitvmx_broker::rpc::errors::BrokerError;
 use bitvmx_client::{
     program::{
         participant::{CommsAddress, ParticipantRole},
@@ -25,9 +26,12 @@ use crate::common::{check_gnova_built, config_trace, helper::TestHelper, init_ut
 
 mod common;
 
-#[ignore]
-#[test]
-pub fn test_protocol() -> Result<()> {
+fn test_aux(
+    prover_public_circuit_input: Vec<bool>,
+    verifier_public_circuit_input: Vec<bool>,
+    circuit_input: Vec<bool>,
+    winner_role: ParticipantRole,
+) -> Result<()> {
     let independent = false;
     let network = Network::Regtest;
 
@@ -176,21 +180,18 @@ pub fn test_protocol() -> Result<()> {
     );
 
     const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";
-    // let wrong_circuit_public_input = vec![false, false];
-    let circuit_public_input = vec![true, false];
-    let circuit_input = vec![false];
 
     let gc_config_prover = GCConfiguration::new(
         prog_id,
         ParticipantRole::Prover,
         TEST_CIRCUIT_PATH.to_string(),
-        circuit_public_input.clone(),
+        prover_public_circuit_input.clone(),
     );
     let gc_config_verifier = GCConfiguration::new(
         prog_id,
         ParticipantRole::Verifier,
         TEST_CIRCUIT_PATH.to_string(),
-        circuit_public_input,
+        verifier_public_circuit_input,
     );
 
     pair_0_1_channels[0].channel.send(
@@ -223,8 +224,58 @@ pub fn test_protocol() -> Result<()> {
     )?;
 
     info!("Waiting for start");
-    helper.wait_tx_name(1, &action_wins(&ParticipantRole::Verifier, 1))?;
+    helper.wait_tx_name(1, &action_wins(&winner_role, 1))?;
     helper.stop()?;
 
     Ok(())
+}
+
+#[test]
+#[ignore]
+pub fn test_wrong_public_input() {
+    let prover_public_circuit_input = vec![true, false];
+    let verifier_public_circuit_input = vec![true, true];
+    let circuit_input = vec![false];
+    let winner_role = ParticipantRole::Verifier; // No one wins in this case since it fails at setup
+    let result = test_aux(
+        prover_public_circuit_input,
+        verifier_public_circuit_input,
+        circuit_input,
+        winner_role,
+    );
+
+    assert!(matches!(
+        result.unwrap_err().downcast_ref::<BrokerError>(),
+        Some(BrokerError::Disconnected)
+    ));
+}
+
+#[test]
+#[ignore]
+pub fn test_wrong_input() -> Result<()> {
+    // current circuit computes (a & b) ^ c  = (true & false) ^ false = (false) ^ false = false -> input is incorrect
+    let public_circuit_input = vec![true, false];
+    let circuit_input = vec![false];
+    let winner_role = ParticipantRole::Verifier;
+    test_aux(
+        public_circuit_input.clone(),
+        public_circuit_input,
+        circuit_input,
+        winner_role,
+    )
+}
+
+#[test]
+#[ignore]
+pub fn test_correct_input() -> Result<()> {
+    // current circuit computes (a & b) ^ c  = (true & false) ^ true = (false) ^ true = true -> input is correct
+    let public_circuit_input = vec![true, false];
+    let circuit_input = vec![true];
+    let winner_role = ParticipantRole::Prover;
+    test_aux(
+        public_circuit_input.clone(),
+        public_circuit_input,
+        circuit_input,
+        winner_role,
+    )
 }
