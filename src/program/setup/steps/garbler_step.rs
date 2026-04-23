@@ -303,7 +303,6 @@ impl SetupStep for GarblerStep {
         let mut commitments = proof_blob.prove_result.sha256_commitments.clone();
         commitments.dedup_by(|a, b| a.h0 == b.h0 && a.h1 == b.h1);
 
-        let config = GCConfiguration::load(&protocol_id, &context.globals)?;
         let public_input_size = config.circuit_public_input.len();
         let num_inputs = proof_blob.prove_result.num_inputs;
 
@@ -339,12 +338,6 @@ impl SetupStep for GarblerStep {
                     .to_string(),
             ));
         }
-
-        context.globals.set_var(
-            &protocol_id,
-            GC_PUBLIC_DATA,
-            VariableTypes::String(serde_json::to_string(&proof_blob.prove_result)?),
-        )?;
 
         import_public_lamport(
             &commitments[public_input_size..num_inputs],
