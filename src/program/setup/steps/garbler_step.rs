@@ -135,73 +135,24 @@ impl SetupStep for GarblerStep {
                     ))
                 })?;
 
-            let gc_proof_path = &prove_result.proof_path;
-            let lamport_proof_path = &prove_result.lamport_proof_path;
-
-            let io_inputs_path = &prove_result.io_inputs_path;
-            let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
-            let hash_type = LamportType::SHA256;
-            let chunks = io_inputs.chunks(hash_type.hash_size());
-
-            let mut bytes_0s: Vec<&[u8]> = Vec::new();
-            let mut bytes_1s: Vec<&[u8]> = Vec::new();
-
-            for (i, chunk) in chunks.enumerate() {
-                if i % 2 == 0 {
-                    bytes_0s.push(chunk);
-                } else {
-                    bytes_1s.push(chunk);
-                }
-            }
-
             let config = GCConfiguration::load(protocol_id, &context.globals)?;
-            let public_input_size = config.circuit_public_input.len();
-            let num_inputs = prove_result.num_inputs;
-
-            let gc_public_input_pk = context.key_manager.import_lamport_private_key(
-                &bytes_0s[..public_input_size].concat(),
-                &bytes_1s[..public_input_size].concat(),
-                public_input_size,
-                hash_type,
-            )?;
-
-            let public_input_signature = context.key_manager.sign_lamport_message_by_pubkey(
-                &config.circuit_public_input,
-                &gc_public_input_pk,
-            )?;
-
-            context.key_manager.import_lamport_private_key(
-                &bytes_0s[public_input_size..num_inputs].concat(),
-                &bytes_1s[public_input_size..num_inputs].concat(),
-                num_inputs - public_input_size,
-                hash_type,
-            )?;
+            import_input_private_keys(&prove_result, &config, context)?;
 
             info!("[Prover] Imported Garbled Circuit Input Private Key");
 
-            let mut commitments = prove_result.sha256_commitments.clone();
-            commitments.dedup_by(|a, b| a.h0 == b.h0 && a.h1 == b.h1);
+            let [public_input_pk, _, _] =
+                import_public_keys(&prove_result, &config, context, protocol_id)?;
 
-            import_public_lamport(
-                &commitments[public_input_size..num_inputs],
-                GC_INPUT_PK,
-                &context,
-                protocol_id,
-            )?;
+            info!("[Prover] Imported Garbled Circuit Public Keys");
 
-            import_public_lamport(
-                &commitments[num_inputs..],
-                GC_OUTPUT_PK,
-                &context,
-                protocol_id,
-            )?;
-
-            info!("[prover] Proof generated at path: {}", gc_proof_path);
+            let gc_proof_path = &prove_result.proof_path;
+            let lamport_proof_path = &prove_result.lamport_proof_path;
+            info!("[Prover] Proof generated at path: {}", gc_proof_path);
             info!(
-                "[prover] Lamport proof generated at path: {}",
+                "[Prover] Lamport proof generated at path: {}",
                 lamport_proof_path
             );
-            info!("[prover] Proofs generated");
+            info!("[Prover] Proofs generated");
             info!("  digest_io: {}", &prove_result.digest_io);
             info!("  digest_labels: {}", &prove_result.digest_labels);
             info!("  digest_lamport: {}", &prove_result.digest_lamport);
@@ -214,6 +165,10 @@ impl SetupStep for GarblerStep {
                 gc_proof,
                 lamport_proof,
             };
+
+            let public_input_signature = context
+                .key_manager
+                .sign_lamport_message_by_pubkey(&config.circuit_public_input, &public_input_pk)?;
 
             let result_bytes = serde_json::to_vec(&ProverGarblerData {
                 proof_blob,
@@ -300,84 +255,22 @@ impl SetupStep for GarblerStep {
             ))
         })?;
 
-        let mut commitments = proof_blob.prove_result.sha256_commitments.clone();
-        commitments.dedup_by(|a, b| a.h0 == b.h0 && a.h1 == b.h1);
+        let [public_input_pk, _, _] =
+            import_public_keys(&proof_blob.prove_result, &config, context, &protocol_id)?;
 
-        let public_input_size = config.circuit_public_input.len();
-        let num_inputs = proof_blob.prove_result.num_inputs;
+        info!("[Verifier] Imported Garbled Circuit Public Keys");
 
-        let public_input_pk = import_public_lamport(
-            &commitments[..public_input_size],
-            GC_PUBLIC_INPUT_PK,
-            &context,
-            &protocol_id,
-        )?;
-
-        context.globals.set_var(
-            &protocol_id,
-            GC_PUBLIC_INPUT_SIGNATURE,
-            VariableTypes::Input(public_input_signature.clone()),
-        )?;
-
-        let public_input_signature = LamportSignature::from_bytes(
+        import_public_input_signature(
             &public_input_signature,
-            public_input_size,
-            LamportType::SHA256,
-        )?;
-
-        if !Lamport::new()
-            .verify_signature(
-                Some(&config.circuit_public_input),
-                &public_input_signature,
-                &public_input_pk,
-            )?
-            .0
-        {
-            return Err(BitVMXError::InvalidInput(
-                "Prover provided invalid public input for circuit during garbler setup step"
-                    .to_string(),
-            ));
-        }
-
-        import_public_lamport(
-            &commitments[public_input_size..num_inputs],
-            GC_INPUT_PK,
-            &context,
-            &protocol_id,
-        )?;
-        import_public_lamport(
-            &commitments[num_inputs..],
-            GC_OUTPUT_PK,
-            &context,
+            &config,
+            public_input_pk,
+            context,
             &protocol_id,
         )?;
 
-        context.globals.set_var(
-            &protocol_id,
-            GC_PUBLIC_DATA,
-            VariableTypes::String(serde_json::to_string(&proof_blob.prove_result)?),
-        )?;
+        info!("[Verifier] Imported Garbled Circuit Public Input Signature");
 
-        let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
-
-        info!("[verifier] Verifying GC + Lamport proofs...");
-        let verify_job =
-            GarbledJobType::Verify(proof_blob, config.circuit.clone(), output_dir.clone());
-
-        let prove_job = DispatcherJob {
-            job_id: Context::SetupStep(
-                protocol_id,
-                self.step_name().to_string(),
-                "verify".to_string(),
-            )
-            .to_string()?,
-            job_type: verify_job,
-        };
-
-        let msg = serde_json::to_string(&prove_job)?;
-        context
-            .broker_channel
-            .send(&context.components_config.garbler, msg)?;
+        dispatch_proof_verification(proof_blob, context, &config, protocol_id, self.step_name())?;
 
         Ok(true)
     }
@@ -406,6 +299,161 @@ impl SetupStep for GarblerStep {
     fn verify_async(&self) -> bool {
         true
     }
+}
+
+fn import_public_input_signature(
+    public_input_signature: &Vec<u8>,
+    config: &GCConfiguration,
+    public_input_pk: LamportPublicKey,
+    context: &ProgramContext,
+    protocol_id: &Uuid,
+) -> Result<(), BitVMXError> {
+    let circuit_public_input = &config.circuit_public_input;
+    let signature = LamportSignature::from_bytes(
+        public_input_signature,
+        circuit_public_input.len(),
+        LamportType::SHA256,
+    )?;
+
+    let (valid_signature, _) = Lamport::new().verify_signature(
+        Some(circuit_public_input),
+        &signature,
+        &public_input_pk,
+    )?;
+
+    if !valid_signature {
+        return Err(BitVMXError::InvalidInput(
+            "Prover provided invalid public input for circuit during garbler setup step"
+                .to_string(),
+        ));
+    }
+
+    context.globals.set_var(
+        &protocol_id,
+        GC_PUBLIC_INPUT_SIGNATURE,
+        VariableTypes::Input(public_input_signature.clone()),
+    )?;
+
+    Ok(())
+}
+
+fn import_public_keys(
+    prove_result: &GCJobProveResult,
+    config: &GCConfiguration,
+    context: &mut ProgramContext,
+    protocol_id: &Uuid,
+) -> Result<[LamportPublicKey; 3], BitVMXError> {
+    let mut commitments = prove_result.sha256_commitments.clone();
+    commitments.dedup_by(|a, b| a.h0 == b.h0 && a.h1 == b.h1);
+
+    let num_inputs = prove_result.num_inputs;
+    let public_input_size = config.circuit_public_input.len();
+    let num_outputs = 1; // we assume only one output
+    
+    let expected = num_inputs + num_outputs;
+    if commitments.len() != expected {
+        return Err(BitVMXError::InvalidMessage(format!(
+            "Not enough commitments: expected at least {}, got {}",
+            expected,
+            commitments.len()
+        )));
+    }
+
+    let public_input_pk = import_public_lamport(
+        &commitments[..public_input_size],
+        GC_PUBLIC_INPUT_PK,
+        &context,
+        protocol_id,
+    )?;
+
+    let input_pk = import_public_lamport(
+        &commitments[public_input_size..num_inputs],
+        GC_INPUT_PK,
+        &context,
+        protocol_id,
+    )?;
+
+    let output_pk = import_public_lamport(
+        &commitments[num_inputs..],
+        GC_OUTPUT_PK,
+        &context,
+        protocol_id,
+    )?;
+
+    Ok([public_input_pk, input_pk, output_pk])
+}
+
+fn import_input_private_keys(
+    prove_result: &GCJobProveResult,
+    config: &GCConfiguration,
+    context: &ProgramContext,
+) -> Result<(), BitVMXError> {
+    let io_inputs_path = &prove_result.io_inputs_path;
+    let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
+    let hash_type = LamportType::SHA256;
+    let chunks = io_inputs.chunks(hash_type.hash_size());
+
+    let mut bytes_0s: Vec<&[u8]> = Vec::new();
+    let mut bytes_1s: Vec<&[u8]> = Vec::new();
+
+    for (i, chunk) in chunks.enumerate() {
+        if i % 2 == 0 {
+            bytes_0s.push(chunk);
+        } else {
+            bytes_1s.push(chunk);
+        }
+    }
+
+    let public_input_size = config.circuit_public_input.len();
+    let num_inputs = prove_result.num_inputs;
+
+    context.key_manager.import_lamport_private_key(
+        &bytes_0s[..public_input_size].concat(),
+        &bytes_1s[..public_input_size].concat(),
+        public_input_size,
+        hash_type,
+    )?;
+
+    context.key_manager.import_lamport_private_key(
+        &bytes_0s[public_input_size..num_inputs].concat(),
+        &bytes_1s[public_input_size..num_inputs].concat(),
+        num_inputs - public_input_size,
+        hash_type,
+    )?;
+
+    Ok(())
+}
+
+fn dispatch_proof_verification(
+    proof_blob: ProofBlob,
+    context: &ProgramContext,
+    config: &GCConfiguration,
+    protocol_id: Uuid,
+    step_name: &str,
+) -> Result<(), BitVMXError> {
+    context.globals.set_var(
+        &protocol_id,
+        GC_PUBLIC_DATA,
+        VariableTypes::String(serde_json::to_string(&proof_blob.prove_result)?),
+    )?;
+
+    let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
+
+    info!("[Verifier] Verifying GC + Lamport proofs...");
+    let verify_job = GarbledJobType::Verify(proof_blob, config.circuit.clone(), output_dir.clone());
+
+    let prove_job = DispatcherJob {
+        job_id: Context::SetupStep(protocol_id, step_name.to_string(), "verify".to_string())
+            .to_string()?,
+        job_type: verify_job,
+    };
+
+    let msg = serde_json::to_string(&prove_job)?;
+    context
+        .broker_channel
+        .send(&context.components_config.garbler, msg)?;
+
+    Ok(())
 }
 
 fn import_public_lamport(
