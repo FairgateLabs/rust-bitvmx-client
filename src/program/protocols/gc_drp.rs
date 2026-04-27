@@ -47,7 +47,10 @@ use crate::{
             timeouts::{auto_dispatch_timeout, cancel_timeout, TxOwnershipTable},
         },
         setup::steps::{
-            garbler_step::{GCConfiguration, GC_INPUT_PK, GC_OUTPUT_PK, GC_PUBLIC_DATA},
+            garbler_step::{
+                GCConfiguration, GC_INPUT_PK, GC_OUTPUT_PK, GC_PUBLIC_DATA,
+                GC_PUBLIC_INPUT_SIGNATURE,
+            },
             SetupStepName,
         },
         variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes},
@@ -554,12 +557,27 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
 
                 match (name.as_str(), self.role()) {
                     (INPUT, ParticipantRole::Verifier) => {
-                        let circuit_input =
+                        let prover_circuit_input =
                             self.decode_lamport_for_speedup(tx_id, vout, &name, transaction)?;
 
                         let protocol_id = &self.ctx.id;
                         let config = GCConfiguration::load(protocol_id, &program_context.globals)?;
                         let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
+
+                        let public_input_signature = program_context
+                            .globals
+                            .get_var_or_err(&self.ctx.id, GC_PUBLIC_INPUT_SIGNATURE)?
+                            .input()?;
+
+                        let (public_input_signature, _) = public_input_signature.as_chunks::<32>();
+
+                        let public_input: Vec<([u8; 32], u8)> = public_input_signature
+                            .iter()
+                            .copied()
+                            .zip(config.circuit_public_input.iter().map(|b| *b as u8))
+                            .collect();
+
+                        let circuit_input = [public_input, prover_circuit_input].concat();
 
                         let public_data: GCJobProveResult = serde_json::from_str(
                             &program_context
