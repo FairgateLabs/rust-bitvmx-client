@@ -72,6 +72,10 @@ cardinal = []
 union = []
 testpanic = []
 
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+
 [[example]]
 name = "union"
 path = "examples/union/main.rs"
