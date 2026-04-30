@@ -342,9 +342,17 @@ impl BitVMX {
                     original_signature: signature.clone(),
                     version: version.clone(),
                 };
-                self.program_context
+                if !self
+                    .program_context
                     .leader_broadcast_helper
-                    .store_original_message(program_id, msg_type, original_msg)?;
+                    .store_original_message(program_id, msg_type, original_msg)?
+                {
+                    info!(
+                        "There is a message already stored for program {}",
+                        program_id
+                    );
+                    return Ok(false);
+                }
             }
         }
 

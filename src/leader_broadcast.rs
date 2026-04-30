@@ -187,7 +187,7 @@ impl LeaderBroadcastHelper {
         context_id: &Uuid,
         msg_type: CommsMessageType,
         original_msg: OriginalMessage,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         let key = get_original_message_key(context_id, msg_type, &original_msg.sender_pubkey_hash);
 
         // Check if message from this sender already exists
@@ -197,12 +197,12 @@ impl LeaderBroadcastHelper {
                 "Original message from {} already stored for context {} and type {:?}",
                 original_msg.sender_pubkey_hash, context_id, msg_type
             );
-            return Ok(()); // Don't error, just skip duplicate
+            return Ok(false); // Don't error, just skip duplicate
         }
 
         // Store the message directly - O(1) operation, only serializes this one message
         self.store.set(&key, original_msg, None)?;
-        Ok(())
+        Ok(true)
     }
 
     /// Get all original messages stored for a given context and message type
