@@ -135,3 +135,216 @@ impl MessageQueue {
         Ok(ids.is_empty())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitvmx_broker::rpc::config::QueueChannelConfig;
+    use std::{env, fs};
+    use storage_backend::storage::{KeyValueStore, Storage};
+    use storage_backend::storage_config::StorageConfig;
+    use uuid::Uuid;
+
+    struct TestStorageDir {
+        path: String,
+    }
+
+    impl TestStorageDir {
+        fn new() -> Self {
+            Self {
+                path: env::temp_dir()
+                    .join(format!("bitvmx-message-queue-test-{}", Uuid::new_v4()))
+                    .to_string_lossy()
+                    .into_owned(),
+            }
+        }
+
+        fn config(&self) -> StorageConfig {
+            StorageConfig {
+                path: self.path.clone(),
+                password: None,
+            }
+        }
+
+        fn storage(&self) -> Rc<Storage> {
+            Rc::new(Storage::new(&self.config()).unwrap())
+        }
+    }
+
+    impl Drop for TestStorageDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn test_retry_policy() -> RetryPolicy {
+        RetryPolicy::new(&QueueChannelConfig {
+            max_msgs_per_tick_utilization: 1.0,
+            max_send_attempts: 3,
+            retry_min_delay_msecs: 1,
+            retry_max_delay_msecs: 3,
+        })
+        .unwrap()
+    }
+
+    fn test_identifier(name: &str) -> Identifier {
+        Identifier::new(name.to_string(), 0)
+    }
+
+    #[test]
+    fn push_new_and_pop_front_are_fifo() {
+        let test_dir = TestStorageDir::new();
+        let storage = test_dir.storage();
+        let queue = MessageQueue::new(storage, test_retry_policy());
+
+        let id1 = test_identifier("first");
+        let id2 = test_identifier("second");
+        let msg1 = vec![1, 2, 3];
+        let msg2 = vec![4, 5, 6];
+
+        assert!(queue.is_empty().unwrap());
+
+        queue.push_new(id1.clone(), msg1.clone()).unwrap();
+        queue.push_new(id2.clone(), msg2.clone()).unwrap();
+
+        assert!(!queue.is_empty().unwrap());
+
+        let popped = queue.pop_front().unwrap().unwrap();
+        assert_eq!(popped.identifier, id1);
+        assert_eq!(popped.data, msg1);
+
+        let popped = queue.pop_front().unwrap().unwrap();
+        assert_eq!(popped.identifier, id2);
+        assert_eq!(popped.data, msg2);
+
+        assert!(queue.pop_front().unwrap().is_none());
+        assert!(queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn pop_front_rotates_not_ready_messages() {
+        let test_dir = TestStorageDir::new();
+        let storage = test_dir.storage();
+        let retry_policy = test_retry_policy();
+        let queue = MessageQueue::new(storage.clone(), retry_policy.clone());
+
+        let delayed_id = test_identifier("delayed");
+        let ready_id = test_identifier("ready");
+
+        let mut delayed_msg = QueuedMessage::new(delayed_id.clone(), vec![1]).unwrap();
+        delayed_msg
+            .retry_state
+            .record_attempt(&retry_policy, now_ms().unwrap());
+        let ready_msg = QueuedMessage::new(ready_id.clone(), vec![2]).unwrap();
+
+        queue.push(delayed_msg).unwrap();
+        queue.push(ready_msg).unwrap();
+
+        let popped = queue.pop_front().unwrap().unwrap();
+        assert_eq!(popped.identifier, ready_id);
+        assert_eq!(popped.data, vec![2]);
+
+        let remaining_ids = queue.get_queue_ids().unwrap();
+        assert_eq!(remaining_ids.len(), 1);
+
+        let remaining: Option<QueuedMessage> = storage
+            .get(&format!("{}{}", MSG_KEY_PREFIX, remaining_ids[0]), None)
+            .unwrap();
+        let remaining = remaining.unwrap();
+
+        assert_eq!(remaining.identifier, delayed_id);
+        assert!(!remaining.retry_state.is_ready(now_ms().unwrap()));
+    }
+
+    #[test]
+    fn push_back_increments_attempts_and_drops_exhausted_messages() {
+        let test_dir = TestStorageDir::new();
+        let storage = test_dir.storage();
+        let retry_policy = test_retry_policy();
+        let queue = MessageQueue::new(storage.clone(), retry_policy.clone());
+
+        let msg = QueuedMessage::new(test_identifier("retry"), vec![9, 9, 9]).unwrap();
+        queue.push_back(msg).unwrap();
+
+        let queued_ids = queue.get_queue_ids().unwrap();
+        assert_eq!(queued_ids.len(), 1);
+
+        let stored: Option<QueuedMessage> = storage
+            .get(&format!("{}{}", MSG_KEY_PREFIX, queued_ids[0]), None)
+            .unwrap();
+        let stored = stored.unwrap();
+        assert_eq!(stored.retry_state.get_attempts(), 1);
+        assert!(queue.pop_front().unwrap().is_none());
+
+        let mut exhausted = QueuedMessage::new(test_identifier("exhausted"), vec![7]).unwrap();
+        for _ in 0..retry_policy.max_attempts - 1 {
+            exhausted
+                .retry_state
+                .record_attempt(&retry_policy, now_ms().unwrap());
+        }
+
+        queue.push_back(exhausted).unwrap();
+
+        assert_eq!(queue.get_queue_ids().unwrap().len(), 1);
+        assert!(!queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn pop_front_skips_missing_message_entries() {
+        let test_dir = TestStorageDir::new();
+        let storage = test_dir.storage();
+        let queue = MessageQueue::new(storage.clone(), test_retry_policy());
+
+        let missing_id = Uuid::new_v4();
+        let valid_id = Uuid::new_v4();
+        let valid_msg = QueuedMessage::new(test_identifier("valid"), vec![4, 2]).unwrap();
+
+        storage
+            .set(
+                &format!("{}{}", MSG_KEY_PREFIX, valid_id),
+                valid_msg.clone(),
+                None,
+            )
+            .unwrap();
+        queue.save_queue_ids(vec![missing_id, valid_id]).unwrap();
+
+        let popped = queue.pop_front().unwrap().unwrap();
+        assert_eq!(popped.identifier, valid_msg.identifier);
+        assert_eq!(popped.data, valid_msg.data);
+        assert!(queue.get_queue_ids().unwrap().is_empty());
+        assert!(queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn queue_persists_across_storage_reopen() {
+        let test_dir = TestStorageDir::new();
+        let retry_policy = test_retry_policy();
+
+        let id1 = test_identifier("persisted-1");
+        let id2 = test_identifier("persisted-2");
+        let msg1 = vec![1, 1, 1];
+        let msg2 = vec![2, 2, 2];
+
+        {
+            let storage = test_dir.storage();
+            let queue = MessageQueue::new(storage, retry_policy.clone());
+
+            queue.push_new(id1.clone(), msg1.clone()).unwrap();
+            queue.push_new(id2.clone(), msg2.clone()).unwrap();
+
+            let popped = queue.pop_front().unwrap().unwrap();
+            assert_eq!(popped.identifier, id1);
+            assert_eq!(popped.data, msg1);
+        }
+
+        {
+            let storage = test_dir.storage();
+            let queue = MessageQueue::new(storage, retry_policy);
+
+            let popped = queue.pop_front().unwrap().unwrap();
+            assert_eq!(popped.identifier, id2);
+            assert_eq!(popped.data, msg2);
+            assert!(queue.pop_front().unwrap().is_none());
+        }
+    }
+}
