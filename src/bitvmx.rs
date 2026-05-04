@@ -858,28 +858,30 @@ impl BitVMX {
     }
 
     pub fn process_api_messages(&mut self) -> Result<bool, BitVMXError> {
-        if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
-            let ret = match from {
-                identifier if identifier == self.config.components.garbler => {
-                    self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
-                    Ok(true)
-                }
-                identifier if identifier == self.config.components.emulator => {
-                    self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
-                    Ok(true)
-                }
-                identifier if identifier == self.config.components.prover => {
-                    self.handle_prover_message(msg)?;
-                    Ok(true)
-                }
-                _ => {
-                    self.handle_api_message(msg, from)?;
-                    Ok(true)
-                }
-            };
-            return ret;
+        let mut processed = false;
+        const MAX_MESSAGES_PER_TICK: usize = 20;
+        for _ in 0..MAX_MESSAGES_PER_TICK {
+            if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
+                match from {
+                    identifier if identifier == self.config.components.garbler => {
+                        self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
+                    }
+                    identifier if identifier == self.config.components.emulator => {
+                        self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
+                    }
+                    identifier if identifier == self.config.components.prover => {
+                        self.handle_prover_message(msg)?;
+                    }
+                    _ => {
+                        self.handle_api_message(msg, from)?;
+                    }
+                };
+                processed = true;
+            } else {
+                break;
+            }
         }
-        Ok(false)
+        Ok(processed)
     }
 
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
