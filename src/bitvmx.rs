@@ -52,6 +52,7 @@ use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Instant;
 use std::{
     net::SocketAddr,
     rc::Rc,
@@ -889,19 +890,63 @@ impl BitVMX {
         }
 
         self.count += 1;
+        const WARN_THRESHOLD: Duration = Duration::from_secs(10);
 
         if self.bitvmx_throttle.should_call() {
             let mut had_work = false;
-            had_work |= self.process_programs()?;
 
+            let instant = Instant::now();
+            had_work |= self.process_programs()?;
+            let duration = instant.elapsed();
+            if duration > WARN_THRESHOLD {
+                warn!(
+                    "Processing programs took {:?} which is above the threshold",
+                    duration
+                );
+            }
+
+            let instant = Instant::now();
             had_work |= self.process_pending_messages()?;
+            let duration = instant.elapsed();
+            if duration > WARN_THRESHOLD {
+                warn!(
+                    "Processing pending messages took {:?} which is above the threshold",
+                    duration
+                );
+            }
+
+            let instant = Instant::now();
             had_work |= self.process_comms_messages()?;
+            let duration = instant.elapsed();
+            if duration > WARN_THRESHOLD {
+                warn!(
+                    "Processing comms messages took {:?} which is above the threshold",
+                    duration
+                );
+            }
+
+            let instant = Instant::now();
             had_work |= self.process_api_messages()?;
+            let duration = instant.elapsed();
+            if duration > WARN_THRESHOLD {
+                warn!(
+                    "Processing API messages took {:?} which is above the threshold",
+                    duration
+                );
+            }
 
             self.bitvmx_throttle.record(had_work);
         }
 
+        let instant = Instant::now();
         self.process_bitcoin_updates_with_throttle()?;
+        let duration = instant.elapsed();
+        if duration > WARN_THRESHOLD {
+            warn!(
+                "Processing bitcoin updates took {:?} which is above the threshold",
+                duration
+            );
+        }
 
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
