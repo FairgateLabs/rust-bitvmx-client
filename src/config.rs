@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
-use bitcoin_coordinator::config::CoordinatorSettingsConfig;
+use bitcoin_coordinator::config::config::BitcoinSettings;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{
     identification::identifier::{Identifier, PubkHash},
@@ -119,7 +119,7 @@ pub struct Config {
     pub client: ClientConfig,
     pub components: ComponentsConfig,
     pub testing: TestConfig, //This is here for testing purposes only
-    pub coordinator_settings: Option<CoordinatorSettingsConfig>,
+    pub coordinator_settings: Option<BitcoinSettings>,
     pub coordinator_throttle: ThrottleConfig,
     pub bitvmx_throttle: ThrottleConfig,
     pub wallet: WalletConfig,

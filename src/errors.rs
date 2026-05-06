@@ -1,5 +1,5 @@
 use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError, Witness};
-use bitcoin_coordinator::errors::BitcoinCoordinatorError;
+use bitcoin_coordinator::{errors::BitcoinCoordinatorError, IndexerError};
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::{
     channel::retry_helper::RetryPolicyError, identification::errors::IdentificationError,
@@ -278,6 +278,9 @@ pub enum BitVMXError {
 
     #[error("Failed to use Bitcoin Coordinator: {0}")]
     BitcoinCoordinatorError(#[from] BitcoinCoordinatorError),
+
+    #[error("Indexer error: {0}")]
+    IndexerError(#[from] IndexerError),
 
     #[error("Invalid transaction name {0}")]
     InvalidTransactionName(String),

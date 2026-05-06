@@ -20,7 +20,7 @@ use crate::{
     types::ProgramContext,
 };
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::Protocol,

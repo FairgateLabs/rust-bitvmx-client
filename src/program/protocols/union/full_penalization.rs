@@ -2,7 +2,7 @@ use core::convert::Into;
 use std::{collections::HashMap, vec};
 
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     graph::graph::GraphOptions,

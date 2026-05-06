@@ -19,7 +19,7 @@ use crate::{
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus, TypesToMonitor};
+use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

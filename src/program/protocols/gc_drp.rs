@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid, XOnlyPublicKey};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script::script;
 use bitcoin_script_stack::stack::StackTracker;
 use bitvmx_job_dispatcher_types::garbled_messages::{
@@ -534,7 +534,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                 _ => {}
             },
             Some(vout) => {
-                let transaction = &tx_status.tx;
+                let transaction = &tx_status.tx_or_err()?;
                 let input_index = self.find_prevout(tx_id, vout, transaction)?;
                 let witness = transaction.input[input_index as usize].witness.clone();
                 let leaf = read_scriptint(

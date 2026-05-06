@@ -72,7 +72,8 @@ impl ProtocolHandler for LockProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup = program_context
-            .key_manager.next_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,
@@ -112,7 +113,7 @@ impl ProtocolHandler for LockProtocol {
             );
         }
         if name == LOCK_TX && tx_status.confirmations == 1 {
-            let witness = tx_status.tx.input[0].witness.clone();
+            let witness = tx_status.tx_or_err()?.input[0].witness.clone();
             info!(
                 "secret witness {:?}",
                 String::from_utf8(witness[1].to_vec())

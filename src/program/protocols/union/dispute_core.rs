@@ -34,7 +34,7 @@ use crate::{
     },
 };
 use bitcoin::{Amount, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use core::result::Result::Ok;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
@@ -2130,7 +2130,7 @@ impl DisputeCoreProtocol {
             tx_name,
             OP_COSIGN_INIT_CHALLENGE_INDEX as u32,
             context,
-            &tx_status.tx,
+            tx_status.tx_or_err()?,
             Some(WT_INIT_CHALLENGE_TX_COSIGN_LEAF as u32),
             Some(protocol),
             None,
@@ -2267,7 +2267,7 @@ impl DisputeCoreProtocol {
             tx_name,
             WT_INIT_CHALLENGE_COSIGN_INDEX as u32,
             context,
-            &tx_status.tx,
+            tx_status.tx_or_err()?,
             None,
             Some(protocol),
             None,
@@ -2544,7 +2544,7 @@ impl DisputeCoreProtocol {
             tx_name,
             REVEAL_INPUT_TX_REVEAL_INDEX as u32,
             context,
-            &tx_status.tx,
+            tx_status.tx_or_err()?,
             Some(REVEAL_INPUT_TX_REVEAL_LEAF as u32),
             Some(protocol),
             None,
@@ -2891,7 +2891,7 @@ impl DisputeCoreProtocol {
             tx_name,
             0,
             context,
-            &tx_status.tx,
+            tx_status.tx_or_err()?,
             Some(OP_INITIAL_DEPOSIT_TX_REIMBURSMENT_LEAF as u32),
             Some(protocol),
             None,
