@@ -403,10 +403,9 @@ impl LeaderBroadcastHelper {
 
             if !original_verified {
                 warn!(
-                    "Original message from {} failed signature verification, skipping",
+                    "Original message from {} failed signature verification (missing key). Added to the queue to be retried later",
                     original_msg.sender_pubkey_hash
                 );
-                continue;
             }
 
             // Reconstruct the full serialized message from OriginalMessage
