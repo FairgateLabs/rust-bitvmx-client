@@ -1,6 +1,6 @@
 use crate::comms_helper::{request, serialize_msg, CommsMessageType};
 use crate::errors::BitVMXError;
-use crate::message_queue::MessageQueue;
+use crate::message_queue::{MessageQueue, QueuedMessage};
 use crate::program::participant::CommsAddress;
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::ProgramContext;
@@ -359,7 +359,12 @@ impl LeaderBroadcastHelper {
     /// 4. For each OriginalMessage:
     ///    - Verifies the original message signature
     ///    - Reconstructs the serialized message
-    ///    - Queues the message for processing
+    ///    - If verified: queues the message immediately for processing
+    ///    - If the signer's verification key has not arrived yet: returns
+    ///      it to the caller as a deferred message so the caller can buffer
+    ///      it for retry. Buffering policy lives in the caller (see the
+    ///      regular missing-key path in `BitVMX::process_msg`) so all
+    ///      retry decisions are made in one place.
     pub fn process_broadcasted_message(
         &self,
         program_context: &ProgramContext,
@@ -367,7 +372,7 @@ impl LeaderBroadcastHelper {
         program_id: Uuid,
         data: Value,
         message_queue: &MessageQueue,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<Vec<QueuedMessage>, BitVMXError> {
         // Deserialize BroadcastedMessage from data
         let broadcasted_msg: BroadcastedMessage =
             serde_json::from_value(data.clone()).map_err(|e| {
@@ -387,6 +392,8 @@ impl LeaderBroadcastHelper {
             broadcasted_msg.original_messages.len()
         );
 
+        let mut deferred = Vec::new();
+
         // Process each original message recursively
         for original_msg in &broadcasted_msg.original_messages {
             // Verify the original message signature
@@ -401,15 +408,10 @@ impl LeaderBroadcastHelper {
                 &original_msg.original_signature,
             )?;
 
-            if !original_verified {
-                warn!(
-                    "Original message from {} failed signature verification, skipping",
-                    original_msg.sender_pubkey_hash
-                );
-                continue;
-            }
-
-            // Reconstruct the full serialized message from OriginalMessage
+            // Reconstruct the full serialized message from OriginalMessage.
+            // The bytes are the same in both branches; the only thing that
+            // differs is whether they go to the queue immediately or get
+            // handed back to the caller for deferred retry-buffering.
             let full_message = serialize_msg(
                 &original_msg.version,
                 original_msg.msg_type,
@@ -418,24 +420,33 @@ impl LeaderBroadcastHelper {
                 original_msg.original_timestamp,
                 original_msg.original_signature.clone(),
             )?;
+            let identifier = Identifier::new(original_msg.sender_pubkey_hash.clone(), 0);
+
+            if !original_verified {
+                warn!(
+                    "Verification key for sender {} not yet known; deferring \
+                     broadcasted original for retry",
+                    original_msg.sender_pubkey_hash
+                );
+                deferred.push(QueuedMessage::new(identifier, full_message)?);
+                continue;
+            }
 
             info!(
                 "Pending message to back: {:?} from {}",
                 original_msg.msg_type, original_msg.sender_pubkey_hash
             );
-            message_queue.push_new(
-                Identifier::new(original_msg.sender_pubkey_hash.clone(), 0),
-                full_message,
-            )?;
+            message_queue.push_new(identifier, full_message)?;
         }
 
         info!(
-            "Successfully queued BroadcastedMessage from leader {} with {} original messages",
+            "Processed BroadcastedMessage from leader {} ({} routed, {} deferred for retry)",
             leader_identifier.pubkey_hash,
-            broadcasted_msg.original_messages.len()
+            broadcasted_msg.original_messages.len() - deferred.len(),
+            deferred.len()
         );
 
-        Ok(())
+        Ok(deferred)
     }
 
     /// Verify the signature of an original message

@@ -387,7 +387,7 @@ impl BitVMX {
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
             info!("Processing Broadcasted message...");
-            return self
+            let deferred = self
                 .program_context
                 .leader_broadcast_helper
                 .process_broadcasted_message(
@@ -396,7 +396,20 @@ impl BitVMX {
                     program_id,
                     data,
                     &self.message_queue,
+                )?;
+            // Buffer embedded originals whose signers' verification keys
+            // haven't arrived yet. Same pattern as the regular missing-key
+            // path further down. push_back records the attempt against
+            // the retry policy so we don't tight-loop until the key
+            // arrives.
+            for deferred_msg in deferred {
+                info!(
+                    "Buffering broadcasted-embedded message due to missing verification key: program {:?} from {:?}",
+                    program_id, deferred_msg.identifier.pubkey_hash
                 );
+                self.message_queue.push_back(deferred_msg)?;
+            }
+            return Ok(());
         }
 
         let is_verification_msg = matches!(
