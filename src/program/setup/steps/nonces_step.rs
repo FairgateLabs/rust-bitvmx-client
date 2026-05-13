@@ -1,4 +1,5 @@
 use crate::{
+    comms_helper::CommsMessageType,
     errors::BitVMXError,
     helper::PubNonceMessage,
     program::{
@@ -11,8 +12,9 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PubNonce};
+use serde_json::Value;
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, info};
 
 /// Template step for exchanging MuSig2 public nonces.
 ///
@@ -43,7 +45,7 @@ impl SetupStep for NoncesStep {
         &self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
+    ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!("NoncesStep: Generating nonces for protocol {}", protocol_id);
@@ -112,21 +114,28 @@ impl SetupStep for NoncesStep {
         )?;
 
         // Serialize to send
-        let serialized = serde_json::to_vec(&public_nonce_msg)?;
-        debug!("NoncesStep: Serialized {} bytes to send", serialized.len());
+        let serialized = serde_json::to_value(&public_nonce_msg)?;
+        debug!("NoncesStep: Serialized");
 
-        Ok(Some(serialized))
+        Ok(Some((serialized, CommsMessageType::PublicNonces)))
     }
 
     fn verify_received(
         &self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext,
         _your_data: bool,
     ) -> Result<bool, BitVMXError> {
+        if !matches!(msg_type, CommsMessageType::PublicNonces) {
+            info!(
+                "Received message with type {msg_type:?} in NoncesStep, ignoring. Expected type: PublicNonces"
+            );
+            return Ok(false);
+        }
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -135,7 +144,7 @@ impl SetupStep for NoncesStep {
         );
 
         // Deserialize the received nonces
-        let nonces: PubNonceMessage = serde_json::from_slice(data).map_err(|e| {
+        let nonces: PubNonceMessage = serde_json::from_value(data).map_err(|e| {
             BitVMXError::InvalidMessage(format!("Failed to deserialize nonces: {}", e))
         })?;
 

@@ -133,12 +133,14 @@ fn process_broadcasted_buffers_originals_when_verification_key_unknown() -> Resu
     let leader_original = build_signed_leader_original(
         &leader,
         &program_id,
-        &json!({"step": "keys", "data": [1, 2, 3]}),
+        json!({"step": "keys", "data": [1, 2, 3]}),
+        CommsMessageType::Keys,
     )?;
     let broadcast_envelope = build_broadcasted_envelope(
         &program_id,
         &leader.pubkey_hash,
         vec![leader_original],
+        CommsMessageType::Keys,
     )?;
 
     // Attach a view onto the recipient's internal MessageQueue. Both queues
@@ -165,11 +167,7 @@ fn process_broadcasted_buffers_originals_when_verification_key_unknown() -> Resu
     // the public storage API directly with a Globals view on the recipient's
     // own backing store. Equivalent end state, no broker-roundtrip
     // required for the test.
-    OperatorVerificationStore::store(
-        &view_globals,
-        &leader.pubkey_hash,
-        &leader.rsa_public_key,
-    )?;
+    OperatorVerificationStore::store(&view_globals, &leader.pubkey_hash, &leader.rsa_public_key)?;
 
     // T2: the embedded original must still be recoverable so the keys step
     // can advance to 4/4. With the bug present the queue is empty here
@@ -217,19 +215,20 @@ fn process_broadcasted_queues_originals_when_keys_known() -> Result<()> {
     // BEFORE the BroadcastedMessage. We do this by storing into Globals via
     // the same storage the recipient uses internally.
     let view_globals = Globals::new(recipient.get_store());
-    OperatorVerificationStore::store(
-        &view_globals,
-        &leader.pubkey_hash,
-        &leader.rsa_public_key,
-    )?;
+    OperatorVerificationStore::store(&view_globals, &leader.pubkey_hash, &leader.rsa_public_key)?;
 
     let program_id = Uuid::new_v4();
-    let leader_original =
-        build_signed_leader_original(&leader, &program_id, &json!({"step": "keys"}))?;
+    let leader_original = build_signed_leader_original(
+        &leader,
+        &program_id,
+        json!({"step": "keys"}),
+        CommsMessageType::Keys,
+    )?;
     let queued = build_broadcasted_envelope(
         &program_id,
         &leader.pubkey_hash,
         vec![leader_original],
+        CommsMessageType::Keys,
     )?;
 
     let view_queue = MessageQueue::new(
@@ -286,8 +285,8 @@ fn build_leader_env() -> Result<LeaderEnv> {
 
     let key_manager = create_key_manager_from_config(&config.key_manager, &config.key_storage)?;
     let key_manager = Rc::new(key_manager);
-    let rsa_public_key = key_manager
-        .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
+    let rsa_public_key =
+        key_manager.import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
     let pubkey_hash = compute_pubkey_hash(&rsa_public_key)?;
 
     Ok(LeaderEnv {
@@ -304,18 +303,19 @@ fn build_leader_env() -> Result<LeaderEnv> {
 fn build_signed_leader_original(
     leader: &LeaderEnv,
     program_id: &Uuid,
-    payload: &serde_json::Value,
+    payload: serde_json::Value,
+    msg_type: CommsMessageType,
 ) -> Result<OriginalMessage> {
     let (version, data, timestamp, signature) = prepare_message(
         &leader.key_manager,
         &leader.rsa_public_key,
         program_id,
-        CommsMessageType::SetupStepData,
+        msg_type,
         payload,
     )?;
     Ok(OriginalMessage {
         sender_pubkey_hash: leader.pubkey_hash.clone(),
-        msg_type: CommsMessageType::SetupStepData,
+        msg_type,
         data,
         original_timestamp: timestamp,
         original_signature: signature,
@@ -332,9 +332,10 @@ fn build_broadcasted_envelope(
     program_id: &Uuid,
     sender: &PubkHash,
     originals: Vec<OriginalMessage>,
+    msg_type: CommsMessageType,
 ) -> Result<QueuedMessage> {
     let broadcasted_msg = BroadcastedMessage {
-        original_msg_type: CommsMessageType::SetupStepData,
+        original_msg_type: msg_type,
         original_messages: originals,
         broadcast_timestamp: Utc::now().timestamp_millis(),
     };
@@ -346,5 +347,8 @@ fn build_broadcasted_envelope(
         Utc::now().timestamp_millis(),
         vec![0xab, 0xcd],
     )?;
-    Ok(QueuedMessage::new(Identifier::new(sender.clone(), 0), bytes)?)
+    Ok(QueuedMessage::new(
+        Identifier::new(sender.clone(), 0),
+        bytes,
+    )?)
 }

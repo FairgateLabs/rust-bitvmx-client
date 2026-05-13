@@ -1,4 +1,5 @@
 use crate::{
+    comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
         participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
@@ -8,6 +9,7 @@ use crate::{
     },
     types::ProgramContext,
 };
+use serde_json::Value;
 use tracing::{debug, info};
 
 /// Template step for exchanging public keys in MuSig2 protocols.
@@ -40,7 +42,7 @@ impl SetupStep for KeysStep {
         &self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
+    ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!("KeysStep: Generating keys for protocol {}", protocol_id);
@@ -68,21 +70,28 @@ impl SetupStep for KeysStep {
         )?;
 
         // Serialize to send to other participants
-        let serialized = serde_json::to_vec(&keys)?;
-        debug!("KeysStep: Serialized {} bytes to send", serialized.len());
+        let serialized = serde_json::to_value(&keys)?;
+        debug!("KeysStep: Serialized");
 
-        Ok(Some(serialized))
+        Ok(Some((serialized, CommsMessageType::Keys)))
     }
 
     fn verify_received(
         &self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext,
         _your_data: bool,
     ) -> Result<bool, BitVMXError> {
+        if !matches!(msg_type, CommsMessageType::Keys) {
+            info!(
+                "Received message with type {msg_type:?} in KeysStep, ignoring. Expected type: Keys"
+            );
+            return Ok(false);
+        }
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -91,7 +100,7 @@ impl SetupStep for KeysStep {
         );
 
         // Deserialize the received keys
-        let keys: ParticipantKeys = serde_json::from_slice(data).map_err(|e| {
+        let keys: ParticipantKeys = serde_json::from_value(data.clone()).map_err(|e| {
             BitVMXError::InvalidMessage(format!("Failed to deserialize keys: {}", e))
         })?;
 

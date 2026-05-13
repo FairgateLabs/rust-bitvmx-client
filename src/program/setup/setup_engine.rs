@@ -198,7 +198,7 @@ impl SetupEngine {
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
         total_participants: usize,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
+    ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         self.if_not_completed()?;
 
         // Get step name first before any mutable borrows (copy to owned String)
@@ -222,7 +222,7 @@ impl SetupEngine {
 
         // Now get the step and generate data
         let step = &self.steps[self.state.current_step_index];
-        let data = step.generate_data(protocol, context)?;
+        let data_and_type = step.generate_data(protocol, context)?;
 
         if (total_participants == 1
             || self.state.participants_completed.len() == total_participants - 1)
@@ -233,13 +233,9 @@ impl SetupEngine {
             self.state.current_step_state = StepState::WaitingForParticipants;
         }
 
-        debug!(
-            "SetupEngine: Step '{}' generated {} bytes",
-            step_name,
-            data.as_ref().map(|d| d.len()).unwrap_or(0)
-        );
+        debug!("SetupEngine: Step '{}' generated ", step_name);
 
-        Ok(data)
+        Ok(data_and_type)
     }
 
     pub fn receive_dispatcher_result(
@@ -256,8 +252,8 @@ impl SetupEngine {
 
         let current_step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
 
-        let sub_step = match context {
-            Context::SetupStep(_, step_name, sub_step) => {
+        let (sub_step, msg_type) = match context {
+            Context::SetupStep(_, step_name, sub_step, msg_type) => {
                 if step_name != &current_step_name {
                     return Err(BitVMXError::InvalidMessage(format!(
                         "Dispatcher result for step '{}', but current step is '{}'",
@@ -268,7 +264,7 @@ impl SetupEngine {
                     "SetupEngine::receive_dispatcher_result() - Received dispatcher result for step '{}', sub_step '{}'",
                     step_name, sub_step
                 );
-                sub_step
+                (sub_step, msg_type)
             }
             _ => {
                 return Err(BitVMXError::InvalidMessage(format!(
@@ -281,9 +277,16 @@ impl SetupEngine {
         let step = &self.steps[self.state.current_step_index];
 
         //TODO: Handle error
-        if let Some(data) = step.receive_dispatcher_result(result, sub_step, program_context, program_id)? {
+        if let Some(data) = step.receive_dispatcher_result(
+            result,
+            msg_type.clone(),
+            sub_step,
+            program_context,
+            program_id,
+        )? {
             self.process_produced_data(
-                &data,
+                data,
+                msg_type.clone(),
                 my_idx,
                 leader,
                 participants,
@@ -307,7 +310,8 @@ impl SetupEngine {
     /// This marks the participant as completed for this step.
     fn receive_current_step_data(
         &mut self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         my_idx: usize,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
@@ -345,6 +349,7 @@ impl SetupEngine {
         let step = &self.steps[self.state.current_step_index];
         let verified = step.verify_received(
             data,
+            msg_type,
             from_participant,
             protocol,
             participants,
@@ -352,13 +357,13 @@ impl SetupEngine {
             false,
         )?;
 
-        if step.verify_async() && !verified {
+        /*if step.verify_async() && !verified {
             info!(
                 "SetupEngine: Step '{}' is async and data from participant {} is not verified yet, waiting for async verification to complete",
                 step_name, participant_idx
              );
             return Ok(true);
-        }
+        }*/
 
         if !verified {
             warn!(
@@ -469,7 +474,8 @@ impl SetupEngine {
     /// - When all data is received, leader broadcasts to all non-leaders
     fn broadcast_setup_data(
         &self,
-        data: Vec<u8>,
+        data: serde_json::Value,
+        msg_type: CommsMessageType,
         program_id: &Uuid,
         my_idx: usize,
         leader: usize,
@@ -480,24 +486,21 @@ impl SetupEngine {
 
         if is_leader {
             // Leader: Store own message for later broadcast
-            info!(
-                "SetupEngine::broadcast_setup_data() - Leader storing own {} bytes",
-                data.len()
-            );
+            info!("SetupEngine::broadcast_setup_data() - Leader storing own msg for type {:?} in step '{}'", msg_type, self.current_step_name());
 
             // Prepare the message (serialize + sign)
             let (version, data_value, timestamp, signature) = prepare_message(
                 &context.key_manager,
                 &context.rsa_public_key,
                 program_id,
-                CommsMessageType::SetupStepData,
+                msg_type,
                 data,
             )?;
 
             // Create OriginalMessage
             let original_msg = OriginalMessage {
                 sender_pubkey_hash: context.comms.get_pubk_hash()?,
-                msg_type: CommsMessageType::SetupStepData,
+                msg_type,
                 data: data_value,
                 original_timestamp: timestamp,
                 original_signature: signature,
@@ -507,7 +510,7 @@ impl SetupEngine {
             // Store leader's own message
             context.leader_broadcast_helper.store_original_message(
                 program_id,
-                CommsMessageType::SetupStepData,
+                msg_type,
                 original_msg,
             )?;
         } else {
@@ -515,9 +518,8 @@ impl SetupEngine {
             let leader_address = &participants[leader];
 
             info!(
-                "SetupEngine::broadcast_setup_data() - Non-leader sending {} bytes to leader {}",
-                data.len(),
-                leader_address.pubkey_hash
+                "SetupEngine::broadcast_setup_data() - type: {:?} - Non-leader sending to leader {}",
+                msg_type, leader_address.pubkey_hash
             );
 
             request(
@@ -526,7 +528,7 @@ impl SetupEngine {
                 &context.rsa_public_key,
                 program_id,
                 leader_address.clone(),
-                CommsMessageType::SetupStepData,
+                msg_type,
                 data,
             )?;
         }
@@ -544,7 +546,8 @@ impl SetupEngine {
     /// Returns whether the engine state changed.
     pub fn receive_setup_data(
         &mut self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         from: &PubKeyHash,
         program_id: &Uuid,
         my_idx: usize,
@@ -554,9 +557,8 @@ impl SetupEngine {
         context: &mut ProgramContext,
     ) -> Result<bool, BitVMXError> {
         info!(
-            "SetupEngine::receive_setup_data() - Received {} bytes from participant {}",
-            data.len(),
-            from
+            "SetupEngine::receive_setup_data() - Received data of type {:?} from participant {}",
+            msg_type, from
         );
 
         // Check if setup is already complete - if so, ignore the message
@@ -585,6 +587,7 @@ impl SetupEngine {
         // Receive and verify the data
         if !self.receive_current_step_data(
             data,
+            msg_type,
             my_idx,
             &from_participant,
             protocol,
@@ -607,7 +610,7 @@ impl SetupEngine {
 
         // Leader broadcast: If I'm the leader and have all messages, broadcast to non-leaders
         if my_idx == leader {
-            self.send_broadcast_data_to_non_leaders(context, program_id, participants)?;
+            self.send_broadcast_data_to_non_leaders(context, program_id, participants, msg_type)?;
         }
 
         // Receiving data always changes the engine state
@@ -619,6 +622,7 @@ impl SetupEngine {
         context: &ProgramContext,
         program_id: &Uuid,
         participants: &[CommsAddress],
+        msg_type: CommsMessageType,
     ) -> Result<(), BitVMXError> {
         // Get list of all participant pubkey hashes (including leader)
         let all_participant_hashes: Vec<_> =
@@ -627,13 +631,13 @@ impl SetupEngine {
         // Check if we have all messages
         let has_all = context.leader_broadcast_helper.has_all_expected_messages(
             program_id,
-            CommsMessageType::SetupStepData,
+            msg_type,
             &all_participant_hashes,
         )?;
 
         if has_all {
             info!(
-                    "SetupEngine::receive_setup_data() - Leader has all messages, broadcasting to non-leaders"
+                    "SetupEngine::receive_setup_data() - type: {:?} - Leader has all messages, broadcasting to non-leaders", msg_type
                 );
 
             // Get non-leader participants
@@ -644,14 +648,13 @@ impl SetupEngine {
             context.leader_broadcast_helper.broadcast_to_non_leaders(
                 context,
                 program_id,
-                CommsMessageType::SetupStepData,
+                msg_type,
                 &non_leaders,
             )?;
 
             info!(
-                    "SetupEngine::receive_setup_data() - Leader successfully broadcasted messages to {} non-leaders",
-                    non_leaders.len()
-                );
+                "SetupEngine::receive_setup_data() - type: {:?} - Leader successfully broadcasted messages to {} non-leaders", msg_type, non_leaders.len()
+            );
         }
 
         Ok(())
@@ -694,7 +697,7 @@ impl SetupEngine {
         let engine_state_before = self.state.clone();
 
         // Process the tick based on current state
-        let mut data_to_send = None;
+        let mut data_and_type_to_send = None;
         let mut state_changed = false;
 
         match self.state.current_step_state {
@@ -704,20 +707,20 @@ impl SetupEngine {
                     step_name
                 );
                 // Generate data for this step
-                let data =
+                let data_and_type =
                     self.generate_current_step_data(protocol, context, participants.len())?;
-                if let Some(ref d) = data {
+                if let Some((ref d, ref msg_type)) = data_and_type {
                     info!(
-                        "SetupEngine::tick() - Generated {} bytes for step '{}'",
-                        d.len(),
-                        step_name
+                        "SetupEngine::tick() - Generated {} - type {:?}",
+                        step_name, msg_type
                     );
 
                     // IMPORTANT: Store our own data in globals BEFORE sending to others
                     // The step's can_advance() method checks that ALL participants' data exists in globals
                     let my_participant = &participants[my_idx];
                     self.current_step().verify_received(
-                        d,
+                        d.clone(),
+                        *msg_type,
                         my_participant,
                         protocol,
                         participants,
@@ -725,12 +728,13 @@ impl SetupEngine {
                         true,
                     )?;
                     info!(
-                            "SetupEngine::tick() - Stored our own data (participant {}) in globals for step '{}'",
+                            "SetupEngine::tick() - Stored our own data (participant {}) in globals for step '{}' type: {:?}",
                             my_idx,
-                            step_name
+                            step_name,
+                            msg_type
                         );
 
-                    data_to_send = Some(d.clone());
+                    data_and_type_to_send = data_and_type;
                 } else {
                     info!(
                         "SetupEngine::tick() - Step '{}' generated no data",
@@ -775,8 +779,16 @@ impl SetupEngine {
         }
 
         // If we have data to send, broadcast it and mark as sent
-        if let Some(data) = &data_to_send {
-            self.process_produced_data(data, my_idx, leader, participants, program_id, context)?;
+        if let Some((data, msg_type)) = data_and_type_to_send {
+            self.process_produced_data(
+                data,
+                msg_type,
+                my_idx,
+                leader,
+                participants,
+                program_id,
+                context,
+            )?;
             state_changed = true;
         }
 
@@ -785,7 +797,8 @@ impl SetupEngine {
 
     fn process_produced_data(
         &mut self,
-        data: &Vec<u8>,
+        data: Value,
+        msg_type: CommsMessageType,
         my_idx: usize,
         leader: usize,
         participants: &[CommsAddress],
@@ -794,8 +807,8 @@ impl SetupEngine {
     ) -> Result<(), BitVMXError> {
         let step_name = self.current_step_name().to_string();
         info!(
-            "SetupEngine::tick() - Broadcasting {} bytes for step '{}' to {} participants",
-            data.len(),
+            "SetupEngine::tick() - type: {:?} - Broadcasting for step '{}' to {} participants",
+            msg_type,
             &step_name,
             participants.len() - 1
         );
@@ -804,6 +817,7 @@ impl SetupEngine {
         // if leader stores its own message
         self.broadcast_setup_data(
             data.clone(),
+            msg_type,
             program_id,
             my_idx,
             leader,
@@ -813,13 +827,13 @@ impl SetupEngine {
 
         self.state.mark_participant_completed(my_idx);
         info!(
-            "SetupEngine::tick() - Marked ourselves (participant {}) as completed for step '{}'",
-            my_idx, step_name
+            "SetupEngine::tick() - type: {:?} - Marked ourselves (participant {}) as completed for step '{}'",
+            msg_type, my_idx, step_name
         );
 
         if my_idx == leader {
             // If we're the leader and have all messages, broadcast to non-leaders
-            self.send_broadcast_data_to_non_leaders(context, program_id, participants)?;
+            self.send_broadcast_data_to_non_leaders(context, program_id, participants, msg_type)?;
         }
         Ok(())
     }

@@ -333,7 +333,7 @@ impl BitVMX {
 
         // If this operator is the leader and the message type should be broadcast, store the original message
         if program.my_idx == program.leader {
-            let should_store = matches!(msg_type, CommsMessageType::SetupStepData);
+            let should_store = msg_type.should_store();
             if should_store {
                 let original_msg = OriginalMessage {
                     sender_pubkey_hash: peer_address.pubkey_hash.clone(),
@@ -358,17 +358,17 @@ impl BitVMX {
         }
 
         // Process the message
-        let data_bytes: Vec<u8> = serde_json::from_value(data.clone()).map_err(|e| {
+        /*let data_bytes: Vec<u8> = serde_json::from_value(data.clone()).map_err(|e| {
             BitVMXError::InvalidMessage(format!(
                 "Failed to parse message data as byte array: {}. Expected JSON array of integers [0-255], got: {}",
                 e,
                 serde_json::to_string(&data).unwrap_or_else(|_| "<unparseable>".to_string())
             ))
-        })?;
+        })?;*/
         program.process_comms_message(
             &peer_address.pubkey_hash,
             &msg_type,
-            data_bytes,
+            data,
             &mut self.program_context,
         )
     }
@@ -836,7 +836,7 @@ impl BitVMX {
             info!("Received result from dispatcher {}", parsed);
             let program_id = match &context {
                 Context::ProgramId(program_id) => *program_id,
-                Context::SetupStep(program_id, _, _) => *program_id,
+                Context::SetupStep(program_id, _, _, _) => *program_id,
                 Context::ProgramStep(program_id, _) => *program_id,
                 _ => {
                     warn!(
@@ -1750,8 +1750,8 @@ pub enum Context {
     ProgramId(Uuid),
     RequestId(Uuid, Identifier),
     Protocol(Uuid, String),
-    SetupStep(Uuid, String, String), // protocol_id, step_name, optional sub_step
-    ProgramStep(Uuid, String),       // program_id, step identifier (for job deduplication)
+    SetupStep(Uuid, String, String, CommsMessageType), // protocol_id, step_name, optional sub_step
+    ProgramStep(Uuid, String), // program_id, step identifier (for job deduplication)
 }
 
 impl Context {
