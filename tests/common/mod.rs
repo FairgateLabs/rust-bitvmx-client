@@ -608,6 +608,196 @@ pub fn init_utxo(
     Ok(utxo)
 }
 
+fn print_advance_options(n: usize) {
+    println!("\n--- Interactive mode ---");
+    for i in 1..=n {
+        println!("  [{i}]            tick operator {i}");
+    }
+    let comms_keys = ['q', 'w', 'e', 'r'];
+    for i in 0..n.min(4) {
+        println!(
+            "  [{}]            process_comms_messages op {}",
+            comms_keys[i],
+            i + 1
+        );
+    }
+    println!("  [a/A]          tick ALL operators");
+    println!("  [m/M]          mine 1 block");
+    println!("  [g/G]          get messages from channels");
+    println!("  [Q/Esc]        quit");
+    println!("------------------------");
+}
+
+/// Process a single key character. Returns `Ok(false)` when the key means quit.
+fn advance_key(
+    c: char,
+    instances: &mut Vec<BitVMX>,
+    channels: &Vec<DualChannel>,
+    wallet: &Wallet,
+) -> Result<bool> {
+    match c {
+        '1'..='4' => {
+            let idx = (c as usize) - ('1' as usize);
+            if idx < instances.len() {
+                info!("[advance] tick operator {}", idx + 1);
+                instances[idx].tick()?;
+            } else {
+                info!(
+                    "[advance] no operator {} (only {} instances)",
+                    idx + 1,
+                    instances.len()
+                );
+            }
+        }
+        'q' | 'w' | 'e' | 'r' => {
+            let idx = match c {
+                'q' => 0,
+                'w' => 1,
+                'e' => 2,
+                _ => 3,
+            };
+            if idx < instances.len() {
+                info!("[advance] process_comms_messages operator {}", idx + 1);
+                instances[idx].process_comms_messages()?;
+            } else {
+                info!(
+                    "[advance] no operator {} (only {} instances)",
+                    idx + 1,
+                    instances.len()
+                );
+            }
+        }
+        'a' | 'A' => {
+            info!("[advance] tick all {} operators", instances.len());
+            for (i, instance) in instances.iter_mut().enumerate() {
+                info!("[advance]   ticking operator {}", i + 1);
+                instance.tick()?;
+            }
+        }
+        'm' | 'M' => {
+            info!("[advance] mine 1 block");
+            wallet.mine(1)?;
+        }
+        'g' | 'G' => {
+            info!("[advance] get messages ({} channels)", channels.len());
+            for (i, channel) in channels.iter().enumerate() {
+                match channel.recv() {
+                    Ok(Some((msg, id))) => {
+                        info!("[advance] channel {} from {:?}: {}", i + 1, id, msg);
+                    }
+                    Ok(None) => {
+                        info!("[advance] channel {}: (no messages)", i + 1);
+                    }
+                    Err(e) => {
+                        info!("[advance] channel {}: error: {}", i + 1, e);
+                    }
+                }
+            }
+        }
+        'Q' => {
+            info!("[advance] quit");
+            return Ok(false);
+        }
+        other => {
+            info!("[advance] unknown key '{}'", other);
+            print_advance_options(instances.len());
+        }
+    }
+    Ok(true)
+}
+
+pub fn interactive_advance(
+    instances: &mut Vec<BitVMX>,
+    channels: &Vec<DualChannel>,
+    wallet: &Wallet,
+) -> Result<()> {
+    use console::{Key, Term};
+
+    let term = Term::stdout();
+    print_advance_options(instances.len());
+
+    loop {
+        let key = term.read_key()?;
+        let c = match key {
+            Key::Char(c) => c,
+            Key::Escape => 'Q',
+            _ => continue,
+        };
+        if !advance_key(c, instances, channels, wallet)? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn scripted_advance(
+    sequence: &str,
+    interval_ms: u64,
+    instances: &mut Vec<BitVMX>,
+    channels: &Vec<DualChannel>,
+    wallet: &Wallet,
+) -> Result<()> {
+    info!(
+        "[scripted] running sequence {:?} with {}ms interval",
+        sequence, interval_ms
+    );
+    for c in sequence.chars() {
+        info!("[scripted] key '{}'", c);
+        if !advance_key(c, instances, channels, wallet)? {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    info!("[scripted] sequence complete");
+    Ok(())
+}
+
+/// Parse a log file produced by a manual run and reconstruct the keystroke sequence.
+/// Matches lines containing `[advance]` or `[interactive]` markers written by `advance_key`.
+pub fn generate_sequence_from_log(log_path: &str) -> Result<String> {
+    let content = std::fs::read_to_string(log_path)
+        .map_err(|e| anyhow::anyhow!("cannot read log file {}: {}", log_path, e))?;
+
+    let mut sequence = String::new();
+
+    for line in content.lines() {
+        // Locate the action payload after either marker prefix.
+        let payload = if let Some(pos) = line.find("[advance]") {
+            line[pos + "[advance]".len()..].trim()
+        } else if let Some(pos) = line.find("[interactive]") {
+            line[pos + "[interactive]".len()..].trim()
+        } else {
+            continue;
+        };
+
+        if let Some(rest) = payload.strip_prefix("tick operator ") {
+            if let Ok(n @ 1..=4) = rest.trim().parse::<u8>() {
+                sequence.push((b'0' + n) as char);
+            }
+        } else if let Some(rest) = payload.strip_prefix("process_comms_messages operator ") {
+            if let Ok(n @ 1..=4) = rest.trim().parse::<usize>() {
+                sequence.push(['q', 'w', 'e', 'r'][n - 1]);
+            }
+        } else if payload.starts_with("tick all") {
+            sequence.push('a');
+        } else if payload.starts_with("mine 1 block") {
+            sequence.push('m');
+        } else if payload.starts_with("get messages") {
+            sequence.push('g');
+        } else if payload.starts_with("quit") {
+            sequence.push('Q');
+        }
+        // sub-lines ("ticking operator N", channel results, etc.) are intentionally skipped
+    }
+
+    info!(
+        "[generate_sequence] parsed {} keys from {}",
+        sequence.len(),
+        log_path
+    );
+    Ok(sequence)
+}
+
 pub fn set_speedup_funding(
     amount: u64,
     pub_key: &PublicKey,
