@@ -365,6 +365,7 @@ pub fn config_trace() {
 fn config_trace_aux() {
     let default_modules = [
         "info",
+        "bitvmx_client=info",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",

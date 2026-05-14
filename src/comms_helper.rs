@@ -167,7 +167,7 @@ impl CommsMessageType {
         (&CommsMessageType::GarbledCircuit, [0x00, 0x04]),
         (&CommsMessageType::VerificationKey, [0x00, 0x05]),
         (&CommsMessageType::VerificationKeyRequest, [0x00, 0x06]),
-        (&CommsMessageType::Broadcasted, [0x00, 0x09]),
+        (&CommsMessageType::Broadcasted, [0x00, 0x07]),
     ];
 
     pub fn should_store(self) -> bool {
