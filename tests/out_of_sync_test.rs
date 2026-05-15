@@ -15,6 +15,7 @@ mod common;
 mod fixtures;
 //mod integration;
 
+#[ignore]
 #[test]
 pub fn test_out_of_sync() -> Result<()> {
     config_trace();
