@@ -5,7 +5,7 @@ pub mod dispute;
 pub mod helper;
 
 use anyhow::Result;
-use bitcoin::{Amount, PublicKey, XOnlyPublicKey};
+use bitcoin::{Amount, PublicKey, Txid, XOnlyPublicKey};
 use bitcoind::{
     bitcoind::{Bitcoind, BitcoindFlags},
     config::BitcoindConfig,
@@ -576,6 +576,23 @@ pub fn init_utxo_new(
     Ok((utxo, output_type))
 }
 
+pub fn fake_utxo(
+    internal_key: &PublicKey,
+    spending_scripts: Vec<ProtocolScript>,
+    amount: u64,
+) -> Result<(Utxo, OutputType)> {
+    let fake_txid: Txid =
+        "0000000000000000000000000000000000000000000000000000000000000000".parse()?;
+
+    let utxo = Utxo::new(fake_txid, 0, amount, &*internal_key);
+
+    let output_type = external_fund_tx(internal_key, spending_scripts, amount)?;
+
+    info!("UTXO: {:?}", utxo);
+
+    Ok((utxo, output_type))
+}
+
 pub fn init_utxo(
     wallet: &mut Wallet,
     aggregated_pub_key: PublicKey,
@@ -634,7 +651,7 @@ fn advance_key(
     c: char,
     instances: &mut Vec<BitVMX>,
     channels: &Vec<DualChannel>,
-    wallet: &Wallet,
+    wallet: Option<&Wallet>,
 ) -> Result<bool> {
     match c {
         '1'..='4' => {
@@ -676,8 +693,10 @@ fn advance_key(
             }
         }
         'm' | 'M' => {
-            info!("[advance] mine 1 block");
-            wallet.mine(1)?;
+            if let Some(wallet) = wallet {
+                info!("[advance] mine 1 block");
+                wallet.mine(1)?;
+            }
         }
         'g' | 'G' => {
             info!("[advance] get messages ({} channels)", channels.len());
@@ -710,7 +729,7 @@ fn advance_key(
 pub fn interactive_advance(
     instances: &mut Vec<BitVMX>,
     channels: &Vec<DualChannel>,
-    wallet: &Wallet,
+    wallet: Option<&Wallet>,
 ) -> Result<()> {
     use console::{Key, Term};
 
@@ -736,7 +755,7 @@ pub fn scripted_advance(
     interval_ms: u64,
     instances: &mut Vec<BitVMX>,
     channels: &Vec<DualChannel>,
-    wallet: &Wallet,
+    wallet: Option<&Wallet>,
 ) -> Result<()> {
     info!(
         "[scripted] running sequence {:?} with {}ms interval",

@@ -5,27 +5,22 @@ use bitvmx_client::{
     program::protocols::cardinal::transfer_config::TransferConfig,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
-use common::{config_trace, get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all};
+use common::{config_trace, get_all, init_bitvmx, send_all};
 use protocol_builder::scripts::{self, SignMode};
 use uuid::Uuid;
 
-use crate::common::{scripted_advance, set_speedup_funding};
+use crate::common::{fake_utxo, scripted_advance};
 
 mod common;
 mod fixtures;
 //mod integration;
 
-#[ignore]
 #[test]
 pub fn test_out_of_sync() -> Result<()> {
     config_trace();
 
-    //const NETWORK: Network = Network::Regtest;
-
-    let (_bitcoin_client, _bitcoind, mut wallet) = prepare_bitcoin()?;
-
-    let (bitvmx_1, _address_1, bridge_1, _) = init_bitvmx("op_1", true)?;
-    let (bitvmx_2, _address_2, bridge_2, _) = init_bitvmx("op_2", true)?;
+    let (bitvmx_1, _address_1, bridge_1, _) = init_bitvmx("op_1", false)?;
+    let (bitvmx_2, _address_2, bridge_2, _) = init_bitvmx("op_2", false)?;
     let (bitvmx_3, _addres_3, bridge_3, _) = init_bitvmx("op_3", false)?;
     //let (bitvmx_4, _addres_4, bridge_4, _) = init_bitvmx("op_4", false)?;
     let mut instances = vec![bitvmx_1, bitvmx_2, bitvmx_3]; //, bitvmx_4];
@@ -46,13 +41,6 @@ pub fn test_out_of_sync() -> Result<()> {
         })
         .collect();
 
-    //get to the top of the blockchain
-    for _ in 0..101 {
-        for instance in instances.iter_mut() {
-            instance.process_bitcoin_updates_with_throttle()?;
-        }
-    }
-
     //get addresses
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4()).to_string()?;
     send_all(&id_channel_pairs, &command)?;
@@ -61,39 +49,6 @@ pub fn test_out_of_sync() -> Result<()> {
         .iter()
         .map(|msg| msg.comm_info().unwrap().1)
         .collect::<Vec<_>>();
-
-    //==================================================
-    //       SETUP FUNDING ADDRESS FOR SPEEDUP
-    //==================================================
-    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
-    let funding_public_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true).to_string()?;
-    send_all(&id_channel_pairs, &command)?;
-    let msgs = get_all(&channels, &mut instances, false)?;
-    let funding_key_0 = msgs[0].public_key().unwrap().1;
-    let funding_key_1 = msgs[1].public_key().unwrap().1;
-    let funding_key_2 = msgs[2].public_key().unwrap().1;
-    set_speedup_funding(
-        10_000_000,
-        &funding_key_0,
-        &channels[0],
-        &mut wallet,
-        &instances[0].get_components_config().bitvmx,
-    )?;
-    set_speedup_funding(
-        10_000_000,
-        &funding_key_1,
-        &channels[1],
-        &mut wallet,
-        &instances[1].get_components_config().bitvmx,
-    )?;
-    set_speedup_funding(
-        10_000_000,
-        &funding_key_2,
-        &channels[2],
-        &mut wallet,
-        &instances[2].get_components_config().bitvmx,
-    )?;
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
@@ -112,8 +67,7 @@ pub fn test_out_of_sync() -> Result<()> {
         ),
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
     ];
-    let asset_utxo = init_utxo_new(
-        &mut wallet,
+    let asset_utxo = fake_utxo(
         &aggregated_pub_key,
         asset_spending_condition.clone(),
         10_000,
@@ -124,19 +78,9 @@ pub fn test_out_of_sync() -> Result<()> {
         SignMode::Aggregate,
     )];
     //emulate op_n_gid_i
-    let op_gid_utxo = init_utxo_new(
-        &mut wallet,
-        &aggregated_pub_key,
-        spending_condition.clone(),
-        1000,
-    )?;
+    let op_gid_utxo = fake_utxo(&aggregated_pub_key, spending_condition.clone(), 1000)?;
     //emulate op_won
-    let op_won_utxo = init_utxo_new(
-        &mut wallet,
-        &aggregated_pub_key,
-        spending_condition.clone(),
-        540,
-    )?;
+    let op_won_utxo = fake_utxo(&aggregated_pub_key, spending_condition.clone(), 540)?;
 
     // SETUP TRANSFER BEGIN
     let program_id = Uuid::new_v4();
@@ -180,7 +124,7 @@ pub fn test_out_of_sync() -> Result<()> {
     //info!("Generated sequence with\n{}", seq);
 
     let seq = "2323111qq232323232q33221123233222223333333qqqq1q111232323";
-    scripted_advance(&seq, 500, &mut instances, &channels, &wallet).unwrap();
+    scripted_advance(&seq, 500, &mut instances, &channels, None).unwrap();
 
     Ok(())
 }
