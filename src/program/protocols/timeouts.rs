@@ -202,7 +202,9 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig>(
         return Ok(());
     };
 
-    if next.owner != protocol_handler.role() {
+    if next.owner != protocol_handler.role()
+        && !ownership_table.ignored_input_txs.contains(&next.tx_name)
+    {
         let tx_to_cancel = timeout_tx(&next.tx_name);
         info!("Cancel timeout tx: {}", tx_to_cancel);
         let tx_id = protocol_handler.get_transaction_id_by_name(&tx_to_cancel)?;
