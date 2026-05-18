@@ -886,6 +886,9 @@ impl BitVMX {
 
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
         //info!("Ticking BitVMX: {}", self.count);
+
+        self.store.begin_global_transaction()?;
+
         if self.shutdown {
             info!("BitVMX is shutdown, stopping tick processing.");
             return Ok(false);
@@ -952,6 +955,8 @@ impl BitVMX {
 
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
+
+        self.store.commit_global_transaction()?;
 
         Ok(true)
     }
