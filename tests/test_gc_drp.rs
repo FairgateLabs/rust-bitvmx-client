@@ -14,7 +14,7 @@ use bitvmx_client::{
     },
     types::IncomingBitVMXApiMessages,
 };
-use bitvmx_wallet::{Destination, RegtestWallet};
+use bitvmx_wallet::Destination;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{OutputType, Utxo},

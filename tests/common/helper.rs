@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 use anyhow::Result;
-use bitcoin::{Amount, Network};
+use bitcoin::{Amount, Network, Transaction};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     channel::channel::DualChannel,
@@ -36,14 +36,41 @@ use bitcoind::{
     bitcoind::{Bitcoind, BitcoindFlags},
     config::BitcoindConfig,
 };
-use bitvmx_wallet::{RegtestWallet, Wallet};
+use bitvmx_wallet::{wallet::errors::WalletError, Destination, RegtestWallet, Wallet};
 
 use crate::common::{clear_db, send_all, INITIAL_BLOCK_COUNT};
 const MIN_TX_FEE: f64 = 2.0;
 
+pub struct InternalWallet {
+    network: Network,
+    wallet: Wallet,
+}
+
+impl InternalWallet {
+    pub fn new(network: Network, wallet: Wallet) -> Self {
+        Self { network, wallet }
+    }
+
+    pub fn mine(&self, num_blocks: u64) -> Result<Vec<Transaction>, WalletError> {
+        if self.network == Network::Regtest {
+            return self.wallet.mine(num_blocks);
+        } else {
+            //TODO: Wait block
+        }
+        Ok(vec![])
+    }
+
+    pub fn fund_destination(
+        &mut self,
+        destination: Destination,
+    ) -> Result<Transaction, WalletError> {
+        self.wallet.fund_destination(destination)
+    }
+}
+
 pub struct TestHelper {
     pub bitcoind: Option<Bitcoind>,
-    pub wallet: Wallet,
+    pub wallet: InternalWallet,
     pub bitvmx_handle: Option<thread::JoinHandle<Result<()>>>,
     pub bitvmx_stop_tx: Sender<()>,
     pub disp_handle: Option<thread::JoinHandle<Result<()>>>,
@@ -232,7 +259,7 @@ impl TestHelper {
 
         Ok(TestHelper {
             bitcoind,
-            wallet,
+            wallet: InternalWallet::new(network, wallet),
             bitvmx_handle: Some(bitvmx_handle),
             bitvmx_stop_tx,
             disp_handle: Some(disp_handle),

@@ -34,7 +34,7 @@ use std::{path::Path, process::Command, sync::Once};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use crate::common::dispute::process_dispatcher_non_blocking;
+use crate::common::{dispute::process_dispatcher_non_blocking, helper::InternalWallet};
 
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
@@ -232,7 +232,7 @@ pub const WALLET_NAME: &str = "wallet";
 pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
-pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWallet)> {
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::wallet::config::Config,
     >(Some("config/wallet_regtest.yaml".to_string()))?;
@@ -344,12 +344,16 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
 
-    Ok((bitcoin_client, bitcoind, wallet))
+    Ok((
+        bitcoin_client,
+        bitcoind,
+        InternalWallet::new(bitcoin::Network::Regtest, wallet),
+    ))
 }
 
 /// Same as prepare_bitcoin but wraps bitcoind in a guard for automatic cleanup.
 /// Use this for new tests to ensure bitcoind stops even if the test panics.
-pub fn prepare_bitcoin_guarded() -> Result<(BitcoinClient, BitcoindGuard, Wallet)> {
+pub fn prepare_bitcoin_guarded() -> Result<(BitcoinClient, BitcoindGuard, InternalWallet)> {
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
     Ok((bitcoin_client, BitcoindGuard::new(bitcoind), wallet))
 }
@@ -468,7 +472,7 @@ pub fn mine_and_wait(
     _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Wallet,
+    wallet: &InternalWallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     mine_and_wait_blocks(_bitcoin_client, channels, instances, wallet, 10, None)
 }
@@ -477,7 +481,7 @@ pub fn mine_and_wait_with_dispatcher(
     _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Wallet,
+    wallet: &InternalWallet,
     dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
     multiple_dispatcher_tries: bool,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
@@ -495,7 +499,7 @@ pub fn mine_and_wait_blocks(
     _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Wallet,
+    wallet: &InternalWallet,
     blocks: u32,
     dispatchers: Option<(&mut Vec<DispatcherHandler<EmulatorJobType>>, bool)>,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
@@ -555,7 +559,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
 }
 
 pub fn init_utxo_new(
-    wallet: &mut Wallet,
+    wallet: &mut InternalWallet,
     internal_key: &PublicKey,
     spending_scripts: Vec<ProtocolScript>,
     amount: u64,
@@ -594,7 +598,7 @@ pub fn fake_utxo(
 }
 
 pub fn init_utxo(
-    wallet: &mut Wallet,
+    wallet: &mut InternalWallet,
     aggregated_pub_key: PublicKey,
     secret: Option<Vec<u8>>,
     amount: u64,
@@ -822,7 +826,7 @@ pub fn set_speedup_funding(
     amount: u64,
     pub_key: &PublicKey,
     channel: &DualChannel,
-    wallet: &mut Wallet,
+    wallet: &mut InternalWallet,
     bitvmx_id: &Identifier,
 ) -> Result<()> {
     let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;

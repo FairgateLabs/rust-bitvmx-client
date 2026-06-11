@@ -4,7 +4,7 @@ use bitvmx_client::{
     program::protocols::dispute::protocol_cost,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
-use bitvmx_wallet::wallet::{Destination, RegtestWallet};
+use bitvmx_wallet::wallet::Destination;
 use common::{
     config_trace,
     dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
