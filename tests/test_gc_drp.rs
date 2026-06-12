@@ -279,3 +279,40 @@ pub fn test_correct_input() -> Result<()> {
         winner_role,
     )
 }
+
+#[test]
+#[ignore]
+pub fn test_w1() -> Result<()> {
+    config_trace();
+    let network = Network::Regtest;
+    let independent = true;
+    let mut helper = TestHelper::new(network, independent, None)?;
+    helper.wallet.sync_wallet()?;
+
+    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true);
+    helper.send_all(command)?;
+    let msgs = helper.wait_all_msg()?;
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+
+    info!("Creating speedup funds");
+    let speedup_amount = 1_000;
+
+    // Get funds for the operator 0
+    let _fund_txid_0 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?
+        .compute_txid();
+
+    // Get funds for the operator 1
+    let _fund_txid_1 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount))?
+        .compute_txid();
+
+    helper.wallet.mine(1)?;
+
+    Ok(())
+}

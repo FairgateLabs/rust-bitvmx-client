@@ -308,21 +308,36 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
         Some(bitcoind_instance)
     };
 
-    let bitcoin_client = if is_ci {
+    let (bitcoin_client, bc2) = if is_ci {
         // In CI mode, use the wallet-specific endpoint to avoid RPC wallet errors
-        BitcoinClient::new_with_wallet(
-            &wallet_config.bitcoin.url,
-            &wallet_config.bitcoin.username,
-            &wallet_config.bitcoin.password,
-            &wallet_config.bitcoin.wallet,
-        )?
+        (
+            BitcoinClient::new_with_wallet(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+                &wallet_config.bitcoin.wallet,
+            )?,
+            BitcoinClient::new_with_wallet(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+                &wallet_config.bitcoin.wallet,
+            )?,
+        )
     } else {
         // Local mode uses the regular client
-        BitcoinClient::new(
-            &wallet_config.bitcoin.url,
-            &wallet_config.bitcoin.username,
-            &wallet_config.bitcoin.password,
-        )?
+        (
+            BitcoinClient::new(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+            )?,
+            BitcoinClient::new(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+            )?,
+        )
     };
 
     // Create a new local wallet
@@ -344,11 +359,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
 
-    Ok((
-        bitcoin_client,
-        bitcoind,
-        InternalWallet::new(bitcoin::Network::Regtest, wallet),
-    ))
+    Ok((bitcoin_client, bitcoind, InternalWallet::new(bc2, wallet)))
 }
 
 /// Same as prepare_bitcoin but wraps bitcoind in a guard for automatic cleanup.

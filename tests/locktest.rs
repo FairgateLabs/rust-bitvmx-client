@@ -46,6 +46,12 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, InternalWallet)> {
         &config.bitcoin.password,
     )?;
 
+    let bitcoin_client2 = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+
     let config_path = match config.bitcoin.network {
         Network::Regtest => "config/wallet_regtest.yaml",
         Network::Testnet => "config/wallet_testnet.yaml",
@@ -59,7 +65,7 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, InternalWallet)> {
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
     wallet.sync_wallet()?;
-    let internal_wallet = InternalWallet::new(config.bitcoin.network, wallet);
+    let internal_wallet = InternalWallet::new(bitcoin_client2, wallet);
     Ok((bitcoin_client, internal_wallet))
 }
 

@@ -12,6 +12,7 @@ use bitvmx_broker::{
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
+    errors::BitVMXError,
     program::{
         protocols::dispute::{input_tx_name, program_input},
         variables::VariableTypes,
@@ -25,6 +26,7 @@ use bitvmx_job_dispatcher_types::{
 };
 use bitvmx_settings::settings;
 use std::{
+    env,
     sync::mpsc::{channel, Receiver, Sender},
     thread,
     time::Duration,
@@ -41,21 +43,68 @@ use bitvmx_wallet::{wallet::errors::WalletError, Destination, RegtestWallet, Wal
 use crate::common::{clear_db, send_all, INITIAL_BLOCK_COUNT};
 const MIN_TX_FEE: f64 = 2.0;
 
+fn get_fee_rate_from_env(network: Network) -> u64 {
+    match env::var("FEE_RATE") {
+        Ok(rate_str) => match rate_str.parse::<u64>() {
+            Ok(rate) => rate,
+            Err(_) => {
+                error!(
+                    "Invalid FEE_RATE value: {}. Using network default.",
+                    rate_str
+                );
+                get_default_fee_rate(network)
+            }
+        },
+        Err(_) => get_default_fee_rate(network),
+    }
+}
+
+fn get_default_fee_rate(network: Network) -> u64 {
+    match network {
+        Network::Regtest => MIN_TX_FEE.ceil() as u64,
+        _ => 1,
+    }
+}
+
 pub struct InternalWallet {
     network: Network,
     wallet: Wallet,
+    client: BitcoinClient,
 }
 
 impl InternalWallet {
-    pub fn new(network: Network, wallet: Wallet) -> Self {
-        Self { network, wallet }
+    pub fn new(client: BitcoinClient, wallet: Wallet) -> Self {
+        Self {
+            network: wallet.network,
+            wallet,
+            client,
+        }
     }
 
-    pub fn mine(&self, num_blocks: u64) -> Result<Vec<Transaction>, WalletError> {
+    pub fn sync_wallet(&mut self) -> Result<()> {
+        self.wallet.sync_wallet()?;
+        Ok(())
+    }
+
+    pub fn mine(&self, num_blocks: u64) -> Result<Vec<Transaction>, BitVMXError> {
         if self.network == Network::Regtest {
-            return self.wallet.mine(num_blocks);
+            return Ok(self.wallet.mine(num_blocks)?);
         } else {
-            //TODO: Wait block
+            let initial = self
+                .client
+                .get_best_block()
+                .map_err(|x| bitvmx_client::errors::BitcoinClientError::RpcError(x))?;
+            let target = initial + 1;
+            loop {
+                thread::sleep(Duration::from_millis(500));
+                let current = self
+                    .client
+                    .get_best_block()
+                    .map_err(|x| bitvmx_client::errors::BitcoinClientError::RpcError(x))?;
+                if current >= target {
+                    break;
+                }
+            }
         }
         Ok(vec![])
     }
@@ -64,7 +113,12 @@ impl InternalWallet {
         &mut self,
         destination: Destination,
     ) -> Result<Transaction, WalletError> {
-        self.wallet.fund_destination(destination)
+        if self.network == Network::Regtest {
+            self.wallet.fund_destination(destination)
+        } else {
+            let fee_rate = get_fee_rate_from_env(self.network);
+            self.wallet.send_funds(destination, Some(fee_rate))
+        }
     }
 }
 
@@ -159,12 +213,12 @@ impl TestHelper {
 
         let mut wallet =
             Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
+        let bitcoin_client = BitcoinClient::new(
+            &wallet_config.bitcoin.url,
+            &wallet_config.bitcoin.username,
+            &wallet_config.bitcoin.password,
+        )?;
         if !independent {
-            let bitcoin_client = BitcoinClient::new(
-                &wallet_config.bitcoin.url,
-                &wallet_config.bitcoin.username,
-                &wallet_config.bitcoin.password,
-            )?;
             let address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
             if std::env::var("GITHUB_ACTIONS").is_err() {
                 // Locally we control bitcoind; in CI the shared bitcoind is already
@@ -259,7 +313,7 @@ impl TestHelper {
 
         Ok(TestHelper {
             bitcoind,
-            wallet: InternalWallet::new(network, wallet),
+            wallet: InternalWallet::new(bitcoin_client, wallet),
             bitvmx_handle: Some(bitvmx_handle),
             bitvmx_stop_tx,
             disp_handle: Some(disp_handle),
