@@ -19,6 +19,7 @@ use protocol_builder::{
     scripts::{self, SignMode},
     types::{OutputType, Utxo},
 };
+use sha2::{Digest, Sha512};
 use tracing::info;
 use uuid::Uuid;
 
@@ -33,6 +34,7 @@ fn test_aux(
     winner_role: ParticipantRole,
     independent: Option<bool>,
     network: Option<Network>,
+    circuit_path: String,
 ) -> Result<()> {
     let independent = independent.unwrap_or(false);
     let network = network.unwrap_or(Network::Regtest);
@@ -63,29 +65,30 @@ fn test_aux(
     let funding_key_1 = msgs[1].public_key().unwrap().1;
 
     info!("Creating speedup funds");
-    let speedup_amount = 50_000;
+    let speedup_amount_0 = 41_000;
+    let speedup_amount_1 = 11_000;
 
     // Get funds for the operator 0
     let fund_txid_0 = helper
         .wallet
-        .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?
+        .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount_0))?
         .compute_txid();
 
     // Get funds for the operator 1
     let fund_txid_1 = helper
         .wallet
-        .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount))?
+        .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount_1))?
         .compute_txid();
     helper.wallet.mine(1)?;
 
     // Set funding UTXOs for both participants
     info!("Setting funding UTXOs");
-    let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount, &funding_key_0);
+    let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount_0, &funding_key_0);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
     helper.id_channel_pairs[0]
         .channel
         .send(&helper.id_channel_pairs[0].id, command)?;
-    let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount, &funding_key_1);
+    let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount_1, &funding_key_1);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
     helper.id_channel_pairs[1]
         .channel
@@ -128,7 +131,7 @@ fn test_aux(
         SignMode::Aggregate,
     )];
 
-    let protocol_cost = 15_000;
+    let protocol_cost = 26_000;
     let (utxo, initial_out_type) = init_utxo_new(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
@@ -180,18 +183,16 @@ fn test_aux(
         vec![],
     );
 
-    const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";
-
     let gc_config_prover = GCConfiguration::new(
         prog_id,
         ParticipantRole::Prover,
-        TEST_CIRCUIT_PATH.to_string(),
+        circuit_path.clone(),
         prover_public_circuit_input.clone(),
     );
     let gc_config_verifier = GCConfiguration::new(
         prog_id,
         ParticipantRole::Verifier,
-        TEST_CIRCUIT_PATH.to_string(),
+        circuit_path,
         verifier_public_circuit_input,
     );
 
@@ -245,6 +246,7 @@ pub fn test_wrong_public_input() {
         winner_role,
         None,
         None,
+        "../rust-bitvmx-gc/test-circuits/simple.circuit".to_string(),
     );
 
     assert!(matches!(
@@ -267,6 +269,7 @@ pub fn test_wrong_input() -> Result<()> {
         winner_role,
         None,
         None,
+        "../rust-bitvmx-gc/test-circuits/simple.circuit".to_string(),
     )
 }
 
@@ -284,42 +287,138 @@ pub fn test_correct_input() -> Result<()> {
         winner_role,
         None,
         None,
+        "../rust-bitvmx-gc/test-circuits/simple.circuit".to_string(),
+    )
+}
+
+const SHA512_IV: [u64; 8] = [
+    0x6A09E667F3BCC908,
+    0xBB67AE8584CAA73B,
+    0x3C6EF372FE94F82B,
+    0xA54FF53A5F1D36F1,
+    0x510E527FADE682D1,
+    0x9B05688C2B3E6C1F,
+    0x1F83D9ABFB41BD6B,
+    0x5BE0CD19137E2179,
+];
+
+fn sha512_iv_bits_le() -> Vec<bool> {
+    SHA512_IV
+        .iter()
+        .rev()
+        .flat_map(|&w| u64_to_bits_le(w))
+        .collect()
+}
+
+fn u64_to_bits_le(x: u64) -> Vec<bool> {
+    (0..64)
+        .map(|i| if ((x >> i) & 1) == 1 { true } else { false })
+        .collect()
+}
+
+fn u8_to_bits_le(x: u8) -> Vec<bool> {
+    (0..8)
+        .map(|i| if ((x >> i) & 1) == 1 { true } else { false })
+        .collect()
+}
+
+fn sha512_block_bits(block: &[u8; 128]) -> Vec<bool> {
+    let mut bits = Vec::with_capacity(1024);
+
+    for chunk in block.chunks(8).rev() {
+        let word = u64::from_be_bytes(chunk.try_into().unwrap());
+        bits.extend(u64_to_bits_le(word));
+    }
+
+    bits
+}
+
+fn sha512_single_block(message: &[u8]) -> [u8; 128] {
+    assert!(
+        message.len() <= 111,
+        "single-block SHA-512 only works for messages up to 111 bytes"
+    );
+
+    let bit_len = (message.len() as u128) * 8;
+    let mut block = [0u8; 128];
+
+    block[..message.len()].copy_from_slice(message);
+    block[message.len()] = 0x80;
+
+    // Last 16 bytes are the 128-bit big-endian length
+    block[112..].copy_from_slice(&bit_len.to_be_bytes());
+
+    block
+}
+
+#[test]
+#[ignore]
+pub fn test_sha512_correct_input() -> Result<()> {
+    let preimage = b"my_super_secret_string_that_noone_knows";
+
+    let mut hasher = Sha512::new();
+    hasher.update(preimage);
+    let hash = hasher.finalize();
+
+    let expected_bits = hash
+        .into_iter()
+        .rev()
+        .flat_map(u8_to_bits_le)
+        .collect::<Vec<_>>();
+    let iv_bits = sha512_iv_bits_le();
+
+    let block = sha512_single_block(preimage);
+
+    let circuit_input = sha512_block_bits(&block);
+    let public_circuit_input = vec![iv_bits, expected_bits, circuit_input[..512].to_vec()]
+        .concat()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let winner_role = ParticipantRole::Prover;
+    test_aux(
+        public_circuit_input.clone(),
+        public_circuit_input,
+        circuit_input[512..].to_vec(),
+        winner_role,
+        None,
+        None,
+        "../rust-bitvmx-gc/test-circuits/full-sha512.json".to_string(),
     )
 }
 
 #[test]
 #[ignore]
-pub fn test_w1() -> Result<()> {
-    config_trace();
-    let network = Network::Regtest;
-    let independent = true;
-    let mut helper = TestHelper::new(network, independent, None)?;
-    helper.wallet.sync_wallet()?;
+fn test_sha512_wrong_input() -> Result<()> {
+    let preimage = b"my_super_secret_string_that_noone_knows";
+    let wrong_preimage = b"my_wrong_secret_string_that_noone_knows";
 
-    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
-    let funding_public_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true);
-    helper.send_all(command)?;
-    let msgs = helper.wait_all_msg()?;
-    let funding_key_0 = msgs[0].public_key().unwrap().1;
-    let funding_key_1 = msgs[1].public_key().unwrap().1;
+    let mut hasher = Sha512::new();
+    hasher.update(preimage);
+    let hash = hasher.finalize();
 
-    info!("Creating speedup funds");
-    let speedup_amount = 1_000;
+    let expected_bits = hash
+        .into_iter()
+        .rev()
+        .flat_map(u8_to_bits_le)
+        .collect::<Vec<_>>();
+    let iv_bits = sha512_iv_bits_le();
 
-    // Get funds for the operator 0
-    let _fund_txid_0 = helper
-        .wallet
-        .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?
-        .compute_txid();
+    let block = sha512_single_block(wrong_preimage);
+    let circuit_input = sha512_block_bits(&block);
+    let public_circuit_input = vec![iv_bits, expected_bits, circuit_input[..512].to_vec()]
+        .concat()
+        .into_iter()
+        .collect::<Vec<_>>();
 
-    // Get funds for the operator 1
-    let _fund_txid_1 = helper
-        .wallet
-        .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount))?
-        .compute_txid();
-
-    helper.wallet.mine(1)?;
-
-    Ok(())
+    let winner_role = ParticipantRole::Verifier;
+    test_aux(
+        public_circuit_input.clone(),
+        public_circuit_input,
+        circuit_input[512..].to_vec(),
+        winner_role,
+        None,
+        None,
+        "../rust-bitvmx-gc/test-circuits/full-sha512.json".to_string(),
+    )
 }
