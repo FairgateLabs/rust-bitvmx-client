@@ -350,8 +350,12 @@ fn import_public_keys(
     context: &mut ProgramContext,
     protocol_id: &Uuid,
 ) -> Result<[LamportPublicKey; 3], BitVMXError> {
-    let mut commitments = prove_result.sha256_commitments.clone();
-    commitments.dedup_by(|a, b| a.h0 == b.h0 && a.h1 == b.h1);
+    let indices = &prove_result.input_commitment_indices;
+    let unordered_commitments = prove_result.sha256_commitments.clone();
+    let commitments: Vec<Sha256CommitmentHex> =
+        indices.iter().map(|&i| unordered_commitments[i].clone()).collect();
+
+    info!("Total deduped commitments: {}", commitments.len());
 
     let num_inputs = prove_result.num_inputs;
     let public_input_size = config.circuit_public_input.len();
