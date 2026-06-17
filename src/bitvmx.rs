@@ -593,10 +593,6 @@ impl BitVMX {
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
 
-        if !news.monitor_news.is_empty() || !news.coordinator_news.is_empty() {
-            //info!("Processing news: {:?}", news);
-        }
-
         for monitor_news in news.monitor_news {
             let ack_news: AckNews;
 
@@ -663,90 +659,6 @@ impl BitVMX {
         }
 
         for coordinator_news in news.coordinator_news {
-            //     let ack_news: AckNews;
-
-            //     match coordinator_news {
-            //         CoordinatorNews::InsufficientFunds(tx_id, _available, _required) => {
-            //             // Complete new params
-            //             let data =
-            //                 OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id).to_string()?;
-
-            //             info!(
-            //                 "Sending funds request to broker: {} available {} required {}",
-            //                 tx_id, _available, _required
-            //             );
-            //             self.program_context
-            //                 .broker_channel
-            //                 .send(&self.config.components.l2, data)?;
-            //             ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
-            //         }
-            //         CoordinatorNews::DispatchTransactionError(txid, _context_data, _counter) => {
-            //             error!(
-            //                 "Dispatch Transaction Error: {:?} {:?} {}",
-            //                 txid, _context_data, _counter
-            //             );
-            //             match self.wallet.get_wallet_tx(txid) {
-            //                 Ok(Some(wallet_tx)) => {
-            //                     self.wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
-            //                 }
-            //                 Ok(None) => {}
-            //                 Err(e) => {
-            //                     error!("Error fetching transaction from wallet: {:?}", e);
-            //                 }
-            //             }
-
-            //             ack_news =
-            //                 AckNews::Coordinator(AckCoordinatorNews::DispatchTransactionError(txid));
-            //         }
-            //         CoordinatorNews::DispatchSpeedUpError(
-            //             _tx_id,
-            //             _context_data,
-            //             _counter,
-            //             _block_height,
-            //         ) => {
-            //             // Complete
-
-            //             ack_news =
-            //                 AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_counter));
-            //         }
-            //         CoordinatorNews::FundingNotFound => {
-            //             // Complete
-            //             error!("Funding not found for speed-up transaction. This is a critical error.");
-
-            //             ack_news = AckNews::Coordinator(AckCoordinatorNews::FundingNotFound);
-            //         }
-            //         CoordinatorNews::EstimateFeerateTooHigh(estimate_fee, max_allowed) => {
-            //             // Complete
-            //             warn!(
-            //                 "Estimate feerate too high: {:?} {:?}",
-            //                 estimate_fee, max_allowed
-            //             );
-
-            //             ack_news = AckNews::Coordinator(AckCoordinatorNews::EstimateFeerateTooHigh(
-            //                 estimate_fee,
-            //                 max_allowed,
-            //             ));
-            //         }
-            //         CoordinatorNews::TransactionAlreadyInMempool(tx_id, _) => {
-            //             // TODO: Complete what to do here
-            //             ack_news = AckNews::Coordinator(
-            //                 AckCoordinatorNews::TransactionAlreadyInMempool(tx_id),
-            //             );
-            //         }
-            //         CoordinatorNews::MempoolRejection(tx_id, _context_data, _counter) => {
-            //             // TODO: Complete what to do here
-            //             ack_news = AckNews::Coordinator(AckCoordinatorNews::MempoolRejection(tx_id));
-            //         }
-            //         CoordinatorNews::NetworkError(tx_id, _context_data, _counter) => {
-            //             // TODO: Complete what to do here
-            //             ack_news = AckNews::Coordinator(AckCoordinatorNews::NetworkError(tx_id));
-            //         }
-            //     }
-
-            //     self.program_context
-            //         .bitcoin_coordinator
-            //         .ack_news(ack_news)?;
-
             match coordinator_news.clone() {
                 CoordinatorNews::InsufficientFunds {
                     available,
