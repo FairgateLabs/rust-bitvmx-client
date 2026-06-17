@@ -12,8 +12,8 @@ use bitvmx_client::{
         self,
         participant::{CommsAddress, ParticipantRole},
         protocols::dispute::{
-            config::DisputeConfiguration, input_tx_name, program_input, CHALLENGE_READ,
-            EXECUTE, TIMELOCK_BLOCKS,
+            config::DisputeConfiguration, input_tx_name, program_input, CHALLENGE_READ, EXECUTE,
+            TIMELOCK_BLOCKS,
         },
         variables::VariableTypes,
     },
@@ -28,7 +28,6 @@ use bitvmx_cpu_definitions::{
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 
-use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use console::style;
 use emulator::executor::utils::FailSelectionBits;
 use emulator::{
@@ -39,7 +38,10 @@ use protocol_builder::types::{OutputType, Utxo};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::common::{mine_and_wait_blocks, mine_and_wait_with_dispatcher, CI_SLEEP_MS, LOCAL_SLEEP_MS};
+use crate::common::helper::InternalWallet;
+use crate::common::{
+    mine_and_wait_blocks, mine_and_wait_with_dispatcher, CI_SLEEP_MS, LOCAL_SLEEP_MS,
+};
 
 use super::{mine_and_wait, send_all, wait_message_from_channel};
 
@@ -204,7 +206,7 @@ pub fn execute_dispute(
     mut instances: &mut Vec<BitVMX>,
     emulator_channels: Vec<DualChannel>,
     bitcoin_client: &BitcoinClient,
-    wallet: &Wallet,
+    wallet: &InternalWallet,
     program_id: Uuid,
     input: Option<(String, u32)>,
     forced_challenge: ForcedChallenges,

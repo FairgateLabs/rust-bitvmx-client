@@ -5,7 +5,7 @@ pub mod dispute;
 pub mod helper;
 
 use anyhow::Result;
-use bitcoin::{Amount, PublicKey, XOnlyPublicKey};
+use bitcoin::{Amount, PublicKey, Txid, XOnlyPublicKey};
 use bitcoind::{
     bitcoind::{Bitcoind, BitcoindFlags},
     config::BitcoindConfig,
@@ -34,7 +34,7 @@ use std::{path::Path, process::Command, sync::Once};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use crate::common::dispute::process_dispatcher_non_blocking;
+use crate::common::{dispute::process_dispatcher_non_blocking, helper::InternalWallet};
 
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
@@ -232,7 +232,7 @@ pub const WALLET_NAME: &str = "wallet";
 pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
-pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
+pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWallet)> {
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::wallet::config::Config,
     >(Some("config/wallet_regtest.yaml".to_string()))?;
@@ -308,21 +308,36 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
         Some(bitcoind_instance)
     };
 
-    let bitcoin_client = if is_ci {
+    let (bitcoin_client, bc2) = if is_ci {
         // In CI mode, use the wallet-specific endpoint to avoid RPC wallet errors
-        BitcoinClient::new_with_wallet(
-            &wallet_config.bitcoin.url,
-            &wallet_config.bitcoin.username,
-            &wallet_config.bitcoin.password,
-            &wallet_config.bitcoin.wallet,
-        )?
+        (
+            BitcoinClient::new_with_wallet(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+                &wallet_config.bitcoin.wallet,
+            )?,
+            BitcoinClient::new_with_wallet(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+                &wallet_config.bitcoin.wallet,
+            )?,
+        )
     } else {
         // Local mode uses the regular client
-        BitcoinClient::new(
-            &wallet_config.bitcoin.url,
-            &wallet_config.bitcoin.username,
-            &wallet_config.bitcoin.password,
-        )?
+        (
+            BitcoinClient::new(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+            )?,
+            BitcoinClient::new(
+                &wallet_config.bitcoin.url,
+                &wallet_config.bitcoin.username,
+                &wallet_config.bitcoin.password,
+            )?,
+        )
     };
 
     // Create a new local wallet
@@ -344,12 +359,12 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, Wallet)> {
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
 
-    Ok((bitcoin_client, bitcoind, wallet))
+    Ok((bitcoin_client, bitcoind, InternalWallet::new(bc2, wallet)))
 }
 
 /// Same as prepare_bitcoin but wraps bitcoind in a guard for automatic cleanup.
 /// Use this for new tests to ensure bitcoind stops even if the test panics.
-pub fn prepare_bitcoin_guarded() -> Result<(BitcoinClient, BitcoindGuard, Wallet)> {
+pub fn prepare_bitcoin_guarded() -> Result<(BitcoinClient, BitcoindGuard, InternalWallet)> {
     let (bitcoin_client, bitcoind, wallet) = prepare_bitcoin()?;
     Ok((bitcoin_client, BitcoindGuard::new(bitcoind), wallet))
 }
@@ -365,6 +380,7 @@ pub fn config_trace() {
 fn config_trace_aux() {
     let default_modules = [
         "info",
+        "bitvmx_client=info",
         "bitvmx_transaction_monitor=off",
         "bitcoin_indexer=off",
         "bitcoin_coordinator=info",
@@ -467,7 +483,7 @@ pub fn mine_and_wait(
     _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Wallet,
+    wallet: &InternalWallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     mine_and_wait_blocks(_bitcoin_client, channels, instances, wallet, 10, None)
 }
@@ -476,7 +492,7 @@ pub fn mine_and_wait_with_dispatcher(
     _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Wallet,
+    wallet: &InternalWallet,
     dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
     multiple_dispatcher_tries: bool,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
@@ -494,7 +510,7 @@ pub fn mine_and_wait_blocks(
     _bitcoin_client: &BitcoinClient,
     channels: &Vec<DualChannel>,
     instances: &mut Vec<BitVMX>,
-    wallet: &Wallet,
+    wallet: &InternalWallet,
     blocks: u32,
     dispatchers: Option<(&mut Vec<DispatcherHandler<EmulatorJobType>>, bool)>,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
@@ -554,7 +570,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
 }
 
 pub fn init_utxo_new(
-    wallet: &mut Wallet,
+    wallet: &mut InternalWallet,
     internal_key: &PublicKey,
     spending_scripts: Vec<ProtocolScript>,
     amount: u64,
@@ -575,8 +591,25 @@ pub fn init_utxo_new(
     Ok((utxo, output_type))
 }
 
+pub fn fake_utxo(
+    internal_key: &PublicKey,
+    spending_scripts: Vec<ProtocolScript>,
+    amount: u64,
+) -> Result<(Utxo, OutputType)> {
+    let fake_txid: Txid =
+        "0000000000000000000000000000000000000000000000000000000000000000".parse()?;
+
+    let utxo = Utxo::new(fake_txid, 0, amount, &*internal_key);
+
+    let output_type = external_fund_tx(internal_key, spending_scripts, amount)?;
+
+    info!("UTXO: {:?}", utxo);
+
+    Ok((utxo, output_type))
+}
+
 pub fn init_utxo(
-    wallet: &mut Wallet,
+    wallet: &mut InternalWallet,
     aggregated_pub_key: PublicKey,
     secret: Option<Vec<u8>>,
     amount: u64,
@@ -608,11 +641,203 @@ pub fn init_utxo(
     Ok(utxo)
 }
 
+fn print_advance_options(n: usize) {
+    println!("\n--- Interactive mode ---");
+    for i in 1..=n {
+        println!("  [{i}]            tick operator {i}");
+    }
+    let comms_keys = ['q', 'w', 'e', 'r'];
+    for i in 0..n.min(4) {
+        println!(
+            "  [{}]            process_comms_messages op {}",
+            comms_keys[i],
+            i + 1
+        );
+    }
+    println!("  [a/A]          tick ALL operators");
+    println!("  [m/M]          mine 1 block");
+    println!("  [g/G]          get messages from channels");
+    println!("  [Q/Esc]        quit");
+    println!("------------------------");
+}
+
+/// Process a single key character. Returns `Ok(false)` when the key means quit.
+fn advance_key(
+    c: char,
+    instances: &mut Vec<BitVMX>,
+    channels: &Vec<DualChannel>,
+    wallet: Option<&Wallet>,
+) -> Result<bool> {
+    match c {
+        '1'..='4' => {
+            let idx = (c as usize) - ('1' as usize);
+            if idx < instances.len() {
+                info!("[advance] tick operator {}", idx + 1);
+                instances[idx].tick()?;
+            } else {
+                info!(
+                    "[advance] no operator {} (only {} instances)",
+                    idx + 1,
+                    instances.len()
+                );
+            }
+        }
+        'q' | 'w' | 'e' | 'r' => {
+            let idx = match c {
+                'q' => 0,
+                'w' => 1,
+                'e' => 2,
+                _ => 3,
+            };
+            if idx < instances.len() {
+                info!("[advance] process_comms_messages operator {}", idx + 1);
+                instances[idx].process_comms_messages()?;
+            } else {
+                info!(
+                    "[advance] no operator {} (only {} instances)",
+                    idx + 1,
+                    instances.len()
+                );
+            }
+        }
+        'a' | 'A' => {
+            info!("[advance] tick all {} operators", instances.len());
+            for (i, instance) in instances.iter_mut().enumerate() {
+                info!("[advance]   ticking operator {}", i + 1);
+                instance.tick()?;
+            }
+        }
+        'm' | 'M' => {
+            if let Some(wallet) = wallet {
+                info!("[advance] mine 1 block");
+                wallet.mine(1)?;
+            }
+        }
+        'g' | 'G' => {
+            info!("[advance] get messages ({} channels)", channels.len());
+            for (i, channel) in channels.iter().enumerate() {
+                match channel.recv() {
+                    Ok(Some((msg, id))) => {
+                        info!("[advance] channel {} from {:?}: {}", i + 1, id, msg);
+                    }
+                    Ok(None) => {
+                        info!("[advance] channel {}: (no messages)", i + 1);
+                    }
+                    Err(e) => {
+                        info!("[advance] channel {}: error: {}", i + 1, e);
+                    }
+                }
+            }
+        }
+        'Q' => {
+            info!("[advance] quit");
+            return Ok(false);
+        }
+        other => {
+            info!("[advance] unknown key '{}'", other);
+            print_advance_options(instances.len());
+        }
+    }
+    Ok(true)
+}
+
+pub fn interactive_advance(
+    instances: &mut Vec<BitVMX>,
+    channels: &Vec<DualChannel>,
+    wallet: Option<&Wallet>,
+) -> Result<()> {
+    use console::{Key, Term};
+
+    let term = Term::stdout();
+    print_advance_options(instances.len());
+
+    loop {
+        let key = term.read_key()?;
+        let c = match key {
+            Key::Char(c) => c,
+            Key::Escape => 'Q',
+            _ => continue,
+        };
+        if !advance_key(c, instances, channels, wallet)? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn scripted_advance(
+    sequence: &str,
+    interval_ms: u64,
+    instances: &mut Vec<BitVMX>,
+    channels: &Vec<DualChannel>,
+    wallet: Option<&Wallet>,
+) -> Result<()> {
+    info!(
+        "[scripted] running sequence {:?} with {}ms interval",
+        sequence, interval_ms
+    );
+    for c in sequence.chars() {
+        info!("[scripted] key '{}'", c);
+        if !advance_key(c, instances, channels, wallet)? {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    info!("[scripted] sequence complete");
+    Ok(())
+}
+
+/// Parse a log file produced by a manual run and reconstruct the keystroke sequence.
+/// Matches lines containing `[advance]` or `[interactive]` markers written by `advance_key`.
+pub fn generate_sequence_from_log(log_path: &str) -> Result<String> {
+    let content = std::fs::read_to_string(log_path)
+        .map_err(|e| anyhow::anyhow!("cannot read log file {}: {}", log_path, e))?;
+
+    let mut sequence = String::new();
+
+    for line in content.lines() {
+        // Locate the action payload after either marker prefix.
+        let payload = if let Some(pos) = line.find("[advance]") {
+            line[pos + "[advance]".len()..].trim()
+        } else if let Some(pos) = line.find("[interactive]") {
+            line[pos + "[interactive]".len()..].trim()
+        } else {
+            continue;
+        };
+
+        if let Some(rest) = payload.strip_prefix("tick operator ") {
+            if let Ok(n @ 1..=4) = rest.trim().parse::<u8>() {
+                sequence.push((b'0' + n) as char);
+            }
+        } else if let Some(rest) = payload.strip_prefix("process_comms_messages operator ") {
+            if let Ok(n @ 1..=4) = rest.trim().parse::<usize>() {
+                sequence.push(['q', 'w', 'e', 'r'][n - 1]);
+            }
+        } else if payload.starts_with("tick all") {
+            sequence.push('a');
+        } else if payload.starts_with("mine 1 block") {
+            sequence.push('m');
+        } else if payload.starts_with("get messages") {
+            sequence.push('g');
+        } else if payload.starts_with("quit") {
+            sequence.push('Q');
+        }
+        // sub-lines ("ticking operator N", channel results, etc.) are intentionally skipped
+    }
+
+    info!(
+        "[generate_sequence] parsed {} keys from {}",
+        sequence.len(),
+        log_path
+    );
+    Ok(sequence)
+}
+
 pub fn set_speedup_funding(
     amount: u64,
     pub_key: &PublicKey,
     channel: &DualChannel,
-    wallet: &mut Wallet,
+    wallet: &mut InternalWallet,
     bitvmx_id: &Identifier,
 ) -> Result<()> {
     let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;

@@ -57,20 +57,19 @@ pub fn construct_message(
     ))
 }
 
-pub fn prepare_message<T: Serialize>(
+pub fn prepare_message(
     key_manager: &Rc<KeyManager>,
     rsa_public_key: &str,
     program_id: &Uuid,
     msg_type: CommsMessageType,
-    msg: T,
+    msg: Value,
 ) -> Result<(String, Value, i64, Vec<u8>), BitVMXError> {
-    let msg_value = serde_json::to_value(&msg).map_err(|_| BitVMXError::SerializationError)?;
     let timestamp = Utc::now().timestamp_millis();
     let message = construct_message(
         &program_id.to_string(),
         CURRENT_PROTOCOL_VERSION,
         msg_type,
-        &msg_value,
+        &msg,
         timestamp,
     )?;
 
@@ -80,7 +79,7 @@ pub fn prepare_message<T: Serialize>(
         .to_vec();
     Ok((
         CURRENT_PROTOCOL_VERSION.to_string(),
-        msg_value,
+        msg,
         timestamp,
         signature.to_vec(),
     ))
@@ -151,33 +150,35 @@ pub fn response<T: Serialize>(
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum CommsMessageType {
     Keys,
-    KeysAck,
     PublicNonces,
-    PublicNoncesAck,
     PartialSignatures,
-    PartialSignaturesAck,
+    GarbledCircuit,
     VerificationKey,
     VerificationKeyRequest,
     Broadcasted,
-    /// Generic message type for SetupEngine step data
-    /// Used by Program - the actual step type is determined by SetupEngine
-    SetupStepData,
 }
 
 impl CommsMessageType {
     // Define a mapping between message kinds and their byte representations
     const KIND_MAP: &'static [(&'static CommsMessageType, [u8; 2])] = &[
         (&CommsMessageType::Keys, [0x00, 0x01]),
-        (&CommsMessageType::KeysAck, [0x00, 0x02]),
-        (&CommsMessageType::PublicNonces, [0x00, 0x03]),
-        (&CommsMessageType::PublicNoncesAck, [0x00, 0x04]),
-        (&CommsMessageType::PartialSignatures, [0x00, 0x05]),
-        (&CommsMessageType::PartialSignaturesAck, [0x00, 0x06]),
-        (&CommsMessageType::VerificationKey, [0x00, 0x07]),
-        (&CommsMessageType::VerificationKeyRequest, [0x00, 0x08]),
-        (&CommsMessageType::Broadcasted, [0x00, 0x09]),
-        (&CommsMessageType::SetupStepData, [0x00, 0x0A]),
+        (&CommsMessageType::PublicNonces, [0x00, 0x02]),
+        (&CommsMessageType::PartialSignatures, [0x00, 0x03]),
+        (&CommsMessageType::GarbledCircuit, [0x00, 0x04]),
+        (&CommsMessageType::VerificationKey, [0x00, 0x05]),
+        (&CommsMessageType::VerificationKeyRequest, [0x00, 0x06]),
+        (&CommsMessageType::Broadcasted, [0x00, 0x07]),
     ];
+
+    pub fn should_store(self) -> bool {
+        matches!(
+            self,
+            CommsMessageType::Keys
+                | CommsMessageType::PublicNonces
+                | CommsMessageType::PartialSignatures
+                | CommsMessageType::GarbledCircuit
+        )
+    }
 
     // Convert message type to 2-byte representation
     fn to_bytes(&self) -> Result<[u8; 2], BitVMXError> {
@@ -419,34 +420,29 @@ mod tests {
     #[test]
     fn test_comms_message_kind_to_bytes() {
         assert_eq!(CommsMessageType::Keys.to_bytes().unwrap(), [0x00, 0x01]);
-        assert_eq!(CommsMessageType::KeysAck.to_bytes().unwrap(), [0x00, 0x02]);
         assert_eq!(
             CommsMessageType::PublicNonces.to_bytes().unwrap(),
-            [0x00, 0x03]
-        );
-        assert_eq!(
-            CommsMessageType::PublicNoncesAck.to_bytes().unwrap(),
-            [0x00, 0x04]
+            [0x00, 0x02]
         );
         assert_eq!(
             CommsMessageType::PartialSignatures.to_bytes().unwrap(),
-            [0x00, 0x05]
+            [0x00, 0x03]
         );
         assert_eq!(
-            CommsMessageType::PartialSignaturesAck.to_bytes().unwrap(),
-            [0x00, 0x06]
+            CommsMessageType::GarbledCircuit.to_bytes().unwrap(),
+            [0x00, 0x04]
         );
         assert_eq!(
             CommsMessageType::VerificationKey.to_bytes().unwrap(),
-            [0x00, 0x07]
+            [0x00, 0x05]
         );
         assert_eq!(
             CommsMessageType::VerificationKeyRequest.to_bytes().unwrap(),
-            [0x00, 0x08]
+            [0x00, 0x06]
         );
         assert_eq!(
             CommsMessageType::Broadcasted.to_bytes().unwrap(),
-            [0x00, 0x09]
+            [0x00, 0x07]
         );
     }
 
@@ -458,34 +454,26 @@ mod tests {
         );
         assert_eq!(
             CommsMessageType::from_bytes([0x00, 0x02]).unwrap(),
-            CommsMessageType::KeysAck
-        );
-        assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x03]).unwrap(),
             CommsMessageType::PublicNonces
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x04]).unwrap(),
-            CommsMessageType::PublicNoncesAck
-        );
-        assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x05]).unwrap(),
+            CommsMessageType::from_bytes([0x00, 0x03]).unwrap(),
             CommsMessageType::PartialSignatures
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x06]).unwrap(),
-            CommsMessageType::PartialSignaturesAck
+            CommsMessageType::from_bytes([0x00, 0x04]).unwrap(),
+            CommsMessageType::GarbledCircuit
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x07]).unwrap(),
+            CommsMessageType::from_bytes([0x00, 0x05]).unwrap(),
             CommsMessageType::VerificationKey
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x08]).unwrap(),
+            CommsMessageType::from_bytes([0x00, 0x06]).unwrap(),
             CommsMessageType::VerificationKeyRequest
         );
         assert_eq!(
-            CommsMessageType::from_bytes([0x00, 0x09]).unwrap(),
+            CommsMessageType::from_bytes([0x00, 0x07]).unwrap(),
             CommsMessageType::Broadcasted
         );
     }

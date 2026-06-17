@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Message containing all original messages received by the leader
@@ -190,6 +190,7 @@ impl LeaderBroadcastHelper {
     ) -> Result<bool, BitVMXError> {
         let key = get_original_message_key(context_id, msg_type, &original_msg.sender_pubkey_hash);
 
+        debug!("New message: {:?}", original_msg.msg_type);
         // Check if message from this sender already exists
         let existing: Option<OriginalMessage> = self.store.get(&key, None)?;
         if existing.is_some() {
@@ -208,7 +209,7 @@ impl LeaderBroadcastHelper {
     /// Get all original messages stored for a given context and message type
     /// Iterates over all keys with the prefix to collect individual messages
     /// Each message is deserialized individually, avoiding large bulk operations
-    pub fn get_original_messages(
+    fn get_original_messages(
         &self,
         context_id: &Uuid,
         msg_type: CommsMessageType,
@@ -265,7 +266,7 @@ impl LeaderBroadcastHelper {
 
     /// Clear all stored original messages for a given context and message type
     /// Deletes all individual message keys with the matching prefix
-    pub fn clear_original_messages(
+    fn clear_original_messages(
         &self,
         context_id: &Uuid,
         msg_type: CommsMessageType,
@@ -403,10 +404,9 @@ impl LeaderBroadcastHelper {
 
             if !original_verified {
                 warn!(
-                    "Original message from {} failed signature verification, skipping",
+                    "Original message from {} failed signature verification (missing key). Added to the queue to be retried later",
                     original_msg.sender_pubkey_hash
                 );
-                continue;
             }
 
             // Reconstruct the full serialized message from OriginalMessage

@@ -12,7 +12,7 @@ use bitvmx_client::program::protocols::dispute::{
 use bitvmx_client::program::protocols::protocol_handler::action_wins;
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
-use bitvmx_wallet::wallet::{Destination, RegtestWallet};
+use bitvmx_wallet::wallet::Destination;
 use common::dispute::{prepare_dispute, ForcedChallenges};
 use common::helper::TestHelper;
 use common::init_utxo_new;

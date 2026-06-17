@@ -1,13 +1,12 @@
 [package]
 name = "bitvmx-client"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2021"
 
 [dependencies]
 anyhow = "1.0.93"
 bitcoin = { version = "0.32.6", features = ["std", "rand-std"] }
 clap = { version = "4.5.10", features = ["derive"] }
-comfy-table = "7.1.3"
 config = "0.15.11"
 console = "0.15.4"
 hex = "0.4.3"
@@ -32,41 +31,42 @@ bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", tag = "v0.6.0" }
 bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scriptexec/", tag = "v0.6.0" }
 
-bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", tag = "v0.7.3" }
-bitvmx-protocol-builder = { git = "https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git", tag = "v0.7.3" }
-# bitcoin-coordinator = { git = "https://github.com/FairgateLabs/rust-bitcoin-coordinator.git", tag = "v0.7.3" }
+bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", tag = "v0.7.4" }
+bitvmx-protocol-builder = { git = "https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git", tag = "v0.7.4" }
+# bitcoin-coordinator = { git = "https://github.com/FairgateLabs/rust-bitcoin-coordinator.git", tag = "v0.7.4" }
 bitcoin-coordinator = { path = "../rust-bitvmx-bitcoin" }
-rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", tag = "v0.7.3" }
-bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.7.3" }
-bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.7.3" }
+rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", tag = "v0.7.4" }
+bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.7.4" }
+bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.7.4" }
 bitvmx-broker = { git = "https://github.com/FairgateLabs/rust-bitvmx-broker.git", features = [
     "storagebackend",
-], tag = "v0.7.3" }
-emulator = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.7.3" }
-bitcoin-script-riscv = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.7.3" }
-bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.7.3" }
-bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack", features = [
-    "interactive",
-], tag = "v0.6.0" }
+], tag = "v0.7.4" }
+emulator = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.7.4" }
+bitcoin-script-riscv = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.7.4" }
+bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.7.4" }
+bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack", tag = "v0.6.0" }
 bitcoin-script-functions = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-functions", tag = "v0.6.0" }
 
-bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git", tag = "v0.7.3" }
+bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git", tag = "v0.7.4" }
 bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", features = [
     "emulator",
     "prover",
     "garbled",
-], tag = "v0.7.3" }
-bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.7.3" }
-bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.7.3" }
+], tag = "v0.7.4" }
+bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.7.4" }
+bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.7.4" }
 redact = { version = "0.1", features = ["serde", "zeroize"] }
+# adding time to fix incomatibility between deps in broker->rcgen 
+time = "=0.3.46"
 
 
 [dev-dependencies]
 futures-util = "0.3"
-bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.7.3" }
+criterion = { version = "0.5", features = ["html_reports"] }
+bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.7.4" }
 reqwest = "0.12.23"
 
-zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", tag = "v0.7.3" }
+zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", tag = "v0.7.4" }
 [features]
 default = ["cardinal", "union"]
 cardinal = []
@@ -86,3 +86,7 @@ required-features = ["union"]
 name = "cardinal"
 path = "examples/cardinal/main.rs"
 required-features = ["cardinal"]
+
+[[bench]]
+name = "message_queue"
+harness = false

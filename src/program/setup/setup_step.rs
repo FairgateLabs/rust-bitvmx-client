@@ -1,7 +1,9 @@
 use enum_dispatch::enum_dispatch;
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
+    comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{participant::CommsAddress, protocols::protocol_handler::ProtocolType},
     types::ProgramContext,
@@ -35,7 +37,7 @@ pub trait SetupStep {
         &self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
-    ) -> Result<Option<Vec<u8>>, BitVMXError>;
+    ) -> Result<Option<(Value, CommsMessageType)>, BitVMXError>;
 
     /// **VERIFY** and store data received from a participant.
     ///
@@ -43,7 +45,8 @@ pub trait SetupStep {
     /// using the convention `"participant_{idx}_{step_name}"`.
     fn verify_received(
         &self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
@@ -81,11 +84,12 @@ pub trait SetupStep {
     fn receive_dispatcher_result(
         &self,
         _result: serde_json::Value,
+        _msg_type: CommsMessageType,
         _sub_step: &str,
         _program_context: &mut ProgramContext,
         _protocol_id: &Uuid,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
-        Ok(Some(Vec::new()))
+    ) -> Result<Option<Value>, BitVMXError> {
+        Ok(Some(Value::Null))
     }
 
     fn generate_async(&self) -> bool {

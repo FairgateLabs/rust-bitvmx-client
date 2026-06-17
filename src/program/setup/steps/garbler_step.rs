@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     bitvmx::Context,
+    comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
         participant::{CommsAddress, ParticipantRole},
@@ -89,7 +90,7 @@ impl SetupStep for GarblerStep {
         &self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
+    ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         let config = GCConfiguration::load(&protocol_id, &context.globals)?;
@@ -106,6 +107,7 @@ impl SetupStep for GarblerStep {
                 protocol_id,
                 self.step_name().to_string(),
                 "generate".to_string(),
+                CommsMessageType::GarbledCircuit,
             )
             .to_string()?,
             job_type: GarbledJobType::Prove(config.circuit.clone(), output_dir.clone()),
@@ -122,10 +124,11 @@ impl SetupStep for GarblerStep {
     fn receive_dispatcher_result(
         &self,
         result: Value,
+        _msg_type: CommsMessageType,
         sub_step: &str,
         context: &mut ProgramContext,
         protocol_id: &Uuid,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
+    ) -> Result<Option<Value>, BitVMXError> {
         if sub_step == "generate" {
             let prove_result: GCJobProveResult =
                 serde_json::from_value(result.clone()).map_err(|e| {
@@ -170,7 +173,7 @@ impl SetupStep for GarblerStep {
                 .key_manager
                 .sign_lamport_message_by_pubkey(&config.circuit_public_input, &public_input_pk)?;
 
-            let result_bytes = serde_json::to_vec(&ProverGarblerData {
+            let result_bytes = serde_json::to_value(&ProverGarblerData {
                 proof_blob,
                 public_input_signature: public_input_signature.to_bytes(),
             })?;
@@ -193,7 +196,7 @@ impl SetupStep for GarblerStep {
             context
                 .globals
                 .set_var(protocol_id, GC_CAN_CONTINUE, VariableTypes::Bool(true))?;
-            return Ok(Some(Vec::new()));
+            return Ok(Some(Value::Null));
         }
 
         return Err(BitVMXError::InvalidState(format!(
@@ -204,13 +207,21 @@ impl SetupStep for GarblerStep {
 
     fn verify_received(
         &self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         _from_participant: &CommsAddress,
         protocol: &ProtocolType,
         _participants: &[CommsAddress],
         context: &mut ProgramContext,
         your_data: bool,
     ) -> Result<bool, BitVMXError> {
+        if !matches!(msg_type, CommsMessageType::GarbledCircuit) {
+            info!(
+                "Received message with type {msg_type:?} in GarblerStep, ignoring. Expected type: GarbledCircuit"
+            );
+            return Ok(false);
+        }
+
         let protocol_id = protocol.context().id;
         let config = GCConfiguration::load(&protocol_id, &context.globals)?;
         let is_prover_data = (config.role == ParticipantRole::Prover && your_data)
@@ -222,7 +233,7 @@ impl SetupStep for GarblerStep {
         );
 
         if !is_prover_data {
-            if data.len() != 0 {
+            if !&data.is_null() {
                 return Err(BitVMXError::InvalidMessage(format!(
                     "Expected empty data for non-prover role, but got: {:?}",
                     data
@@ -247,12 +258,8 @@ impl SetupStep for GarblerStep {
         let ProverGarblerData {
             proof_blob,
             public_input_signature,
-        } = serde_json::from_slice(data).map_err(|e| {
-            BitVMXError::InvalidMessage(format!(
-                "Failed to deserialize garbler data: {} \n {:?}",
-                e,
-                serde_json::to_value(data)
-            ))
+        } = serde_json::from_value(data).map_err(|e| {
+            BitVMXError::InvalidMessage(format!("Failed to deserialize garbler data: {} ", e))
         })?;
 
         let [public_input_pk, _, _] =
@@ -349,7 +356,7 @@ fn import_public_keys(
     let num_inputs = prove_result.num_inputs;
     let public_input_size = config.circuit_public_input.len();
     let num_outputs = 1; // we assume only one output
-    
+
     let expected = num_inputs + num_outputs;
     if commitments.len() != expected {
         return Err(BitVMXError::InvalidMessage(format!(
@@ -443,8 +450,13 @@ fn dispatch_proof_verification(
     let verify_job = GarbledJobType::Verify(proof_blob, config.circuit.clone(), output_dir.clone());
 
     let prove_job = DispatcherJob {
-        job_id: Context::SetupStep(protocol_id, step_name.to_string(), "verify".to_string())
-            .to_string()?,
+        job_id: Context::SetupStep(
+            protocol_id,
+            step_name.to_string(),
+            "verify".to_string(),
+            CommsMessageType::GarbledCircuit,
+        )
+        .to_string()?,
         job_type: verify_job,
     };
 

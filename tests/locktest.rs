@@ -19,7 +19,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
-use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
+use bitvmx_wallet::wallet::Wallet;
 use common::{
     config_trace, get_all, init_bitvmx, init_broker, mine_and_wait, prepare_bitcoin, send_all,
     wait_message_from_channel,
@@ -29,15 +29,24 @@ use protocol_builder::scripts::{build_taproot_spend_info, ProtocolScript};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{common::set_speedup_funding, fixtures::create_lockreq_ready};
+use crate::{
+    common::{helper::InternalWallet, set_speedup_funding},
+    fixtures::create_lockreq_ready,
+};
 
 mod common;
 mod fixtures;
 
-pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Wallet)> {
+pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, InternalWallet)> {
     let config = Config::new(Some("config/op_1.yaml".to_string()))?;
 
     let bitcoin_client = BitcoinClient::new(
+        &config.bitcoin.url,
+        &config.bitcoin.username,
+        &config.bitcoin.password,
+    )?;
+
+    let bitcoin_client2 = BitcoinClient::new(
         &config.bitcoin.url,
         &config.bitcoin.username,
         &config.bitcoin.password,
@@ -56,7 +65,8 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, Wallet)> {
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
     wallet.sync_wallet()?;
-    Ok((bitcoin_client, wallet))
+    let internal_wallet = InternalWallet::new(bitcoin_client2, wallet);
+    Ok((bitcoin_client, internal_wallet))
 }
 
 #[ignore]

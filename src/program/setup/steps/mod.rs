@@ -9,9 +9,11 @@ pub use nonces_step::NoncesStep;
 pub use signatures_step::SignaturesStep;
 
 use enum_dispatch::enum_dispatch;
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::SetupStep;
+use crate::comms_helper::CommsMessageType;
 use crate::errors::BitVMXError;
 use crate::program::participant::CommsAddress;
 use crate::program::protocols::protocol_handler::ProtocolType;

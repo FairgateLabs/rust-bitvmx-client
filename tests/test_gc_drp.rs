@@ -14,7 +14,7 @@ use bitvmx_client::{
     },
     types::IncomingBitVMXApiMessages,
 };
-use bitvmx_wallet::{Destination, RegtestWallet};
+use bitvmx_wallet::Destination;
 use protocol_builder::{
     scripts::{self, SignMode},
     types::{OutputType, Utxo},
@@ -31,15 +31,18 @@ fn test_aux(
     verifier_public_circuit_input: Vec<bool>,
     circuit_input: Vec<bool>,
     winner_role: ParticipantRole,
+    independent: Option<bool>,
+    network: Option<Network>,
 ) -> Result<()> {
-    let independent = false;
-    let network = Network::Regtest;
+    let independent = independent.unwrap_or(false);
+    let network = network.unwrap_or(Network::Regtest);
 
     check_gnova_built()?;
 
     config_trace();
 
     let mut helper = TestHelper::new(network, independent, Some(1000))?;
+    helper.wallet.sync_wallet()?;
 
     // Obtain communication addresses from all participants
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
@@ -60,15 +63,13 @@ fn test_aux(
     let funding_key_1 = msgs[1].public_key().unwrap().1;
 
     info!("Creating speedup funds");
-    let speedup_amount = 100_000;
+    let speedup_amount = 50_000;
 
     // Get funds for the operator 0
     let fund_txid_0 = helper
         .wallet
         .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?
         .compute_txid();
-
-    helper.wallet.mine(1)?;
 
     // Get funds for the operator 1
     let fund_txid_1 = helper
@@ -112,7 +113,7 @@ fn test_aux(
         SignMode::Aggregate,
     )];
 
-    let pegin_amount = 100_000;
+    let pegin_amount = 10_000;
     let (utxo_pegin, pegin_output_type) = init_utxo_new(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
@@ -242,6 +243,8 @@ pub fn test_wrong_public_input() {
         verifier_public_circuit_input,
         circuit_input,
         winner_role,
+        None,
+        None,
     );
 
     assert!(matches!(
@@ -262,6 +265,8 @@ pub fn test_wrong_input() -> Result<()> {
         public_circuit_input,
         circuit_input,
         winner_role,
+        None,
+        None,
     )
 }
 
@@ -277,5 +282,44 @@ pub fn test_correct_input() -> Result<()> {
         public_circuit_input,
         circuit_input,
         winner_role,
+        None,
+        None,
     )
+}
+
+#[test]
+#[ignore]
+pub fn test_w1() -> Result<()> {
+    config_trace();
+    let network = Network::Regtest;
+    let independent = true;
+    let mut helper = TestHelper::new(network, independent, None)?;
+    helper.wallet.sync_wallet()?;
+
+    //one time per bitvmx instance, we need to get the public key for the speedup funding utxo
+    let funding_public_id = Uuid::new_v4();
+    let command = IncomingBitVMXApiMessages::GetPubKey(funding_public_id, true);
+    helper.send_all(command)?;
+    let msgs = helper.wait_all_msg()?;
+    let funding_key_0 = msgs[0].public_key().unwrap().1;
+    let funding_key_1 = msgs[1].public_key().unwrap().1;
+
+    info!("Creating speedup funds");
+    let speedup_amount = 1_000;
+
+    // Get funds for the operator 0
+    let _fund_txid_0 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?
+        .compute_txid();
+
+    // Get funds for the operator 1
+    let _fund_txid_1 = helper
+        .wallet
+        .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount))?
+        .compute_txid();
+
+    helper.wallet.mine(1)?;
+
+    Ok(())
 }

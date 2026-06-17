@@ -1,4 +1,5 @@
 use crate::{
+    comms_helper::CommsMessageType,
     errors::BitVMXError,
     helper::PartialSignatureMessage,
     program::{
@@ -11,8 +12,9 @@ use crate::{
 };
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PartialSignature};
+use serde_json::Value;
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Template step for exchanging MuSig2 partial signatures.
 ///
@@ -43,7 +45,7 @@ impl SetupStep for SignaturesStep {
         &self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext,
-    ) -> Result<Option<Vec<u8>>, BitVMXError> {
+    ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -117,24 +119,28 @@ impl SetupStep for SignaturesStep {
         )?;
 
         // Serialize to send
-        let serialized = serde_json::to_vec(&partial_sig_msg)?;
-        debug!(
-            "SignaturesStep: Serialized {} bytes to send",
-            serialized.len()
-        );
+        let serialized = serde_json::to_value(&partial_sig_msg)?;
+        debug!("SignaturesStep: Serialized");
 
-        Ok(Some(serialized))
+        Ok(Some((serialized, CommsMessageType::PartialSignatures)))
     }
 
     fn verify_received(
         &self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext,
         _your_data: bool,
     ) -> Result<bool, BitVMXError> {
+        if !matches!(msg_type, CommsMessageType::PartialSignatures) {
+            info!(
+                "Received message with type {msg_type:?} in SignaturesStep, ignoring. Expected type: PartialSignatures"
+            );
+            return Ok(false);
+        }
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -143,7 +149,7 @@ impl SetupStep for SignaturesStep {
         );
 
         // Deserialize the received signatures
-        let signatures: PartialSignatureMessage = serde_json::from_slice(data).map_err(|e| {
+        let signatures: PartialSignatureMessage = serde_json::from_value(data).map_err(|e| {
             BitVMXError::InvalidMessage(format!("Failed to deserialize signatures: {}", e))
         })?;
 

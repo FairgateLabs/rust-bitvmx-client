@@ -374,7 +374,7 @@ impl Program {
             JobDispatcherType::Garbler => {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
                 match &context {
-                    Context::SetupStep(_, _, _) => {
+                    Context::SetupStep(_, _, _, _) => {
                         if let Some(engine) = &mut self.setup_engine {
                             if engine.receive_dispatcher_result(
                                 result,
@@ -443,7 +443,8 @@ impl Program {
     /// is in SettingUp state. The SetupEngine handles all the logic internally.
     fn receive_setup_data(
         &mut self,
-        data: &[u8],
+        data: Value,
+        msg_type: CommsMessageType,
         from: &PubKeyHash,
         program_context: &mut ProgramContext,
     ) -> Result<bool, BitVMXError> {
@@ -457,6 +458,7 @@ impl Program {
         let (message_processed, engine_state) = if let Some(engine) = &mut self.setup_engine {
             let message_processed = engine.receive_setup_data(
                 data,
+                msg_type,
                 from,
                 &self.program_id,
                 self.my_idx,
@@ -507,21 +509,15 @@ impl Program {
         &mut self,
         comms_address: &PubKeyHash,
         msg_type: &CommsMessageType,
-        data: Vec<u8>,
+        data: Value,
         program_context: &mut ProgramContext,
     ) -> Result<bool, BitVMXError> {
         debug!(
-            "Program::process_comms_message() - Received {:?} ({} bytes) from {}",
-            msg_type,
-            data.len(),
-            comms_address
+            "Program::process_comms_message() - Received {:?}  from {}",
+            msg_type, comms_address
         );
 
         match msg_type {
-            CommsMessageType::SetupStepData => {
-                debug!("Program::process_comms_message() - Routing SetupStepData to receive_setup_data()");
-                return self.receive_setup_data(&data, comms_address, program_context);
-            }
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest => {
                 debug!("Program: Verification key message handled upstream, ignoring");
             }
@@ -529,10 +525,15 @@ impl Program {
                 debug!("Program: Broadcasted message should be handled upstream");
             }
             _ => {
-                // Other message types
                 debug!(
-                    "Program: Ignoring message type {:?} - not supported by Program",
+                    "Program::process_comms_message() - Routing {:?} to receive_setup_data()",
                     msg_type
+                );
+                return self.receive_setup_data(
+                    data,
+                    msg_type.clone(),
+                    comms_address,
+                    program_context,
                 );
             }
         }
