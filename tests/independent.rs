@@ -61,6 +61,7 @@ pub fn test_all_aux(
     config_trace();
 
     let mut helper = TestHelper::new(network, independent, Some(1000))?;
+    helper.wallet.sync_wallet()?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
     helper.send_all(command)?;
@@ -83,16 +84,6 @@ pub fn test_all_aux(
     info!("Creating speedup funds");
     let speedup_amount = 100_000 * MIN_TX_FEE as u64;
 
-    // let fund_txid_0 = helper.wallet.fund_address(
-    //     WALLET_NAME,
-    //     FUNDING_ID,
-    //     funding_key_0,
-    //     &vec![speedup_amount],
-    //     1000,
-    //     false,
-    //     true,
-    //     None,
-    // )?;
     let fund_tx_0 = helper
         .wallet
         .fund_destination(Destination::P2WPKH(funding_key_0, speedup_amount))?;
@@ -101,18 +92,6 @@ pub fn test_all_aux(
     helper.wallet.mine(1)?;
     info!("Wait for the fund for operator 0 speedups");
 
-    wait_enter(independent);
-    // let fund_txid_1 = helper.wallet.fund_address(
-    //     WALLET_NAME,
-    //     FUNDING_ID,
-    //     funding_key_1,
-    //     &vec![speedup_amount],
-    //     1000,
-    //     false,
-    //     true,
-    //     None,
-    // )?;
-
     let fund_tx_1 = helper
         .wallet
         .fund_destination(Destination::P2WPKH(funding_key_1, speedup_amount))?;
@@ -120,7 +99,6 @@ pub fn test_all_aux(
     helper.wallet.mine(1)?;
     info!("Wait for the first funding ready");
     info!("Wait for the fund for operator 1 speedups");
-    wait_enter(independent);
 
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount, &funding_key_0);
     let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
@@ -162,7 +140,6 @@ pub fn test_all_aux(
     )?;
 
     info!("Wait for the first funding ready");
-    wait_enter(independent);
 
     info!("Initializing UTXO for the prover action");
     let (prover_win_utxo, prover_win_out_type) = init_utxo_new(
@@ -172,7 +149,6 @@ pub fn test_all_aux(
         11_000,
     )?;
     info!("Wait for the action utxo ready");
-    wait_enter(independent);
 
     let pair_0_1_channels = vec![
         helper.id_channel_pairs[0].clone(),
@@ -226,7 +202,6 @@ pub fn test_all_aux(
 
     // wait input from command line
     info!("Waiting for funding ready");
-    wait_enter(independent);
 
     //the witness is observed and then the challenge is sent
     send_all(&pair_0_1_channels, &set_witness)?;
@@ -264,18 +239,6 @@ pub fn test_all_aux(
     helper.stop()?;
 
     Ok(())
-}
-
-fn wait_enter(independent: bool) {
-    if !independent {
-        return;
-    }
-    info!("Waiting for user input to continue...");
-    info!("Press Enter to continue...");
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .expect("Failed to read line");
 }
 
 pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> WinternitzPublicKey {
