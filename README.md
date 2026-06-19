@@ -17,6 +17,7 @@ git clone git@github.com:FairgateLabs/rust-bitvmx-client.git
 
 ## Build 
 
+
 ```bash
 cargo build
 ```
