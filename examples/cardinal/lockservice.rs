@@ -63,6 +63,7 @@ pub fn prepare_bitcoin_running() -> Result<Wallet> {
     let wallet_config_file = match config.bitcoin.network {
         Network::Regtest => "config/wallet_regtest.yaml",
         Network::Testnet => "config/wallet_testnet.yaml",
+        Network::Testnet4 => "config/wallet_testnet4.yaml",
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 

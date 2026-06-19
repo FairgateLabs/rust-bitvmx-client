@@ -1370,6 +1370,8 @@ fn get_master_wallet() -> Result<MasterWallet> {
 fn get_user() -> Result<User> {
     let id = if NETWORK == Network::Testnet {
         "testnet_user_1"
+    } else if NETWORK == Network::Testnet4 {
+        "testnet4_user_1"
     } else {
         "user_1"
     };
@@ -1403,7 +1405,7 @@ fn pegin_setup(
 fn get_user_take_fee() -> Result<u64, anyhow::Error> {
     match NETWORK {
         Network::Regtest => Ok(3000),
-        Network::Testnet => Ok(300),
+        Network::Testnet | Network::Testnet4 => Ok(300),
         _ => Err(anyhow::anyhow!("Unsupported network")),
     }
 }
@@ -1411,7 +1413,7 @@ fn get_user_take_fee() -> Result<u64, anyhow::Error> {
 fn get_accept_pegin_fee() -> Result<u64, anyhow::Error> {
     match NETWORK {
         Network::Regtest => Ok(5000),
-        Network::Testnet => Ok(300),
+        Network::Testnet | Network::Testnet4 => Ok(300),
         _ => Err(anyhow::anyhow!("Unsupported network")),
     }
 }
@@ -1419,7 +1421,7 @@ fn get_accept_pegin_fee() -> Result<u64, anyhow::Error> {
 fn get_advance_funds_fee() -> Result<u64, anyhow::Error> {
     match NETWORK {
         Network::Regtest => Ok(3000),
-        Network::Testnet => Ok(300),
+        Network::Testnet | Network::Testnet4 => Ok(300),
         _ => Err(anyhow::anyhow!("Unsupported network")),
     }
 }
@@ -1433,7 +1435,7 @@ fn get_blocks_to_wait() -> u32 {
                 2 + PEGIN_CONFIRMATIONS as u32
             }
         }
-        Network::Testnet => 1,
+        Network::Testnet | Network::Testnet4 => 1,
         _ => Err(anyhow::anyhow!("Unsupported network")).unwrap(),
     }
 }
