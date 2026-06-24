@@ -37,6 +37,7 @@ pub struct GCConfiguration {
     pub role: ParticipantRole,
     pub circuit: String,
     pub circuit_public_input: Vec<bool>,
+    pub import_proof_path: Option<String>,
 }
 
 impl GCConfiguration {
@@ -47,12 +48,14 @@ impl GCConfiguration {
         role: ParticipantRole,
         circuit: String,
         circuit_public_input: Vec<bool>,
+        import_proof_path: Option<String>,
     ) -> Self {
         Self {
             id,
             role,
             circuit,
             circuit_public_input,
+            import_proof_path,
         }
     }
 
@@ -100,7 +103,12 @@ impl SetupStep for GarblerStep {
         }
 
         let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);
-        std::fs::create_dir_all(&output_dir)?;
+
+        let job_type = if let Some(from_path) = config.import_proof_path {
+            GarbledJobType::ImportProof(from_path, output_dir)
+        } else {
+            GarbledJobType::Prove(config.circuit.clone(), output_dir.clone())
+        };
 
         let prove_job = DispatcherJob {
             job_id: Context::SetupStep(
@@ -110,7 +118,7 @@ impl SetupStep for GarblerStep {
                 CommsMessageType::GarbledCircuit,
             )
             .to_string()?,
-            job_type: GarbledJobType::Prove(config.circuit.clone(), output_dir.clone()),
+            job_type,
         };
 
         let msg = serde_json::to_string(&prove_job)?;
@@ -352,8 +360,10 @@ fn import_public_keys(
 ) -> Result<[LamportPublicKey; 3], BitVMXError> {
     let indices = &prove_result.input_commitment_indices;
     let unordered_commitments = prove_result.sha256_commitments.clone();
-    let commitments: Vec<Sha256CommitmentHex> =
-        indices.iter().map(|&i| unordered_commitments[i].clone()).collect();
+    let commitments: Vec<Sha256CommitmentHex> = indices
+        .iter()
+        .map(|&i| unordered_commitments[i].clone())
+        .collect();
 
     info!("Total deduped commitments: {}", commitments.len());
 

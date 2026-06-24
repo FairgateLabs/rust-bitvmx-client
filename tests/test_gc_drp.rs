@@ -35,6 +35,7 @@ fn test_aux(
     independent: Option<bool>,
     network: Option<Network>,
     circuit_path: String,
+    import_proof_path: Option<String>,
 ) -> Result<()> {
     let independent = independent.unwrap_or(false);
     let network = network.unwrap_or(Network::Regtest);
@@ -188,12 +189,14 @@ fn test_aux(
         ParticipantRole::Prover,
         circuit_path.clone(),
         prover_public_circuit_input.clone(),
+        import_proof_path.clone(),
     );
     let gc_config_verifier = GCConfiguration::new(
         prog_id,
         ParticipantRole::Verifier,
         circuit_path,
         verifier_public_circuit_input,
+        import_proof_path,
     );
 
     pair_0_1_channels[0].channel.send(
@@ -247,6 +250,7 @@ pub fn test_wrong_public_input() {
         None,
         None,
         "../rust-bitvmx-gc/test-circuits/simple.circuit".to_string(),
+        None,
     );
 
     assert!(matches!(
@@ -270,6 +274,7 @@ pub fn test_wrong_input() -> Result<()> {
         None,
         None,
         "../rust-bitvmx-gc/test-circuits/simple.circuit".to_string(),
+        None,
     )
 }
 
@@ -288,6 +293,7 @@ pub fn test_correct_input() -> Result<()> {
         None,
         None,
         "../rust-bitvmx-gc/test-circuits/simple.circuit".to_string(),
+        None,
     )
 }
 
@@ -354,7 +360,7 @@ fn sha512_single_block(message: &[u8]) -> [u8; 128] {
 #[test]
 #[ignore]
 pub fn test_sha512_correct_input() -> Result<()> {
-    let preimage = b"my_super_secret_string_that_noone_knows";
+    let preimage = b"my_super_secret_string_that_noone_knowsAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     let mut hasher = Sha512::new();
     hasher.update(preimage);
@@ -384,14 +390,15 @@ pub fn test_sha512_correct_input() -> Result<()> {
         None,
         None,
         "../rust-bitvmx-gc/test-circuits/full-sha512.json".to_string(),
+        None,
     )
 }
 
 #[test]
 #[ignore]
 fn test_sha512_wrong_input() -> Result<()> {
-    let preimage = b"my_super_secret_string_that_noone_knows";
-    let wrong_preimage = b"my_wrong_secret_string_that_noone_knows";
+    let preimage = b"my_super_secret_string_that_noone_knowsAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let wrong_preimage = b"my_wrong_secret_string_that_noone_knowsAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     let mut hasher = Sha512::new();
     hasher.update(preimage);
@@ -417,8 +424,9 @@ fn test_sha512_wrong_input() -> Result<()> {
         public_circuit_input,
         circuit_input[512..].to_vec(),
         winner_role,
-        None,
-        None,
+        Some(true),
+        Some(Network::Testnet4),
         "../rust-bitvmx-gc/test-circuits/full-sha512.json".to_string(),
+        Some("../rust-bitvmx-gc/test-proof".to_string()),
     )
 }
