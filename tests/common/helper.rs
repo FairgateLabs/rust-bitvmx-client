@@ -171,6 +171,7 @@ impl TestHelper {
         let config_path = match network {
             Network::Regtest => "config/wallet_regtest.yaml",
             Network::Testnet => "config/wallet_testnet.yaml",
+            Network::Testnet4 => "config/wallet_testnet4.yaml",
             _ => panic!("Not supported network {}", network),
         };
 
@@ -456,6 +457,7 @@ pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     let config_names = match network {
         Network::Regtest => vec!["op_1", "op_2", "op_3", "op_4"],
         Network::Testnet => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3"],
+        Network::Testnet4 => vec!["testnet4_op_1", "testnet4_op_2", "testnet4_op_3"],
         _ => panic!("Network not supported: {}", network),
     };
 

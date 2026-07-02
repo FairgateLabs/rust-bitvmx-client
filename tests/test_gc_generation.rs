@@ -52,12 +52,14 @@ pub fn test_gc_generation() -> Result<()> {
         ParticipantRole::Prover,
         TEST_CIRCUIT_PATH.to_string(),
         vec![],
+        None,
     );
     let gc_config_verifier = GCConfiguration::new(
         prog_id,
         ParticipantRole::Verifier,
         TEST_CIRCUIT_PATH.to_string(),
         vec![],
+        None,
     );
 
     info!("Setup start");
