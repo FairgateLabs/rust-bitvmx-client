@@ -17,10 +17,13 @@ comms:
   priv_key: config/keys/op_4.key
   storage_path: /tmp/op_4/comms.db
 coordinator_settings:
-  max_feerate_sat_vb: 2
-  monitor_settings:
-    indexer_settings:
-      checkpoint_height: 4631677
+    fee:
+      max_feerate_sat_vb: 10
+      base_fee_multiplier: 1.0
+      min_safe_fee_rate: 2
+    monitor:
+      indexer_settings:
+        checkpoint_height: 5013041
 
 coordinator_throttle:
   init_interval: 1000
@@ -76,4 +79,4 @@ client:
 
 wallet:
   db_path: /tmp/testnet/op_4/wallet.db
-  start_height: 4631993
+  start_height: 5013041
