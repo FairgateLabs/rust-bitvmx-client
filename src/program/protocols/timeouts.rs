@@ -8,7 +8,6 @@ use crate::{
     },
     types::ProgramContext,
 };
-use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use tracing::info;
 
 pub fn dispatch_timeout_tx<T: ProtocolHandler>(

@@ -1,6 +1,5 @@
 use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use bitvmx_broker::identification::identifier::Identifier;
@@ -68,6 +67,7 @@ use crate::program::variables::{Globals, PartialUtxo, VariableTypes, WitnessType
 use crate::program::witness;
 
 const REQUESTED_CONFIRMATIONS_VAR: &str = "requested_confirmations";
+const REQUESTED_STUCK_IN_MEMPOOL_VAR: &str = "requested_stuck_in_mempool";
 
 #[derive(Clone, Debug)]
 pub struct LeafToSign {
@@ -146,6 +146,28 @@ pub trait ProtocolHandler {
             &self.context().id,
             REQUESTED_CONFIRMATIONS_VAR,
             VariableTypes::Number(confirmations),
+        )?;
+        Ok(())
+    }
+
+    fn requested_stuck_in_mempool(&self, program_context: &ProgramContext) -> Option<u32> {
+        program_context
+            .globals
+            .get_var(&self.context().id, REQUESTED_STUCK_IN_MEMPOOL_VAR)
+            .ok()
+            .flatten()
+            .and_then(|v| v.number().ok())
+    }
+
+    fn set_requested_stuck_in_mempool(
+        &self,
+        program_context: &ProgramContext,
+        stuck_in_mempool_blocks: u32,
+    ) -> Result<(), BitVMXError> {
+        program_context.globals.set_var(
+            &self.context().id,
+            REQUESTED_STUCK_IN_MEMPOOL_VAR,
+            VariableTypes::Number(stuck_in_mempool_blocks),
         )?;
         Ok(())
     }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bitcoin::{hashes::Hash, PublicKey, Sequence, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script_stack::stack::StackTracker;
 use console::style;
 use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
@@ -238,7 +238,7 @@ impl ProtocolHandler for SlotProtocol {
                 &name,
                 0,
                 program_context,
-                &tx_status.tx,
+                tx_status.tx_or_err()?,
                 Some(0),
                 None,
                 None,
@@ -295,7 +295,7 @@ impl ProtocolHandler for SlotProtocol {
                     .unwrap()
                     .number()?;
 
-                let txid = tx_status.tx_id;
+                let txid = tx_status.tx_or_err()?.compute_txid();
 
                 //notify when the stops are consumed
                 for i in 0..total_operators - 1 {
@@ -456,7 +456,7 @@ impl ProtocolHandler for SlotProtocol {
                 tx,
                 Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.block_info.unwrap().height + timelock_blocks),
+                Some(tx_status.clone().block_info.unwrap().height + timelock_blocks),
                 self.requested_confirmations(program_context),
             )?;
         }
@@ -474,7 +474,7 @@ impl ProtocolHandler for SlotProtocol {
                 &name,
                 0,
                 program_context,
-                &tx_status.tx,
+                tx_status.tx_or_err()?,
                 Some(op_and_id[1]),
                 None,
                 None,

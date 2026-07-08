@@ -1,7 +1,7 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitcoin::Network;
-use bitcoin_coordinator::coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi};
+use bitcoin_coordinator::coordinator::BitcoinCoordinator;
 use bitcoin_coordinator::types::CoordinatorNews;
 use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};
 use bitvmx_client::config::Config;
@@ -93,7 +93,11 @@ fn retry_failed_txs_test() -> Result<()> {
     let mut has_dispatch_error = false;
 
     for news_item in news.coordinator_news.iter() {
-        if let CoordinatorNews::DispatchTransactionError(_, _, _) = news_item {
+        if let CoordinatorNews::DispatchError {
+            txid: _,
+            context: _,
+        } = news_item
+        {
             has_dispatch_error = true;
             break;
         }

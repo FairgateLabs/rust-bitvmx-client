@@ -80,11 +80,13 @@ impl BitVMXClient {
         id: Uuid,
         tx: Transaction,
         confirmation_threshold: Option<u32>,
+        stuck_in_mempool_blocks: Option<u32>,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::DispatchTransaction(
             id,
             tx,
             confirmation_threshold,
+            stuck_in_mempool_blocks,
         ))
     }
 

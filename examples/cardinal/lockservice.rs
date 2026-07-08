@@ -454,11 +454,15 @@ pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier)
             _ => panic!("Expected Transaction message"),
         };
 
-        info!("Received message from channel: {:?}", status.tx_id);
+        info!(
+            "Received message from channel: {:?}",
+            status.tx_id_or_error()
+        );
         info!("happy path secret: {}", fake_secret);
         info!("happy path public: {}", aggregated_happy_path);
 
-        let msg = serde_json::to_string(&(status.tx_id, fake_secret))?;
+        let txid = status.tx_id_or_error()?;
+        let msg = serde_json::to_string(&(txid, fake_secret))?;
         channel.send(&identifier, msg)?;
     }
 

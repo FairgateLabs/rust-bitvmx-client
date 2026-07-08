@@ -28,7 +28,7 @@ use crate::{
     types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::{
     builder::{Protocol, ProtocolBuilder},
@@ -374,7 +374,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
             if operator_index == self.ctx.my_idx {
                 // Both, OPERATOR_TAKE_TX and OPERATOR_WON_TX, have the same output index to reimburse funds to the operator
                 let output_index: u32 = 0;
-                let amount = tx_status.tx.output[output_index as usize].value.to_sat();
+                let amount = tx_status.tx_or_err()?.output[output_index as usize]
+                    .value
+                    .to_sat();
                 let utxo = (
                     tx_id,
                     output_index,

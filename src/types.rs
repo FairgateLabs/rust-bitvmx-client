@@ -98,7 +98,7 @@ pub enum IncomingBitVMXApiMessages {
     SubscribeToOutputPattern(OutputPatternFilter, Option<u32>),
     SubscribeToRskPegin(Option<u32>),
     GetSPVProof(Txid),
-    DispatchTransaction(Uuid, Transaction, Option<u32>),
+    DispatchTransaction(Uuid, Transaction, Option<u32>, Option<u32>), // id, transaction, confirmation_threshold, stuck_in_mempool_blocks
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
     GetAggregatedPubkey(Uuid),
@@ -141,7 +141,7 @@ pub enum OutgoingBitVMXApiMessages {
     // Represents when a spending utxo transaction is found
     SpendingUTXOTransactionFound(Uuid, Txid, u32, TransactionStatus),
     // Represents when a program is running out of funds
-    SpeedUpProgramNoFunds(Txid),
+    SpeedUpProgramNoFunds(),
     // Setup Completed,
     SetupCompleted(ProgramId),
     // Add response types for the new messages if needed
@@ -299,7 +299,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(_, _, _, _) => {
                 "SpendingUTXOTransactionFound".to_string()
             }
-            OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(_) => {
+            OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds() => {
                 "SpeedUpProgramNoFunds".to_string()
             }
             OutgoingBitVMXApiMessages::SetupCompleted(_) => "SetupCompleted".to_string(),

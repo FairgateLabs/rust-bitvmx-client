@@ -1,4 +1,3 @@
-use bitcoin_coordinator::coordinator::BitcoinCoordinatorApi;
 use bitcoin_script_riscv::riscv::instruction_mapping::{
     create_verification_script_mapping, get_key_from_opcode,
 };

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
-use bitcoin_coordinator::{coordinator::BitcoinCoordinatorApi, TransactionStatus};
+use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
     graph::graph::GraphOptions,
     scripts::op_return_script,
@@ -261,7 +261,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 block_height,
             )?;
 
-            let tx = tx_status.tx;
+            let tx = tx_status.tx_or_err()?;
             self.update_advance_funds_input(context, &tx)?;
         }
 

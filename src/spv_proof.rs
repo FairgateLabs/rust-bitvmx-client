@@ -4,7 +4,7 @@ use bitcoin::hex::Case;
 use bitcoin::hex::DisplayHex;
 use bitcoin::Transaction;
 use bitcoin::Txid;
-use bitcoin_coordinator::types::FullBlock;
+use bitcoin_coordinator::FullBlock;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 

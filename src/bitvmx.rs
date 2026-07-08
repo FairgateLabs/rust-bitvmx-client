@@ -26,8 +26,8 @@ use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_coordinator::{
-    coordinator::{BitcoinCoordinator, BitcoinCoordinatorApi},
-    types::{AckCoordinatorNews, AckNews, CoordinatorNews},
+    coordinator::BitcoinCoordinator,
+    types::{AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 use bitvmx_broker::channel::queue_channel::{QueueChannel, ReceiveHandlerChannel};
@@ -593,10 +593,6 @@ impl BitVMX {
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
 
-        if !news.monitor_news.is_empty() || !news.coordinator_news.is_empty() {
-            //info!("Processing news: {:?}", news);
-        }
-
         for monitor_news in news.monitor_news {
             let ack_news: AckNews;
 
@@ -663,28 +659,22 @@ impl BitVMX {
         }
 
         for coordinator_news in news.coordinator_news {
-            let ack_news: AckNews;
-
-            match coordinator_news {
-                CoordinatorNews::InsufficientFunds(tx_id, _available, _required) => {
-                    // Complete new params
-                    let data =
-                        OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds(tx_id).to_string()?;
-
+            match coordinator_news.clone() {
+                CoordinatorNews::InsufficientFunds {
+                    available,
+                    required,
+                } => {
                     info!(
-                        "Sending funds request to broker: {} available {} required {}",
-                        tx_id, _available, _required
+                        "Insufficient funds for transaction. Available: {}, Required: {}",
+                        available, required
                     );
+                    let data = OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds().to_string()?;
                     self.program_context
                         .broker_channel
                         .send(&self.config.components.l2, data)?;
-                    ack_news = AckNews::Coordinator(AckCoordinatorNews::InsufficientFunds(tx_id));
                 }
-                CoordinatorNews::DispatchTransactionError(txid, _context_data, _counter) => {
-                    error!(
-                        "Dispatch Transaction Error: {:?} {:?} {}",
-                        txid, _context_data, _counter
-                    );
+                CoordinatorNews::DispatchError { txid, context } => {
+                    error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
                     match self.wallet.get_wallet_tx(txid) {
                         Ok(Some(wallet_tx)) => {
                             self.wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
@@ -694,60 +684,19 @@ impl BitVMX {
                             error!("Error fetching transaction from wallet: {:?}", e);
                         }
                     }
-
-                    ack_news =
-                        AckNews::Coordinator(AckCoordinatorNews::DispatchTransactionError(txid));
                 }
-                CoordinatorNews::DispatchSpeedUpError(
-                    _tx_id,
-                    _context_data,
-                    _counter,
-                    _block_height,
-                ) => {
-                    // Complete
-
-                    ack_news =
-                        AckNews::Coordinator(AckCoordinatorNews::DispatchSpeedUpError(_counter));
-                }
-                CoordinatorNews::FundingNotFound => {
-                    // Complete
-                    error!("Funding not found for speed-up transaction. This is a critical error.");
-
-                    ack_news = AckNews::Coordinator(AckCoordinatorNews::FundingNotFound);
-                }
-                CoordinatorNews::EstimateFeerateTooHigh(estimate_fee, max_allowed) => {
-                    // Complete
+                _ => {
                     warn!(
-                        "Estimate feerate too high: {:?} {:?}",
-                        estimate_fee, max_allowed
+                        "Received unhandled coordinator news: {:?}",
+                        coordinator_news
                     );
-
-                    ack_news = AckNews::Coordinator(AckCoordinatorNews::EstimateFeerateTooHigh(
-                        estimate_fee,
-                        max_allowed,
-                    ));
-                }
-                CoordinatorNews::TransactionAlreadyInMempool(tx_id, _) => {
-                    // TODO: Complete what to do here
-                    ack_news = AckNews::Coordinator(
-                        AckCoordinatorNews::TransactionAlreadyInMempool(tx_id),
-                    );
-                }
-                CoordinatorNews::MempoolRejection(tx_id, _context_data, _counter) => {
-                    // TODO: Complete what to do here
-                    ack_news = AckNews::Coordinator(AckCoordinatorNews::MempoolRejection(tx_id));
-                }
-                CoordinatorNews::NetworkError(tx_id, _context_data, _counter) => {
-                    // TODO: Complete what to do here
-                    ack_news = AckNews::Coordinator(AckCoordinatorNews::NetworkError(tx_id));
-                }
+                } //TODO: Complete handling other news types
             }
 
             self.program_context
                 .bitcoin_coordinator
-                .ack_news(ack_news)?;
+                .ack_news(AckNews::Coordinator(coordinator_news))?;
         }
-
         Ok(true)
     }
 
@@ -1359,16 +1308,19 @@ impl BitVMX {
         id: Uuid,
         tx: Transaction,
         confirmation_threshold: Option<u32>,
+        stuck_in_mempool_blocks: Option<u32>,
     ) -> Result<(), BitVMXError> {
         info!("Dispatching transaction: {:?} for instance: {:?}", tx, id);
 
-        self.program_context.bitcoin_coordinator.dispatch(
-            tx,
-            None,
-            Context::RequestId(id, from).to_string()?,
-            None,
-            confirmation_threshold,
-        )?;
+        self.program_context
+            .bitcoin_coordinator
+            .dispatch_without_speedup(
+                tx,
+                Context::RequestId(id, from).to_string()?,
+                None,
+                confirmation_threshold,
+                stuck_in_mempool_blocks,
+            )?;
 
         Ok(())
     }
@@ -1521,8 +1473,8 @@ impl BitVMX {
                 };
 
                 let txid = tx.compute_txid();
-                //TODO: Is this confirmation threshold of 1 appropriate here?
-                self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1))?;
+                //TODO: Is this confirmation threshold of 1 appropriate here? What about stuck_in_mempool_blocks?
+                self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1), None)?;
                 self.wallet.update_with_tx(&tx)?;
 
                 self.program_context.broker_channel.send(
@@ -1591,8 +1543,19 @@ impl BitVMX {
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
                 self.dispatch_transaction_name(id, &tx)?
             }
-            IncomingBitVMXApiMessages::DispatchTransaction(id, tx, confirmation_threshold) => {
-                self.dispatch_transaction(from, id, tx, confirmation_threshold)?;
+            IncomingBitVMXApiMessages::DispatchTransaction(
+                id,
+                tx,
+                confirmation_threshold,
+                stuck_in_mempool_blocks,
+            ) => {
+                self.dispatch_transaction(
+                    from,
+                    id,
+                    tx,
+                    confirmation_threshold,
+                    stuck_in_mempool_blocks,
+                )?;
             }
             IncomingBitVMXApiMessages::SetupKey(
                 id,
