@@ -32,6 +32,7 @@ impl MasterWallet {
         let config_path = match network {
             Network::Regtest => "config/wallet_regtest.yaml",
             Network::Testnet => "config/wallet_testnet.yaml",
+            Network::Testnet4 => "config/wallet_testnet4.yaml",
             _ => return Err(anyhow::anyhow!("Unsupported network: {}", network)),
         };
 

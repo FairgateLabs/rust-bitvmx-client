@@ -46,6 +46,7 @@ impl Committee {
         let network_prefix = match network {
             Network::Bitcoin => "mainnet",
             Network::Testnet => "testnet",
+            Network::Testnet4 => "testnet4",
             Network::Regtest => "",
             _ => panic!("Unsupported network"),
         };

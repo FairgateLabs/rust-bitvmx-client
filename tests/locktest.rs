@@ -55,6 +55,7 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, InternalWallet)> {
     let config_path = match config.bitcoin.network {
         Network::Regtest => "config/wallet_regtest.yaml",
         Network::Testnet => "config/wallet_testnet.yaml",
+        Network::Testnet4 => "config/wallet_testnet4.yaml",
         _ => panic!("Not supported network {}", config.bitcoin.network),
     };
 

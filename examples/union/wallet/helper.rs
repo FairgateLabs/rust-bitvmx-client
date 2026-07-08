@@ -161,6 +161,7 @@ pub fn print_link(network: Network, txid: bitcoin::Txid) {
 
     let url = match network {
         Network::Testnet => format!("https://mempool.space/testnet/tx/{}", txid),
+        Network::Testnet4 => format!("https://mempool.space/testnet4/tx/{}", txid),
         Network::Bitcoin => format!("https://mempool.space/tx/{}", txid),
         _ => "Unsupported network".to_string(),
     };
@@ -319,6 +320,9 @@ pub fn get_network_prefix(network: Network, env_var: bool) -> &'static str {
         (Network::Testnet, false) => "testnet",
         (Network::Testnet, true) => "TESTNET",
 
+        (Network::Testnet4, false) => "testnet4",
+        (Network::Testnet4, true) => "TESTNET4",
+
         (Network::Bitcoin, false) => "mainnet",
         (Network::Bitcoin, true) => "MAINNET",
 
@@ -331,6 +335,7 @@ pub fn string_to_network(network: Option<&String>) -> Result<Network> {
         Some(net) => match net.as_str() {
             "regtest" => Network::Regtest,
             "testnet" => Network::Testnet,
+            "testnet4" => Network::Testnet4,
             "mainnet" => Network::Bitcoin,
             _ => {
                 return Err(anyhow!(
@@ -399,6 +404,7 @@ fn get_fee_rate(network: Network) -> u64 {
     match network {
         Network::Regtest => 10,
         Network::Testnet => 1,
+        Network::Testnet4 => 1,
         Network::Bitcoin => 1,
         _ => 1,
     }
