@@ -10,6 +10,8 @@ pub mod ping_helper;
 pub mod program;
 pub mod signature_verifier;
 pub mod spv_proof;
+#[cfg(test)]
+pub(crate) mod test_utils;
 pub mod throttle;
 pub mod timestamp_verifier;
 pub mod types;

@@ -204,41 +204,11 @@ impl MessageQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestStorageDir;
     use bitvmx_broker::rpc::config::QueueChannelConfig;
-    use std::{env, fs};
-    use storage_backend::storage::Storage;
-    use storage_backend::storage_config::StorageConfig;
 
-    struct TestStorageDir {
-        path: String,
-    }
-
-    impl TestStorageDir {
-        fn new() -> Self {
-            Self {
-                path: env::temp_dir()
-                    .join(format!("bitvmx-message-queue-test-{}", Uuid::new_v4()))
-                    .to_string_lossy()
-                    .into_owned(),
-            }
-        }
-
-        fn config(&self) -> StorageConfig {
-            StorageConfig {
-                path: self.path.clone(),
-                password: None,
-            }
-        }
-
-        fn storage(&self) -> Rc<Storage> {
-            Rc::new(Storage::new(&self.config()).unwrap())
-        }
-    }
-
-    impl Drop for TestStorageDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
+    fn test_storage_dir() -> TestStorageDir {
+        TestStorageDir::new("bitvmx-message-queue-test")
     }
 
     fn test_retry_policy() -> RetryPolicy {
@@ -257,7 +227,7 @@ mod tests {
 
     #[test]
     fn push_new_and_pop_front_are_fifo() {
-        let test_dir = TestStorageDir::new();
+        let test_dir = test_storage_dir();
         let storage = test_dir.storage();
         let queue = MessageQueue::new(storage, test_retry_policy());
 
@@ -287,7 +257,7 @@ mod tests {
 
     #[test]
     fn message_and_retry_state_are_stored_separately() {
-        let test_dir = TestStorageDir::new();
+        let test_dir = test_storage_dir();
         let storage = test_dir.storage();
         let queue = MessageQueue::new(storage.clone(), test_retry_policy());
 
@@ -309,7 +279,7 @@ mod tests {
 
     #[test]
     fn pop_front_rotates_not_ready_messages() {
-        let test_dir = TestStorageDir::new();
+        let test_dir = test_storage_dir();
         let storage = test_dir.storage();
         let retry_policy = test_retry_policy();
         let queue = MessageQueue::new(storage, retry_policy.clone());
@@ -344,7 +314,7 @@ mod tests {
 
     #[test]
     fn push_back_increments_attempts_and_drops_exhausted_messages() {
-        let test_dir = TestStorageDir::new();
+        let test_dir = test_storage_dir();
         let storage = test_dir.storage();
         let retry_policy = test_retry_policy();
         let queue = MessageQueue::new(storage, retry_policy.clone());
@@ -374,7 +344,7 @@ mod tests {
 
     #[test]
     fn pop_front_skips_incomplete_entries() {
-        let test_dir = TestStorageDir::new();
+        let test_dir = test_storage_dir();
         let storage = test_dir.storage();
         let queue = MessageQueue::new(storage.clone(), test_retry_policy());
 
@@ -425,7 +395,7 @@ mod tests {
 
     #[test]
     fn queue_persists_across_storage_reopen() {
-        let test_dir = TestStorageDir::new();
+        let test_dir = test_storage_dir();
         let retry_policy = test_retry_policy();
 
         let id1 = test_identifier("persisted-1");

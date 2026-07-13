@@ -144,6 +144,11 @@ Other directories:
 - Logging: `tracing` with env-filter; default filter set in `main.rs`
   silences noisy deps. Use `info_span!` with operator id for per-instance logs.
 - Branches: work happens on `dev`; PRs target `main`.
+- Commits: single-line message only (no body unless a breaking change or
+  non-obvious "why" demands it), imperative mood, lowercase, concise
+  (e.g. "add cov info in agents", "bump to 0.8.0"). Never add AI attribution:
+  no `Co-Authored-By: Claude ...` trailer, no "Generated with Claude Code"
+  or similar lines.
 - Version bumps: bump `Cargo.toml` version and dependency tags together
   (see commits like "bump to 0.8.0"), typically coordinated across all
   FairgateLabs repos.
