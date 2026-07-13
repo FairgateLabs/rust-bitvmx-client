@@ -581,7 +581,7 @@ pub trait ProtocolHandler {
 
         let mut names = vec![];
         let mut sizes = vec![];
-        //TODO: make the script save the size so we don't need to get it from participant keys or variables
+
         for k in script.get_keys().iter().rev() {
             names.push(k.name().to_string());
 
