@@ -1,6 +1,10 @@
 use std::rc::Rc;
 
-use crate::{errors::BitVMXError, types::IncomingBitVMXApiMessages};
+use crate::{
+    errors::BitVMXError,
+    ports::store::{KeyValueStoreExt, KeyValueStorePort},
+    types::IncomingBitVMXApiMessages,
+};
 use bitcoin::{PublicKey, Txid};
 use key_manager::{
     lamport::{LamportPublicKey, LamportSignature},
@@ -8,7 +12,6 @@ use key_manager::{
 };
 use protocol_builder::types::OutputType;
 use serde::{Deserialize, Serialize};
-use storage_backend::storage::{KeyValueStore, Storage};
 use uuid::Uuid;
 
 /*
@@ -135,11 +138,11 @@ impl VariableTypes {
     }
 }
 pub struct Globals {
-    storage: Rc<Storage>,
+    storage: Rc<dyn KeyValueStorePort>,
 }
 
 impl Globals {
-    pub fn new(storage: Rc<Storage>) -> Self {
+    pub fn new(storage: Rc<dyn KeyValueStorePort>) -> Self {
         Self { storage }
     }
 
@@ -211,11 +214,11 @@ impl WitnessTypes {
     }
 }
 pub struct WitnessVars {
-    storage: Rc<Storage>,
+    storage: Rc<dyn KeyValueStorePort>,
 }
 
 impl WitnessVars {
-    pub fn new(storage: Rc<Storage>) -> Self {
+    pub fn new(storage: Rc<dyn KeyValueStorePort>) -> Self {
         Self { storage }
     }
 
@@ -244,5 +247,125 @@ impl WitnessVars {
         let value = self.get_witness_or_err(from, key)?;
         self.set_witness(to, key, value)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_adapters::InMemoryStore;
+    use std::str::FromStr;
+
+    fn globals() -> Globals {
+        Globals::new(Rc::new(InMemoryStore::new()))
+    }
+
+    fn assert_round_trip(value: VariableTypes) {
+        let globals = globals();
+        let id = Uuid::new_v4();
+        globals.set_var(&id, "k", value.clone()).unwrap();
+        let read = globals.get_var(&id, "k").unwrap().unwrap();
+        assert_eq!(format!("{:?}", read), format!("{:?}", value));
+    }
+
+    #[test]
+    fn variable_types_round_trip() {
+        let pubkey = PublicKey::from_str(
+            "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+        )
+        .unwrap();
+        let txid =
+            Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+        for value in [
+            VariableTypes::Secret(vec![1, 2, 3]),
+            VariableTypes::PubKey(pubkey),
+            VariableTypes::Utxo((txid, 1, Some(10_000), None)),
+            VariableTypes::Number(7),
+            VariableTypes::Amount(21_000_000),
+            VariableTypes::String("hello".to_string()),
+            VariableTypes::VecStr(vec!["a".to_string(), "b".to_string()]),
+            VariableTypes::VecNumber(vec![1, 2, 3]),
+            VariableTypes::Input(vec![0xde, 0xad]),
+            VariableTypes::GcInput(vec![true, false, true]),
+            VariableTypes::Uuid(Uuid::new_v4()),
+            VariableTypes::Bool(true),
+        ] {
+            assert_round_trip(value);
+        }
+    }
+
+    #[test]
+    fn typed_accessors_reject_wrong_variant() {
+        let value = VariableTypes::Number(1);
+        assert!(value.number().is_ok());
+        assert!(value.string().is_err());
+        assert!(value.secret().is_err());
+        assert!(value.utxo().is_err());
+    }
+
+    #[test]
+    fn contains_and_unset_var() {
+        let globals = globals();
+        let id = Uuid::new_v4();
+        assert!(!globals.contains_var(&id, "k").unwrap());
+        globals
+            .set_var(&id, "k", VariableTypes::Bool(true))
+            .unwrap();
+        assert!(globals.contains_var(&id, "k").unwrap());
+        globals.unset_var(&id, "k").unwrap();
+        assert!(!globals.contains_var(&id, "k").unwrap());
+        assert!(globals.get_var(&id, "k").unwrap().is_none());
+    }
+
+    #[test]
+    fn vars_are_scoped_per_program_id() {
+        let globals = globals();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        globals.set_var(&a, "k", VariableTypes::Number(1)).unwrap();
+        assert!(globals.get_var(&b, "k").unwrap().is_none());
+        globals.copy_var(&a, &b, "k").unwrap();
+        assert_eq!(
+            globals.get_var(&b, "k").unwrap().unwrap().number().unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn get_var_or_err_reports_id_and_key() {
+        let globals = globals();
+        let id = Uuid::new_v4();
+        match globals.get_var_or_err(&id, "missing") {
+            Err(BitVMXError::VariableNotFound(err_id, key)) => {
+                assert_eq!(err_id, id);
+                assert_eq!(key, "missing");
+            }
+            other => panic!(
+                "expected VariableNotFound, got {:?}",
+                other.map(|v| v.err())
+            ),
+        }
+    }
+
+    #[test]
+    fn witness_round_trip_and_error() {
+        let store: Rc<InMemoryStore> = Rc::new(InMemoryStore::new());
+        let witness = WitnessVars::new(store);
+        let id = Uuid::new_v4();
+        witness
+            .set_witness(&id, "w", WitnessTypes::Secret(vec![9, 9]))
+            .unwrap();
+        assert_eq!(
+            witness.get_witness(&id, "w").unwrap(),
+            Some(WitnessTypes::Secret(vec![9, 9]))
+        );
+        assert!(witness.get_witness_or_err(&id, "nope").is_err());
+
+        let other = Uuid::new_v4();
+        witness.copy_witness(&id, &other, "w").unwrap();
+        assert_eq!(
+            witness.get_witness(&other, "w").unwrap(),
+            Some(WitnessTypes::Secret(vec![9, 9]))
+        );
     }
 }

@@ -71,6 +71,8 @@ default = ["cardinal", "union"]
 cardinal = []
 union = []
 testpanic = []
+# exposes in-memory adapters (test_adapters) to integration tests & downstream crates
+test-utils = []
 
 [profile.release-with-debug]
 inherits = "release"

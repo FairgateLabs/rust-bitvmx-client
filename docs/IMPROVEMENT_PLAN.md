@@ -102,11 +102,13 @@ this document. Re-measure after each phase.
 **Done:** baseline recorded in the [Coverage](#coverage) section below (`cargo llvm-cov --lib`,
 2026-07-13). Re-run with `cargo llvm-cov --lib` and update the table after each phase.
 
-### Task 0.4 — Dev-dependency for mocking (decision)
+### Task 0.4 — Dev-dependency for mocking (decision) ✅ DONE
 Decide: hand-rolled fakes (recommended — the ports are small and fakes double as simulators) vs
 `mockall`. Recommendation: **hand-rolled fakes in `src/adapters/test/`** (behind `#[cfg(any(test, feature = "test-utils"))]`)
 so integration tests and downstream crates can reuse them.
 *Effort: XS. Risk: none.*
+**Done:** hand-rolled fakes. `src/ports/` (traits) + `src/test_adapters/` (fakes, behind
+`cfg(any(test, feature = "test-utils"))`); `test-utils` feature added to Cargo.toml.
 
 ---
 
@@ -119,7 +121,7 @@ Pattern for every task in this phase:
    because callers already go through the field).
 4. Add the in-memory test adapter + first unit tests that use it.
 
-### Task 1.1 — `KeyValueStorePort` (storage)
+### Task 1.1 — `KeyValueStorePort` (storage) ✅ DONE (first consumers)
 Define `trait KeyValueStorePort` covering the `get`/`set`/`transaction` subset of
 `storage_backend::KeyValueStore` used by `Globals`, `WitnessVars`, `Program::save/load`,
 `LeaderBroadcastHelper`, `MessageQueue`, and the ZKP store keys in `bitvmx.rs`.
@@ -128,6 +130,12 @@ transaction semantics).
 **First consumers:** switch `Globals` and `WitnessVars` to hold `Rc<dyn KeyValueStorePort>`.
 **Unit tests unlocked:** full coverage of `Globals`, `WitnessVars`, variable type round-trips.
 *Effort: M. Risk: low — mechanical. This is the foundation task; do it first.*
+**Done:** `src/ports/store.rs` (`KeyValueStorePort` object-safe over `serde_json::Value` +
+`KeyValueStoreExt` typed sugar, `impl` for `Storage`); `src/test_adapters/store.rs`
+(`InMemoryStore` with transaction/global-transaction fidelity); `Globals`/`WitnessVars` hold
+`Rc<dyn KeyValueStorePort>`; round-trip + scoping + witness unit tests added.
+Remaining consumers (`Program::save/load`, `LeaderBroadcastHelper`, `MessageQueue`, ZKP keys in
+`bitvmx.rs`) migrate opportunistically in Phase 2 extractions.
 
 ### Task 1.2 — `L2ChannelPort` (broker channel)
 Surface used: `send(&Identifier, String)`, `recv() -> Option<(String, Identifier)>`.

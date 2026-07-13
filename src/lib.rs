@@ -7,9 +7,12 @@ pub mod helper;
 pub mod leader_broadcast;
 pub mod message_queue;
 pub mod ping_helper;
+pub mod ports;
 pub mod program;
 pub mod signature_verifier;
 pub mod spv_proof;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_adapters;
 pub mod throttle;
 pub mod timestamp_verifier;
 pub mod types;
