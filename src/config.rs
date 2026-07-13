@@ -93,21 +93,6 @@ pub struct PingConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct TimestampVerifierConfig {
-    pub enabled: bool,
-    pub max_drift_ms: i64,
-}
-
-impl Default for TimestampVerifierConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_drift_ms: 2000,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)] // enforce strict field compliance
 pub struct Config {
     pub bitcoin: RpcConfig,
@@ -124,7 +109,6 @@ pub struct Config {
     pub bitvmx_throttle: ThrottleConfig,
     pub wallet: WalletConfig,
     pub job_dispatcher_ping: Option<PingConfig>,
-    pub timestamp_verifier: Option<TimestampVerifierConfig>,
 }
 
 impl Config {

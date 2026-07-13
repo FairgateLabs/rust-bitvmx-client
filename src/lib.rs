@@ -13,7 +13,6 @@ pub mod spv_proof;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod throttle;
-pub mod timestamp_verifier;
 pub mod types;
 
 // Re-export types from the dependencies

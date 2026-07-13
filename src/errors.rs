@@ -243,34 +243,6 @@ pub enum BitVMXError {
     RetryPolicyError(#[from] RetryPolicyError),
 
     /* =========================
-     * Timestamp / Replay
-     * ========================= */
-    #[error("Message timestamp {timestamp} from peer {peer} is too far in the future (now: {now}, drift: {drift_ms}ms, max allowed: {max_drift_ms}ms)")]
-    TimestampTooFarInFuture {
-        peer: String,
-        timestamp: i64,
-        now: i64,
-        drift_ms: i64,
-        max_drift_ms: i64,
-    },
-
-    #[error("Message timestamp {timestamp} from peer {peer} is too old (now: {now}, drift: {drift_ms}ms, max allowed: {max_drift_ms}ms)")]
-    TimestampTooOld {
-        peer: String,
-        timestamp: i64,
-        now: i64,
-        drift_ms: i64,
-        max_drift_ms: i64,
-    },
-
-    #[error("Replay attack detected: timestamp {timestamp} from peer {peer} is not newer than last seen timestamp {last_timestamp}")]
-    TimestampReplayAttack {
-        peer: String,
-        timestamp: i64,
-        last_timestamp: i64,
-    },
-
-    /* =========================
      * Bitcoin / Transactions
      * ========================= */
     #[error("Error when using Bitcoin client: {0}")]

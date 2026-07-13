@@ -92,7 +92,7 @@ src/
   comms_helper.rs    # P2P comms message (de)serialization
   message_queue.rs   # queued/retryable message handling
   leader_broadcast.rs# leader-based message broadcast among participants
-  signature_verifier.rs, timestamp_verifier.rs, spv_proof.rs, throttle.rs
+  signature_verifier.rs, spv_proof.rs, throttle.rs
   program/
     program.rs       # Program state machine
     participant.rs   # participants, CommsAddress, roles

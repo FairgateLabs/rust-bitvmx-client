@@ -5,7 +5,6 @@ use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::throttle::Throttle;
-use crate::timestamp_verifier::TimestampVerifier;
 use crate::{
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
@@ -76,7 +75,6 @@ pub struct BitVMX {
     broker: BrokerSync,
     count: u32,
     message_queue: MessageQueue,
-    timestamp_verifier: TimestampVerifier,
     coordinator_throttle: Throttle,
     bitvmx_throttle: Throttle,
     wallet: Wallet,
@@ -202,13 +200,6 @@ impl BitVMX {
         );
 
         let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone());
-        let timestamp_config = config
-            .timestamp_verifier
-            .as_ref()
-            .map(|c| c.clone())
-            .unwrap_or_default();
-        let timestamp_verifier =
-            TimestampVerifier::new(timestamp_config.enabled, timestamp_config.max_drift_ms);
 
         let message_queue = MessageQueue::new(
             store.clone(),
@@ -225,7 +216,6 @@ impl BitVMX {
             broker,
             count: 0,
             message_queue,
-            timestamp_verifier,
             coordinator_throttle,
             bitvmx_throttle,
             wallet,
@@ -374,7 +364,6 @@ impl BitVMX {
     }
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
-        let is_new_message = msg.retry_state.get_attempts() == 0;
         let (version, msg_type, program_id, data, timestamp, signature) = deserialize_msg(
             msg.data.clone(),
             self.config
@@ -423,10 +412,6 @@ impl BitVMX {
                 return Ok(());
             }
         }
-        if is_new_message {
-            self.timestamp_verifier
-                .ensure_fresh(&msg.identifier.pubkey_hash, timestamp)?;
-        }
         let message_consumed = if let Ok(mut program) = self.load_program(&program_id) {
             let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
@@ -461,10 +446,7 @@ impl BitVMX {
             false
         };
 
-        if message_consumed {
-            self.timestamp_verifier
-                .record(&msg.identifier.pubkey_hash, timestamp);
-        } else {
+        if !message_consumed {
             // Message needs to be buffered (not processed or program not found)
             info!(
                 "Pending message to back: {:?} for program {:?} from: {:?}",
