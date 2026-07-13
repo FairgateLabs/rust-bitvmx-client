@@ -15,7 +15,7 @@ use crate::common::{check_gnova_built, config_trace, helper::TestHelper};
 
 mod common;
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + gnova"]
 #[test]
 pub fn test_gc_generation() -> Result<()> {
     let network = Network::Regtest;

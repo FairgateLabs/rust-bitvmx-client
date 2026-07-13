@@ -6,7 +6,7 @@ use uuid::Uuid;
 mod common;
 
 #[test]
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 fn shutdown_without_errors() -> Result<()> {
     common::config_trace();
 

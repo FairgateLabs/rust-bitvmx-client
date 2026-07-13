@@ -12,7 +12,7 @@ use uuid::Uuid;
 mod common;
 
 /// Test aggregated key protocol (implemented with Program and SetupEngine)
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_aggregated_key() -> Result<()> {
     config_trace();
@@ -184,7 +184,7 @@ pub fn test_aggregated_key() -> Result<()> {
 
 /// Test that single-participant aggregated key protocol works correctly.
 /// With a single participant, the "aggregated" key is just that participant's own key.
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_aggregated_single_participant() -> Result<()> {
     config_trace();

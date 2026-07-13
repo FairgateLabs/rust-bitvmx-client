@@ -40,7 +40,11 @@ cargo install cargo-llvm-cov
 cargo llvm-cov --lib --html      # baseline: unit-test coverage only
 ```
 
-Record per-module numbers in a `## Coverage` section at the bottom of IMPROVEMENT_PLAN.md.
+**Done:** baseline recorded in the `## Coverage` section of IMPROVEMENT_PLAN.md (2026-07-13:
+9.91 % lines). Note: `cargo install cargo-llvm-cov` crashed rustc (STATUS_ACCESS_VIOLATION during
+LTO) on Windows — use the prebuilt binary from the GitHub releases page instead
+(`cargo-llvm-cov-x86_64-pc-windows-msvc.zip` → `~/.cargo/bin`). Requires
+`rustup component add llvm-tools-preview`.
 
 ### Task 0.4 — Test-utils infrastructure decision
 

@@ -250,6 +250,9 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
         std::thread::sleep(std::time::Duration::from_secs(2));
         None
     } else {
+        // Fail fast with a clear message instead of a confusing timeout later
+        ensure_docker_available()?;
+
         // Clean up any existing bitcoin-regtest container before starting a new one
         // This prevents conflicts when running tests sequentially or in parallel
         info!("Cleaning up any existing bitcoin-regtest container");

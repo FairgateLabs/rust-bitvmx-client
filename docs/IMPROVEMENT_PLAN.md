@@ -95,10 +95,12 @@ Split test execution: tag integration tests that require bitcoind (feature flag 
 gnova); `prepare_bitcoin` fails fast with a clear message when docker is unavailable; cargo
 aliases `cargo test-fast` and `cargo test-integration` added in `.cargo/config.toml`.
 
-### Task 0.3 — Coverage baseline
+### Task 0.3 — Coverage baseline ✅ DONE
 Add `cargo llvm-cov` (or `tarpaulin`) config and record the current line/branch coverage per module in
 this document. Re-measure after each phase.
 *Effort: XS. Risk: none.*
+**Done:** baseline recorded in the [Coverage](#coverage) section below (`cargo llvm-cov --lib`,
+2026-07-13). Re-run with `cargo llvm-cov --lib` and update the table after each phase.
 
 ### Task 0.4 — Dev-dependency for mocking (decision)
 Decide: hand-rolled fakes (recommended — the ports are small and fakes double as simulators) vs
@@ -301,7 +303,39 @@ first real unit tests within days.
 
 ## Success Metrics
 
-- `cargo test --lib` runs in < 30 s with no external processes.
-- Coverage on `src/` (excluding adapters): baseline → 40 % after Phase 2 → 60 %+ after Phase 3.
+- `cargo test --lib` runs in < 30 s with no external processes. *(baseline: 65 tests, < 1 s ✅)*
+- Coverage on `src/` (excluding adapters): baseline 9.91 % → 40 % after Phase 2 → 60 %+ after Phase 3.
 - New protocol changes require a snapshot-test update (i.e., graph changes are always intentional).
 - Integration tests shrink to true end-to-end scenarios instead of being the only safety net.
+
+## Coverage
+
+Baseline measured 2026-07-13 with `cargo llvm-cov --lib` (unit tests only; 65 tests, < 1 s).
+**Totals: 9.91 % lines · 14.65 % functions · 10.81 % regions.**
+
+Line coverage per area (files ordered worst-offender first within each group):
+
+| Area | Line coverage | Notes |
+|---|---|---|
+| `throttle.rs` | 100 % | existing unit tests |
+| `message_queue.rs` | 99.7 % | existing unit tests |
+| `spv_proof.rs` | 79.6 % | existing unit tests |
+| `timestamp_verifier.rs` | 78.6 % | existing unit tests |
+| `comms_helper.rs` | 73.2 % | existing unit tests |
+| `helper.rs` | 55.4 % | |
+| `signature_verifier.rs` | 54.4 % | |
+| `leader_broadcast.rs` | 49.2 % | |
+| `config.rs` | 47.1 % | |
+| `program/setup/setup_engine.rs` | 19.0 % | steps (keys/nonces/signatures/garbler): 0–4 % |
+| `program/participant.rs` | 14.7 % | |
+| `program/variables.rs` | 10.5 % | unlocked by Task 1.1 |
+| `bitvmx.rs` | 0 % | 1,209 lines — unlocked by Phases 1–2 |
+| `program/program.rs` | 0 % | unlocked by Task 3.3 |
+| `types.rs`, `client.rs`, `ping_helper.rs` | 0 % | |
+| `program/protocols/**` (all protocols) | ~0 % | dispute/mod 0.2 %, tx_news 8.1 %, timeouts 24.7 %; union/cardinal/claim/gc: 0 % — unlocked by Task 3.1 |
+
+Re-measure after each phase and append a dated row of totals here:
+
+| Date | Milestone | Lines | Functions | Regions |
+|---|---|---|---|---|
+| 2026-07-13 | Baseline (pre-Phase 1) | 9.91 % | 14.65 % | 10.81 % |

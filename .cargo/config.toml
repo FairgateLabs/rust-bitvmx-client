@@ -1,0 +1,7 @@
+# Test lanes (see docs/IMPROVEMENT_PLAN.md, Task 0.2)
+[alias]
+# Fast lane: unit tests in src/ plus non-ignored integration tests. No bitcoind/docker needed.
+test-fast = "test --lib --tests"
+# Integration lane: #[ignore]d tests that need bitcoind (docker), BitVMX-CPU emulator or gnova.
+# Serial: tests share the bitcoin-regtest container and fixed broker ports.
+test-integration = "test --tests -- --ignored --test-threads=1"

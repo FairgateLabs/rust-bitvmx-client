@@ -15,7 +15,7 @@ mod common;
 mod fixtures;
 //mod integration;
 
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_out_of_sync() -> Result<()> {
     config_trace();

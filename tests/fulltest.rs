@@ -38,7 +38,7 @@ mod common;
 mod fixtures;
 //mod integration;
 
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_full() -> Result<()> {
     config_trace();

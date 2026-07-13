@@ -20,7 +20,7 @@ use uuid::Uuid;
 mod common;
 
 //cargo test --release  -- test_drp --ignored
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_drp() -> Result<()> {
     test_drp_aux(None)?;
@@ -28,7 +28,7 @@ pub fn test_drp() -> Result<()> {
 }
 
 //cargo test --release  -- test_to --ignored
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_to() -> Result<()> {
     test_drp_aux(Some("NARY_VERIFIER_3"))?;
@@ -171,7 +171,7 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
 
 //cargo test --release  -- test_aggregation --ignored
 //Test aggregation with three parts
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_aggregation() -> Result<()> {
     config_trace();

@@ -306,7 +306,7 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
     signature
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_generic_verifier() -> Result<()> {
     test_all_aux(

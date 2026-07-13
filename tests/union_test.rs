@@ -31,25 +31,25 @@ fn test_union_aux(name: &str) -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 pub fn test_union_request_pegout() -> Result<()> {
     test_union_aux("request_pegout")
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 pub fn test_union_committee() -> Result<()> {
     test_union_aux("committee")
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 pub fn test_union_advance() -> Result<()> {
     test_union_aux("advance_funds")
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 pub fn test_union_fund() -> Result<()> {
     test_union_aux("fund_members")

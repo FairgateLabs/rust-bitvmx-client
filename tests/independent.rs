@@ -294,27 +294,27 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
 }
 
 /*
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_independent_testnet() -> Result<()> {
     test_all_aux(true, Network::Testnet, None, None, None, None)?;
     Ok(())
 }*/
 /*
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_independent_regtest() -> Result<()> {
     test_all_aux(true, Network::Regtest, None, None, None, None)?;
     Ok(())
 }*/
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_all() -> Result<()> {
     test_all_aux(false, Network::Regtest, None, None, None, None)?;
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_const() -> Result<()> {
     test_all_aux(
@@ -338,7 +338,7 @@ fn test_const() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_const_fail_input() -> Result<()> {
     let main_config = ConfigResult {
@@ -392,7 +392,7 @@ fn test_const_fail_input() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_previous_input() -> Result<()> {
     test_all_aux(
@@ -407,7 +407,7 @@ fn test_previous_input() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_verifier_input() -> Result<()> {
     test_all_aux(
@@ -435,7 +435,7 @@ fn test_verifier_input() -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_zkp() -> Result<()> {
     config_trace();
@@ -472,301 +472,301 @@ fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_trace_hash_prover() -> Result<()> {
     test_challenge(ForcedChallenges::TraceHash(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_trace_hash_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::TraceHash(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_trace_hash_zero_prover() -> Result<()> {
     test_challenge(ForcedChallenges::TraceHashZero(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_trace_hash_zero_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::TraceHashZero(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_entry_point_prover() -> Result<()> {
     test_challenge(ForcedChallenges::EntryPoint(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_entry_point_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EntryPoint(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_program_counter_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ProgramCounter(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_program_counter_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ProgramCounter(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_input_prover() -> Result<()> {
     test_challenge(ForcedChallenges::Input(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_input_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Input(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_opcode_prover() -> Result<()> {
     test_challenge(ForcedChallenges::Opcode(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_opcode_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Opcode(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_read_section_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ReadSection(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_read_section_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ReadSection(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_write_section_prover() -> Result<()> {
     test_challenge(ForcedChallenges::WriteSection(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_write_section_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::WriteSection(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_program_counter_section_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ProgramCounterSection(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_program_counter_section_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ProgramCounterSection(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_initialized_prover() -> Result<()> {
     test_challenge(ForcedChallenges::Initialized(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_initialized_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Initialized(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_uninitialized_prover() -> Result<()> {
     test_challenge(ForcedChallenges::Uninitialized(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_uninitialized_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Uninitialized(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_witness_prover() -> Result<()> {
     test_challenge(ForcedChallenges::WitnessDiv(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_witness_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::WitnessDiv(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_future_read_prover() -> Result<()> {
     test_challenge(ForcedChallenges::FutureRead(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_future_read_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::FutureRead(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_halt_prover() -> Result<()> {
     test_challenge(ForcedChallenges::Halt(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_halt_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::Halt(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_read_value_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ReadValue(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_read_value_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ReadValue(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_correct_hash_prover() -> Result<()> {
     test_challenge(ForcedChallenges::CorrectHash(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_correct_hash_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::CorrectHash(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_hash_prover() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationHash(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_hash_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationHash(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_step_prover() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignStep(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_step_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignStep(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_next_prover() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignNext(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_next_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignNext(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_step2_prover() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignStep2(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_step2_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignStep2(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_next2_prover() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignNext2(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_equivocation_resign_next2_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::EquivocationResignNext2(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_prover_challenge_step_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ProverChallengeStep(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_prover_challenge_step_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ProverChallengeStep(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_prover_challenge_step2_prover() -> Result<()> {
     test_challenge(ForcedChallenges::ProverChallengeStep2(Prover))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_prover_challenge_step2_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::ProverChallengeStep2(Verifier))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_prover_force_second_nary() -> Result<()> {
     test_challenge(ForcedChallenges::ProverForceSecondNary)
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_verifier_out_of_bounds_bits() -> Result<()> {
     test_challenge(ForcedChallenges::VerifierOutOfBoundsBits)
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_verifier_out_of_bounds_bits_in_challenge() -> Result<()> {
     test_challenge(ForcedChallenges::VerifierOutOfBoundsBitsInChallenge)
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_hashes_prover() -> Result<()> {
     test_challenge(ForcedChallenges::InputTimeOut(
@@ -775,7 +775,7 @@ fn test_input_timeout_hashes_prover() -> Result<()> {
     ))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_pre_commitment_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::InputTimeOut(
@@ -784,7 +784,7 @@ fn test_input_timeout_pre_commitment_verifier() -> Result<()> {
     ))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_commitment_prover() -> Result<()> {
     test_challenge(ForcedChallenges::InputTimeOut(
@@ -793,7 +793,7 @@ fn test_input_timeout_commitment_prover() -> Result<()> {
     ))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_post_commitment_verifier() -> Result<()> {
     test_challenge(ForcedChallenges::InputTimeOut(
@@ -802,7 +802,7 @@ fn test_input_timeout_post_commitment_verifier() -> Result<()> {
     ))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_input_prover() -> Result<()> {
     test_challenge(ForcedChallenges::InputTimeOut(
@@ -811,7 +811,7 @@ fn test_input_timeout_input_prover() -> Result<()> {
     ))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_input_prover_with_previous() -> Result<()> {
     test_all_aux(
@@ -828,7 +828,7 @@ fn test_input_timeout_input_prover_with_previous() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_input_verifier() -> Result<()> {
     test_all_aux(
@@ -845,7 +845,7 @@ fn test_input_timeout_input_verifier() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn test_input_timeout_input_prover_cosign() -> Result<()> {
     test_all_aux(
@@ -869,7 +869,7 @@ fn test_input_timeout_input_prover_cosign() -> Result<()> {
 //     test_challenge(ForcedChallenges::No)
 // }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + BitVMX-CPU emulator"]
 #[test]
 fn challenge_execution() -> Result<()> {
     test_challenge(ForcedChallenges::Execution)

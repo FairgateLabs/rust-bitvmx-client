@@ -47,7 +47,7 @@ fn check_circuit_file() -> Result<()> {
 }
 
 /// Test combined prove + verify commands (GC + Lamport in one)
-#[ignore]
+#[ignore = "integration: requires bitcoind + gnova"]
 #[test]
 pub fn test_gnova_commands() -> Result<()> {
     config_trace();
@@ -155,7 +155,7 @@ pub fn test_gnova_commands() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind + gnova"]
 #[test]
 pub fn test_gnova_e2e() -> Result<()> {
     config_trace();
@@ -418,7 +418,7 @@ fn compute_sha256(data: &[u8]) -> [u8; 32] {
 /// 4. digest_ct matches recomputed from garbled gates
 /// 5. digest_lamport matches recomputed from SHA256 commitments
 /// 6. digest_io == digest_labels (proofs are linked)
-#[ignore]
+#[ignore = "integration: requires bitcoind + gnova"]
 #[test]
 pub fn test_full_protocol() -> Result<()> {
     config_trace();

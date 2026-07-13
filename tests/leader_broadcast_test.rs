@@ -112,7 +112,7 @@ mod common;
 /// that the fix has not landed. Once the helper buffers missing-key
 /// originals the same way the regular path at `src/bitvmx.rs:407-423`
 /// does, the queue will retain the contribution and this test will pass.
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 fn process_broadcasted_buffers_originals_when_verification_key_unknown() -> Result<()> {
     config_trace();
@@ -201,7 +201,7 @@ fn process_broadcasted_buffers_originals_when_verification_key_unknown() -> Resu
 /// told apart from the specific silent-drop bug exercised in the other
 /// test: if both tests start failing the same way, the issue is in
 /// signature verification overall, not in the silent-drop branch.
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 fn process_broadcasted_queues_originals_when_keys_known() -> Result<()> {
     config_trace();

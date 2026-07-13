@@ -70,14 +70,14 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, InternalWallet)> {
     Ok((bitcoin_client, internal_wallet))
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_lock() -> Result<()> {
     test_lock_aux(false, false)
 }
 
 /*
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_integration() -> Result<()> {
     LockProtocol(true, true)
@@ -407,7 +407,7 @@ pub fn hardcoded_unspendable() -> SecpPublicKey {
     SecpPublicKey::from_slice(&key_bytes).expect("Invalid public key")
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_send_lockreq_tx() -> Result<()> {
     common::config_trace();
@@ -453,7 +453,7 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     Ok(())
 }
 
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 pub fn test_prepare_bitcoin() -> Result<()> {
     common::config_trace();

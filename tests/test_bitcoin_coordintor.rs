@@ -23,7 +23,7 @@ mod common;
 /// transaction dispatch errors when transactions fail to be processed. The test
 /// creates two transactions chained together (causing the second one to fail because the first one was not in the mempool).
 /// This failure occurs because QuikNode takes time to update or propagate transactions.
-#[ignore]
+#[ignore = "integration: requires bitcoind"]
 #[test]
 fn retry_failed_txs_test() -> Result<()> {
     config_trace();
