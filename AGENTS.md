@@ -63,6 +63,22 @@ RUST_BACKTRACE=1 cargo test --release -- --ignored test_full
 - Don't run ignored/integration tests unless asked — they take tens of
   minutes and need Docker.
 
+## Coverage
+
+Unit-test coverage (non-`#[ignore]` tests only, no bitcoind needed):
+
+```bash
+cargo binstall -y cargo-llvm-cov   # one-time install
+./scripts/coverage.sh --unit --no-open --summary
+```
+
+HTML report lands in `target/coverage/html/index.html`. Baseline as of
+2026-07-13 (unit tests only): **10.54% lines / 11.75% regions / 15.61%
+functions** (TOTAL, 18942 lines). Low totals are expected — protocol code
+(`bitvmx.rs`, `cardinal/`, `union/`, `dispute/`) is only exercised by the
+`#[ignore]`d integration tests; use `--nightly` or `--test file:name` to
+include those (needs bitcoind Docker).
+
 ## Source layout
 
 ```
