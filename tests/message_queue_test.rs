@@ -71,7 +71,16 @@ fn test_queue_no_starvation() {
 
     // Create storage and queue
     let storage = Rc::new(Storage::new(&config).unwrap());
-    let retry_policy = RetryPolicy::new(&QueueChannelConfig::default()).unwrap();
+
+    // Create a retry policy with a small delay and limited attempts
+    let retry_policy = RetryPolicy::new(&QueueChannelConfig {
+        max_msgs_per_tick_utilization: 0.5,
+        max_send_attempts: 3,
+        retry_min_delay_msecs: 10,
+        retry_max_delay_msecs: 50,
+    })
+    .unwrap();
+
     let queue = MessageQueue::new(storage.clone(), retry_policy.clone());
 
     // Create poison message and valid message
