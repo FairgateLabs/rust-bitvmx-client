@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::{
     errors::BitVMXError,
     leader_broadcast::LeaderBroadcastHelper,
+    ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes, WitnessTypes, WitnessVars},
@@ -31,11 +32,14 @@ use crate::{
 pub use bitcoin_coordinator::OutputPatternFilter;
 pub const RSK_PEGIN_TAG: &[u8] = b"RSK_PEGIN";
 
-pub struct ProgramContext {
+// The coordinator is statically dispatched: production code uses the default
+// `BitcoinCoordinator`, unit tests can instantiate with a mock implementing
+// `BitcoinCoordinatorApi`.
+pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub key_manager: Rc<KeyManager>,
     pub rsa_public_key: String, //TODO: this should not be here
     pub comms: QueueChannel,
-    pub bitcoin_coordinator: BitcoinCoordinator,
+    pub bitcoin_coordinator: BC,
     pub broker_channel: LocalChannel<BrokerStorage>,
     pub globals: Globals,
     pub witness: WitnessVars,
@@ -43,12 +47,12 @@ pub struct ProgramContext {
     pub leader_broadcast_helper: LeaderBroadcastHelper,
 }
 
-impl ProgramContext {
+impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
     pub fn new(
         comms: QueueChannel,
         key_manager: Rc<KeyManager>,
         rsa_public_key: String,
-        bitcoin_coordinator: BitcoinCoordinator,
+        bitcoin_coordinator: BC,
         broker_channel: LocalChannel<BrokerStorage>,
         globals: Globals,
         witness: WitnessVars,
