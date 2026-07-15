@@ -416,6 +416,105 @@ pub fn deserialize_msg(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestCommsEnv;
+
+    #[test]
+    fn test_prepare_message_signs_payload() -> Result<(), BitVMXError> {
+        let env = TestCommsEnv::new("comms-helper-prepare")?;
+        let program_id = Uuid::new_v4();
+        let msg = json!({"key": "value"});
+
+        let (version, returned_msg, timestamp, signature) = prepare_message(
+            &env.key_manager,
+            &env.rsa_public_key,
+            &program_id,
+            CommsMessageType::Keys,
+            msg.clone(),
+        )?;
+
+        assert_eq!(version, CURRENT_PROTOCOL_VERSION);
+        assert_eq!(returned_msg, msg);
+        assert!(timestamp > 0);
+        assert!(!signature.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_request_round_trip_delivers_verifiable_message() -> Result<(), BitVMXError> {
+        let env = TestCommsEnv::new("comms-helper-request")?;
+        let mut comms = env.queue_channel()?;
+        let program_id = Uuid::new_v4();
+        let payload = json!({"key": "value"});
+        // Send to the channel's own address so the message comes back to us.
+        let destination = CommsAddress::new(comms.get_address(), comms.get_pubk_hash()?);
+
+        request(
+            &comms,
+            &env.key_manager,
+            &env.rsa_public_key,
+            &program_id,
+            destination,
+            CommsMessageType::Keys,
+            payload.clone(),
+        )?;
+
+        let (sender, raw) = TestCommsEnv::receive_one(&mut comms)?;
+        assert_eq!(sender.pubkey_hash, comms.get_pubk_hash()?);
+
+        let (version, msg_type, received_program_id, data, timestamp, signature) =
+            deserialize_msg(raw, 200000)?;
+        assert_eq!(version, CURRENT_PROTOCOL_VERSION);
+        assert_eq!(msg_type, CommsMessageType::Keys);
+        assert_eq!(received_program_id, program_id);
+        assert_eq!(data, payload);
+        assert!(!signature.is_empty());
+
+        // The signature must verify against the reconstructed message.
+        let message = construct_message(
+            &program_id.to_string(),
+            &version,
+            msg_type,
+            &data,
+            timestamp,
+        )?;
+        let rsa_signature = key_manager::rsa::Signature::try_from(signature.as_slice())
+            .expect("signature bytes should form a valid RSA signature");
+        let verified = key_manager::verifier::SignatureVerifier::new().verify_rsa_signature(
+            &rsa_signature,
+            message.as_bytes(),
+            &env.rsa_public_key,
+        )?;
+        assert!(verified);
+        Ok(())
+    }
+
+    #[test]
+    fn test_send_verification_key_to_peer_delivers_announcement() -> Result<(), BitVMXError> {
+        let env = TestCommsEnv::new("comms-helper-vk")?;
+        let mut comms = env.queue_channel()?;
+        let program_id = Uuid::new_v4();
+        let destination = CommsAddress::new(comms.get_address(), comms.get_pubk_hash()?);
+
+        send_verification_key_to_peer(
+            &comms,
+            &env.key_manager,
+            &env.rsa_public_key,
+            &program_id,
+            destination,
+        )?;
+
+        let (_, raw) = TestCommsEnv::receive_one(&mut comms)?;
+        let (version, msg_type, received_program_id, data, _, signature) =
+            deserialize_msg(raw, 200000)?;
+        assert_eq!(version, CURRENT_PROTOCOL_VERSION);
+        assert_eq!(msg_type, CommsMessageType::VerificationKey);
+        assert_eq!(received_program_id, program_id);
+        assert!(!signature.is_empty());
+
+        let announcement = VerificationKeyAnnouncement::from_value(&data)?;
+        assert_eq!(announcement.verification_key, env.rsa_public_key);
+        Ok(())
+    }
 
     #[test]
     fn test_comms_message_kind_to_bytes() {
