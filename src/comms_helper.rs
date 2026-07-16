@@ -723,7 +723,10 @@ mod tests {
         })
     }
 
-    fn assert_invalid_message(result: Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError>, expected_fragment: &str) {
+    fn assert_invalid_message(
+        result: Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError>,
+        expected_fragment: &str,
+    ) {
         match result {
             Err(BitVMXError::InvalidMessage(msg)) => {
                 assert!(
@@ -739,7 +742,10 @@ mod tests {
 
     #[test]
     fn test_deserialize_msg_too_short() {
-        assert_invalid_message(deserialize_msg(vec![0x01, 0x00, 0x00], 200000), "Invalid message length");
+        assert_invalid_message(
+            deserialize_msg(vec![0x01, 0x00, 0x00], 200000),
+            "Invalid message length",
+        );
     }
 
     #[test]
@@ -784,63 +790,90 @@ mod tests {
     fn test_deserialize_msg_missing_program_id() {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("program_id");
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "Missing program ID");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "Missing program ID",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_non_string_program_id() {
         let mut payload = valid_payload();
         payload["program_id"] = json!(42);
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "Missing program ID");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "Missing program ID",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_invalid_uuid_program_id() {
         let mut payload = valid_payload();
         payload["program_id"] = json!("not-a-uuid");
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "Invalid program ID");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "Invalid program ID",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_missing_msg() {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("msg");
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "Missing message");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "Missing message",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_missing_timestamp() {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("timestamp");
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "timestamp");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "timestamp",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_non_integer_timestamp() {
         let mut payload = valid_payload();
         payload["timestamp"] = json!("yesterday");
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "timestamp");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "timestamp",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_missing_signature() {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("signature");
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "signature field");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "signature field",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_signature_not_array() {
         let mut payload = valid_payload();
         payload["signature"] = json!("abc");
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "signature field");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "signature field",
+        );
     }
 
     #[test]
     fn test_deserialize_msg_empty_signature() {
         let mut payload = valid_payload();
         payload["signature"] = json!([]);
-        assert_invalid_message(deserialize_msg(msg_with_payload(&payload), 200000), "Signature array is empty");
+        assert_invalid_message(
+            deserialize_msg(msg_with_payload(&payload), 200000),
+            "Signature array is empty",
+        );
     }
 
     #[test]

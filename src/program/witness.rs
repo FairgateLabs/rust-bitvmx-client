@@ -123,8 +123,7 @@ mod tests {
             expected.push((hashes, digits, i));
         }
 
-        let signatures =
-            decode_witness(message_sizes, WinternitzType::HASH160, witness).unwrap();
+        let signatures = decode_witness(message_sizes, WinternitzType::HASH160, witness).unwrap();
 
         assert_eq!(signatures.len(), 2);
         for (signature, (hashes, digits, _)) in signatures.iter().zip(expected.iter()) {

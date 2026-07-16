@@ -9,7 +9,10 @@ use uuid::Uuid;
 
 use crate::{
     errors::BitVMXError,
-    program::{protocols::protocol_handler::ClaimGateConfig, variables::{Globals, PartialUtxo, VariableTypes}},
+    program::{
+        protocols::protocol_handler::ClaimGateConfig,
+        variables::{Globals, PartialUtxo, VariableTypes},
+    },
     types::{IncomingBitVMXApiMessages, PROGRAM_TYPE_DRP},
 };
 

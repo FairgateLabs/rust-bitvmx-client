@@ -92,7 +92,8 @@ impl ProtocolHandler for TransferProtocol {
         program_context: &mut ProgramContext,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup = program_context
-            .key_manager.next_keypair(BitcoinKeyType::P2tr)?;
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)?;
 
         program_context.globals.set_var(
             &self.ctx.id,

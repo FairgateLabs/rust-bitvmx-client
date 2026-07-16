@@ -262,15 +262,12 @@ mod tests {
     }
 
     fn sample_pubkey() -> PublicKey {
-        PublicKey::from_str(
-            "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
-        )
-        .unwrap()
+        PublicKey::from_str("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")
+            .unwrap()
     }
 
     fn sample_txid() -> Txid {
-        Txid::from_str("e2769b09e784f32f62ef849763d4f45b98e07ba658647343b915ff832b110436")
-            .unwrap()
+        Txid::from_str("e2769b09e784f32f62ef849763d4f45b98e07ba658647343b915ff832b110436").unwrap()
     }
 
     fn sample_wots_pubkey() -> WinternitzPublicKey {
@@ -335,7 +332,9 @@ mod tests {
             vec!["a".to_string(), "b".to_string()]
         );
         assert_eq!(
-            VariableTypes::VecNumber(vec![1, 2, 3]).vec_number().unwrap(),
+            VariableTypes::VecNumber(vec![1, 2, 3])
+                .vec_number()
+                .unwrap(),
             vec![1, 2, 3]
         );
         assert_eq!(
@@ -343,7 +342,9 @@ mod tests {
             vec![4, 5, 6]
         );
         assert_eq!(
-            VariableTypes::GcInput(vec![true, false]).gc_input().unwrap(),
+            VariableTypes::GcInput(vec![true, false])
+                .gc_input()
+                .unwrap(),
             vec![true, false]
         );
 
@@ -444,19 +445,35 @@ mod tests {
         assert!(!globals.contains_var(&id, "num").unwrap());
         assert!(globals.get_var(&id, "num").unwrap().is_none());
 
-        globals.set_var(&id, "num", VariableTypes::Number(3)).unwrap();
+        globals
+            .set_var(&id, "num", VariableTypes::Number(3))
+            .unwrap();
         assert!(globals.contains_var(&id, "num").unwrap());
         assert_eq!(
-            globals.get_var(&id, "num").unwrap().unwrap().number().unwrap(),
+            globals
+                .get_var(&id, "num")
+                .unwrap()
+                .unwrap()
+                .number()
+                .unwrap(),
             3
         );
 
         // Overwrite with a different variant
         globals
-            .set_var(&id, "num", VariableTypes::String("now a string".to_string()))
+            .set_var(
+                &id,
+                "num",
+                VariableTypes::String("now a string".to_string()),
+            )
             .unwrap();
         assert_eq!(
-            globals.get_var(&id, "num").unwrap().unwrap().string().unwrap(),
+            globals
+                .get_var(&id, "num")
+                .unwrap()
+                .unwrap()
+                .string()
+                .unwrap(),
             "now a string"
         );
 
@@ -472,7 +489,9 @@ mod tests {
         let id_a = Uuid::new_v4();
         let id_b = Uuid::new_v4();
 
-        globals.set_var(&id_a, "key", VariableTypes::Number(1)).unwrap();
+        globals
+            .set_var(&id_a, "key", VariableTypes::Number(1))
+            .unwrap();
         assert!(!globals.contains_var(&id_b, "key").unwrap());
     }
 
@@ -491,7 +510,9 @@ mod tests {
             other => panic!("expected VariableNotFound, got {:?}", other),
         }
 
-        globals.set_var(&id, "present", VariableTypes::Bool(true)).unwrap();
+        globals
+            .set_var(&id, "present", VariableTypes::Bool(true))
+            .unwrap();
         assert!(globals
             .get_var_or_err(&id, "present")
             .unwrap()
@@ -590,7 +611,11 @@ mod tests {
         assert!(witnesses.get_witness(&id, "sig").unwrap().is_none());
 
         witnesses
-            .set_witness(&id, "sig", WitnessTypes::Winternitz(sample_wots_signature()))
+            .set_witness(
+                &id,
+                "sig",
+                WitnessTypes::Winternitz(sample_wots_signature()),
+            )
             .unwrap();
         assert_eq!(
             witnesses.get_witness(&id, "sig").unwrap().unwrap(),
@@ -626,7 +651,11 @@ mod tests {
         let to = Uuid::new_v4();
 
         witnesses
-            .set_witness(&from, "sig", WitnessTypes::Lamport(sample_lamport_signature()))
+            .set_witness(
+                &from,
+                "sig",
+                WitnessTypes::Lamport(sample_lamport_signature()),
+            )
             .unwrap();
         witnesses.copy_witness(&from, &to, "sig").unwrap();
         assert_eq!(

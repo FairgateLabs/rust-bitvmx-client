@@ -403,7 +403,11 @@ mod tests {
         let merkle_tree = build_merkle_tree_store(&txs, true);
 
         // Coinbase wtxid is zeroed, remaining leaves use the wtxid
-        assert_eq!(merkle_tree[0].unwrap(), [0u8; 32], "Coinbase leaf not zeroed");
+        assert_eq!(
+            merkle_tree[0].unwrap(),
+            [0u8; 32],
+            "Coinbase leaf not zeroed"
+        );
         for (i, tx) in txs.iter().enumerate().skip(1) {
             assert_eq!(
                 merkle_tree[i].unwrap(),
@@ -452,8 +456,7 @@ mod tests {
         let proof = get_spv_proof(txid, block_100000(txs)).unwrap();
 
         assert_eq!(
-            proof.block_hash,
-            "000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506",
+            proof.block_hash, "000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506",
             "Block hash is wrong"
         );
         assert_eq!(proof.tx.compute_txid(), txid, "Proof carries wrong tx");
@@ -469,7 +472,8 @@ mod tests {
             &txid.to_byte_array(),
             &to_swapped_bytes32(&proof.merkle_branch_hashes[0]),
         );
-        let root = hash_merkle_branches(&to_swapped_bytes32(&proof.merkle_branch_hashes[1]), &step_1);
+        let root =
+            hash_merkle_branches(&to_swapped_bytes32(&proof.merkle_branch_hashes[1]), &step_1);
         assert_eq!(
             to_swapped_bytes32(&root).to_hex_string(Case::Lower),
             "f3e94742aca4b5ef85488dc37c06c3282295ffec960994b2c0d5ac2a25a95766",

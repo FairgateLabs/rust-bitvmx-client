@@ -437,10 +437,8 @@ impl TestProgramContextEnv {
         let comms = env.queue_channel()?;
         let broker_backend = Arc::new(Mutex::new(Storage::new(&env.config.broker.storage)?));
         let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
-        let broker_channel = LocalChannel::new(
-            env.config.components.bitvmx.clone(),
-            broker_storage,
-        );
+        let broker_channel =
+            LocalChannel::new(env.config.components.bitvmx.clone(), broker_storage);
 
         let context = ProgramContext::new(
             comms,
@@ -468,10 +466,7 @@ impl TestProgramContextEnv {
     /// Comms address of peer `index` (its real address and pubkey hash).
     pub fn peer_address(&self, index: usize) -> Result<CommsAddress, BitVMXError> {
         let peer = &self.peers[index];
-        Ok(CommsAddress::new(
-            peer.get_address(),
-            peer.get_pubk_hash()?,
-        ))
+        Ok(CommsAddress::new(peer.get_address(), peer.get_pubk_hash()?))
     }
 
     /// Comms address of the context's own channel. Messages sent here are
@@ -492,10 +487,7 @@ impl TestProgramContextEnv {
 
     /// Tick the context channel and peer `index` until the peer receives a
     /// message, or panic after a few seconds.
-    pub fn receive_via_peer(
-        &mut self,
-        index: usize,
-    ) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+    pub fn receive_via_peer(&mut self, index: usize) -> Result<(Identifier, Vec<u8>), BitVMXError> {
         TestCommsEnv::receive_via(&mut self.context.comms, &mut self.peers[index])
     }
 

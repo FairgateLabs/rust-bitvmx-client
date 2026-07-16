@@ -753,8 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn request_missing_verification_keys_skips_self_and_known_peers(
-    ) -> Result<(), BitVMXError> {
+    fn request_missing_verification_keys_skips_self_and_known_peers() -> Result<(), BitVMXError> {
         let mut env = TestProgramContextEnv::new_with_peers("sigver-req-skip", 1)?;
         let program_id = Uuid::new_v4();
         let self_peer = env.self_address()?;
@@ -791,8 +790,8 @@ mod tests {
     }
 
     #[test]
-    fn request_missing_verification_keys_sends_request_for_missing_peer(
-    ) -> Result<(), BitVMXError> {
+    fn request_missing_verification_keys_sends_request_for_missing_peer() -> Result<(), BitVMXError>
+    {
         let mut env = TestProgramContextEnv::new_with_peers("sigver-req-send", 1)?;
         let program_id = Uuid::new_v4();
         let missing_peer = env.peer_address(0)?;
@@ -837,8 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_and_get_key_returns_announced_key_without_verification(
-    ) -> Result<(), BitVMXError> {
+    fn verify_and_get_key_returns_announced_key_without_verification() -> Result<(), BitVMXError> {
         let env = TestProgramContextEnv::new("sigver-vgk-vk")?;
         let data = json!({ "verification_key": "announced-key" });
 
@@ -972,8 +970,7 @@ mod tests {
 
     #[test]
     fn handle_verification_messages_responds_to_key_request() -> Result<(), BitVMXError> {
-        let mut env =
-            TestProgramContextEnv::new_with_peers("sigver-hvm-request", 1)?;
+        let mut env = TestProgramContextEnv::new_with_peers("sigver-hvm-request", 1)?;
         let program_id = Uuid::new_v4();
         let peer_address = env.peer_address(0)?;
 
@@ -997,8 +994,7 @@ mod tests {
 
     #[test]
     fn handle_verification_messages_ignores_other_types() -> Result<(), BitVMXError> {
-        let mut env =
-            TestProgramContextEnv::new_with_peers("sigver-hvm-other", 1)?;
+        let mut env = TestProgramContextEnv::new_with_peers("sigver-hvm-other", 1)?;
         let peer_address = env.peer_address(0)?;
 
         SignatureVerifier::handle_verification_messages(
@@ -1020,8 +1016,7 @@ mod tests {
 
     #[test]
     fn handle_missing_verification_key_requests_and_buffers() -> Result<(), BitVMXError> {
-        let mut env =
-            TestProgramContextEnv::new_with_peers("sigver-missing-key", 1)?;
+        let mut env = TestProgramContextEnv::new_with_peers("sigver-missing-key", 1)?;
         let program_id = Uuid::new_v4();
         let peer_address = env.peer_address(0)?;
         let identifier = Identifier::new(peer_address.pubkey_hash.clone(), 0);

@@ -335,7 +335,7 @@ pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig>(
         }
     }
 
-    // at least for now, in every protocol, the last tx in the ownership table consumes the claim gate 
+    // at least for now, in every protocol, the last tx in the ownership table consumes the claim gate
     if let Some(TxOwnership { tx_name, owner }) = ownership_table.txs.last() {
         if tx_name == name && owner != &protocol_handler.role() {
             program_context.globals.set_var(
