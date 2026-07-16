@@ -5,6 +5,7 @@ use crate::{
     },
     errors::BitVMXError,
     helper::compute_pubkey_hash,
+    ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes},
@@ -356,8 +357,8 @@ impl SignatureVerifier {
 
     /// Handles verification messages (VerificationKey and VerificationKeyRequest).
     /// Returns Ok(()) if the message was processed, or Err if there was an error.
-    pub fn handle_verification_messages(
-        program_context: &ProgramContext,
+    pub fn handle_verification_messages<BC: BitcoinCoordinatorApi>(
+        program_context: &ProgramContext<BC>,
         program_id: &Uuid,
         msg_type: &CommsMessageType,
         data: &Value,
@@ -376,8 +377,8 @@ impl SignatureVerifier {
         }
     }
 
-    fn handle_verification_key_announcement(
-        program_context: &ProgramContext,
+    fn handle_verification_key_announcement<BC: BitcoinCoordinatorApi>(
+        program_context: &ProgramContext<BC>,
         peer_address: &CommsAddress,
         data: &Value,
     ) -> Result<(), BitVMXError> {
@@ -410,8 +411,8 @@ impl SignatureVerifier {
         Ok(())
     }
 
-    fn handle_verification_key_request(
-        program_context: &ProgramContext,
+    fn handle_verification_key_request<BC: BitcoinCoordinatorApi>(
+        program_context: &ProgramContext<BC>,
         context_id: &Uuid,
         peer_address: CommsAddress,
     ) -> Result<(), BitVMXError> {
@@ -432,8 +433,8 @@ impl SignatureVerifier {
     }
 
     /// Handles the MissingVerificationKey error by requesting the key and buffering the message
-    pub fn handle_missing_verification_key(
-        program_context: &ProgramContext,
+    pub fn handle_missing_verification_key<BC: BitcoinCoordinatorApi>(
+        program_context: &ProgramContext<BC>,
         program_id: &Uuid,
         address: &CommsAddress,
         identifier: &Identifier,
@@ -457,37 +458,24 @@ impl SignatureVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use bitvmx_settings::settings;
-    use key_manager::create_key_manager_from_config;
+    use crate::test_utils::TestProgramContextEnv;
     use serde_json::json;
     use signature::SignatureEncoding;
-    use std::rc::Rc;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use storage_backend::storage::Storage;
     use uuid::Uuid;
 
-    fn build_test_env() -> Result<(Rc<KeyManager>, String, Globals), BitVMXError> {
-        let mut config = Config::new(Some("config/development.yaml".to_string()))?;
-        let unique_dir = std::env::temp_dir()
-            .join("bitvmx-signature-tests")
-            .join(Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&unique_dir).map_err(|_| BitVMXError::InvalidMessageFormat)?;
-        config.storage.path = unique_dir.join("storage.db").to_string_lossy().to_string();
-        config.key_storage.path = unique_dir.join("keys.db").to_string_lossy().to_string();
-        let store = Rc::new(Storage::new(&config.storage)?);
-        let globals = Globals::new(store.clone());
-        let key_manager =
-            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
-        let key_manager = Rc::new(key_manager);
-        let rsa_pubkey_pem = key_manager
-            .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
-        Ok((key_manager, rsa_pubkey_pem, globals))
+    fn build_test_env() -> Result<TestProgramContextEnv, BitVMXError> {
+        TestProgramContextEnv::new("sigver-unit")
     }
 
     #[test]
     fn verify_message_signature_accepts_valid_payload() -> Result<(), BitVMXError> {
-        let (key_manager, rsa_public_key, globals) = build_test_env()?;
+        let env = build_test_env()?;
+        let (key_manager, rsa_public_key, globals) = (
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
+            &env.context.globals,
+        );
         let program_id = Uuid::new_v4();
         let msg_type = CommsMessageType::Keys;
         let data = json!({ "payload": "value" });
@@ -529,7 +517,12 @@ mod tests {
 
     #[test]
     fn verify_message_signature_detects_tampering() -> Result<(), BitVMXError> {
-        let (key_manager, rsa_public_key, globals) = build_test_env()?;
+        let env = build_test_env()?;
+        let (key_manager, rsa_public_key, globals) = (
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
+            &env.context.globals,
+        );
         let program_id = Uuid::new_v4();
         let msg_type = CommsMessageType::Keys;
         let original_data = json!({ "payload": "value" });
@@ -572,7 +565,8 @@ mod tests {
 
     #[test]
     fn get_verification_key_from_announcement() -> Result<(), BitVMXError> {
-        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
+        let env = build_test_env()?;
+        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
         let sender = "peer-1".to_string();
         let my_pubkey_hash = "self".to_string();
         let verification_key = rsa_public_key.clone();
@@ -596,7 +590,8 @@ mod tests {
 
     #[test]
     fn get_verification_key_for_self_message() -> Result<(), BitVMXError> {
-        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
+        let env = build_test_env()?;
+        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
         let my_pubkey_hash = "self".to_string();
         let data = json!({});
 
@@ -608,13 +603,14 @@ mod tests {
             &rsa_public_key,
             &my_pubkey_hash,
         )?;
-        assert_eq!(key, rsa_public_key);
+        assert_eq!(&key, rsa_public_key);
         Ok(())
     }
 
     #[test]
     fn get_verification_key_from_shared_map() -> Result<(), BitVMXError> {
-        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
+        let env = build_test_env()?;
+        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
         let sender = "peer-2".to_string();
         let my_pubkey_hash = "self".to_string();
         let verification_key = "peer-2-key".to_string();
@@ -634,7 +630,8 @@ mod tests {
 
     #[test]
     fn get_verification_key_missing_entry_errors() -> Result<(), BitVMXError> {
-        let (_key_manager, rsa_public_key, globals) = build_test_env()?;
+        let env = build_test_env()?;
+        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
         let sender = "peer-3".to_string();
         let my_pubkey_hash = "self".to_string();
 
@@ -655,7 +652,8 @@ mod tests {
 
     #[test]
     fn operator_verification_store_has_and_missing() -> Result<(), BitVMXError> {
-        let (_key_manager, _rsa_public_key, globals) = build_test_env()?;
+        let env = build_test_env()?;
+        let globals = &env.context.globals;
         let stored_peer = "peer-stored".to_string();
         let missing_peer = "peer-missing".to_string();
 
@@ -668,6 +666,387 @@ mod tests {
             &[stored_peer.clone(), missing_peer.clone()],
         )?;
         assert_eq!(missing, vec![missing_peer]);
+        Ok(())
+    }
+
+    #[test]
+    fn has_all_keys_reports_missing_and_complete() -> Result<(), BitVMXError> {
+        let env = build_test_env()?;
+        let globals = &env.context.globals;
+        let peers = vec!["peer-a".to_string(), "peer-b".to_string()];
+
+        assert!(!SignatureVerifier::has_all_keys(&globals, &peers)?);
+        OperatorVerificationStore::store(&globals, &peers[0], "key-a")?;
+        assert!(!SignatureVerifier::has_all_keys(&globals, &peers)?);
+        OperatorVerificationStore::store(&globals, &peers[1], "key-b")?;
+        assert!(SignatureVerifier::has_all_keys(&globals, &peers)?);
+        Ok(())
+    }
+
+    #[test]
+    fn verify_message_signature_maps_reconstruction_error() -> Result<(), BitVMXError> {
+        let env = build_test_env()?;
+        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
+        let my_pubkey_hash = "self".to_string();
+
+        let result = SignatureVerifier::verify_message_signature(
+            &globals,
+            &Uuid::new_v4().to_string(),
+            "9.9",
+            &CommsMessageType::Keys,
+            &json!({}),
+            0,
+            &[0u8; 4],
+            &my_pubkey_hash,
+            &rsa_public_key,
+            &my_pubkey_hash,
+        );
+        assert!(matches!(
+            result,
+            Err(BitVMXError::MessageReconstructionError { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn verify_message_signature_rejects_empty_signature() -> Result<(), BitVMXError> {
+        let env = build_test_env()?;
+        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
+        let my_pubkey_hash = "self".to_string();
+
+        let verified = SignatureVerifier::verify_message_signature(
+            &globals,
+            &Uuid::new_v4().to_string(),
+            "1.0",
+            &CommsMessageType::Keys,
+            &json!({}),
+            0,
+            &[],
+            &my_pubkey_hash,
+            &rsa_public_key,
+            &my_pubkey_hash,
+        )?;
+        assert!(!verified);
+        Ok(())
+    }
+
+    #[test]
+    fn get_verification_key_rejects_malformed_announcement() -> Result<(), BitVMXError> {
+        let env = build_test_env()?;
+        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
+        let sender = "peer-bad".to_string();
+        let my_pubkey_hash = "self".to_string();
+
+        let result = SignatureVerifier::get_verification_key(
+            &CommsMessageType::VerificationKey,
+            &json!({ "unexpected": "shape" }),
+            &sender,
+            &globals,
+            &rsa_public_key,
+            &my_pubkey_hash,
+        );
+        assert!(matches!(
+            result,
+            Err(BitVMXError::VerificationKeyExtractionError { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn request_missing_verification_keys_skips_self_and_known_peers(
+    ) -> Result<(), BitVMXError> {
+        let mut env = TestProgramContextEnv::new_with_peers("sigver-req-skip", 1)?;
+        let program_id = Uuid::new_v4();
+        let self_peer = env.self_address()?;
+        let known_peer = env.peer_address(0)?;
+        OperatorVerificationStore::store(
+            &env.context.globals,
+            &known_peer.pubkey_hash,
+            "known-key",
+        )?;
+
+        // Only ourselves in the peer list: nothing to request.
+        OperatorVerificationStore::request_missing_verification_keys(
+            &env.context.globals,
+            &env.context.comms,
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
+            &program_id,
+            &[self_peer.clone()],
+        )?;
+
+        // Peer whose key is already stored: nothing to request either.
+        OperatorVerificationStore::request_missing_verification_keys(
+            &env.context.globals,
+            &env.context.comms,
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
+            &program_id,
+            &[self_peer, known_peer],
+        )?;
+
+        // Neither call may have queued a request to us or to the known peer.
+        env.assert_no_delivery_via_peer(0);
+        Ok(())
+    }
+
+    #[test]
+    fn request_missing_verification_keys_sends_request_for_missing_peer(
+    ) -> Result<(), BitVMXError> {
+        let mut env = TestProgramContextEnv::new_with_peers("sigver-req-send", 1)?;
+        let program_id = Uuid::new_v4();
+        let missing_peer = env.peer_address(0)?;
+        // Include ourselves in the list: we must be skipped, not requested.
+        let self_peer = env.self_address()?;
+
+        OperatorVerificationStore::request_missing_verification_keys(
+            &env.context.globals,
+            &env.context.comms,
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
+            &program_id,
+            &[self_peer, missing_peer],
+        )?;
+
+        let (_, raw) = env.receive_via_peer(0)?;
+        let (_, msg_type, received_program_id, _, _, _) =
+            crate::comms_helper::deserialize_msg(raw, 200000)?;
+        assert_eq!(msg_type, CommsMessageType::VerificationKeyRequest);
+        assert_eq!(received_program_id, program_id);
+        Ok(())
+    }
+
+    #[test]
+    fn verify_and_get_key_skips_verification_key_request() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-vgk-req")?;
+
+        let key = SignatureVerifier::verify_and_get_key(
+            &env.context.comms,
+            &env.context.globals,
+            &env.context.rsa_public_key,
+            &"any-peer".to_string(),
+            &Uuid::new_v4(),
+            &CommsMessageType::VerificationKeyRequest,
+            &json!({}),
+            0,
+            &[],
+            "1.0",
+        )?;
+        assert_eq!(key, String::new());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_and_get_key_returns_announced_key_without_verification(
+    ) -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-vgk-vk")?;
+        let data = json!({ "verification_key": "announced-key" });
+
+        // VerificationKey messages return the announced key; the signature is
+        // verified later against the announced key, so none is needed here.
+        let key = SignatureVerifier::verify_and_get_key(
+            &env.context.comms,
+            &env.context.globals,
+            &env.context.rsa_public_key,
+            &"peer-vk".to_string(),
+            &Uuid::new_v4(),
+            &CommsMessageType::VerificationKey,
+            &data,
+            0,
+            &[],
+            "1.0",
+        )?;
+        assert_eq!(key, "announced-key");
+        Ok(())
+    }
+
+    #[test]
+    fn verify_and_get_key_accepts_valid_and_rejects_tampered() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-vgk-sig")?;
+        let program_id = Uuid::new_v4();
+        let my_hash = env.context.comms.get_pubk_hash()?;
+        let data = json!({ "payload": "value" });
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let message = construct_message(
+            &program_id.to_string(),
+            "1.0",
+            CommsMessageType::Keys,
+            &data,
+            timestamp,
+        )?;
+        let signature = env
+            .context
+            .key_manager
+            .sign_rsa_message(message.as_bytes(), &env.context.rsa_public_key)?
+            .to_bytes()
+            .to_vec();
+
+        let key = SignatureVerifier::verify_and_get_key(
+            &env.context.comms,
+            &env.context.globals,
+            &env.context.rsa_public_key,
+            &my_hash,
+            &program_id,
+            &CommsMessageType::Keys,
+            &data,
+            timestamp,
+            &signature,
+            "1.0",
+        )?;
+        assert_eq!(key, env.context.rsa_public_key);
+
+        let result = SignatureVerifier::verify_and_get_key(
+            &env.context.comms,
+            &env.context.globals,
+            &env.context.rsa_public_key,
+            &my_hash,
+            &program_id,
+            &CommsMessageType::Keys,
+            &json!({ "payload": "tampered" }),
+            timestamp,
+            &signature,
+            "1.0",
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidSignature { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn handle_verification_messages_stores_valid_announcement() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-hvm-store")?;
+        let program_id = Uuid::new_v4();
+        let peer_hash = compute_pubkey_hash(&env.context.rsa_public_key)?;
+        let peer_address = CommsAddress::new(env.context.comms.get_address(), peer_hash.clone());
+        let data = VerificationKeyAnnouncement {
+            verification_key: env.context.rsa_public_key.clone(),
+        }
+        .to_value()?;
+
+        SignatureVerifier::handle_verification_messages(
+            &env.context,
+            &program_id,
+            &CommsMessageType::VerificationKey,
+            &data,
+            &peer_address,
+        )?;
+
+        assert_eq!(
+            OperatorVerificationStore::get(&env.context.globals, &peer_hash)?,
+            Some(env.context.rsa_public_key.clone())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn handle_verification_messages_rejects_fingerprint_mismatch() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-hvm-mismatch")?;
+        let peer_address = CommsAddress::new(
+            env.context.comms.get_address(),
+            "not-the-key-fingerprint".to_string(),
+        );
+        let data = VerificationKeyAnnouncement {
+            verification_key: env.context.rsa_public_key.clone(),
+        }
+        .to_value()?;
+
+        let result = SignatureVerifier::handle_verification_messages(
+            &env.context,
+            &Uuid::new_v4(),
+            &CommsMessageType::VerificationKey,
+            &data,
+            &peer_address,
+        );
+        assert!(matches!(
+            result,
+            Err(BitVMXError::VerificationKeyFingerprintMismatch { .. })
+        ));
+        assert!(!OperatorVerificationStore::has(
+            &env.context.globals,
+            &peer_address.pubkey_hash
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_verification_messages_responds_to_key_request() -> Result<(), BitVMXError> {
+        let mut env =
+            TestProgramContextEnv::new_with_peers("sigver-hvm-request", 1)?;
+        let program_id = Uuid::new_v4();
+        let peer_address = env.peer_address(0)?;
+
+        SignatureVerifier::handle_verification_messages(
+            &env.context,
+            &program_id,
+            &CommsMessageType::VerificationKeyRequest,
+            &json!({}),
+            &peer_address,
+        )?;
+
+        let (_, raw) = env.receive_via_peer(0)?;
+        let (_, msg_type, received_program_id, data, _, _) =
+            crate::comms_helper::deserialize_msg(raw, 200000)?;
+        assert_eq!(msg_type, CommsMessageType::VerificationKey);
+        assert_eq!(received_program_id, program_id);
+        let announcement = VerificationKeyAnnouncement::from_value(&data)?;
+        assert_eq!(announcement.verification_key, env.context.rsa_public_key);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_verification_messages_ignores_other_types() -> Result<(), BitVMXError> {
+        let mut env =
+            TestProgramContextEnv::new_with_peers("sigver-hvm-other", 1)?;
+        let peer_address = env.peer_address(0)?;
+
+        SignatureVerifier::handle_verification_messages(
+            &env.context,
+            &Uuid::new_v4(),
+            &CommsMessageType::Keys,
+            &json!({}),
+            &peer_address,
+        )?;
+
+        // Non-verification types are ignored: no key stored, nothing sent.
+        assert!(!OperatorVerificationStore::has(
+            &env.context.globals,
+            &peer_address.pubkey_hash
+        )?);
+        env.assert_no_delivery_via_peer(0);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_missing_verification_key_requests_and_buffers() -> Result<(), BitVMXError> {
+        let mut env =
+            TestProgramContextEnv::new_with_peers("sigver-missing-key", 1)?;
+        let program_id = Uuid::new_v4();
+        let peer_address = env.peer_address(0)?;
+        let identifier = Identifier::new(peer_address.pubkey_hash.clone(), 0);
+        let msg = vec![1u8, 2, 3];
+        let mut pending = VecDeque::new();
+
+        SignatureVerifier::handle_missing_verification_key(
+            &env.context,
+            &program_id,
+            &peer_address,
+            &identifier,
+            msg.clone(),
+            &mut pending,
+        )?;
+
+        // The original message is buffered for reprocessing.
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].1, msg);
+
+        // A key request went out to the peer.
+        let (_, raw) = env.receive_via_peer(0)?;
+        let (_, msg_type, received_program_id, _, _, _) =
+            crate::comms_helper::deserialize_msg(raw, 200000)?;
+        assert_eq!(msg_type, CommsMessageType::VerificationKeyRequest);
+        assert_eq!(received_program_id, program_id);
         Ok(())
     }
 }

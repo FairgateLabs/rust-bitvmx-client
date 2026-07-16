@@ -416,17 +416,17 @@ pub fn deserialize_msg(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestCommsEnv;
+    use crate::test_utils::TestProgramContextEnv;
 
     #[test]
     fn test_prepare_message_signs_payload() -> Result<(), BitVMXError> {
-        let env = TestCommsEnv::new("comms-helper-prepare")?;
+        let env = TestProgramContextEnv::new("comms-helper-prepare")?;
         let program_id = Uuid::new_v4();
         let msg = json!({"key": "value"});
 
         let (version, returned_msg, timestamp, signature) = prepare_message(
-            &env.key_manager,
-            &env.rsa_public_key,
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
             &program_id,
             CommsMessageType::Keys,
             msg.clone(),
@@ -441,25 +441,24 @@ mod tests {
 
     #[test]
     fn test_request_round_trip_delivers_verifiable_message() -> Result<(), BitVMXError> {
-        let env = TestCommsEnv::new("comms-helper-request")?;
-        let mut comms = env.queue_channel()?;
+        let mut env = TestProgramContextEnv::new("comms-helper-request")?;
         let program_id = Uuid::new_v4();
         let payload = json!({"key": "value"});
         // Send to the channel's own address so the message comes back to us.
-        let destination = CommsAddress::new(comms.get_address(), comms.get_pubk_hash()?);
+        let destination = env.self_address()?;
 
         request(
-            &comms,
-            &env.key_manager,
-            &env.rsa_public_key,
+            &env.context.comms,
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
             &program_id,
             destination,
             CommsMessageType::Keys,
             payload.clone(),
         )?;
 
-        let (sender, raw) = TestCommsEnv::receive_one(&mut comms)?;
-        assert_eq!(sender.pubkey_hash, comms.get_pubk_hash()?);
+        let (sender, raw) = env.receive_one()?;
+        assert_eq!(sender.pubkey_hash, env.context.comms.get_pubk_hash()?);
 
         let (version, msg_type, received_program_id, data, timestamp, signature) =
             deserialize_msg(raw, 200000)?;
@@ -482,7 +481,7 @@ mod tests {
         let verified = key_manager::verifier::SignatureVerifier::new().verify_rsa_signature(
             &rsa_signature,
             message.as_bytes(),
-            &env.rsa_public_key,
+            &env.context.rsa_public_key,
         )?;
         assert!(verified);
         Ok(())
@@ -490,20 +489,19 @@ mod tests {
 
     #[test]
     fn test_send_verification_key_to_peer_delivers_announcement() -> Result<(), BitVMXError> {
-        let env = TestCommsEnv::new("comms-helper-vk")?;
-        let mut comms = env.queue_channel()?;
+        let mut env = TestProgramContextEnv::new("comms-helper-vk")?;
         let program_id = Uuid::new_v4();
-        let destination = CommsAddress::new(comms.get_address(), comms.get_pubk_hash()?);
+        let destination = env.self_address()?;
 
         send_verification_key_to_peer(
-            &comms,
-            &env.key_manager,
-            &env.rsa_public_key,
+            &env.context.comms,
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
             &program_id,
             destination,
         )?;
 
-        let (_, raw) = TestCommsEnv::receive_one(&mut comms)?;
+        let (_, raw) = env.receive_one()?;
         let (version, msg_type, received_program_id, data, _, signature) =
             deserialize_msg(raw, 200000)?;
         assert_eq!(version, CURRENT_PROTOCOL_VERSION);
@@ -512,7 +510,7 @@ mod tests {
         assert!(!signature.is_empty());
 
         let announcement = VerificationKeyAnnouncement::from_value(&data)?;
-        assert_eq!(announcement.verification_key, env.rsa_public_key);
+        assert_eq!(announcement.verification_key, env.context.rsa_public_key);
         Ok(())
     }
 

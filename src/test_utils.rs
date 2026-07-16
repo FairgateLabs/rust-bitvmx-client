@@ -26,6 +26,7 @@ use crate::config::Config;
 use crate::errors::BitVMXError;
 use crate::leader_broadcast::LeaderBroadcastHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::program::participant::CommsAddress;
 use crate::program::variables::{Globals, WitnessVars};
 use crate::types::ProgramContext;
 
@@ -71,16 +72,20 @@ impl Drop for TestStorageDir {
 /// redirected to a unique temp dir (removed on drop). Provides a `KeyManager`
 /// with the development comms RSA key imported, and can build a `QueueChannel`
 /// for tests that exercise the comms send path.
-pub struct TestCommsEnv {
-    pub config: Config,
-    pub storage: Rc<Storage>,
-    pub key_manager: Rc<KeyManager>,
-    pub rsa_public_key: String,
+///
+/// Internal building block of [`TestProgramContextEnv`] — write tests against
+/// that instead; the context env costs barely more and provides everything
+/// this does plus globals, broker channel and the coordinator mock.
+struct TestCommsEnv {
+    config: Config,
+    storage: Rc<Storage>,
+    key_manager: Rc<KeyManager>,
+    rsa_public_key: String,
     _dir: TestStorageDir,
 }
 
 impl TestCommsEnv {
-    pub fn new(prefix: &str) -> Result<Self, BitVMXError> {
+    fn new(prefix: &str) -> Result<Self, BitVMXError> {
         let dir = TestStorageDir::new(prefix);
         fs::create_dir_all(dir.path()).map_err(|_| BitVMXError::SerializationError)?;
 
@@ -118,7 +123,7 @@ impl TestCommsEnv {
     /// Tick the channel until a message is delivered and received, or panic
     /// after a few seconds. Delivery goes through the channel's local server,
     /// so this works for self-addressed messages without an external broker.
-    pub fn receive_one(channel: &mut QueueChannel) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+    fn receive_one(channel: &mut QueueChannel) -> Result<(Identifier, Vec<u8>), BitVMXError> {
         for _ in 0..100 {
             channel.tick()?;
             let mut received = channel.check_receive()?;
@@ -130,10 +135,70 @@ impl TestCommsEnv {
         panic!("no message received after 5 seconds");
     }
 
+    /// Tick both channels until the receiver gets a message, or panic after a
+    /// few seconds. Use for cross-channel delivery: the sender's tick pushes
+    /// the queued message to the receiver's local server.
+    fn receive_via(
+        sender: &mut QueueChannel,
+        receiver: &mut QueueChannel,
+    ) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+        for _ in 0..100 {
+            sender.tick()?;
+            receiver.tick()?;
+            let mut received = receiver.check_receive()?;
+            if let Some(ReceiveHandlerChannel::Msg(identifier, data)) = received.pop() {
+                return Ok((identifier, data));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("no message received after 5 seconds");
+    }
+
+    /// Tick both channels long enough for any queued message to be delivered
+    /// and assert none arrives on either side. Use to verify a code path
+    /// deliberately sent nothing.
+    fn assert_no_delivery(a: &mut QueueChannel, b: &mut QueueChannel) {
+        for _ in 0..10 {
+            a.tick().unwrap();
+            b.tick().unwrap();
+            assert!(
+                a.check_receive().unwrap().is_empty(),
+                "unexpected message delivered to first channel"
+            );
+            assert!(
+                b.check_receive().unwrap().is_empty(),
+                "unexpected message delivered to second channel"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Build an extra comms identity listening on its own port, for tests that
+    /// need a real remote peer distinct from [`Self::queue_channel`] (which
+    /// uses the op_1 key). Peer `index` uses the development `op_{index + 2}`
+    /// key, so each index is a distinct identity (0..=8 available). Its comms
+    /// storage lives in the same temp dir.
+    fn peer_channel(&self, index: usize) -> Result<QueueChannel, BitVMXError> {
+        static NEXT_PEER_PORT: AtomicU16 = AtomicU16::new(24100);
+        let mut address = self.config.comms.address;
+        address.set_port(NEXT_PEER_PORT.fetch_add(1, Ordering::Relaxed));
+        let name = format!("peer-{}", index);
+        Ok(QueueChannel::new_with_paths(
+            &name,
+            address,
+            &format!("config/keys/op_{}.key", index + 2),
+            self.storage.clone(),
+            Some(format!("{}/comms-{}.db", self._dir.path(), name)),
+            &self.config.broker.allow_list,
+            &self.config.broker.routing_table,
+            self.config.broker.settings.clone(),
+        )?)
+    }
+
     /// Build a QueueChannel using the development broker settings. The channel
     /// runs its own local server, so messages sent to its own address are
     /// delivered back to it on tick without an external broker.
-    pub fn queue_channel(&self) -> Result<QueueChannel, BitVMXError> {
+    fn queue_channel(&self) -> Result<QueueChannel, BitVMXError> {
         Ok(QueueChannel::new_with_paths(
             "comms",
             self.config.comms.address,
@@ -351,12 +416,22 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
 /// witness vars and broker channel (all on the [`TestCommsEnv`] temp storage),
 /// with the bitcoin coordinator mocked so no bitcoind is needed.
 pub struct TestProgramContextEnv {
-    pub env: TestCommsEnv,
+    env: TestCommsEnv,
     pub context: ProgramContext<BitcoinCoordinatorMock>,
+    /// Remote peer identities; peer `i` uses the development `op_{i + 2}` key
+    /// on its own port, so each index is a distinct identity (0..=8 available).
+    pub peers: Vec<QueueChannel>,
 }
 
 impl TestProgramContextEnv {
     pub fn new(prefix: &str) -> Result<Self, BitVMXError> {
+        Self::new_with_peers(prefix, 0)
+    }
+
+    /// Like [`Self::new`], but also instantiates `peer_count` remote peer
+    /// channels, addressable through [`Self::peer_address`] and read back
+    /// with [`Self::receive_via_peer`].
+    pub fn new_with_peers(prefix: &str, peer_count: usize) -> Result<Self, BitVMXError> {
         let env = TestCommsEnv::new(prefix)?;
 
         let comms = env.queue_channel()?;
@@ -379,7 +454,55 @@ impl TestProgramContextEnv {
             LeaderBroadcastHelper::new(env.storage.clone()),
         );
 
-        Ok(Self { env, context })
+        let peers = (0..peer_count)
+            .map(|index| env.peer_channel(index))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            env,
+            context,
+            peers,
+        })
+    }
+
+    /// Comms address of peer `index` (its real address and pubkey hash).
+    pub fn peer_address(&self, index: usize) -> Result<CommsAddress, BitVMXError> {
+        let peer = &self.peers[index];
+        Ok(CommsAddress::new(
+            peer.get_address(),
+            peer.get_pubk_hash()?,
+        ))
+    }
+
+    /// Comms address of the context's own channel. Messages sent here are
+    /// delivered back to the channel itself on tick (see [`Self::receive_one`]).
+    pub fn self_address(&self) -> Result<CommsAddress, BitVMXError> {
+        Ok(CommsAddress::new(
+            self.context.comms.get_address(),
+            self.context.comms.get_pubk_hash()?,
+        ))
+    }
+
+    /// Tick the context channel until a message is delivered and received, or
+    /// panic after a few seconds. Works for self-addressed messages (sent to
+    /// [`Self::self_address`]) without an external broker.
+    pub fn receive_one(&mut self) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+        TestCommsEnv::receive_one(&mut self.context.comms)
+    }
+
+    /// Tick the context channel and peer `index` until the peer receives a
+    /// message, or panic after a few seconds.
+    pub fn receive_via_peer(
+        &mut self,
+        index: usize,
+    ) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+        TestCommsEnv::receive_via(&mut self.context.comms, &mut self.peers[index])
+    }
+
+    /// Assert that neither the context channel nor peer `index` receives
+    /// anything (see [`TestCommsEnv::assert_no_delivery`]).
+    pub fn assert_no_delivery_via_peer(&mut self, index: usize) {
+        TestCommsEnv::assert_no_delivery(&mut self.context.comms, &mut self.peers[index]);
     }
 
     pub fn coordinator_mock(&self) -> &BitcoinCoordinatorMock {
