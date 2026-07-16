@@ -214,6 +214,7 @@ mod tests {
     use bitcoin::consensus::Decodable;
     use bitcoin::hex::Case;
     use bitcoin::hex::DisplayHex;
+    use bitcoin::BlockHash;
 
     #[test]
     fn test_hash_merkle_branches() {
@@ -243,11 +244,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_build_merkle_tree_store_and_branches() {
-        // Arrenge
-        // From https://mempool.space/es/block/000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506
-        let txids = [
+    // Transactions from block 100000
+    // https://mempool.space/es/block/000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506
+    fn block_100000_txs() -> Vec<Transaction> {
+        vec![
             // 8c14f0db3df150123e6f3dbbf30f8b955a8249b62ac1d1ff16284aefa3d06d87
             Transaction::consensus_decode(&mut hex::decode("01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff08044c86041b020602ffffffff0100f2052a010000004341041b0e8c2567c12536aa13357b79a073dc4444acb83c4ec7a0e2f99dd7457516c5817242da796924ca4e99947d087fedf9ce467cb9f7c6287078f801df276fdf84ac00000000").unwrap().as_slice()).unwrap(),
             // fff2525b8931402dd09222c50775608f75787bd2b87e56995a7bdd30f79702c4
@@ -256,7 +256,13 @@ mod tests {
             Transaction::consensus_decode(&mut hex::decode("0100000001c33ebff2a709f13d9f9a7569ab16a32786af7d7e2de09265e41c61d078294ecf010000008a4730440220032d30df5ee6f57fa46cddb5eb8d0d9fe8de6b342d27942ae90a3231e0ba333e02203deee8060fdc70230a7f5b4ad7d7bc3e628cbe219a886b84269eaeb81e26b4fe014104ae31c31bf91278d99b8377a35bbce5b27d9fff15456839e919453fc7b3f721f0ba403ff96c9deeb680e5fd341c0fc3a7b90da4631ee39560639db462e9cb850fffffffff0240420f00000000001976a914b0dcbf97eabf4404e31d952477ce822dadbe7e1088acc060d211000000001976a9146b1281eec25ab4e1e0793ff4e08ab1abb3409cd988ac00000000").unwrap().as_slice()).unwrap(),
             // e9a66845e05d5abc0ad04ec80f774a7e585c6e8db975962d069a522137b80c1d
             Transaction::consensus_decode(&mut hex::decode("01000000010b6072b386d4a773235237f64c1126ac3b240c84b917a3909ba1c43ded5f51f4000000008c493046022100bb1ad26df930a51cce110cf44f7a48c3c561fd977500b1ae5d6b6fd13d0b3f4a022100c5b42951acedff14abba2736fd574bdb465f3e6f8da12e2c5303954aca7f78f3014104a7135bfe824c97ecc01ec7d7e336185c81e2aa2c41ab175407c09484ce9694b44953fcb751206564a9c24dd094d42fdbfdd5aad3e063ce6af4cfaaea4ea14fbbffffffff0140420f00000000001976a91439aa3d569e06a1d7926dc4be1193c99bf2eb9ee088ac00000000").unwrap().as_slice()).unwrap(),
-        ];
+        ]
+    }
+
+    #[test]
+    fn test_build_merkle_tree_store_and_branches() {
+        // Arrenge
+        let txids = block_100000_txs();
         let tx_index = 2;
 
         // Act
@@ -387,6 +393,102 @@ mod tests {
             to_swapped_bytes32(&bytes_to_reverse).to_hex_string(Case::Lower),
             "f3e94742aca4b5ef85488dc37c06c3282295ffec960994b2c0d5ac2a25a95766",
             "Reversed bytes32 is wrong"
+        );
+    }
+
+    #[test]
+    fn test_build_merkle_tree_store_witness() {
+        let txs = block_100000_txs();
+
+        let merkle_tree = build_merkle_tree_store(&txs, true);
+
+        // Coinbase wtxid is zeroed, remaining leaves use the wtxid
+        assert_eq!(merkle_tree[0].unwrap(), [0u8; 32], "Coinbase leaf not zeroed");
+        for (i, tx) in txs.iter().enumerate().skip(1) {
+            assert_eq!(
+                merkle_tree[i].unwrap(),
+                tx.compute_wtxid().to_byte_array(),
+                "Leaf {} is not the wtxid",
+                i
+            );
+        }
+        let h01 = hash_merkle_branches(&[0u8; 32], &txs[1].compute_wtxid().to_byte_array());
+        let h23 = hash_merkle_branches(
+            &txs[2].compute_wtxid().to_byte_array(),
+            &txs[3].compute_wtxid().to_byte_array(),
+        );
+        let expected_root = hash_merkle_branches(&h01, &h23);
+        assert_eq!(
+            merkle_tree.last().unwrap().unwrap(),
+            expected_root,
+            "Witness merkle root is wrong"
+        );
+    }
+
+    fn block_100000(txs: Vec<Transaction>) -> FullBlock {
+        FullBlock {
+            height: 100_000,
+            hash: BlockHash::from_str(
+                "000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506",
+            )
+            .unwrap(),
+            prev_hash: BlockHash::all_zeros(),
+            txs,
+            orphan: false,
+            estimated_fee_rate: 1,
+        }
+    }
+
+    #[test]
+    fn test_get_spv_proof() {
+        // Debug level so the proof's logged merkle data is rendered too
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+        let txs = block_100000_txs();
+        let txid = txs[2].compute_txid();
+
+        let proof = get_spv_proof(txid, block_100000(txs)).unwrap();
+
+        assert_eq!(
+            proof.block_hash,
+            "000000000003ba27aa200b1cecaad478d2b00432346c3f1f3986da1afd33e506",
+            "Block hash is wrong"
+        );
+        assert_eq!(proof.tx.compute_txid(), txid, "Proof carries wrong tx");
+        assert_eq!(proof.merkle_branch_path, "2", "Merkle branch path is wrong");
+        assert_eq!(
+            proof.merkle_branch_hashes.len(),
+            2,
+            "Merkle branch has wrong number of hashes"
+        );
+        // Rebuild the merkle root from the proof: path = 2 means the tx is a
+        // left child at level 0 and a right child at level 1
+        let step_1 = hash_merkle_branches(
+            &txid.to_byte_array(),
+            &to_swapped_bytes32(&proof.merkle_branch_hashes[0]),
+        );
+        let root = hash_merkle_branches(&to_swapped_bytes32(&proof.merkle_branch_hashes[1]), &step_1);
+        assert_eq!(
+            to_swapped_bytes32(&root).to_hex_string(Case::Lower),
+            "f3e94742aca4b5ef85488dc37c06c3282295ffec960994b2c0d5ac2a25a95766",
+            "Merkle root rebuilt from SPV proof is wrong"
+        );
+    }
+
+    #[test]
+    fn test_get_spv_proof_tx_not_found() {
+        let missing_txid =
+            Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+
+        let err = get_spv_proof(missing_txid, block_100000(block_100000_txs())).unwrap_err();
+
+        assert!(
+            matches!(err, BitVMXError::TransactionNotFoundInBlock),
+            "Expected TransactionNotFoundInBlock, got {:?}",
+            err
         );
     }
 }
