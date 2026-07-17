@@ -1,7 +1,6 @@
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
-    helper::PartialSignatureMessage,
     program::{
         participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
@@ -15,6 +14,12 @@ use key_manager::musig2::{types::MessageId, PartialSignature};
 use serde_json::Value;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
+
+pub type PartialSignatureMessage = Vec<(
+    bitcoin::PublicKey,
+    bitcoin::PublicKey,
+    Vec<(MessageId, PartialSignature)>,
+)>;
 
 /// Template step for exchanging MuSig2 partial signatures.
 ///
