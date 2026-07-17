@@ -8,6 +8,7 @@ use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
@@ -70,7 +71,7 @@ impl BroadcastedMessage {
         }
 
         // Validate that there are no duplicate messages (same sender_pubkey_hash)
-        let mut seen_senders = std::collections::HashSet::new();
+        let mut seen_senders = HashSet::new();
         for msg in &self.original_messages {
             if !seen_senders.insert(&msg.sender_pubkey_hash) {
                 return Err(BitVMXError::InvalidMessage(format!(
@@ -245,7 +246,12 @@ impl LeaderBroadcastHelper {
 
     /// Check if all expected messages have been received
     /// expected_participants should be a list of pubkey_hashes of non-leader participants
-    /// Returns an error if duplicate messages (same sender) are detected
+    ///
+    /// No duplicate-sender check is needed here: messages are stored under a key
+    /// that includes the sender's pubkey hash (see get_original_message_key), so
+    /// storage can hold at most one message per sender. Duplicates crafted by a
+    /// malicious leader are caught on the receiving side by
+    /// BroadcastedMessage::validate.
     pub fn has_all_expected_messages(
         &self,
         context_id: &Uuid,
@@ -253,28 +259,12 @@ impl LeaderBroadcastHelper {
         expected_participants: &[PubkHash],
     ) -> Result<bool, BitVMXError> {
         let messages = self.get_original_messages(context_id, msg_type)?;
-
-        // Check for duplicate messages (same sender_pubkey_hash)
-        let mut seen_senders = std::collections::HashSet::new();
-        for msg in &messages {
-            if !seen_senders.insert(&msg.sender_pubkey_hash) {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Duplicate original message: {:?}",
-                    msg.sender_pubkey_hash
-                )));
-            }
-        }
-
-        let received_senders: std::collections::HashSet<&PubkHash> =
+        let received_senders: HashSet<&PubkHash> =
             messages.iter().map(|m| &m.sender_pubkey_hash).collect();
 
-        for expected in expected_participants {
-            if !received_senders.contains(expected) {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
+        Ok(expected_participants
+            .iter()
+            .all(|expected| received_senders.contains(expected)))
     }
 
     /// Clear all stored original messages for a given context and message type
@@ -553,6 +543,51 @@ mod tests {
         assert!(helper
             .store_original_message(&context_id, CommsMessageType::PublicNonces, msg)
             .is_err());
+    }
+
+    /// has_all_expected_messages performs no duplicate-sender check because
+    /// storage keys include the sender's pubkey hash, making duplicates
+    /// impossible. This test guards that invariant: if it ever fails, the
+    /// duplicate check must be reinstated there.
+    #[test]
+    fn store_original_message_upholds_unique_sender_invariant() {
+        let dir = TestStorageDir::new("leader-broadcast-unique");
+        let helper = LeaderBroadcastHelper::new(dir.storage());
+        let context_id = Uuid::new_v4();
+
+        assert!(helper
+            .store_original_message(
+                &context_id,
+                CommsMessageType::Keys,
+                test_original_message("alice")
+            )
+            .unwrap());
+
+        // Repeated stores from the same sender, with different payloads
+        for i in 0..3u8 {
+            let mut msg = test_original_message("alice");
+            msg.original_signature = vec![i + 10];
+            let stored = helper
+                .store_original_message(&context_id, CommsMessageType::Keys, msg)
+                .unwrap();
+            assert!(!stored, "invariant broken: duplicate sender was stored");
+        }
+
+        let messages = helper
+            .get_original_messages(&context_id, CommsMessageType::Keys)
+            .unwrap();
+        let unique_senders: HashSet<_> = messages.iter().map(|m| &m.sender_pubkey_hash).collect();
+        assert_eq!(
+            unique_senders.len(),
+            messages.len(),
+            "invariant broken: storage returned duplicate senders; \
+             has_all_expected_messages relies on one message per sender"
+        );
+        assert_eq!(
+            messages.len(),
+            1,
+            "invariant broken: expected exactly one stored message for the sender"
+        );
     }
 
     #[test]
