@@ -55,16 +55,17 @@ impl BroadcastedMessage {
         // Validate that there is at least one original message
         if self.original_messages.is_empty() {
             return Err(BitVMXError::InvalidMessage(
-                format!("No original messages").to_string(),
+                "No original messages".to_string(),
             ));
         }
 
         // Validate that all original messages have the same type as original_msg_type
         for msg in &self.original_messages {
             if msg.msg_type != self.original_msg_type {
-                return Err(BitVMXError::InvalidMessage(
-                    format!("Original message type mismatch: {:?}", msg.msg_type).to_string(),
-                ));
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Original message type mismatch: {:?}",
+                    msg.msg_type
+                )));
             }
         }
 
@@ -72,21 +73,19 @@ impl BroadcastedMessage {
         let mut seen_senders = std::collections::HashSet::new();
         for msg in &self.original_messages {
             if !seen_senders.insert(&msg.sender_pubkey_hash) {
-                return Err(BitVMXError::InvalidMessage(
-                    format!("Duplicate original message: {:?}", msg.sender_pubkey_hash).to_string(),
-                ));
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Duplicate original message: {:?}",
+                    msg.sender_pubkey_hash
+                )));
             }
         }
 
         // Validate that the broadcast timestamp is reasonable (not negative, not too far in the future)
         if self.broadcast_timestamp < 0 {
-            return Err(BitVMXError::InvalidMessage(
-                format!(
-                    "Broadcast timestamp is negative: {:?}",
-                    self.broadcast_timestamp
-                )
-                .to_string(),
-            ));
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Broadcast timestamp is negative: {:?}",
+                self.broadcast_timestamp
+            )));
         }
 
         // Validate each original message
@@ -103,41 +102,42 @@ impl OriginalMessage {
     pub fn validate(&self) -> Result<(), BitVMXError> {
         // Validate that the timestamp is not negative
         if self.original_timestamp < 0 {
-            return Err(BitVMXError::InvalidMessage(
-                format!(
-                    "Original timestamp is negative: {:?}",
-                    self.original_timestamp
-                )
-                .to_string(),
-            ));
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Original timestamp is negative: {:?}",
+                self.original_timestamp
+            )));
         }
 
         // Validate that the signature is not empty
         if self.original_signature.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                format!("Original signature is empty: {:?}", self.original_signature).to_string(),
-            ));
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Original signature is empty: {:?}",
+                self.original_signature
+            )));
         }
 
         // Validate that the version is not empty
         if self.version.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                format!("Version is empty: {:?}", self.version).to_string(),
-            ));
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Version is empty: {:?}",
+                self.version
+            )));
         }
 
         // Validate that the pubkey_hash is not empty
         if self.sender_pubkey_hash.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                format!("Sender pubkey hash is empty: {:?}", self.sender_pubkey_hash).to_string(),
-            ));
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Sender pubkey hash is empty: {:?}",
+                self.sender_pubkey_hash
+            )));
         }
 
         // Validate that the message type is not Broadcasted (cannot broadcast a broadcast)
         if self.msg_type == CommsMessageType::Broadcasted {
-            return Err(BitVMXError::InvalidMessage(
-                format!("Message type is Broadcasted: {:?}", self.msg_type).to_string(),
-            ));
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Message type is Broadcasted: {:?}",
+                self.msg_type
+            )));
         }
 
         Ok(())
@@ -188,6 +188,17 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
         original_msg: OriginalMessage,
     ) -> Result<bool, BitVMXError> {
+        // Reject invalid messages at the boundary, before they reach storage.
+        // A stored invalid message would make broadcast_to_non_leaders fail on
+        // every attempt, with the error attributed to the wrong place.
+        original_msg.validate()?;
+        if original_msg.msg_type != msg_type {
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Original message type mismatch: expected {:?}, got {:?}",
+                msg_type, original_msg.msg_type
+            )));
+        }
+
         let key = get_original_message_key(context_id, msg_type, &original_msg.sender_pubkey_hash);
 
         debug!("New message: {:?}", original_msg.msg_type);
@@ -221,9 +232,10 @@ impl LeaderBroadcastHelper {
         for (_, msg_json) in stored_messages.iter() {
             // Deserialize each message individually
             let msg: OriginalMessage = serde_json::from_str(msg_json).map_err(|e| {
-                BitVMXError::InvalidMessage(
-                    format!("Failed to deserialize original message: {:?}", e).to_string(),
-                )
+                BitVMXError::InvalidMessage(format!(
+                    "Failed to deserialize original message: {:?}",
+                    e
+                ))
             })?;
             messages.push(msg);
         }
@@ -246,9 +258,10 @@ impl LeaderBroadcastHelper {
         let mut seen_senders = std::collections::HashSet::new();
         for msg in &messages {
             if !seen_senders.insert(&msg.sender_pubkey_hash) {
-                return Err(BitVMXError::InvalidMessage(
-                    format!("Duplicate original message: {:?}", msg.sender_pubkey_hash).to_string(),
-                ));
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Duplicate original message: {:?}",
+                    msg.sender_pubkey_hash
+                )));
             }
         }
 
@@ -370,13 +383,13 @@ impl LeaderBroadcastHelper {
         message_queue: &MessageQueue,
     ) -> Result<(), BitVMXError> {
         // Deserialize BroadcastedMessage from data
-        let broadcasted_msg: BroadcastedMessage =
-            serde_json::from_value(data.clone()).map_err(|e| {
-                error!("Failed to deserialize BroadcastedMessage: {:?}", e);
-                BitVMXError::InvalidMessage(
-                    format!("Failed to deserialize BroadcastedMessage: {:?}", e).to_string(),
-                )
-            })?;
+        let broadcasted_msg: BroadcastedMessage = serde_json::from_value(data).map_err(|e| {
+            error!("Failed to deserialize BroadcastedMessage: {:?}", e);
+            BitVMXError::InvalidMessage(format!(
+                "Failed to deserialize BroadcastedMessage: {:?}",
+                e
+            ))
+        })?;
 
         // Validate the BroadcastedMessage structure
         broadcasted_msg.validate()?;
@@ -388,7 +401,10 @@ impl LeaderBroadcastHelper {
             broadcasted_msg.original_messages.len()
         );
 
-        // Process each original message recursively
+        // Phase 1: verify and reconstruct every original message before queueing
+        // anything, so an invalid message rejects the whole broadcast atomically
+        // and nothing from it enters the system.
+        let mut queued_messages = Vec::with_capacity(broadcasted_msg.original_messages.len());
         for original_msg in &broadcasted_msg.original_messages {
             // Verify the original message signature
             let original_verified = Self::verify_original_message_signature(
@@ -419,14 +435,23 @@ impl LeaderBroadcastHelper {
                 original_msg.original_signature.clone(),
             )?;
 
+            queued_messages.push((
+                Identifier::new(original_msg.sender_pubkey_hash.clone(), 0),
+                full_message,
+            ));
+        }
+
+        // Phase 2: all messages passed, queue them for processing
+        for (original_msg, (identifier, full_message)) in broadcasted_msg
+            .original_messages
+            .iter()
+            .zip(queued_messages)
+        {
             info!(
                 "Pending message to back: {:?} from {}",
                 original_msg.msg_type, original_msg.sender_pubkey_hash
             );
-            message_queue.push_new(
-                Identifier::new(original_msg.sender_pubkey_hash.clone(), 0),
-                full_message,
-            )?;
+            message_queue.push_new(identifier, full_message)?;
         }
 
         info!(
@@ -485,7 +510,91 @@ pub fn get_non_leader_participants(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestStorageDir;
     use serde_json::json;
+
+    fn test_original_message(sender: &str) -> OriginalMessage {
+        OriginalMessage {
+            sender_pubkey_hash: sender.to_string(),
+            msg_type: CommsMessageType::Keys,
+            data: json!({"key": "value"}),
+            original_timestamp: 1234567890,
+            original_signature: vec![1, 2, 3],
+            version: "1.0".to_string(),
+        }
+    }
+
+    #[test]
+    fn store_original_message_rejects_invalid_message() {
+        let dir = TestStorageDir::new("leader-broadcast-invalid");
+        let helper = LeaderBroadcastHelper::new(dir.storage());
+        let context_id = Uuid::new_v4();
+
+        let mut msg = test_original_message("sender");
+        msg.original_signature = vec![];
+        assert!(helper
+            .store_original_message(&context_id, CommsMessageType::Keys, msg)
+            .is_err());
+
+        // The invalid message must not reach storage
+        assert!(helper
+            .get_original_messages(&context_id, CommsMessageType::Keys)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn store_original_message_rejects_type_mismatch() {
+        let dir = TestStorageDir::new("leader-broadcast-mismatch");
+        let helper = LeaderBroadcastHelper::new(dir.storage());
+        let context_id = Uuid::new_v4();
+
+        let msg = test_original_message("sender");
+        assert!(helper
+            .store_original_message(&context_id, CommsMessageType::PublicNonces, msg)
+            .is_err());
+    }
+
+    #[test]
+    fn store_original_message_skips_duplicates_and_tracks_expected() {
+        let dir = TestStorageDir::new("leader-broadcast-store");
+        let helper = LeaderBroadcastHelper::new(dir.storage());
+        let context_id = Uuid::new_v4();
+        let expected = ["alice".to_string(), "bob".to_string()];
+
+        assert!(helper
+            .store_original_message(
+                &context_id,
+                CommsMessageType::Keys,
+                test_original_message("alice")
+            )
+            .unwrap());
+
+        // Duplicate sender is skipped without error
+        assert!(!helper
+            .store_original_message(
+                &context_id,
+                CommsMessageType::Keys,
+                test_original_message("alice")
+            )
+            .unwrap());
+
+        assert!(!helper
+            .has_all_expected_messages(&context_id, CommsMessageType::Keys, &expected)
+            .unwrap());
+
+        assert!(helper
+            .store_original_message(
+                &context_id,
+                CommsMessageType::Keys,
+                test_original_message("bob")
+            )
+            .unwrap());
+
+        assert!(helper
+            .has_all_expected_messages(&context_id, CommsMessageType::Keys, &expected)
+            .unwrap());
+    }
 
     #[test]
     fn test_broadcasted_message_validation_empty_messages() {
