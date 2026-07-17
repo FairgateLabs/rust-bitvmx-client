@@ -236,6 +236,16 @@ impl SetupStep for KeysStep {
 
             aggregated_pub_keys.sort();
 
+            // The local key must be one of the exchanged participant keys. In
+            // particular, the single-participant shortcut below bypasses the
+            // key manager's MuSig2 validation, so validate membership here.
+            if !aggregated_pub_keys.contains(my_key) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "My key '{}' is not present in the participant keys",
+                    agg_name
+                )));
+            }
+
             // Compute the aggregated key using MuSig2
             // MuSig2 requires at least 2 participants; with a single participant,
             // the aggregated key is simply that participant's own public key.
@@ -279,5 +289,256 @@ impl SetupStep for KeysStep {
         protocol.build(all_keys, my_keys.computed_aggregated, context)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::PublicKey;
+    use key_manager::key_type::BitcoinKeyType;
+    use std::rc::Rc;
+    use storage_backend::storage::Storage;
+    use uuid::Uuid;
+
+    use crate::program::protocols::protocol_handler::new_protocol_type;
+    use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
+    use crate::types::{PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION};
+
+    fn protocol(name: &str, id: Uuid, storage: Rc<Storage>) -> ProtocolType {
+        new_protocol_type(id, name, 0, storage).unwrap()
+    }
+
+    fn set_optional_generated_key<BC: BitcoinCoordinatorApi>(
+        id: &Uuid,
+        context: &ProgramContext<BC>,
+    ) {
+        context
+            .globals
+            .set_var(
+                id,
+                "optional_keys",
+                VariableTypes::String(
+                    serde_json::to_string(&Option::<Vec<PublicKey>>::None).unwrap(),
+                ),
+            )
+            .unwrap();
+    }
+
+    fn stored_keys<BC: BitcoinCoordinatorApi>(
+        id: &Uuid,
+        name: &str,
+        context: &ProgramContext<BC>,
+    ) -> ParticipantKeys {
+        serde_json::from_str(
+            &context
+                .globals
+                .get_var(id, name)
+                .unwrap()
+                .unwrap()
+                .string()
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn generates_verifies_and_completes_single_participant_keys() {
+        let mut env = TestProgramContextEnv::new("keys-step-lifecycle").unwrap();
+        let dir = TestStorageDir::new("keys-step-protocol");
+        let id = Uuid::new_v4();
+        let mut protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, id, dir.storage());
+        let participant = env.self_address().unwrap();
+        let participants = vec![participant.clone()];
+        let step = KeysStep::new();
+        set_optional_generated_key(&id, &env.context);
+
+        assert_eq!(step.step_name(), "keys");
+        let (data, msg_type) = step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(msg_type, CommsMessageType::Keys);
+        let generated: ParticipantKeys = serde_json::from_value(data.clone()).unwrap();
+        assert_eq!(generated.mapping.len(), 1);
+        assert_eq!(generated.aggregated, vec![id.to_string()]);
+        assert_eq!(stored_keys(&id, "my_keys", &env.context), generated);
+
+        assert!(!step
+            .can_advance(&protocol, &participants, &env.context)
+            .unwrap());
+        assert!(step
+            .verify_received(
+                data,
+                msg_type,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                true,
+            )
+            .unwrap());
+        assert!(step
+            .can_advance(&protocol, &participants, &env.context)
+            .unwrap());
+
+        step.on_step_complete(&protocol, &participants, &mut env.context)
+            .unwrap();
+
+        let all_keys: Vec<ParticipantKeys> = serde_json::from_str(
+            &env.context
+                .globals
+                .get_var(&id, "all_participant_keys")
+                .unwrap()
+                .unwrap()
+                .string()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(all_keys, vec![generated.clone()]);
+
+        let completed = stored_keys(&id, "my_keys", &env.context);
+        let aggregate = completed.computed_aggregated[&id.to_string()];
+        assert_eq!(aggregate, *generated.get_public(&id.to_string()).unwrap());
+        assert_eq!(
+            env.context
+                .globals
+                .get_var(&id, "final_aggregated_key")
+                .unwrap()
+                .unwrap()
+                .pubkey()
+                .unwrap(),
+            aggregate
+        );
+    }
+
+    #[test]
+    fn handles_empty_generation_and_rejects_invalid_received_data() {
+        let mut env = TestProgramContextEnv::new("keys-step-validation").unwrap();
+        let dir = TestStorageDir::new("keys-step-validation-protocol");
+        let step = KeysStep::new();
+        let storage = dir.storage();
+
+        let empty_id = Uuid::new_v4();
+        let mut empty_protocol = protocol(PROGRAM_TYPE_GC_GENERATION, empty_id, storage.clone());
+        let (empty_data, empty_type) = step
+            .generate_data(&mut empty_protocol, &mut env.context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(empty_type, CommsMessageType::Keys);
+        assert_eq!(
+            serde_json::from_value::<ParticipantKeys>(empty_data).unwrap(),
+            ParticipantKeys::new(vec![], vec![])
+        );
+
+        let id = Uuid::new_v4();
+        let protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, id, storage);
+        let participant = env.self_address().unwrap();
+        let participants = vec![participant.clone()];
+        let valid = serde_json::to_value(ParticipantKeys::new(vec![], vec![])).unwrap();
+
+        assert!(!step
+            .verify_received(
+                valid.clone(),
+                CommsMessageType::PublicNonces,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap());
+        assert!(env
+            .context
+            .globals
+            .get_var(&id, "participant_0_keys")
+            .unwrap()
+            .is_none());
+
+        let err = step
+            .verify_received(
+                serde_json::json!({"not": "participant keys"}),
+                CommsMessageType::Keys,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(err, BitVMXError::InvalidMessage(_)));
+
+        let mut outsider = participant.clone();
+        outsider.pubkey_hash = "unknown-participant".to_string();
+        assert!(step
+            .verify_received(
+                valid,
+                CommsMessageType::Keys,
+                &outsider,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn completion_rejects_missing_or_inconsistent_keys() {
+        let mut env = TestProgramContextEnv::new("keys-step-completion-errors").unwrap();
+        let dir = TestStorageDir::new("keys-step-completion-errors-protocol");
+        let step = KeysStep::new();
+        let storage = dir.storage();
+        let participant = env.self_address().unwrap();
+        let participants = vec![participant];
+
+        let missing_id = Uuid::new_v4();
+        let missing_protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, missing_id, storage.clone());
+        let err = step
+            .on_step_complete(&missing_protocol, &participants, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Missing keys"))
+        );
+
+        let id = Uuid::new_v4();
+        let protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, id, storage);
+        let name = id.to_string();
+        let my_key = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let other_key = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let my_keys = ParticipantKeys::new(vec![(name.clone(), my_key.into())], vec![name.clone()]);
+        let participant_keys =
+            ParticipantKeys::new(vec![(name.clone(), other_key.into())], vec![name.clone()]);
+        env.context
+            .globals
+            .set_var(
+                &id,
+                "my_keys",
+                VariableTypes::String(serde_json::to_string(&my_keys).unwrap()),
+            )
+            .unwrap();
+        env.context
+            .globals
+            .set_var(
+                &id,
+                "participant_0_keys",
+                VariableTypes::String(serde_json::to_string(&participant_keys).unwrap()),
+            )
+            .unwrap();
+
+        let err = step
+            .on_step_complete(&protocol, &participants, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("not present"))
+        );
     }
 }
