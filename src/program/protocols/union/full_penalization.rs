@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use core::convert::Into;
 use std::{collections::HashMap, vec};
 
@@ -71,9 +72,9 @@ impl ProtocolHandler for FullPenalizationProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         let data = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
@@ -90,18 +91,18 @@ impl ProtocolHandler for FullPenalizationProtocol {
         ])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        _program_context: &mut ProgramContext,
+        _program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         info!(
             "Building FullPenalizationProtocol for program {}",
@@ -125,10 +126,10 @@ impl ProtocolHandler for FullPenalizationProtocol {
         Ok(())
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(OP_LAZY_DISABLER_TX) {
             Ok(self.op_lazy_disabler_tx(name, context)?)
@@ -147,13 +148,13 @@ impl ProtocolHandler for FullPenalizationProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -170,7 +171,10 @@ impl ProtocolHandler for FullPenalizationProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        _context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!(
             "FullPenalizationProtocol setup complete for program {}",
@@ -186,9 +190,9 @@ impl FullPenalizationProtocol {
         Self { ctx }
     }
 
-    fn full_penalization_data(
+    fn full_penalization_data<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<FullPenalizationData, BitVMXError> {
         let request = context
             .globals
@@ -200,9 +204,9 @@ impl FullPenalizationProtocol {
         Ok(data)
     }
 
-    fn committee(
+    fn committee<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
     ) -> Result<Committee, BitVMXError> {
         let committee = context
@@ -215,9 +219,9 @@ impl FullPenalizationProtocol {
         Ok(committee)
     }
 
-    fn op_initial_deposit_txid(
+    fn op_initial_deposit_txid<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
     ) -> Result<Txid, BitVMXError> {
         let txid = context
@@ -232,9 +236,9 @@ impl FullPenalizationProtocol {
         Ok(txid)
     }
 
-    fn op_initial_deposit_amount(
+    fn op_initial_deposit_amount<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
     ) -> Result<u64, BitVMXError> {
         let amount = context
@@ -245,9 +249,9 @@ impl FullPenalizationProtocol {
         Ok(amount)
     }
 
-    fn op_initial_deposit_out_scripts(
+    fn op_initial_deposit_out_scripts<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
         slot_index: usize,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
@@ -264,9 +268,9 @@ impl FullPenalizationProtocol {
         Ok(scripts)
     }
 
-    fn wt_init_challenge_utxos(
+    fn wt_init_challenge_utxos<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
     ) -> Result<Vec<Option<WtInitChallengeUtxos>>, BitVMXError> {
         let data = context
@@ -279,10 +283,10 @@ impl FullPenalizationProtocol {
         Ok(utxos)
     }
 
-    fn create_operator_disabler(
+    fn create_operator_disabler<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
         committee: &Committee,
         op_index: usize,
@@ -479,9 +483,9 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn operator_take_enabler(
+    fn operator_take_enabler<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
@@ -495,9 +499,9 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
-    fn operator_won_enabler(
+    fn operator_won_enabler<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
@@ -511,9 +515,9 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
-    fn op_disabler_directory_utxo(
+    fn op_disabler_directory_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
@@ -523,9 +527,9 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
-    fn wt_disabler_directory_utxo(
+    fn wt_disabler_directory_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_core_pid: Uuid,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
@@ -560,10 +564,10 @@ impl FullPenalizationProtocol {
         Ok((tx, None))
     }
 
-    fn op_lazy_disabler_tx(
+    fn op_lazy_disabler_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         // NOTE: OP_LAZY_DISABLER_TX_<WT>_<OP>_<SLOT> it's tied to:
         // - Watchtower index
@@ -601,10 +605,10 @@ impl FullPenalizationProtocol {
         Ok((tx, None))
     }
 
-    fn op_disabler_tx(
+    fn op_disabler_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
@@ -631,10 +635,10 @@ impl FullPenalizationProtocol {
         Ok((tx, None))
     }
 
-    fn wt_disabler_tx(
+    fn wt_disabler_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         debug!(id = self.ctx.my_idx, "Loading {} tx", name);
 
@@ -672,10 +676,10 @@ impl FullPenalizationProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn wt_cosign_disabler_tx(
+    fn wt_cosign_disabler_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         debug!(id = self.ctx.my_idx, "Loading {} tx", name);
 
@@ -713,10 +717,10 @@ impl FullPenalizationProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn disabler_directory_tx(
+    fn disabler_directory_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         role: ParticipantRole,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
@@ -763,12 +767,12 @@ impl FullPenalizationProtocol {
         Ok((tx, speedup_data))
     }
 
-    fn create_operator_disablers(
+    fn create_operator_disablers<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         committee: &Committee,
         data: &FullPenalizationData,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let member_count = committee.members.len();
         let settings = get_stream_setting(
@@ -844,13 +848,13 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn create_op_initial_deposit_tx(
+    fn create_op_initial_deposit_tx<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         operator_index: usize,
         committee_id: Uuid,
         committee: &Committee,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(String, PartialUtxo, Vec<PartialUtxo>, Vec<PartialUtxo>), BitVMXError> {
         let dispute_core_pid =
             get_dispute_core_pid(committee_id, &committee.members[operator_index].take_key);
@@ -905,12 +909,12 @@ impl FullPenalizationProtocol {
         ))
     }
 
-    fn create_watchtower_disablers(
+    fn create_watchtower_disablers<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         committee: &Committee,
         data: &FullPenalizationData,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let member_count = committee.members.len();
 
@@ -983,10 +987,10 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn create_watchtower_disabler(
+    fn create_watchtower_disabler<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
         committee: &Committee,
         wt_index: usize, // WT who is going to be disabled
@@ -1139,9 +1143,9 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn handle_wt_disabler_directory_tx(
+    fn handle_wt_disabler_directory_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
         info!("Handling: {}", tx_name);
@@ -1190,9 +1194,9 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn handle_op_disabler_directory_tx(
+    fn handle_op_disabler_directory_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
         info!("Handling: {}", tx_name);
@@ -1256,9 +1260,9 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn dispatch_batch(
+    fn dispatch_batch<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         txs: Vec<(String, Transaction, Option<SpeedupData>)>,
     ) -> Result<(), BitVMXError> {
         for (tx_name, tx, speedup) in txs {
@@ -1281,9 +1285,9 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn wt_claim_success_utxo(
+    fn wt_claim_success_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee: &Committee,
         committee_id: Uuid,
         wt_index: usize,
@@ -1302,9 +1306,9 @@ impl FullPenalizationProtocol {
             .utxo()
     }
 
-    fn op_claim_success_utxo(
+    fn op_claim_success_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee: &Committee,
         committee_id: Uuid,
         wt_index: usize,

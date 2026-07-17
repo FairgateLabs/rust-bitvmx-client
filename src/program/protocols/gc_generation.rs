@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -32,18 +33,18 @@ impl ProtocolHandler for GCGenerationProtocol {
         &mut self.ctx
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        _program_context: &mut ProgramContext,
+        _program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         tracing::info!(
             "GcGenerationProtocol::build() called for program {}",

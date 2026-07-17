@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 /// AggregatedKeyProtocol - Simple protocol for generating an aggregated MuSig2 key
 ///
 /// This protocol is used when multiple parties want to create a single
@@ -47,9 +48,9 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         &mut self.ctx
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let optional_keys = program_context
             .globals
@@ -76,11 +77,11 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         ))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         tracing::info!(
             "AggregatedKeyProtocol::build() called for program {}",

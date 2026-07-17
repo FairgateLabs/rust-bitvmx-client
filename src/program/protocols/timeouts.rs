@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     errors::BitVMXError,
     program::{
@@ -10,9 +11,9 @@ use crate::{
 };
 use tracing::info;
 
-pub fn dispatch_timeout_tx<T: ProtocolHandler>(
+pub fn dispatch_timeout_tx<T: ProtocolHandler, BC: BitcoinCoordinatorApi>(
     protocol_handler: &T,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     name: &str,
     current_height: u32,
     require_leaf_id: bool,
@@ -137,11 +138,14 @@ impl TxOwnershipTable {
     }
 }
 
-pub fn auto_dispatch_timeout<T: ProtocolHandler + WithClaimGateConfig>(
+pub fn auto_dispatch_timeout<
+    T: ProtocolHandler + WithClaimGateConfig,
+    BC: BitcoinCoordinatorApi,
+>(
     protocol_handler: &T,
     name: &str,
     vout: Option<u32>,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     current_height: u32,
     ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
@@ -165,11 +169,11 @@ pub fn auto_dispatch_timeout<T: ProtocolHandler + WithClaimGateConfig>(
     Ok(())
 }
 
-pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig>(
+pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoordinatorApi>(
     protocol_handler: &T,
     name: &str,
     vout: Option<u32>,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
     if ownership_table

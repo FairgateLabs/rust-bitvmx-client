@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid, XOnlyPublicKey};
@@ -183,9 +184,9 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         let config = GCDisputeConfiguration::load(&self.ctx.id, &context.globals)?;
 
@@ -195,9 +196,9 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         )])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let aggregated_1 = program_context
             .key_manager
@@ -221,11 +222,11 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         Ok(ParticipantKeys::new(keys, vec![AGGREGATED_KEY.to_string()]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let dust = OutputType::generic_dust_limit(None).to_sat();
         let speedup_dust = dust;
@@ -440,10 +441,10 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         Ok(())
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name == START_CH {
             let tx = self.get_signed(context, START_CH, vec![0.into()])?;
@@ -454,13 +455,13 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         let current_height = tx_status
@@ -606,7 +607,10 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        _program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         Ok(())
     }
 
@@ -638,11 +642,11 @@ impl GCDisputeResolutionProtocol {
         Self { ctx }
     }
 
-    pub fn execution_result(
+    pub fn execution_result<BC: BitcoinCoordinatorApi>(
         &self,
         result: Value,
         job_context: &Context,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         // Dedup guard: if this step was already processed, skip it
         let dedup_key = if let Context::ProgramStep(_, ref step) = job_context {
@@ -731,9 +735,9 @@ impl GCDisputeResolutionProtocol {
         stack.get_script()
     }
 
-    fn get_tx_with_speedup_data(
+    fn get_tx_with_speedup_data<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
     ) -> Result<(Transaction, SpeedupData), BitVMXError> {
         let tx = self.get_signed(context, name, vec![(0, true).into()])?;

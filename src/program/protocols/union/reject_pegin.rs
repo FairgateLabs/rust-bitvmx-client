@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use crate::{
@@ -51,14 +52,17 @@ impl ProtocolHandler for RejectPegInProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok([].to_vec())
     }
 
-    fn generate_keys(&self, context: &mut ProgramContext) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &mut ProgramContext<BC>,
+    ) -> Result<ParticipantKeys, BitVMXError> {
         let keys = &mut vec![];
         let speedup_key = context.key_manager.next_keypair(BitcoinKeyType::P2tr)?;
 
@@ -75,11 +79,11 @@ impl ProtocolHandler for RejectPegInProtocol {
         Ok(ParticipantKeys::new(keys.to_vec(), vec![]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let data: RejectPeginData = self.reject_pegin(context)?;
         let committee = self.committee(context, data.committee_id)?;
@@ -128,10 +132,10 @@ impl ProtocolHandler for RejectPegInProtocol {
         Ok(())
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name == REJECT_PEGIN_TX {
             self.reject_tx(context)
@@ -140,13 +144,13 @@ impl ProtocolHandler for RejectPegInProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        _program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -157,7 +161,10 @@ impl ProtocolHandler for RejectPegInProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         // self.send_pegin_accepted(&program_context, &take_aggregated_key)?;
         let (tx, speedup) = self.reject_tx(context)?;
@@ -190,7 +197,10 @@ impl RejectPegInProtocol {
         Self { ctx }
     }
 
-    fn reject_pegin(&self, context: &ProgramContext) -> Result<RejectPeginData, BitVMXError> {
+    fn reject_pegin<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<RejectPeginData, BitVMXError> {
         let data = context
             .globals
             .get_var(&self.ctx.id, &RejectPeginData::name())?
@@ -201,9 +211,9 @@ impl RejectPegInProtocol {
         Ok(data)
     }
 
-    fn reject_tx(
+    fn reject_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let member_leaf_index = self.reject_pegin(context)?.member_index;
         let name = REJECT_PEGIN_TX;
@@ -237,9 +247,9 @@ impl RejectPegInProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn committee(
+    fn committee<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
     ) -> Result<Committee, BitVMXError> {
         let committee = context
@@ -252,7 +262,10 @@ impl RejectPegInProtocol {
         Ok(committee)
     }
 
-    fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn my_speedup_key<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PublicKey, BitVMXError> {
         Ok(context
             .globals
             .get_var(&self.ctx.id, SPEEDUP_KEY)?

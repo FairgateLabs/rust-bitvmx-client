@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, ScriptBuf};
@@ -214,11 +215,11 @@ pub fn get_verifier_keys() -> Vec<(String, usize)> {
     keys
 }
 
-pub fn challenge_scripts(
+pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
     role: ParticipantRole,
     program_definitions: &ProgramDefinition,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     aggregated: &PublicKey,
     sign_mode: SignMode,
     keys: &Vec<ParticipantKeys>,
@@ -772,9 +773,9 @@ pub fn challenge_scripts(
     Ok(challenge_leaf_script)
 }
 
-pub fn get_challenge_leaf(
+pub fn get_challenge_leaf<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     program_definitions: &ProgramDefinition,
     challenge: &ChallengeType,
 ) -> Result<Option<u32>, BitVMXError> {

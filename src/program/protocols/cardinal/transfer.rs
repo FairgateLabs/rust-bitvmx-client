@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -73,9 +74,9 @@ impl ProtocolHandler for TransferProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![(
             "pregenerated".to_string(),
@@ -87,9 +88,9 @@ impl ProtocolHandler for TransferProtocol {
         )])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup = program_context
             .key_manager
@@ -105,10 +106,10 @@ impl ProtocolHandler for TransferProtocol {
         Ok(ParticipantKeys::new(keys, vec![]))
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(TOO_TX) {
             let op_and_id: Vec<u32> = name
@@ -125,22 +126,22 @@ impl ProtocolHandler for TransferProtocol {
         Err(BitVMXError::InvalidTransactionName(name.to_string()))
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         _tx_id: Txid,
         _vout: Option<u32>,
         _tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        _program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let dust = OutputType::generic_dust_limit(None).to_sat();
 
@@ -237,7 +238,10 @@ impl ProtocolHandler for TransferProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        _program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!(
             "TransferProtocol setup complete for program {}",

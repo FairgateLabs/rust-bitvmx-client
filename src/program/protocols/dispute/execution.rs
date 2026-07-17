@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use bitcoin_script_riscv::riscv::instruction_mapping::{
     create_verification_script_mapping, get_key_from_opcode,
 };
@@ -26,12 +27,12 @@ use crate::{
     types::ProgramContext,
 };
 
-pub fn execution_result(
+pub fn execution_result<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
     drp: &DisputeResolutionProtocol,
     result: Value,
     job_context: &Context,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
 ) -> Result<(), BitVMXError> {
     // Dedup guard: if this step was already processed, skip it
     let dedup_key = if let Context::ProgramStep(_, ref step) = job_context {

@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use enum_dispatch::enum_dispatch;
 use serde_json::Value;
 use uuid::Uuid;
@@ -33,35 +34,35 @@ pub trait SetupStep {
     ///
     /// **IMPORTANT**: Must store the generated data in `context.globals`
     /// using the convention `"my_{step_name}"` for later use.
-    fn generate_data(
+    fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<Option<(Value, CommsMessageType)>, BitVMXError>;
 
     /// **VERIFY** and store data received from a participant.
     ///
     /// **IMPORTANT**: Must store the verified data in `context.globals`
     /// using the convention `"participant_{idx}_{step_name}"`.
-    fn verify_received(
+    fn verify_received<BC: BitcoinCoordinatorApi>(
         &self,
         data: Value,
         msg_type: CommsMessageType,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
         your_data: bool,
     ) -> Result<bool, BitVMXError>;
 
     /// **VERIFY ADVANCE** - Verifies if all participants have completed this step.
     ///
     /// Typically, verifies that variables exist in `context.globals` for all participants.
-    fn can_advance(
+    fn can_advance<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<bool, BitVMXError>;
 
     /// **Optional hook**: Called when the step completes successfully.
@@ -72,21 +73,21 @@ pub trait SetupStep {
     /// - Completion logging
     ///
     /// Default: does nothing.
-    fn on_step_complete(
+    fn on_step_complete<BC: BitcoinCoordinatorApi>(
         &self,
         _protocol: &ProtocolType,
         _participants: &[CommsAddress],
-        _context: &mut ProgramContext,
+        _context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
 
-    fn receive_dispatcher_result(
+    fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &self,
         _result: serde_json::Value,
         _msg_type: CommsMessageType,
         _sub_step: &str,
-        _program_context: &mut ProgramContext,
+        _program_context: &mut ProgramContext<BC>,
         _protocol_id: &Uuid,
     ) -> Result<Option<Value>, BitVMXError> {
         Ok(Some(Value::Null))

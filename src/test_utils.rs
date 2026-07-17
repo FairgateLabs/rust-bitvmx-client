@@ -509,6 +509,11 @@ mod tests {
     use bitcoin::transaction::Version;
     use bitcoin_coordinator::types::CoordinatorNews;
 
+    use crate::program::protocols::protocol_handler::{new_protocol_type, ProtocolHandler};
+    use crate::program::setup::steps::{KeysStep, SetupStepEnum};
+    use crate::program::setup::SetupStep;
+    use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+
     fn dummy_tx() -> Transaction {
         Transaction {
             version: Version::TWO,
@@ -597,5 +602,20 @@ mod tests {
             env.context.components_config.bitvmx,
             env.env.config.components.bitvmx
         );
+
+        // ProtocolHandler and SetupStep dispatch accept the mocked context.
+        let protocol = new_protocol_type(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            0,
+            env.env.storage.clone(),
+        )
+        .unwrap();
+        assert_eq!(protocol.requested_confirmations(&env.context), Some(1));
+
+        let setup_step = SetupStepEnum::Keys(KeysStep::new());
+        assert!(setup_step
+            .can_advance(&protocol, &[], &env.context)
+            .unwrap());
     }
 }

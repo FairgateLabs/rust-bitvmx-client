@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 pub mod challenge;
 pub mod config;
 pub mod execution;
@@ -274,9 +275,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
 
@@ -286,9 +287,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
         let nary_def = program_def.nary_def();
@@ -427,10 +428,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(INPUT_TX) {
             let idx = name
@@ -452,22 +453,22 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         tx_news::handle_tx_news(&self, tx_id, vout, tx_status, program_context)
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         keys: Vec<ParticipantKeys>,
         computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         // TODO get this from config, all values expressed in satoshis
 
@@ -1040,7 +1041,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        _program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!(
             "DisputeResolutionProtocol setup complete for program {}",
@@ -1064,9 +1068,9 @@ impl DisputeResolutionProtocol {
         Self { ctx: context }
     }
 
-    pub fn get_tx_with_speedup_data(
+    pub fn get_tx_with_speedup_data<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
         _input_index: u32,
         mut leaf_index: u32,
@@ -1261,9 +1265,9 @@ impl DisputeResolutionProtocol {
         (reverse_script, stack.get_script())
     }
 
-    fn challenge_step_script(
+    fn challenge_step_script<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         aggregated: &PublicKey,
         sign_mode: SignMode,
         keys: &Vec<ParticipantKeys>,
@@ -1393,9 +1397,9 @@ impl DisputeResolutionProtocol {
         Ok(winternitz_check)
     }
 
-    fn execute_script(
+    fn execute_script<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         aggregated: &PublicKey,
         sign_mode: SignMode,
         keys: &Vec<ParticipantKeys>,
@@ -1511,11 +1515,11 @@ impl DisputeResolutionProtocol {
         Ok(winternitz_check_list)
     }
 
-    pub fn execution_result(
+    pub fn execution_result<BC: BitcoinCoordinatorApi>(
         &self,
         result: Value,
         job_context: &Context,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         execution_result(&self.ctx.id, &self, result, job_context, context)
     }
@@ -1526,9 +1530,9 @@ impl DisputeResolutionProtocol {
         Ok(execution_path)
     }
 
-    fn get_program_definition(
+    fn get_program_definition<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(ProgramDefinition, String), BitVMXError> {
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
         Ok((

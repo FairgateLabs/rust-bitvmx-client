@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use anyhow::Error;
 use bitcoin::{PublicKey, ScriptBuf};
 use key_manager::{key_manager::KeyManager, winternitz};
@@ -295,7 +296,9 @@ pub fn estimate_fee(input_quantity: usize, output_quantity: usize, fee_rate: u64
     (46 + input_quantity as u64 * 68 + output_quantity as u64 * 34) * fee_rate // rough estimate
 }
 
-pub fn load_union_settings(context: &ProgramContext) -> Result<UnionSettings, BitVMXError> {
+pub fn load_union_settings<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
+) -> Result<UnionSettings, BitVMXError> {
     let var = context
         .globals
         .get_var(&GLOBAL_SETTINGS_UUID, &UnionSettings::name().to_string())?
@@ -318,8 +321,8 @@ pub fn load_union_settings(context: &ProgramContext) -> Result<UnionSettings, Bi
     Ok(serde_json::from_str(&var_str)?)
 }
 
-pub fn save_union_settings(
-    context: &ProgramContext,
+pub fn save_union_settings<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
     settings: &UnionSettings,
 ) -> Result<(), Error> {
     context.globals.set_var(
@@ -582,8 +585,8 @@ pub fn collect_input_signatures(
     Ok(input_args)
 }
 
-pub fn save_penalized_member(
-    context: &ProgramContext,
+pub fn save_penalized_member<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
     committee_id: Uuid,
     data: &PenalizedMember,
 ) -> Result<(), BitVMXError> {
@@ -601,8 +604,8 @@ pub fn save_penalized_member(
     Ok(())
 }
 
-pub fn load_penalized_member(
-    context: &ProgramContext,
+pub fn load_penalized_member<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
     committee_id: Uuid,
     member_index: usize,
     role: ParticipantRole,
@@ -617,14 +620,21 @@ pub fn load_penalized_member(
     Ok(Some(data))
 }
 
-pub fn set_my_idx(context: &ProgramContext, pid: Uuid, my_idx: usize) -> Result<(), BitVMXError> {
+pub fn set_my_idx<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
+    pid: Uuid,
+    my_idx: usize,
+) -> Result<(), BitVMXError> {
     context
         .globals
         .set_var(&pid, MY_IDX, VariableTypes::Number(my_idx as u32))?;
     Ok(())
 }
 
-pub fn get_my_idx(context: &ProgramContext, pid: Uuid) -> Result<usize, BitVMXError> {
+pub fn get_my_idx<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
+    pid: Uuid,
+) -> Result<usize, BitVMXError> {
     match context.globals.get_var(&pid, MY_IDX)? {
         Some(var) => Ok(var.number()? as usize),
         None => Err(BitVMXError::InvalidParameter(format!(

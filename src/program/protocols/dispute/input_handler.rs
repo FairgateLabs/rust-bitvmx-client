@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use emulator::loader::program_definition::ProgramDefinition;
 use tracing::info;
 use uuid::Uuid;
@@ -61,10 +62,10 @@ pub fn generate_input_owner_list(
     Ok((input_mapping, total_words))
 }
 
-pub fn get_required_keys(
+pub fn get_required_keys<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
     program_def: &ProgramDefinition,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     participant_role: &ParticipantRole,
 ) -> Result<Vec<String>, BitVMXError> {
     let mut required_keys = Vec::new();
@@ -170,10 +171,10 @@ pub fn get_required_keys(
     Ok(required_keys)
 }
 
-pub fn split_input(
+pub fn split_input<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
     idx: u32,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
 ) -> Result<(), BitVMXError> {
     let (input_txs, input_txs_sizes, input_txs_offsets, _) =
         get_txs_configuration(id, program_context)?;
@@ -206,9 +207,9 @@ pub fn split_input(
     Ok(())
 }
 
-pub fn get_txs_configuration(
+pub fn get_txs_configuration<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
 ) -> Result<(Vec<String>, Vec<u32>, Vec<u32>, u32), BitVMXError> {
     let get = |key: &str| program_context.globals.get_var_or_err(id, key);
 
@@ -225,9 +226,9 @@ pub fn get_txs_configuration(
     Ok((input_txs, input_txs_sizes, input_txs_offsets, last_tx_id))
 }
 
-pub fn unify_witnesses(
+pub fn unify_witnesses<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     idx: usize,
 ) -> Result<(), BitVMXError> {
     let (input_txs, input_txs_sizes, input_txs_offsets, _) =
@@ -261,9 +262,9 @@ pub fn unify_witnesses(
     Ok(())
 }
 
-pub fn unify_inputs(
+pub fn unify_inputs<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     program_def: &ProgramDefinition,
 ) -> Result<Vec<u8>, BitVMXError> {
     let (input_txs, input_txs_sizes, _, _) = get_txs_configuration(&id, program_context)?;
@@ -322,45 +323,45 @@ pub fn unify_inputs(
     Ok(full_input)
 }
 
-pub fn set_input_u8(
+pub fn set_input_u8<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     name: &str,
     value: u8,
 ) -> Result<(), BitVMXError> {
     set_input(id, context, name, vec![value])
 }
 
-pub fn set_input_u32(
+pub fn set_input_u32<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     name: &str,
     value: u32,
 ) -> Result<(), BitVMXError> {
     set_input(id, context, name, value.to_be_bytes().to_vec())
 }
 
-pub fn set_input_u64(
+pub fn set_input_u64<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     name: &str,
     value: u64,
 ) -> Result<(), BitVMXError> {
     set_input(id, context, name, value.to_be_bytes().to_vec())
 }
 
-pub fn set_input_hex(
+pub fn set_input_hex<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     name: &str,
     value: &str,
 ) -> Result<(), BitVMXError> {
     set_input(id, context, name, hex::decode(value)?)
 }
 
-pub fn set_input(
+pub fn set_input<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     name: &str,
     value: Vec<u8>,
 ) -> Result<(), BitVMXError> {
@@ -379,10 +380,10 @@ pub enum InputTypes {
 }
 
 impl InputTypes {
-    pub fn set_input(
+    pub fn set_input<BC: BitcoinCoordinatorApi>(
         &self,
         id: &Uuid,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
     ) -> Result<(), BitVMXError> {
         match self {
@@ -433,9 +434,9 @@ impl<'a> From<(&'a str, InputTypes)> for InputPair<'a> {
     }
 }
 
-pub fn set_inputs(
+pub fn set_inputs<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     inputs: Vec<InputPair>,
 ) -> Result<(), BitVMXError> {
     for InputPair(name, input) in inputs {

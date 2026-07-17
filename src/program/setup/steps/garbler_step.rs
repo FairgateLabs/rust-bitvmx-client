@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::garbled_messages::{
     GCJobProveResult, GarbledJobType, ProofBlob, Sha256CommitmentHex,
@@ -89,10 +90,10 @@ impl SetupStep for GarblerStep {
         "garbler"
     }
 
-    fn generate_data(
+    fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         let protocol_id = protocol.context().id;
 
@@ -129,12 +130,12 @@ impl SetupStep for GarblerStep {
         Ok(None)
     }
 
-    fn receive_dispatcher_result(
+    fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &self,
         result: Value,
         _msg_type: CommsMessageType,
         sub_step: &str,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
         protocol_id: &Uuid,
     ) -> Result<Option<Value>, BitVMXError> {
         if sub_step == "generate" {
@@ -213,14 +214,14 @@ impl SetupStep for GarblerStep {
         )));
     }
 
-    fn verify_received(
+    fn verify_received<BC: BitcoinCoordinatorApi>(
         &self,
         data: Value,
         msg_type: CommsMessageType,
         _from_participant: &CommsAddress,
         protocol: &ProtocolType,
         _participants: &[CommsAddress],
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
         your_data: bool,
     ) -> Result<bool, BitVMXError> {
         if !matches!(msg_type, CommsMessageType::GarbledCircuit) {
@@ -290,11 +291,11 @@ impl SetupStep for GarblerStep {
         Ok(true)
     }
 
-    fn can_advance(
+    fn can_advance<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &ProtocolType,
         _participants: &[CommsAddress],
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
@@ -316,11 +317,11 @@ impl SetupStep for GarblerStep {
     }
 }
 
-fn import_public_input_signature(
+fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
     public_input_signature: &Vec<u8>,
     config: &GCConfiguration,
     public_input_pk: LamportPublicKey,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     protocol_id: &Uuid,
 ) -> Result<(), BitVMXError> {
     let circuit_public_input = &config.circuit_public_input;
@@ -352,10 +353,10 @@ fn import_public_input_signature(
     Ok(())
 }
 
-fn import_public_keys(
+fn import_public_keys<BC: BitcoinCoordinatorApi>(
     prove_result: &GCJobProveResult,
     config: &GCConfiguration,
-    context: &mut ProgramContext,
+    context: &mut ProgramContext<BC>,
     protocol_id: &Uuid,
 ) -> Result<[LamportPublicKey; 3], BitVMXError> {
     let indices = &prove_result.input_commitment_indices;
@@ -404,10 +405,10 @@ fn import_public_keys(
     Ok([public_input_pk, input_pk, output_pk])
 }
 
-fn import_input_private_keys(
+fn import_input_private_keys<BC: BitcoinCoordinatorApi>(
     prove_result: &GCJobProveResult,
     config: &GCConfiguration,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
 ) -> Result<(), BitVMXError> {
     let io_inputs_path = &prove_result.io_inputs_path;
     let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
@@ -445,9 +446,9 @@ fn import_input_private_keys(
     Ok(())
 }
 
-fn dispatch_proof_verification(
+fn dispatch_proof_verification<BC: BitcoinCoordinatorApi>(
     proof_blob: ProofBlob,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     config: &GCConfiguration,
     protocol_id: Uuid,
     step_name: &str,
@@ -482,10 +483,10 @@ fn dispatch_proof_verification(
     Ok(())
 }
 
-fn import_public_lamport(
+fn import_public_lamport<BC: BitcoinCoordinatorApi>(
     commitments: &[Sha256CommitmentHex],
     name: &str,
-    context: &ProgramContext,
+    context: &ProgramContext<BC>,
     protocol_id: &Uuid,
 ) -> Result<LamportPublicKey, BitVMXError> {
     let h0s = commitments

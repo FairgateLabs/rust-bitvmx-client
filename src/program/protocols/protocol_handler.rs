@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -106,17 +107,17 @@ impl From<(u32, bool)> for LeafToSign {
 pub trait ProtocolHandler {
     fn context(&self) -> &ProtocolContext;
     fn context_mut(&mut self) -> &mut ProtocolContext;
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         // Default implementation: no pregenerated keys
         Ok(vec![])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError>;
 
     fn set_storage(&mut self, storage: Rc<Storage>) {
@@ -125,7 +126,10 @@ pub trait ProtocolHandler {
 
     // Default to 1 confirmation for Bitcoin transactions
     // Each protocol should override if different
-    fn requested_confirmations(&self, program_context: &ProgramContext) -> Option<u32> {
+    fn requested_confirmations<BC: BitcoinCoordinatorApi>(
+        &self,
+        program_context: &ProgramContext<BC>,
+    ) -> Option<u32> {
         Some(
             program_context
                 .globals
@@ -137,9 +141,9 @@ pub trait ProtocolHandler {
         )
     }
 
-    fn set_requested_confirmations(
+    fn set_requested_confirmations<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         confirmations: u32,
     ) -> Result<(), BitVMXError> {
         program_context.globals.set_var(
@@ -150,7 +154,10 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
-    fn requested_stuck_in_mempool(&self, program_context: &ProgramContext) -> Option<u32> {
+    fn requested_stuck_in_mempool<BC: BitcoinCoordinatorApi>(
+        &self,
+        program_context: &ProgramContext<BC>,
+    ) -> Option<u32> {
         program_context
             .globals
             .get_var(&self.context().id, REQUESTED_STUCK_IN_MEMPOOL_VAR)
@@ -159,9 +166,9 @@ pub trait ProtocolHandler {
             .and_then(|v| v.number().ok())
     }
 
-    fn set_requested_stuck_in_mempool(
+    fn set_requested_stuck_in_mempool<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         stuck_in_mempool_blocks: u32,
     ) -> Result<(), BitVMXError> {
         program_context.globals.set_var(
@@ -172,11 +179,11 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError>;
 
     fn sign(&mut self, key_manager: &Rc<KeyManager>) -> Result<(), ProtocolBuilderError> {
@@ -215,9 +222,9 @@ pub trait ProtocolHandler {
         self.load_protocol()?.transaction_by_id(txid).cloned()
     }
 
-    fn add_vout_to_monitor(
+    fn add_vout_to_monitor<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         name: &str,
         vout: u32,
     ) -> Result<(), BitVMXError> {
@@ -236,9 +243,9 @@ pub trait ProtocolHandler {
         Ok(())
     }
 
-    fn get_transactions_to_monitor(
+    fn get_transactions_to_monitor<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(Vec<Txid>, Vec<(Txid, u32)>), BitVMXError> {
         // Try to load protocol, but if it doesn't exist (e.g., protocols without transactions),
         // return empty vectors
@@ -317,10 +324,10 @@ pub trait ProtocolHandler {
         )
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         // Default implementation: protocol has no transactions
         Err(BitVMXError::InvalidTransactionName(format!(
@@ -329,33 +336,33 @@ pub trait ProtocolHandler {
         )))
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         _tx_id: Txid,
         _vout: Option<u32>,
         _tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        _program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         // Default implementation: no-op for protocols that don't need to handle news
         Ok(())
     }
 
-    fn notify_external_news(
+    fn notify_external_news<BC: BitcoinCoordinatorApi>(
         &self,
         _tx_id: Txid,
         _vout: Option<u32>,
         _tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        _program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         Ok(())
     }
 
-    fn get_lamport_signature_for_script(
+    fn get_lamport_signature_for_script<BC: BitcoinCoordinatorApi>(
         &self,
         protocol_script: &ProtocolScript,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<Vec<LamportSignature>, BitVMXError> {
         let keys = protocol_script.get_keys();
         let mut lamp_sigs = Vec::with_capacity(keys.len());
@@ -412,10 +419,10 @@ pub trait ProtocolHandler {
         Ok(lamp_sigs)
     }
 
-    fn get_winternitz_signature_for_script(
+    fn get_winternitz_signature_for_script<BC: BitcoinCoordinatorApi>(
         &self,
         protocol_script: &ProtocolScript,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<Vec<WinternitzSignature>, BitVMXError> {
         let mut wots_sigs = vec![];
 
@@ -469,9 +476,9 @@ pub trait ProtocolHandler {
         Ok(wots_sigs)
     }
 
-    fn get_signed(
+    fn get_signed<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
         inputs: Vec<LeafToSign>,
     ) -> Result<Transaction, BitVMXError> {
@@ -532,11 +539,11 @@ pub trait ProtocolHandler {
         Ok(protocol.transaction_to_send(name, &all_input_args.as_slice())?)
     }
 
-    fn decode_witness_for_tx(
+    fn decode_witness_for_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
         input_index: u32,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         transaction: &Transaction,
         leaf: Option<u32>,
         protocol: Option<Protocol>,
@@ -649,12 +656,12 @@ pub trait ProtocolHandler {
         Ok(signatures)
     }
 
-    fn decode_witness_from_speedup(
+    fn decode_witness_from_speedup<BC: BitcoinCoordinatorApi>(
         &self,
         prev_tx_id: Txid,
         prev_vout: u32,
         prev_name: &str,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         transaction: &Transaction,
         leaf: Option<u32>,
     ) -> Result<(Vec<String>, u32), BitVMXError> {
@@ -697,17 +704,20 @@ pub trait ProtocolHandler {
         }
     }
 
-    fn get_speedup_key(&self, program_context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn get_speedup_key<BC: BitcoinCoordinatorApi>(
+        &self,
+        program_context: &ProgramContext<BC>,
+    ) -> Result<PublicKey, BitVMXError> {
         program_context
             .globals
             .get_var_or_err(&self.context().id, "speedup")?
             .pubkey()
     }
 
-    fn get_speedup_data_from_tx(
+    fn get_speedup_data_from_tx<BC: BitcoinCoordinatorApi>(
         &self,
         tx: &Transaction,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         vout: Option<u32>,
     ) -> Result<SpeedupData, BitVMXError> {
         let txid = tx.compute_txid();
@@ -741,7 +751,10 @@ pub trait ProtocolHandler {
         )
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        _program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // Default implementation: no additional setup needed
         Ok(())
     }
@@ -772,9 +785,12 @@ pub trait ProtocolHandler {
         ])
     }
 
-    fn add_connection_with_scripts<V: Into<AmountType> + std::fmt::Debug + std::clone::Clone>(
+    fn add_connection_with_scripts<
+        V: Into<AmountType> + std::fmt::Debug + std::clone::Clone,
+        BC: BitcoinCoordinatorApi,
+    >(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         aggregated: &PublicKey,
         protocol: &mut Protocol,
         timelock_blocks: u16,
@@ -974,9 +990,9 @@ pub trait ProtocolHandler {
         (txid, vout, amount)
     }
 
-    fn dispatch(
+    fn dispatch<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         tx: Transaction,
         sp: Option<SpeedupData>,
         block_height: Option<u32>,
@@ -990,9 +1006,9 @@ pub trait ProtocolHandler {
         )?)
     }
 
-    fn execute_job<J: Serialize + DispatcherMessage>(
+    fn execute_job<J: Serialize + DispatcherMessage, BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         dest: &Identifier,
         job_type: J,
         step: &str,

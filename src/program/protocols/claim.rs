@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use bitcoin::{hashes::Hash, PublicKey, Sequence, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use protocol_builder::{
@@ -307,11 +308,11 @@ fn get_claim_name<T: ProtocolHandler + WithClaimGateConfig>(
     }
 }
 
-pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig>(
+pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoordinatorApi>(
     protocol_handler: &T,
     name: &str,
     vout: Option<u32>,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     ownership_table: &TxOwnershipTable,
 ) -> Result<(), BitVMXError> {
     if vout.is_some() {
@@ -349,13 +350,13 @@ pub fn auto_claim_start<T: ProtocolHandler + WithClaimGateConfig>(
     Ok(())
 }
 
-pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig>(
+pub fn claim_state_handle<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoordinatorApi>(
     protocol_handler: &T,
     tx_id: Txid,
     name: &str,
     vout: Option<u32>,
     tx_status: TransactionStatus,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     current_height: u32,
     timelock_blocks: u32,
 ) -> Result<(), BitVMXError> {

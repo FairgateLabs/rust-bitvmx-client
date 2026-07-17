@@ -15,6 +15,7 @@ use uuid::Uuid;
 use super::SetupStep;
 use crate::comms_helper::CommsMessageType;
 use crate::errors::BitVMXError;
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::protocols::protocol_handler::ProtocolType;
 use crate::types::ProgramContext;

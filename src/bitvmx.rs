@@ -1,5 +1,6 @@
 use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::program::{is_active_program, Program};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
@@ -1009,7 +1010,7 @@ impl BitVMX {
         Ok(())
     }
 
-    fn send_new_block_news(&self, context: &ProgramContext) -> bool {
+    fn send_new_block_news<BC: BitcoinCoordinatorApi>(&self, context: &ProgramContext<BC>) -> bool {
         context
             .globals
             .get_var(&CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS)

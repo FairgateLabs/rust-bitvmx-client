@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
@@ -58,25 +59,25 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        _program_context: &mut ProgramContext,
+        _program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         info!(
             "Building Advance Funds Protocol for program {}",
@@ -209,10 +210,10 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
             ADVANCE_FUNDS_TX => Ok(self.advance_funds_tx()?),
@@ -220,13 +221,13 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -268,7 +269,10 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!(
             "AdvanceFundsProtocol setup complete for program {}",
@@ -292,9 +296,9 @@ impl AdvanceFundsProtocol {
         Self { ctx }
     }
 
-    fn advance_funds_request(
+    fn advance_funds_request<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<AdvanceFundsRequest, BitVMXError> {
         let request = context
             .globals
@@ -306,9 +310,9 @@ impl AdvanceFundsProtocol {
         Ok(request)
     }
 
-    fn advance_funds_input_utxo(
+    fn advance_funds_input_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<PartialUtxo, BitVMXError> {
         Ok(context
             .globals
@@ -317,9 +321,9 @@ impl AdvanceFundsProtocol {
             .utxo()?)
     }
 
-    fn operator_take_utxo(
+    fn operator_take_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Option<PartialUtxo>, BitVMXError> {
         let var = context
             .globals
@@ -331,9 +335,9 @@ impl AdvanceFundsProtocol {
         }
     }
 
-    fn accept_pegin_utxo(
+    fn accept_pegin_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
@@ -344,9 +348,9 @@ impl AdvanceFundsProtocol {
             .utxo()?)
     }
 
-    fn is_initial_deposit_tx_dispatched(
+    fn is_initial_deposit_tx_dispatched<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
     ) -> Result<bool, BitVMXError> {
         let dispatched = context
@@ -358,9 +362,9 @@ impl AdvanceFundsProtocol {
         Ok(dispatched)
     }
 
-    fn dispatch_op_initial_deposit_tx(
+    fn dispatch_op_initial_deposit_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
         pubkey: &PublicKey,
     ) -> Result<(), BitVMXError> {
@@ -392,9 +396,9 @@ impl AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn dispatch_reimbursement_tx(
+    fn dispatch_reimbursement_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_protocol_id: Uuid,
         slot_index: usize,
         block_height: Option<u32>,
@@ -424,9 +428,9 @@ impl AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn save_pegout_id(
+    fn save_pegout_id<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_protocol_id: Uuid,
         pegout_id: Vec<u8>,
         slot_index: usize,
@@ -439,14 +443,20 @@ impl AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn my_dispute_key<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PublicKey, BitVMXError> {
         let my_index = self.find_my_index(context)?;
 
         let committee = self.committee(context)?;
         Ok(committee.members[my_index].dispute_key.clone())
     }
 
-    fn committee(&self, context: &ProgramContext) -> Result<Committee, BitVMXError> {
+    fn committee<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<Committee, BitVMXError> {
         let committee_id = self.committee_id(context)?;
 
         let committee = context
@@ -459,11 +469,17 @@ impl AdvanceFundsProtocol {
         Ok(committee)
     }
 
-    fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
+    fn committee_id<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<Uuid, BitVMXError> {
         Ok(self.advance_funds_request(context)?.committee_id)
     }
 
-    fn find_my_index(&self, context: &ProgramContext) -> Result<usize, BitVMXError> {
+    fn find_my_index<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<usize, BitVMXError> {
         let my_key = self.advance_funds_request(context)?.my_take_pubkey;
 
         let committee = self.committee(context)?;
@@ -478,9 +494,9 @@ impl AdvanceFundsProtocol {
         ))
     }
 
-    fn update_advance_funds_input(
+    fn update_advance_funds_input<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx: &Transaction,
     ) -> Result<(), BitVMXError> {
         const CHANGE_INDEX: usize = 2;
@@ -512,7 +528,10 @@ impl AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn dispatch_advance_funds_tx(&self, context: &ProgramContext) -> Result<Txid, BitVMXError> {
+    fn dispatch_advance_funds_tx<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<Txid, BitVMXError> {
         info!(
             "Dispatching {} transaction from protocol {}",
             ADVANCE_FUNDS_TX, self.ctx.id
@@ -553,7 +572,11 @@ impl AdvanceFundsProtocol {
         Ok((tx2send, None))
     }
 
-    fn send_funds_advanced(&self, context: &ProgramContext, txid: Txid) -> Result<(), BitVMXError> {
+    fn send_funds_advanced<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        txid: Txid,
+    ) -> Result<(), BitVMXError> {
         let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
 
         let funds_advanced = FundsAdvanced {
@@ -582,7 +605,11 @@ impl AdvanceFundsProtocol {
         Ok(())
     }
 
-    fn send_spv(&self, context: &ProgramContext, txid: Txid) -> Result<(), BitVMXError> {
+    fn send_spv<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        txid: Txid,
+    ) -> Result<(), BitVMXError> {
         let tx_info = context.bitcoin_coordinator.get_transaction(txid);
 
         let proof = match tx_info {

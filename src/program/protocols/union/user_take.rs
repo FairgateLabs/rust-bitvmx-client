@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
@@ -51,9 +52,9 @@ impl ProtocolHandler for UserTakeProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![(
             "take_aggregated".to_string(),
@@ -61,18 +62,18 @@ impl ProtocolHandler for UserTakeProtocol {
         )])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        _program_context: &mut ProgramContext,
+        _program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         Ok(ParticipantKeys::new(vec![], vec![]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let pegout_request = self.pegout_request(context)?;
         self.set_requested_confirmations(
@@ -182,10 +183,10 @@ impl ProtocolHandler for UserTakeProtocol {
         Ok(())
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        _context: &ProgramContext,
+        _context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         match name {
             USER_TAKE_TX => Ok((self.user_take_tx()?, None)),
@@ -193,13 +194,13 @@ impl ProtocolHandler for UserTakeProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        _program_context: &ProgramContext,
+        _program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -210,7 +211,10 @@ impl ProtocolHandler for UserTakeProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
             "UserTakeProtocol setup complete for program {}", self.ctx.id
@@ -227,7 +231,10 @@ impl UserTakeProtocol {
         Self { ctx }
     }
 
-    fn pegout_request(&self, context: &ProgramContext) -> Result<PegOutRequest, BitVMXError> {
+    fn pegout_request<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PegOutRequest, BitVMXError> {
         let pegout_request = context
             .globals
             .get_var(&self.ctx.id, &PegOutRequest::name())?
@@ -238,13 +245,16 @@ impl UserTakeProtocol {
         Ok(pegout_request)
     }
 
-    fn take_aggregated_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn take_aggregated_key<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PublicKey, BitVMXError> {
         Ok(self.pegout_request(context)?.take_aggregated_key)
     }
 
-    fn accept_pegin_utxo(
+    fn accept_pegin_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
@@ -271,9 +281,9 @@ impl UserTakeProtocol {
         Ok(tx)
     }
 
-    fn etake_utxo(
+    fn etake_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
@@ -284,9 +294,9 @@ impl UserTakeProtocol {
             .utxo()?)
     }
 
-    pub fn send_pegout_accepted(
+    pub fn send_pegout_accepted<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let pegout_request = self.pegout_request(program_context)?;
         let take_aggregated_key = pegout_request.take_aggregated_key;
@@ -350,9 +360,9 @@ impl UserTakeProtocol {
         Ok(())
     }
 
-    fn committee(
+    fn committee<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
     ) -> Result<Committee, BitVMXError> {
         let committee = context

@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
@@ -275,9 +276,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         let committee = self.committee(context)?;
         Ok(vec![
@@ -292,7 +293,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         ])
     }
 
-    fn generate_keys(&self, context: &mut ProgramContext) -> Result<ParticipantKeys, BitVMXError> {
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &mut ProgramContext<BC>,
+    ) -> Result<ParticipantKeys, BitVMXError> {
         let committee = self.committee(context)?;
         let packet_size = committee.packet_size;
         let data = self.dispute_core_data(context)?;
@@ -398,11 +402,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
         Ok(ParticipantKeys::new(keys, vec![]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         info!("Building DisputeCoreProtocol for program {}", self.ctx.id);
 
@@ -514,10 +518,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         Ok(())
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!("Getting transaction by name: {}", name);
         if name == PROTOCOL_FUNDING_TX {
@@ -543,13 +547,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         context: String,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         info!("Notified of transaction: {}. Context: {}", tx_id, context);
 
@@ -597,13 +601,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
         Ok(())
     }
 
-    fn notify_external_news(
+    fn notify_external_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         _vout: Option<u32>,
         _tx_status: TransactionStatus,
         context: String,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         info!(
             "Notified of external transaction: {}, Context: {}",
@@ -635,7 +639,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!(
             id = self.ctx.my_idx,
@@ -1150,7 +1157,7 @@ impl DisputeCoreProtocol {
         Ok(outputs)
     }
 
-    fn create_dispute_core(
+    fn create_dispute_core<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut Protocol,
         committee: &Committee,
@@ -1158,7 +1165,7 @@ impl DisputeCoreProtocol {
         dispute_core_index: usize,
         keys: &Vec<ParticipantKeys>,
         reimbursement_output: OutputType,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         reveal_output: &OutputType,
         settings: &StreamSettings,
     ) -> Result<(), BitVMXError> {
@@ -1430,9 +1437,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn protocol_funding_tx(
+    fn protocol_funding_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let tx_name = PROTOCOL_FUNDING_TX;
         let mut protocol = self.load_protocol()?;
@@ -1456,10 +1463,10 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn reimbursement_kickoff_tx(
+    fn reimbursement_kickoff_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let leaf_index = 0;
         let slot_index = extract_index(name, REIMBURSEMENT_KICKOFF_TX)?;
@@ -1493,10 +1500,10 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn challenge_tx(
+    fn challenge_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
@@ -1531,10 +1538,10 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn wt_init_challenge_tx(
+    fn wt_init_challenge_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
@@ -1628,9 +1635,9 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn sign_pegout_id_words(
+    fn sign_pegout_id_words<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         script: &ProtocolScript,
         key_prefix: &str,
         op_index: usize,
@@ -1669,18 +1676,18 @@ impl DisputeCoreProtocol {
             .collect()
     }
 
-    fn get_number(
+    fn get_number<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         pid: &Uuid,
         var_name: &str,
     ) -> Result<u32, BitVMXError> {
         Ok(context.globals.get_var(pid, var_name)?.unwrap().number()?)
     }
 
-    fn set_number(
+    fn set_number<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         pid: &Uuid,
         var_name: &str,
         value: u32,
@@ -1690,7 +1697,10 @@ impl DisputeCoreProtocol {
             .set_var(pid, var_name, VariableTypes::Number(value))
     }
 
-    fn dispute_core_data(&self, context: &ProgramContext) -> Result<DisputeCoreData, BitVMXError> {
+    fn dispute_core_data<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<DisputeCoreData, BitVMXError> {
         let data = context
             .globals
             .get_var(&self.ctx.id, &DisputeCoreData::name())?
@@ -1701,7 +1711,10 @@ impl DisputeCoreProtocol {
         Ok(data)
     }
 
-    fn committee(&self, context: &ProgramContext) -> Result<Committee, BitVMXError> {
+    fn committee<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<Committee, BitVMXError> {
         let committee_id = self.committee_id(context)?;
 
         let committee = context
@@ -1714,14 +1727,20 @@ impl DisputeCoreProtocol {
         Ok(committee)
     }
 
-    fn is_prover(&self, context: &ProgramContext) -> Result<bool, BitVMXError> {
+    fn is_prover<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<bool, BitVMXError> {
         match self.committee(context)?.members[self.ctx.my_idx].role {
             ParticipantRole::Prover => Ok(true),
             _ => Ok(false),
         }
     }
 
-    fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn my_speedup_key<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PublicKey, BitVMXError> {
         Ok(context
             .globals
             .get_var(&self.ctx.id, SPEEDUP_KEY)?
@@ -1729,27 +1748,30 @@ impl DisputeCoreProtocol {
             .pubkey()?)
     }
 
-    // fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    // fn my_dispute_key<BC: BitcoinCoordinatorApi>(&self, context: &ProgramContext<BC>) -> Result<PublicKey, BitVMXError> {
     //     let committee = self.committee(context)?;
     //     Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
     // }
 
-    fn committee_id(&self, context: &ProgramContext) -> Result<Uuid, BitVMXError> {
+    fn committee_id<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<Uuid, BitVMXError> {
         Ok(self.dispute_core_data(context)?.committee_id)
     }
 
-    fn monitored_member_take_key(
+    fn monitored_member_take_key<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<PublicKey, BitVMXError> {
         let committee = self.committee(context)?;
         let data = self.dispute_core_data(context)?;
         Ok(committee.members[data.member_index].take_key)
     }
 
-    fn funds_advanced(
+    fn funds_advanced<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         slot_id: usize,
     ) -> Result<Option<AdvanceFundsRegistered>, BitVMXError> {
         let committee_id = self.committee_id(context)?;
@@ -1766,16 +1788,19 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn get_reveal_in_progress(&self, context: &ProgramContext) -> Result<Option<u32>, BitVMXError> {
+    fn get_reveal_in_progress<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<Option<u32>, BitVMXError> {
         match context.globals.get_var(&self.ctx.id, REVEAL_IN_PROGRESS)? {
             Some(var) => Ok(Some(var.number()?)),
             None => Ok(None),
         }
     }
 
-    fn set_reveal_in_progress(
+    fn set_reveal_in_progress<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         slot_index: usize,
     ) -> Result<(), BitVMXError> {
         info!(
@@ -1790,9 +1815,9 @@ impl DisputeCoreProtocol {
         )
     }
 
-    fn handle_wt_claim_gate_txs(
+    fn handle_wt_claim_gate_txs<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
@@ -1842,9 +1867,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn get_drp_op_index(
+    fn get_drp_op_index<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         pid: Uuid,
         wt_index: usize,
     ) -> Result<Option<usize>, BitVMXError> {
@@ -1862,9 +1887,9 @@ impl DisputeCoreProtocol {
         Ok(maybe_index)
     }
 
-    fn handle_start_challenge(
+    fn handle_start_challenge<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         pid: Uuid,
     ) -> Result<(), BitVMXError> {
         info!("Handling start challenge. PID: {}", pid);
@@ -1899,9 +1924,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn handle_action_wins(
+    fn handle_action_wins<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         role: ParticipantRole,
         pid: Uuid,
@@ -1951,9 +1976,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn handle_op_no_cosign_tx(
+    fn handle_op_no_cosign_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
         info!(id = self.ctx.my_idx, "Handling {}", tx_name);
@@ -1966,9 +1991,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn handle_wt_no_challenge_tx(
+    fn handle_wt_no_challenge_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
     ) -> Result<(), BitVMXError> {
         info!(id = self.ctx.my_idx, "Handling {}", tx_name);
@@ -1981,9 +2006,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn handle_op_claim_gate_txs(
+    fn handle_op_claim_gate_txs<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
@@ -2033,9 +2058,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn claim_gate_tx(
+    fn claim_gate_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
         signing_infos: &Vec<InputSigningInfo>,
         with_speedup: bool,
@@ -2081,9 +2106,9 @@ impl DisputeCoreProtocol {
         Ok(block_height + timelock as u32)
     }
 
-    fn dispatch_claim_gate(
+    fn dispatch_claim_gate<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         action: ClaimGateAction,
         prefix: &str,
         op_index: usize,
@@ -2108,16 +2133,19 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn load_stream_setting(&self, context: &ProgramContext) -> Result<StreamSettings, BitVMXError> {
+    fn load_stream_setting<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<StreamSettings, BitVMXError> {
         get_stream_setting(
             &load_union_settings(context)?,
             self.committee(context)?.stream_denomination,
         )
     }
 
-    fn handle_op_cosign_tx(
+    fn handle_op_cosign_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
@@ -2211,9 +2239,9 @@ impl DisputeCoreProtocol {
         Ok((tx, None))
     }
 
-    fn handle_wt_init_challenge(
+    fn handle_wt_init_challenge<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
@@ -2254,9 +2282,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn dispatch_op_cosign(
+    fn dispatch_op_cosign<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx_status: &TransactionStatus,
         wt_index: usize,
@@ -2290,9 +2318,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn handle_penalized_watchtower(
+    fn handle_penalized_watchtower<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         data: &DisputeCoreData,
         op_index: usize,
     ) -> Result<bool, BitVMXError> {
@@ -2367,10 +2395,10 @@ impl DisputeCoreProtocol {
         Ok((tx, None))
     }
 
-    fn op_cosign_tx(
+    fn op_cosign_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
         let protocol = self.load_protocol()?;
@@ -2463,9 +2491,9 @@ impl DisputeCoreProtocol {
         Ok((tx, None))
     }
 
-    fn handle_reveal_input_tx(
+    fn handle_reveal_input_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
@@ -2515,9 +2543,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn dispatch_init_challenge(
+    fn dispatch_init_challenge<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx_status: &TransactionStatus,
         slot_index: usize,
@@ -2581,9 +2609,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn check_stop_op_won(
+    fn check_stop_op_won<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         data: &DisputeCoreData,
         slot_index: usize,
     ) -> Result<bool, BitVMXError> {
@@ -2617,9 +2645,9 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn handle_challenge_tx(
+    fn handle_challenge_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         slot_index: usize,
         tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
@@ -2650,7 +2678,11 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn cancel_operator_take(&self, context: &ProgramContext, slot_index: usize) {
+    fn cancel_operator_take<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        slot_index: usize,
+    ) {
         let tx_name = indexed_name(OPERATOR_TAKE_TX, self.ctx.my_idx);
 
         let committee_id = match self.committee_id(context) {
@@ -2671,10 +2703,10 @@ impl DisputeCoreProtocol {
         self.cancel_dispatch(context, &tx_name, Some((PROGRAM_TYPE_ACCEPT_PEGIN, pid)));
     }
 
-    fn reveal_input_tx(
+    fn reveal_input_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
         let mut protocol = self.load_protocol()?;
@@ -2709,10 +2741,10 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn input_not_revealed_tx(
+    fn input_not_revealed_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
@@ -2742,9 +2774,9 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn handle_double_reveal(
+    fn handle_double_reveal<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         slot_index: usize,
     ) -> Result<bool, BitVMXError> {
         let reveal_in_progress = self.get_reveal_in_progress(context)?;
@@ -2813,9 +2845,9 @@ impl DisputeCoreProtocol {
         Ok((tx, None, name))
     }
 
-    fn handle_reimbursement_kickoff_transaction(
+    fn handle_reimbursement_kickoff_transaction<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_status: &TransactionStatus,
         tx_id: Txid,
         tx_name: &str,
@@ -2869,9 +2901,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn validate_reimbursement(
+    fn validate_reimbursement<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         slot_index: usize,
         tx_status: &TransactionStatus,
         tx_name: &str,
@@ -2938,9 +2970,9 @@ impl DisputeCoreProtocol {
         Ok(true)
     }
 
-    fn check_op_lazy_disabler(
+    fn check_op_lazy_disabler<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         slot_index: usize,
     ) -> Result<bool, BitVMXError> {
         let data = self.dispute_core_data(context)?;
@@ -2976,9 +3008,9 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn send_reimbursement_kickoff_spv(
+    fn send_reimbursement_kickoff_spv<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         txid: Txid,
         slot_index: usize,
     ) -> Result<(), BitVMXError> {
@@ -3021,9 +3053,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn dispatch(
+    fn dispatch<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_type: DisputeCoreTxType,
     ) -> Result<(), BitVMXError> {
         let tx_name = tx_type.tx_name();
@@ -3087,9 +3119,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn wt_start_enabler_tx(
+    fn wt_start_enabler_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
             id = self.ctx.my_idx,
@@ -3118,14 +3150,17 @@ impl DisputeCoreProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn is_my_dispute_core(&self, program_context: &ProgramContext) -> Result<bool, BitVMXError> {
+    fn is_my_dispute_core<BC: BitcoinCoordinatorApi>(
+        &self,
+        program_context: &ProgramContext<BC>,
+    ) -> Result<bool, BitVMXError> {
         let dispute_core_data = self.dispute_core_data(program_context)?;
         Ok(dispute_core_data.member_index == self.ctx.my_idx)
     }
 
-    fn save_op_utxos(
+    fn save_op_utxos<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee: &Committee,
         reimbursement_outputs: &mut Vec<OutputType>,
         reveal_output: &mut OutputType,
@@ -3228,9 +3263,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn save_wt_utxos(
+    fn save_wt_utxos<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee: &Committee,
         data: &DisputeCoreData,
         init_challenge_outputs: &mut Vec<Option<WtInitChallengeOutputs>>,
@@ -3381,9 +3416,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn pegout_id(
+    fn pegout_id<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         slot_index: usize,
     ) -> Result<Vec<u8>, BitVMXError> {
         let key = indexed_name(PEGOUT_ID, slot_index);
@@ -3399,10 +3434,10 @@ impl DisputeCoreProtocol {
             .input()
     }
 
-    fn sign_aggregated_input(
+    fn sign_aggregated_input<BC: BitcoinCoordinatorApi>(
         &self,
         tx_name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         with_speedup: bool,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", tx_name);
@@ -3430,9 +3465,9 @@ impl DisputeCoreProtocol {
         Ok((tx, speedout))
     }
 
-    fn load_or_create_slot_id_keys(
+    fn load_or_create_slot_id_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
         committee: &Committee,
     ) -> Result<Vec<PublicKeyType>, BitVMXError> {
@@ -3469,9 +3504,9 @@ impl DisputeCoreProtocol {
         Ok(slot_id_keys)
     }
 
-    fn load_or_create_pegout_id_keys(
+    fn load_or_create_pegout_id_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: &Uuid,
         committee: &Committee,
     ) -> Result<Vec<PublicKeyType>, BitVMXError> {
@@ -3505,9 +3540,9 @@ impl DisputeCoreProtocol {
         Ok(pegout_id_keys)
     }
 
-    fn get_dispute_pair_keys(
+    fn get_dispute_pair_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
         members: &Vec<MemberData>,
     ) -> Result<Vec<(String, PublicKeyType)>, BitVMXError> {
@@ -3539,9 +3574,9 @@ impl DisputeCoreProtocol {
         Ok(keys)
     }
 
-    fn members_slot_id_keys(
+    fn members_slot_id_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
     ) -> Result<Vec<Vec<WinternitzPublicKey>>, BitVMXError> {
         match context
@@ -3557,10 +3592,10 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn validate_keys(
+    fn validate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         keys: &Vec<ParticipantKeys>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
     ) -> Result<(), BitVMXError> {
         // TODO: Add pegout id key validation
@@ -3655,9 +3690,9 @@ impl DisputeCoreProtocol {
     }
 
     // Set DRP variables for union-verifier.yaml
-    fn set_drp_variables(
+    fn set_drp_variables<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
         committee: &Committee,
         keys: &Vec<ParticipantKeys>,
@@ -3759,9 +3794,9 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn log_and_dispatch(
+    fn log_and_dispatch<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         tx: Transaction,
         speedup: Option<SpeedupData>,
@@ -3829,9 +3864,9 @@ impl DisputeCoreProtocol {
         txid
     }
 
-    fn cancel_dispatch(
+    fn cancel_dispatch<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         tx_name: &str,
         protocol_info: Option<(&str, Uuid)>,
     ) {

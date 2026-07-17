@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     config::{ComponentsConfig, PingConfig},
     errors::BitVMXError,
@@ -44,9 +45,9 @@ impl PingHelper {
         }
     }
 
-    pub fn check_job_dispatchers_liveness(
+    pub fn check_job_dispatchers_liveness<BC: BitcoinCoordinatorApi>(
         &mut self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         components: &ComponentsConfig,
     ) -> Result<(), BitVMXError> {
         if !self.enabled {
@@ -81,9 +82,9 @@ impl PingHelper {
         }
     }
 
-    fn send_liveness_message_to_dispatchers(
+    fn send_liveness_message_to_dispatchers<BC: BitcoinCoordinatorApi>(
         &mut self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         components: &ComponentsConfig,
     ) -> Result<(), BitVMXError> {
         let msg_to_prover = serde_json::to_string(&PingMessage::Ping)?;

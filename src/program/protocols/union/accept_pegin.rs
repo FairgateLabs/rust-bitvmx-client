@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use crate::{
@@ -65,9 +66,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         let pegin_request = self.pegin_request(context)?;
 
@@ -77,9 +78,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
         )])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup_key = program_context
             .key_manager
@@ -100,11 +101,11 @@ impl ProtocolHandler for AcceptPegInProtocol {
         Ok(ParticipantKeys::new(keys, vec![]))
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
         let pegin_request_txid = pegin_request.txid;
@@ -317,10 +318,10 @@ impl ProtocolHandler for AcceptPegInProtocol {
         Ok(())
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name == ACCEPT_PEGIN_TX {
             self.accept_pegin_tx()
@@ -335,13 +336,13 @@ impl ProtocolHandler for AcceptPegInProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         _vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -396,7 +397,10 @@ impl ProtocolHandler for AcceptPegInProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         let pegin_request: PegInRequest = self.pegin_request(program_context)?;
         let take_aggregated_key = pegin_request.take_aggregated_key;
@@ -416,7 +420,10 @@ impl AcceptPegInProtocol {
         Self { ctx }
     }
 
-    fn pegin_request(&self, context: &ProgramContext) -> Result<PegInRequest, BitVMXError> {
+    fn pegin_request<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PegInRequest, BitVMXError> {
         let pegin_request = context
             .globals
             .get_var(&self.ctx.id, &PegInRequest::name())?
@@ -427,9 +434,9 @@ impl AcceptPegInProtocol {
         Ok(pegin_request)
     }
 
-    fn operator_take_enabler(
+    fn operator_take_enabler<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_protocol_id: Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
@@ -443,9 +450,9 @@ impl AcceptPegInProtocol {
             .utxo()?)
     }
 
-    fn operator_won_enabler(
+    fn operator_won_enabler<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         dispute_protocol_id: Uuid,
         slot_index: usize,
     ) -> Result<PartialUtxo, BitVMXError> {
@@ -459,9 +466,9 @@ impl AcceptPegInProtocol {
             .utxo()?)
     }
 
-    fn send_pegin_accepted(
+    fn send_pegin_accepted<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         take_aggregated_key: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let pegin_request: PegInRequest = self.pegin_request(context)?;
@@ -709,9 +716,9 @@ impl AcceptPegInProtocol {
         Ok((tx, None))
     }
 
-    fn operator_take_tx(
+    fn operator_take_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let op_leaf_index = self.ctx.my_idx;
@@ -754,9 +761,9 @@ impl AcceptPegInProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn cancel_take0_tx(
+    fn cancel_take0_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
@@ -786,9 +793,9 @@ impl AcceptPegInProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    fn operator_won_tx(
+    fn operator_won_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         name: &str,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(
@@ -851,9 +858,9 @@ impl AcceptPegInProtocol {
         Ok(leaves)
     }
 
-    fn committee(
+    fn committee<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         committee_id: Uuid,
     ) -> Result<Committee, BitVMXError> {
         let committee = context
@@ -866,7 +873,10 @@ impl AcceptPegInProtocol {
         Ok(committee)
     }
 
-    fn my_speedup_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn my_speedup_key<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PublicKey, BitVMXError> {
         Ok(context
             .globals
             .get_var(&self.ctx.id, SPEEDUP_KEY)?
@@ -874,9 +884,9 @@ impl AcceptPegInProtocol {
             .pubkey()?)
     }
 
-    fn update_operator_take_utxo(
+    fn update_operator_take_utxo<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         utxo: PartialUtxo,
     ) -> Result<(), BitVMXError> {
         info!(
@@ -891,14 +901,17 @@ impl AcceptPegInProtocol {
         Ok(())
     }
 
-    fn my_dispute_key(&self, context: &ProgramContext) -> Result<PublicKey, BitVMXError> {
+    fn my_dispute_key<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<PublicKey, BitVMXError> {
         let committee = self.committee(context, self.pegin_request(context)?.committee_id)?;
         Ok(committee.members[self.ctx.my_idx].dispute_key.clone())
     }
 
-    fn clean_reveal_in_progress(
+    fn clean_reveal_in_progress<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         operator_index: usize,
     ) -> Result<(), BitVMXError> {
         let request = self.pegin_request(context)?;
@@ -943,9 +956,9 @@ impl AcceptPegInProtocol {
         Ok(())
     }
 
-    fn get_reveal_in_progress(
+    fn get_reveal_in_progress<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         protocol_id: Uuid,
     ) -> Result<Option<u32>, BitVMXError> {
         match program_context
@@ -957,7 +970,10 @@ impl AcceptPegInProtocol {
         }
     }
 
-    fn load_stream_setting(&self, context: &ProgramContext) -> Result<StreamSettings, BitVMXError> {
+    fn load_stream_setting<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<StreamSettings, BitVMXError> {
         let request = self.pegin_request(context)?;
         get_stream_setting(
             &load_union_settings(context)?,
@@ -974,9 +990,9 @@ impl AcceptPegInProtocol {
         }
     }
 
-    fn send_spv_notification(
+    fn send_spv_notification<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         txid: Txid,
         tx_type: UnionTxType,
     ) -> Result<(), BitVMXError> {

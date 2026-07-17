@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
@@ -102,12 +103,12 @@ fn add_nary_search(
     }
 }
 
-pub fn handle_tx_news(
+pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
     drp: &DisputeResolutionProtocol,
     tx_id: Txid,
     vout: Option<u32>,
     tx_status: TransactionStatus,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
 ) -> Result<(), BitVMXError> {
     let name = drp.get_transaction_name_by_id(tx_id)?;
     let current_height = tx_status
@@ -666,9 +667,9 @@ pub fn handle_tx_news(
     Ok(())
 }
 
-fn handle_nary_common(
+fn handle_nary_common<BC: BitcoinCoordinatorApi>(
     drp: &DisputeResolutionProtocol,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     fail_force_config: &ForceFailConfiguration,
     nary_search_type: NArySearchType,
     round: u32,
@@ -699,10 +700,10 @@ fn handle_nary_common(
     Ok(fail_config)
 }
 
-fn handle_nary_verifier(
+fn handle_nary_verifier<BC: BitcoinCoordinatorApi>(
     name: &str,
     drp: &DisputeResolutionProtocol,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     fail_force_config: &ForceFailConfiguration,
     selection_bits: &str,             // "selection_bits"
     prev_name: &str,                  // COMMITMENT
@@ -793,10 +794,10 @@ fn handle_nary_verifier(
     Ok(())
 }
 
-fn handle_nary_prover(
+fn handle_nary_prover<BC: BitcoinCoordinatorApi>(
     name: &str,
     drp: &DisputeResolutionProtocol,
-    program_context: &ProgramContext,
+    program_context: &ProgramContext<BC>,
     leaf: u32,
     fail_force_config: &ForceFailConfiguration,
     strip_prefix: &str,               // "NARY_PROVER_"

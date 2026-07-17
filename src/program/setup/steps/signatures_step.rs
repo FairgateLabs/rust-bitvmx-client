@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
@@ -46,10 +47,10 @@ impl SetupStep for SignaturesStep {
         "signatures"
     }
 
-    fn generate_data(
+    fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         let protocol_id = protocol.context().id;
 
@@ -130,14 +131,14 @@ impl SetupStep for SignaturesStep {
         Ok(Some((serialized, CommsMessageType::PartialSignatures)))
     }
 
-    fn verify_received(
+    fn verify_received<BC: BitcoinCoordinatorApi>(
         &self,
         data: Value,
         msg_type: CommsMessageType,
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
         _your_data: bool,
     ) -> Result<bool, BitVMXError> {
         if !matches!(msg_type, CommsMessageType::PartialSignatures) {
@@ -188,11 +189,11 @@ impl SetupStep for SignaturesStep {
         Ok(true)
     }
 
-    fn can_advance(
+    fn can_advance<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         let protocol_id = protocol.context().id;
 
@@ -218,11 +219,11 @@ impl SetupStep for SignaturesStep {
         Ok(true)
     }
 
-    fn on_step_complete(
+    fn on_step_complete<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let protocol_id = protocol.context().id;
         let my_idx = protocol.context().my_idx;

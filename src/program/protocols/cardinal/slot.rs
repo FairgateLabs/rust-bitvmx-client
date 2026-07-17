@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use bitcoin::{hashes::Hash, PublicKey, Sequence, Transaction, Txid};
@@ -124,9 +125,9 @@ impl ProtocolHandler for SlotProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys(
+    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
         Ok(vec![(
             "pregenerated".to_string(),
@@ -138,9 +139,9 @@ impl ProtocolHandler for SlotProtocol {
         )])
     }
 
-    fn generate_keys(
+    fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
         let speedup = program_context
             .key_manager
@@ -170,10 +171,10 @@ impl ProtocolHandler for SlotProtocol {
         Ok(ParticipantKeys::new(keys, vec![]))
     }
 
-    fn get_transaction_by_name(
+    fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         //TODO: this is hacky. parametrize get_transaction_name
         if name.starts_with("unsigned_") {
@@ -213,13 +214,13 @@ impl ProtocolHandler for SlotProtocol {
         }
     }
 
-    fn notify_news(
+    fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         vout: Option<u32>,
         tx_status: TransactionStatus,
         _context: String,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
@@ -484,11 +485,11 @@ impl ProtocolHandler for SlotProtocol {
         Ok(())
     }
 
-    fn build(
+    fn build<BC: BitcoinCoordinatorApi>(
         &self,
         keys: Vec<ParticipantKeys>,
         _computed_aggregated: HashMap<String, PublicKey>,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let dust = OutputType::generic_dust_limit(None).to_sat();
 
@@ -728,7 +729,10 @@ impl ProtocolHandler for SlotProtocol {
         Ok(())
     }
 
-    fn setup_complete(&self, _program_context: &ProgramContext) -> Result<(), BitVMXError> {
+    fn setup_complete<BC: BitcoinCoordinatorApi>(
+        &self,
+        _program_context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         // This is called after the protocol is built and ready to be used
         info!("SlotProtocol setup complete for program {}", self.ctx.id);
         Ok(())
@@ -740,9 +744,9 @@ impl SlotProtocol {
         Self { ctx: context }
     }
 
-    pub fn setup_tx(
+    pub fn setup_tx<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         let dust = OutputType::generic_dust_limit(None).to_sat();
 

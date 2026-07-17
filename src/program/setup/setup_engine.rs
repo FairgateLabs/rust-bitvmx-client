@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::{prepare_message, request, CommsMessageType},
@@ -193,10 +194,10 @@ impl SetupEngine {
     ///
     /// Returns the serialized data to send to other participants, or None if
     /// the step doesn't generate data.
-    fn generate_current_step_data(
+    fn generate_current_step_data<BC: BitcoinCoordinatorApi>(
         &mut self,
         protocol: &mut ProtocolType,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
         total_participants: usize,
     ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         self.if_not_completed()?;
@@ -238,7 +239,7 @@ impl SetupEngine {
         Ok(data_and_type)
     }
 
-    pub fn receive_dispatcher_result(
+    pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
         context: &Context,
@@ -246,7 +247,7 @@ impl SetupEngine {
         program_id: &Uuid,
         leader: usize,
         participants: &[CommsAddress],
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         self.if_not_completed()?;
 
@@ -308,7 +309,7 @@ impl SetupEngine {
     /// Receives and verifies data from a participant for the current step.
     ///
     /// This marks the participant as completed for this step.
-    fn receive_current_step_data(
+    fn receive_current_step_data<BC: BitcoinCoordinatorApi>(
         &mut self,
         data: Value,
         msg_type: CommsMessageType,
@@ -316,7 +317,7 @@ impl SetupEngine {
         from_participant: &CommsAddress,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         self.if_not_completed()?;
 
@@ -398,11 +399,11 @@ impl SetupEngine {
     /// the next step.
     ///
     /// Returns true if the step advanced, false if still waiting.
-    fn try_advance_current_step(
+    fn try_advance_current_step<BC: BitcoinCoordinatorApi>(
         &mut self,
         protocol: &ProtocolType,
         participants: &[CommsAddress],
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         self.if_not_completed()?;
 
@@ -472,7 +473,7 @@ impl SetupEngine {
     /// - Non-leaders send their data only to the leader
     /// - Leader stores its own data + collects data from non-leaders
     /// - When all data is received, leader broadcasts to all non-leaders
-    fn broadcast_setup_data(
+    fn broadcast_setup_data<BC: BitcoinCoordinatorApi>(
         &self,
         data: serde_json::Value,
         msg_type: CommsMessageType,
@@ -480,7 +481,7 @@ impl SetupEngine {
         my_idx: usize,
         leader: usize,
         participants: &[CommsAddress],
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let is_leader = my_idx == leader;
 
@@ -544,7 +545,7 @@ impl SetupEngine {
     /// 3. Tries to advance the current step
     ///
     /// Returns whether the engine state changed.
-    pub fn receive_setup_data(
+    pub fn receive_setup_data<BC: BitcoinCoordinatorApi>(
         &mut self,
         data: Value,
         msg_type: CommsMessageType,
@@ -554,7 +555,7 @@ impl SetupEngine {
         leader: usize,
         participants: &[CommsAddress],
         protocol: &ProtocolType,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         info!(
             "SetupEngine::receive_setup_data() - Received data of type {:?} from participant {}",
@@ -617,9 +618,9 @@ impl SetupEngine {
         Ok(true)
     }
 
-    fn send_broadcast_data_to_non_leaders(
+    fn send_broadcast_data_to_non_leaders<BC: BitcoinCoordinatorApi>(
         &self,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
         program_id: &Uuid,
         participants: &[CommsAddress],
         msg_type: CommsMessageType,
@@ -674,14 +675,14 @@ impl SetupEngine {
     /// - Marking participants as completed
     ///
     /// Returns the data to send (if any) and whether state changed.
-    pub fn tick(
+    pub fn tick<BC: BitcoinCoordinatorApi>(
         &mut self,
         protocol: &mut ProtocolType,
         participants: &[CommsAddress],
         my_idx: usize,
         program_id: &Uuid,
         leader: usize,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<SetupTickResult, BitVMXError> {
         if self.is_complete() {
             debug!("SetupEngine::tick() - Setup already complete");
@@ -795,7 +796,7 @@ impl SetupEngine {
         Ok(SetupTickResult { state_changed })
     }
 
-    fn process_produced_data(
+    fn process_produced_data<BC: BitcoinCoordinatorApi>(
         &mut self,
         data: Value,
         msg_type: CommsMessageType,
@@ -803,7 +804,7 @@ impl SetupEngine {
         leader: usize,
         participants: &[CommsAddress],
         program_id: &Uuid,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let step_name = self.current_step_name().to_string();
         info!(

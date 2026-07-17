@@ -1,3 +1,4 @@
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 /// Program — orchestrates protocol setup and lifecycle.
 ///
 /// - Uses SetupEngine for multi-step setup (keys, nonces, signatures)
@@ -58,7 +59,10 @@ impl Program {
     /// Attempts to send SetupCompleted message to the L2 channel.
     /// Returns true if the message was sent (meaning state changed and should be saved).
     /// Some protocols (e.g., AggregatedKeyProtocol) suppress this message.
-    fn send_setup_completed(&mut self, program_context: &mut ProgramContext) -> bool {
+    fn send_setup_completed<BC: BitcoinCoordinatorApi>(
+        &mut self,
+        program_context: &mut ProgramContext<BC>,
+    ) -> bool {
         if !self.protocol.send_setup_completed() {
             return false;
         }
@@ -101,12 +105,12 @@ impl Program {
     }
 
     /// Creates and initializes a new Program instance
-    pub fn new(
+    pub fn new<BC: BitcoinCoordinatorApi>(
         program_id: Uuid,
         program_type: &str,
         peers: Vec<CommsAddress>,
         leader: usize,
-        context: &mut ProgramContext,
+        context: &mut ProgramContext<BC>,
         storage: Rc<Storage>,
         config: &ClientConfig,
     ) -> Result<(), BitVMXError> {
@@ -241,7 +245,10 @@ impl Program {
     }
 
     /// Main tick function - drives the program forward
-    pub fn tick(&mut self, program_context: &mut ProgramContext) -> Result<(), BitVMXError> {
+    pub fn tick<BC: BitcoinCoordinatorApi>(
+        &mut self,
+        program_context: &mut ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
         let mut state_changed = false;
 
         match &self.state {
@@ -309,9 +316,9 @@ impl Program {
         Ok(())
     }
 
-    fn start_monitoring(
+    fn start_monitoring<BC: BitcoinCoordinatorApi>(
         &mut self,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         // After the protocol is ready, we need to monitor the transactions on blockchain
         // Only register monitoring if not already done (idempotent)
@@ -363,12 +370,12 @@ impl Program {
     }
 
     /// Receives results from job dispatchers (Garbler, Emulator)
-    pub fn receive_dispatcher_result(
+    pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
         context: Context,
         dispatcher: JobDispatcherType,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match dispatcher {
             JobDispatcherType::Garbler => {
@@ -441,12 +448,12 @@ impl Program {
     ///
     /// This is a public wrapper that delegates to SetupEngine when the program
     /// is in SettingUp state. The SetupEngine handles all the logic internally.
-    fn receive_setup_data(
+    fn receive_setup_data<BC: BitcoinCoordinatorApi>(
         &mut self,
         data: Value,
         msg_type: CommsMessageType,
         from: &PubKeyHash,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         // Only handle setup data if we're in setup state
         if matches!(self.state, ProgramState::Ready) {
@@ -505,12 +512,12 @@ impl Program {
     /// Main entry point for processing incoming communication messages
     ///
     /// Routes SetupStepData messages to receive_setup_data()
-    pub fn process_comms_message(
+    pub fn process_comms_message<BC: BitcoinCoordinatorApi>(
         &mut self,
         comms_address: &PubKeyHash,
         msg_type: &CommsMessageType,
         data: Value,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
         debug!(
             "Program::process_comms_message() - Received {:?}  from {}",
@@ -542,10 +549,10 @@ impl Program {
     }
 
     /// Gets a transaction by name from the protocol
-    pub fn get_transaction_by_name(
+    pub fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext,
+        context: &ProgramContext<BC>,
     ) -> Result<Transaction, BitVMXError> {
         let (tx, _speedup) = self.protocol.get_transaction_by_name(name, context)?;
         Ok(tx)
@@ -559,10 +566,10 @@ impl Program {
     }
 
     /// Dispatches (broadcasts) a transaction by name
-    pub fn dispatch_transaction_name(
+    pub fn dispatch_transaction_name<BC: BitcoinCoordinatorApi>(
         &mut self,
         name: &str,
-        program_context: &mut ProgramContext,
+        program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let (tx, speedup) = self
             .protocol
@@ -587,13 +594,13 @@ impl Program {
     }
 
     /// Notifies the protocol about blockchain events (transaction confirmations, etc.)
-    pub fn notify_news(
+    pub fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
         vout: Option<u32>,
         tx_status: TransactionStatus,
         context: String,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         self.protocol
             .notify_news(tx_id, vout, tx_status.clone(), context, program_context)?;
