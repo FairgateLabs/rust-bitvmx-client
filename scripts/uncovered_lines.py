@@ -2,16 +2,19 @@
 """List uncovered lines from a cargo-llvm-cov HTML report.
 
 Usage:
-    python scripts/uncovered_lines.py <source-file-name> [--html-root DIR] [--context]
+    python scripts/uncovered_lines.py <source-file-name> [--html-root DIR] [--context] [--summary]
 
 Examples:
     python scripts/uncovered_lines.py comms_helper.rs
     python scripts/uncovered_lines.py src/program/variables.rs --context
+    python scripts/uncovered_lines.py leader_broadcast.rs --summary
 
 Finds the per-file HTML page under the coverage HTML root (default:
 target/coverage/html), extracts the line numbers marked as uncovered
 (red), and prints them. With --context, also prints the source text of
-each uncovered line and groups consecutive lines into ranges.
+each uncovered line and groups consecutive lines into ranges. With
+--summary, also prints the file's function/line/region coverage plus
+the report totals, taken from the report's index.html.
 """
 
 import argparse
@@ -65,6 +68,37 @@ def as_ranges(nums: list[int]) -> str:
     return ", ".join(parts)
 
 
+def coverage_summary(html_root: Path, report: Path) -> list[str]:
+    """Extract the report row for `report` (and the Totals row) from index.html.
+
+    Each index row is: Filename, Function Coverage, Line Coverage, Region
+    Coverage, Branch Coverage — e.g. "99.18% (730/736)".
+    """
+    index = html_root / "index.html"
+    if not index.exists():
+        sys.exit(f"error: no index.html under {html_root}")
+    text = index.read_text(encoding="utf-8")
+
+    # The per-file row links to the same page find_report located.
+    needle = report.relative_to(html_root).as_posix()
+    out = []
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", text, re.S):
+        cells = [
+            html_mod.unescape(re.sub(r"<[^>]+>", "", c)).strip()
+            for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)
+        ]
+        if len(cells) < 4:
+            continue
+        is_file_row = f"href='{needle}'" in row.replace("\\", "/")
+        if is_file_row or cells[0] == "Totals":
+            out.append(
+                f"{cells[0]}: functions {cells[1]}, lines {cells[2]}, regions {cells[3]}"
+            )
+    if not out:
+        sys.exit(f"error: no index.html row matching {needle}")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("source", help="source file name, e.g. comms_helper.rs")
@@ -77,9 +111,17 @@ def main() -> None:
     ap.add_argument(
         "--context", action="store_true", help="print source text of uncovered lines"
     )
+    ap.add_argument(
+        "--summary",
+        action="store_true",
+        help="print the file's coverage percentages and the report totals",
+    )
     args = ap.parse_args()
 
     report = find_report(args.html_root, args.source)
+    if args.summary:
+        for line in coverage_summary(args.html_root, report):
+            print(line)
     lines = uncovered_lines(report)
     if not lines:
         print(f"{args.source}: fully covered (no red lines)")

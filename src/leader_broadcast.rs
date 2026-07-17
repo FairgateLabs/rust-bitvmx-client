@@ -1,6 +1,7 @@
 use crate::comms_helper::{request, serialize_msg, CommsMessageType};
 use crate::errors::BitVMXError;
 use crate::message_queue::MessageQueue;
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::ProgramContext;
@@ -265,9 +266,9 @@ impl LeaderBroadcastHelper {
     /// 2. Creates a BroadcastedMessage
     /// 3. Sends it to all non-leader participants
     /// 4. Clears the stored messages after successful broadcast
-    pub fn broadcast_to_non_leaders(
+    pub fn broadcast_to_non_leaders<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         context_id: &Uuid,
         msg_type: CommsMessageType,
         non_leader_participants: &[CommsAddress],
@@ -337,9 +338,9 @@ impl LeaderBroadcastHelper {
     ///    - Verifies the original message signature
     ///    - Reconstructs the serialized message
     ///    - Queues the message for processing
-    pub fn process_broadcasted_message(
+    pub fn process_broadcasted_message<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &ProgramContext,
+        program_context: &ProgramContext<BC>,
         leader_identifier: Identifier,
         program_id: Uuid,
         data: Value,
@@ -423,8 +424,8 @@ impl LeaderBroadcastHelper {
 
     /// Verify the signature of an original message
     /// This is similar to verify_message_signature but works with OriginalMessage data
-    fn verify_original_message_signature(
-        program_context: &ProgramContext,
+    fn verify_original_message_signature<BC: BitcoinCoordinatorApi>(
+        program_context: &ProgramContext<BC>,
         program_id: &Uuid,
         original_msg: &OriginalMessage,
     ) -> Result<bool, BitVMXError> {
@@ -463,8 +464,21 @@ pub fn get_non_leader_participants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestStorageDir;
+    use crate::comms_helper::{deserialize_msg, prepare_message};
+    use crate::signature_verifier::OperatorVerificationStore;
+    use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
+    use bitvmx_broker::channel::retry_helper::RetryPolicy;
+    use bitvmx_broker::rpc::config::QueueChannelConfig;
     use serde_json::json;
+
+    const MAX_MSG_LEN_KB: usize = 200000;
+
+    fn test_message_queue(store: Rc<Storage>) -> MessageQueue {
+        MessageQueue::new(
+            store,
+            RetryPolicy::new(&QueueChannelConfig::default()).unwrap(),
+        )
+    }
 
     fn test_original_message(sender: &str) -> OriginalMessage {
         OriginalMessage {
@@ -711,6 +725,323 @@ mod tests {
             version: "1.0".to_string(),
         };
         assert!(msg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_original_message_validation_empty_pubkey_hash() {
+        let mut msg = test_original_message("");
+        msg.sender_pubkey_hash = String::new();
+        assert!(msg.validate().is_err());
+    }
+
+    #[test]
+    fn get_original_messages_surfaces_corrupt_stored_entry() {
+        let dir = TestStorageDir::new("leader-broadcast-corrupt");
+        let storage = dir.storage();
+        let helper = LeaderBroadcastHelper::new(storage.clone());
+        let context_id = Uuid::new_v4();
+
+        // Write a value under the messages prefix that is not an
+        // OriginalMessage, bypassing store_original_message validation.
+        let key = get_original_message_key(&context_id, CommsMessageType::Keys, &"alice".into());
+        storage.set(&key, 42u32, None).unwrap();
+
+        assert!(helper
+            .get_original_messages(&context_id, CommsMessageType::Keys)
+            .is_err());
+        // Callers relying on the readback see the same error instead of a
+        // silently wrong completeness answer
+        assert!(helper
+            .has_all_expected_messages(&context_id, CommsMessageType::Keys, &["alice".into()])
+            .is_err());
+    }
+
+    #[test]
+    fn get_non_leader_participants_filters_out_leader() {
+        let leader = CommsAddress::new("127.0.0.1:1000".parse().unwrap(), "leader".into());
+        let bob = CommsAddress::new("127.0.0.1:1001".parse().unwrap(), "bob".into());
+        let carol = CommsAddress::new("127.0.0.1:1002".parse().unwrap(), "carol".into());
+
+        let non_leaders = get_non_leader_participants(
+            &[leader.clone(), bob.clone(), carol.clone()],
+            &leader.pubkey_hash,
+        );
+
+        let hashes: Vec<_> = non_leaders.iter().map(|p| p.pubkey_hash.as_str()).collect();
+        assert_eq!(hashes, vec!["bob", "carol"]);
+    }
+
+    #[test]
+    fn broadcast_sends_filtered_envelope_to_each_peer_and_clears_storage() {
+        let mut env = TestProgramContextEnv::new_with_peers("leader-broadcast-send", 2).unwrap();
+        let context_id = Uuid::new_v4();
+        let peer0 = env.peer_address(0).unwrap();
+        let peer1 = env.peer_address(1).unwrap();
+        let helper = &env.context.leader_broadcast_helper;
+
+        for peer in [&peer0, &peer1] {
+            assert!(helper
+                .store_original_message(
+                    &context_id,
+                    CommsMessageType::Keys,
+                    test_original_message(&peer.pubkey_hash),
+                )
+                .unwrap());
+        }
+
+        helper
+            .broadcast_to_non_leaders(
+                &env.context,
+                &context_id,
+                CommsMessageType::Keys,
+                &[peer0.clone(), peer1.clone()],
+            )
+            .unwrap();
+
+        // Each peer receives a Broadcasted envelope from the leader that
+        // excludes its own contribution and carries the other peer's message
+        let leader_hash = env.context.comms.get_pubk_hash().unwrap();
+        for (index, own, other) in [(0, &peer0, &peer1), (1, &peer1, &peer0)] {
+            let (sender, raw) = env.receive_via_peer(index).unwrap();
+            assert_eq!(sender.pubkey_hash, leader_hash);
+
+            let (_, msg_type, received_context, data, _, _) =
+                deserialize_msg(raw, MAX_MSG_LEN_KB).unwrap();
+            assert_eq!(msg_type, CommsMessageType::Broadcasted);
+            assert_eq!(received_context, context_id);
+
+            let broadcast: BroadcastedMessage = serde_json::from_value(data).unwrap();
+            assert_eq!(broadcast.original_msg_type, CommsMessageType::Keys);
+            let senders: Vec<_> = broadcast
+                .original_messages
+                .iter()
+                .map(|m| m.sender_pubkey_hash.as_str())
+                .collect();
+            assert_eq!(senders, vec![other.pubkey_hash.as_str()]);
+            assert!(!senders.contains(&own.pubkey_hash.as_str()));
+        }
+
+        // Stored messages are cleared after a successful broadcast
+        assert!(env
+            .context
+            .leader_broadcast_helper
+            .get_original_messages(&context_id, CommsMessageType::Keys)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn broadcast_with_no_stored_messages_sends_nothing() {
+        let mut env = TestProgramContextEnv::new_with_peers("leader-broadcast-none", 1).unwrap();
+        let context_id = Uuid::new_v4();
+        let peer0 = env.peer_address(0).unwrap();
+
+        env.context
+            .leader_broadcast_helper
+            .broadcast_to_non_leaders(&env.context, &context_id, CommsMessageType::Keys, &[peer0])
+            .unwrap();
+
+        env.assert_no_delivery_via_peer(0);
+    }
+
+    #[test]
+    fn broadcast_rejects_corrupt_message_set_and_keeps_storage() {
+        let mut env = TestProgramContextEnv::new_with_peers("leader-broadcast-reject", 1).unwrap();
+        let context_id = Uuid::new_v4();
+        let peer0 = env.peer_address(0).unwrap();
+
+        // Plant a stored message whose type contradicts its storage prefix,
+        // bypassing the store-time validation
+        let mut bad = test_original_message("mallory");
+        bad.msg_type = CommsMessageType::PublicNonces;
+        let key =
+            get_original_message_key(&context_id, CommsMessageType::Keys, &bad.sender_pubkey_hash);
+        env.context
+            .leader_broadcast_helper
+            .store
+            .set(&key, bad, None)
+            .unwrap();
+
+        assert!(env
+            .context
+            .leader_broadcast_helper
+            .broadcast_to_non_leaders(&env.context, &context_id, CommsMessageType::Keys, &[peer0],)
+            .is_err());
+
+        // Nothing was sent and the stored messages were not cleared
+        env.assert_no_delivery_via_peer(0);
+        assert_eq!(
+            env.context
+                .leader_broadcast_helper
+                .store
+                .partial_compare(
+                    &get_original_messages_prefix(&context_id, CommsMessageType::Keys),
+                    None
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// Build an OriginalMessage whose payload is really signed by the env's
+    /// own key, so signature verification succeeds via the self-key path.
+    fn signed_self_original(
+        env: &TestProgramContextEnv,
+        program_id: &Uuid,
+        payload: Value,
+    ) -> OriginalMessage {
+        let (version, data, timestamp, signature) = prepare_message(
+            &env.context.key_manager,
+            &env.context.rsa_public_key,
+            program_id,
+            CommsMessageType::Keys,
+            payload,
+        )
+        .unwrap();
+        OriginalMessage {
+            sender_pubkey_hash: env.context.comms.get_pubk_hash().unwrap(),
+            msg_type: CommsMessageType::Keys,
+            data,
+            original_timestamp: timestamp,
+            original_signature: signature,
+            version,
+        }
+    }
+
+    #[test]
+    fn process_broadcasted_message_queues_verified_original() {
+        let env = TestProgramContextEnv::new("leader-broadcast-process").unwrap();
+        let program_id = Uuid::new_v4();
+        let payload = json!({"step": "keys", "n": 1});
+        let original = signed_self_original(&env, &program_id, payload.clone());
+        let sender_hash = original.sender_pubkey_hash.clone();
+
+        let broadcast = BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![original],
+        };
+        let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
+
+        env.context
+            .leader_broadcast_helper
+            .process_broadcasted_message(
+                &env.context,
+                Identifier::new("leader-hash".into(), COMMS_ID),
+                program_id,
+                serde_json::to_value(&broadcast).unwrap(),
+                &queue,
+            )
+            .unwrap();
+
+        // The reconstructed original is queued and round-trips back to the
+        // exact message the sender signed
+        let queued = queue
+            .pop_front()
+            .unwrap()
+            .expect("verified original must be queued");
+        assert_eq!(queued.identifier.pubkey_hash, sender_hash);
+        let (_, msg_type, queued_program_id, data, _, _) =
+            deserialize_msg(queued.data, MAX_MSG_LEN_KB).unwrap();
+        assert_eq!(msg_type, CommsMessageType::Keys);
+        assert_eq!(queued_program_id, program_id);
+        assert_eq!(data, payload);
+        assert!(queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn process_broadcasted_message_queues_original_with_missing_key_for_retry() {
+        let env = TestProgramContextEnv::new("leader-broadcast-missing-key").unwrap();
+        let program_id = Uuid::new_v4();
+
+        // Sender whose verification key has not arrived yet: verification
+        // returns "missing key", and the message must still be queued so it
+        // can be retried once the key shows up
+        let mut original = test_original_message("unknown-peer");
+        original.data = json!({"step": "keys"});
+        let broadcast = BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![original],
+        };
+        let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
+
+        env.context
+            .leader_broadcast_helper
+            .process_broadcasted_message(
+                &env.context,
+                Identifier::new("leader-hash".into(), COMMS_ID),
+                program_id,
+                serde_json::to_value(&broadcast).unwrap(),
+                &queue,
+            )
+            .unwrap();
+
+        let queued = queue
+            .pop_front()
+            .unwrap()
+            .expect("missing-key original must be queued for retry");
+        assert_eq!(queued.identifier.pubkey_hash, "unknown-peer");
+    }
+
+    #[test]
+    fn process_broadcasted_message_rejects_whole_broadcast_on_bad_signature() {
+        let env = TestProgramContextEnv::new("leader-broadcast-bad-sig").unwrap();
+        let program_id = Uuid::new_v4();
+
+        let good = signed_self_original(&env, &program_id, json!({"step": "keys"}));
+
+        // "mallory" has a known verification key (the env's own RSA key), but
+        // her message carries a signature taken from a different payload, so
+        // verification runs and fails
+        OperatorVerificationStore::store(
+            &env.context.globals,
+            &"mallory".into(),
+            &env.context.rsa_public_key,
+        )
+        .unwrap();
+        let mut forged = signed_self_original(&env, &program_id, json!({"step": "forged"}));
+        forged.sender_pubkey_hash = "mallory".into();
+        forged.data = json!({"step": "tampered"});
+
+        let broadcast = BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![good, forged],
+        };
+        let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
+
+        assert!(env
+            .context
+            .leader_broadcast_helper
+            .process_broadcasted_message(
+                &env.context,
+                Identifier::new("leader-hash".into(), COMMS_ID),
+                program_id,
+                serde_json::to_value(&broadcast).unwrap(),
+                &queue,
+            )
+            .is_err());
+
+        // All-or-nothing: the valid message must not have been queued either
+        assert!(queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn process_broadcasted_message_rejects_malformed_data() {
+        let env = TestProgramContextEnv::new("leader-broadcast-malformed").unwrap();
+        let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
+
+        assert!(env
+            .context
+            .leader_broadcast_helper
+            .process_broadcasted_message(
+                &env.context,
+                Identifier::new("leader-hash".into(), COMMS_ID),
+                Uuid::new_v4(),
+                json!("not a broadcasted message"),
+                &queue,
+            )
+            .is_err());
+        assert!(queue.is_empty().unwrap());
     }
 
     #[test]
