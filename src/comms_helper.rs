@@ -261,21 +261,16 @@ pub fn send_verification_key_to_peer(
 impl VerificationKeyAnnouncement {
     pub fn to_value(&self) -> Result<Value, BitVMXError> {
         serde_json::to_value(self).map_err(|_| {
-            BitVMXError::InvalidMessage(
-                format!(
-                    "Failed to serialize VerificationKeyAnnouncement: {:?}",
-                    self
-                )
-                .to_string(),
-            )
+            BitVMXError::InvalidMessage(format!(
+                "Failed to serialize VerificationKeyAnnouncement: {:?}",
+                self
+            ))
         })
     }
 
     pub fn from_value(value: &Value) -> Result<Self, BitVMXError> {
         serde_json::from_value(value.clone()).map_err(|_| {
-            BitVMXError::InvalidMessage(
-                format!("Invalid VerificationKeyAnnouncement: {:?}", value).to_string(),
-            )
+            BitVMXError::InvalidMessage(format!("Invalid VerificationKeyAnnouncement: {:?}", value))
         })
     }
 }
@@ -318,9 +313,10 @@ pub fn deserialize_msg(
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
     let max_expected_msg_len = max_expected_msg_len_kb * 1024; // Convert KB to bytes
     if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > max_expected_msg_len {
-        return Err(BitVMXError::InvalidMessage(
-            format!("Invalid message length: {}", data.len()).to_string(),
-        ));
+        return Err(BitVMXError::InvalidMessage(format!(
+            "Invalid message length: {}",
+            data.len()
+        )));
     }
 
     // Extract the version (first 2 bytes) and message type (next 2 bytes)
@@ -334,21 +330,21 @@ pub fn deserialize_msg(
 
     // Validate and parse JSON payload
     let payload: Value = serde_json::from_slice(json_payload).map_err(|_| {
-        BitVMXError::InvalidMessage(format!("Invalid JSON payload: {:?}", json_payload).to_string())
+        BitVMXError::InvalidMessage(format!("Invalid JSON payload: {:?}", json_payload))
     })?;
 
     // Extract program ID and message
     let program_id = payload
         .get("program_id")
         .and_then(|id| id.as_str())
-        .ok_or_else(|| BitVMXError::InvalidMessage(format!("Missing program ID").to_string()))?;
+        .ok_or_else(|| BitVMXError::InvalidMessage("Missing program ID".to_string()))?;
 
     let data = payload
         .get("msg")
-        .ok_or_else(|| BitVMXError::InvalidMessage(format!("Missing message").to_string()))?;
+        .ok_or_else(|| BitVMXError::InvalidMessage("Missing message".to_string()))?;
     // Convert program ID to Uuid
     let program_id = Uuid::parse_str(program_id).map_err(|_| {
-        BitVMXError::InvalidMessage(format!("Invalid program ID: {:?}", program_id).to_string())
+        BitVMXError::InvalidMessage(format!("Invalid program ID: {:?}", program_id))
     })?;
 
     let timestamp = payload
