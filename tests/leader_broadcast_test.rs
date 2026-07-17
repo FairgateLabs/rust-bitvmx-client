@@ -337,7 +337,6 @@ fn build_broadcasted_envelope(
     let broadcasted_msg = BroadcastedMessage {
         original_msg_type: msg_type,
         original_messages: originals,
-        broadcast_timestamp: Utc::now().timestamp_millis(),
     };
     let bytes = serialize_msg(
         TEST_VERSION,

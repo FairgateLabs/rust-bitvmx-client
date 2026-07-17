@@ -5,7 +5,7 @@ use crate::program::participant::CommsAddress;
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::ProgramContext;
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
-use chrono::Utc;
+use bitvmx_broker::settings::COMMS_ID;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -23,9 +23,6 @@ pub struct BroadcastedMessage {
     /// List of original messages received, with their sender and data
     /// Each original message can be processed individually by process_msg
     pub original_messages: Vec<OriginalMessage>,
-
-    /// Timestamp when the leader created this broadcast
-    pub broadcast_timestamp: i64,
 }
 
 /// Represents an original message received by the leader
@@ -60,7 +57,9 @@ impl BroadcastedMessage {
             ));
         }
 
-        // Validate that all original messages have the same type as original_msg_type
+        // Single pass over the messages: type matches original_msg_type,
+        // no duplicate senders, and each message is valid on its own
+        let mut seen_senders = HashSet::new();
         for msg in &self.original_messages {
             if msg.msg_type != self.original_msg_type {
                 return Err(BitVMXError::InvalidMessage(format!(
@@ -68,29 +67,12 @@ impl BroadcastedMessage {
                     msg.msg_type
                 )));
             }
-        }
-
-        // Validate that there are no duplicate messages (same sender_pubkey_hash)
-        let mut seen_senders = HashSet::new();
-        for msg in &self.original_messages {
             if !seen_senders.insert(&msg.sender_pubkey_hash) {
                 return Err(BitVMXError::InvalidMessage(format!(
                     "Duplicate original message: {:?}",
                     msg.sender_pubkey_hash
                 )));
             }
-        }
-
-        // Validate that the broadcast timestamp is reasonable (not negative, not too far in the future)
-        if self.broadcast_timestamp < 0 {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Broadcast timestamp is negative: {:?}",
-                self.broadcast_timestamp
-            )));
-        }
-
-        // Validate each original message
-        for msg in &self.original_messages {
             msg.validate()?;
         }
 
@@ -101,14 +83,6 @@ impl BroadcastedMessage {
 impl OriginalMessage {
     /// Validates that the OriginalMessage is valid
     pub fn validate(&self) -> Result<(), BitVMXError> {
-        // Validate that the timestamp is not negative
-        if self.original_timestamp < 0 {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Original timestamp is negative: {:?}",
-                self.original_timestamp
-            )));
-        }
-
         // Validate that the signature is not empty
         if self.original_signature.is_empty() {
             return Err(BitVMXError::InvalidMessage(format!(
@@ -309,26 +283,25 @@ impl LeaderBroadcastHelper {
             return Ok(());
         }
 
-        // Create BroadcastedMessage
-        let broadcast_timestamp = Utc::now().timestamp_millis();
+        // Validate the full message set before sending anything
         let broadcasted_msg = BroadcastedMessage {
             original_msg_type: msg_type,
-            original_messages: original_messages.clone(),
-            broadcast_timestamp,
+            original_messages,
         };
-
-        // Validate the broadcasted message
         broadcasted_msg.validate()?;
 
-        // Send to all non-leader participants
+        // Send to all non-leader participants, excluding each participant's
+        // own message from the copy it receives
         for participant in non_leader_participants {
-            let mut copy_broadcasted_msg = broadcasted_msg.clone(); // Clone for each participant to avoid ownership issues
-            copy_broadcasted_msg.original_messages = copy_broadcasted_msg
-                .original_messages
-                .iter()
-                .filter(|m| &m.sender_pubkey_hash != &participant.pubkey_hash)
-                .cloned()
-                .collect();
+            let msg_for_participant = BroadcastedMessage {
+                original_msg_type: msg_type,
+                original_messages: broadcasted_msg
+                    .original_messages
+                    .iter()
+                    .filter(|m| m.sender_pubkey_hash != participant.pubkey_hash)
+                    .cloned()
+                    .collect(),
+            };
 
             request(
                 &program_context.comms,
@@ -337,7 +310,7 @@ impl LeaderBroadcastHelper {
                 context_id,
                 participant.clone(),
                 CommsMessageType::Broadcasted,
-                &copy_broadcasted_msg,
+                &msg_for_participant,
             )?;
         }
 
@@ -346,7 +319,7 @@ impl LeaderBroadcastHelper {
 
         info!(
             "Successfully broadcasted {} messages to {} non-leaders for context {} and type {:?}",
-            original_messages.len(),
+            broadcasted_msg.original_messages.len(),
             non_leader_participants.len(),
             context_id,
             msg_type
@@ -399,13 +372,8 @@ impl LeaderBroadcastHelper {
             // Verify the original message signature
             let original_verified = Self::verify_original_message_signature(
                 program_context,
-                &original_msg.sender_pubkey_hash,
                 &program_id,
-                &original_msg.version,
-                &original_msg.msg_type,
-                &original_msg.data,
-                original_msg.original_timestamp,
-                &original_msg.original_signature,
+                original_msg,
             )?;
 
             if !original_verified {
@@ -426,7 +394,7 @@ impl LeaderBroadcastHelper {
             )?;
 
             queued_messages.push((
-                Identifier::new(original_msg.sender_pubkey_hash.clone(), 0),
+                Identifier::new(original_msg.sender_pubkey_hash.clone(), COMMS_ID),
                 full_message,
             ));
         }
@@ -457,25 +425,20 @@ impl LeaderBroadcastHelper {
     /// This is similar to verify_message_signature but works with OriginalMessage data
     fn verify_original_message_signature(
         program_context: &ProgramContext,
-        sender_pubkey_hash: &PubkHash,
         program_id: &Uuid,
-        version: &String,
-        msg_type: &CommsMessageType,
-        data: &Value,
-        timestamp: i64,
-        signature: &Vec<u8>,
+        original_msg: &OriginalMessage,
     ) -> Result<bool, BitVMXError> {
         match SignatureVerifier::verify_and_get_key(
             &program_context.comms,
             &program_context.globals,
             &program_context.rsa_public_key,
-            sender_pubkey_hash,
+            &original_msg.sender_pubkey_hash,
             program_id,
-            msg_type,
-            data,
-            timestamp,
-            signature,
-            version,
+            &original_msg.msg_type,
+            &original_msg.data,
+            original_msg.original_timestamp,
+            &original_msg.original_signature,
+            &original_msg.version,
         ) {
             Ok(_) => Ok(true),
             Err(BitVMXError::MissingVerificationKey { .. }) => Ok(false),
@@ -636,7 +599,6 @@ mod tests {
         let msg = BroadcastedMessage {
             original_msg_type: CommsMessageType::Keys,
             original_messages: vec![],
-            broadcast_timestamp: 1234567890,
         };
         assert!(msg.validate().is_err());
     }
@@ -653,7 +615,6 @@ mod tests {
                 original_signature: vec![1, 2, 3],
                 version: "1.0".to_string(),
             }],
-            broadcast_timestamp: 1234567890,
         };
         assert!(msg.validate().is_err());
     }
@@ -680,7 +641,6 @@ mod tests {
                     version: "1.0".to_string(),
                 },
             ],
-            broadcast_timestamp: 1234567890,
         };
         assert!(msg.validate().is_err());
     }
@@ -697,7 +657,6 @@ mod tests {
                 original_signature: vec![1, 2, 3],
                 version: "1.0".to_string(),
             }],
-            broadcast_timestamp: 1234567890,
         };
         assert!(msg.validate().is_ok());
     }
@@ -724,19 +683,6 @@ mod tests {
             original_timestamp: 1234567890,
             original_signature: vec![1, 2, 3],
             version: "".to_string(), // Empty
-        };
-        assert!(msg.validate().is_err());
-    }
-
-    #[test]
-    fn test_original_message_validation_negative_timestamp() {
-        let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({}),
-            original_timestamp: -1, // Negative
-            original_signature: vec![1, 2, 3],
-            version: "1.0".to_string(),
         };
         assert!(msg.validate().is_err());
     }
@@ -779,7 +725,6 @@ mod tests {
                 original_signature: vec![1, 2, 3],
                 version: "1.0".to_string(),
             }],
-            broadcast_timestamp: 1234567890,
         };
 
         // Serialize

@@ -147,6 +147,16 @@ pub fn response<T: Serialize>(
     ) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
+/// COMPATIBILITY: renaming or removing variants of this enum breaks
+/// compatibility between versions. The variant names are persisted and
+/// exchanged in three places:
+/// - serde (wire format): OriginalMessage/BroadcastedMessage serialize the
+///   variant name as JSON
+/// - storage keys: leader_broadcast builds keys with the Debug name, so
+///   stored messages would be orphaned under the old name
+/// - KIND_MAP below: the 2-byte header representation (order-independent,
+///   but a removed variant frees its byte pair for accidental reuse)
+/// Adding new variants at the end is safe.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum CommsMessageType {
     Keys,
