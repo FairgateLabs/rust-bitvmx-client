@@ -24,13 +24,114 @@ use tracing::{debug, info};
 /// The generated keys are stored in globals with the following conventions:
 /// - Own keys: "my_keys"
 /// - Participant i keys: "participant_{i}_keys"
-/// - All keys aggregated: "all_participant_keys"
 #[derive(Debug, Clone, Default)]
 pub struct KeysStep;
 
 impl KeysStep {
     pub fn new() -> Self {
         Self
+    }
+
+    fn collect_participant_keys<BC: BitcoinCoordinatorApi>(
+        protocol_id: &uuid::Uuid,
+        participants: &[CommsAddress],
+        context: &ProgramContext<BC>,
+    ) -> Result<Vec<ParticipantKeys>, BitVMXError> {
+        participants
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                let keys_json = context
+                    .globals
+                    .get_var(protocol_id, &format!("participant_{}_keys", idx))?
+                    .ok_or_else(|| {
+                        BitVMXError::InvalidMessage(format!("Missing keys for participant {}", idx))
+                    })?
+                    .string()?;
+
+                Ok(serde_json::from_str(&keys_json)?)
+            })
+            .collect()
+    }
+
+    fn compute_aggregated_keys<BC: BitcoinCoordinatorApi>(
+        my_keys: &ParticipantKeys,
+        all_keys: &[ParticipantKeys],
+        context: &mut ProgramContext<BC>,
+    ) -> Result<std::collections::HashMap<String, bitcoin::PublicKey>, BitVMXError> {
+        let mut computed_aggregated = std::collections::HashMap::new();
+
+        for agg_name in &my_keys.aggregated {
+            let my_key = *my_keys.get_public(agg_name).map_err(|_| {
+                BitVMXError::InvalidMessage(format!(
+                    "My key '{}' not found or not a PublicKey type",
+                    agg_name
+                ))
+            })?;
+
+            let mut aggregated_pub_keys = all_keys
+                .iter()
+                .map(|participant_keys| {
+                    participant_keys
+                        .mapping
+                        .get(agg_name)
+                        .ok_or_else(|| {
+                            BitVMXError::InvalidMessage(format!(
+                                "Participant missing key '{}' for aggregation",
+                                agg_name
+                            ))
+                        })?
+                        .public()
+                        .copied()
+                        .ok_or_else(|| {
+                            BitVMXError::InvalidMessage(format!(
+                                "Participant key '{}' is not a PublicKey type",
+                                agg_name
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            aggregated_pub_keys.sort();
+
+            // The single-participant shortcut bypasses the key manager's MuSig2
+            // validation, so explicitly validate membership here.
+            if !aggregated_pub_keys.contains(&my_key) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "My key '{}' is not present in the participant keys",
+                    agg_name
+                )));
+            }
+
+            let aggregated_key = if aggregated_pub_keys.len() == 1 {
+                debug!("KeysStep: Single participant, using own key directly");
+                my_key
+            } else {
+                context
+                    .key_manager
+                    .new_musig2_session(aggregated_pub_keys, my_key)?
+            };
+
+            computed_aggregated.insert(agg_name.clone(), aggregated_key);
+            debug!(
+                "KeysStep: Computed aggregated key '{}': {}",
+                agg_name, aggregated_key
+            );
+        }
+
+        Ok(computed_aggregated)
+    }
+
+    fn store_my_keys<BC: BitcoinCoordinatorApi>(
+        protocol_id: &uuid::Uuid,
+        my_keys: &ParticipantKeys,
+        context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
+        context.globals.set_var(
+            protocol_id,
+            "my_keys",
+            VariableTypes::String(serde_json::to_string(my_keys)?),
+        )
     }
 }
 
@@ -49,12 +150,11 @@ impl SetupStep for KeysStep {
         debug!("KeysStep: Generating keys for protocol {}", protocol_id);
 
         // Call the protocol to generate its specific keys
-        let mut keys = protocol.generate_keys(context)?;
+        let keys = protocol.generate_keys(context)?;
 
         // Validate that keys were generated
         if keys.mapping.is_empty() && keys.aggregated.is_empty() {
             info!("KeysStep: Protocol did not generate any keys, using empty defaults");
-            keys = ParticipantKeys::new(vec![], vec![]);
         }
 
         debug!(
@@ -64,11 +164,7 @@ impl SetupStep for KeysStep {
         );
 
         // Save to globals with the convention "my_keys"
-        context.globals.set_var(
-            &protocol_id,
-            "my_keys",
-            VariableTypes::String(serde_json::to_string(&keys)?),
-        )?;
+        Self::store_my_keys(&protocol_id, &keys, context)?;
 
         // Serialize to send to other participants
         let serialized = serde_json::to_value(&keys)?;
@@ -101,7 +197,7 @@ impl SetupStep for KeysStep {
         );
 
         // Deserialize the received keys
-        let keys: ParticipantKeys = serde_json::from_value(data.clone()).map_err(|e| {
+        let keys: ParticipantKeys = serde_json::from_value(data).map_err(|e| {
             BitVMXError::InvalidMessage(format!("Failed to deserialize keys: {}", e))
         })?;
 
@@ -169,116 +265,14 @@ impl SetupStep for KeysStep {
 
         debug!("KeysStep: Step complete, aggregating all participant keys");
 
-        // Collect all participant keys
-        let mut all_keys = Vec::new();
+        let all_keys = Self::collect_participant_keys(&protocol_id, participants, context)?;
+        let mut my_keys =
+            super::load_my_keys(&protocol_id, context, "my_keys not found in globals")?;
+        let mut computed_aggregated = Self::compute_aggregated_keys(&my_keys, &all_keys, context)?;
 
-        for (idx, _) in participants.iter().enumerate() {
-            let keys_json = context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_keys", idx))?
-                .ok_or_else(|| {
-                    BitVMXError::InvalidMessage(format!("Missing keys for participant {}", idx))
-                })?
-                .string()?;
-
-            let keys: ParticipantKeys = serde_json::from_str(&keys_json)?;
-            all_keys.push(keys);
-        }
-
-        // Save the complete collection for later use
-        context.globals.set_var(
-            &protocol_id,
-            "all_participant_keys",
-            VariableTypes::String(serde_json::to_string(&all_keys)?),
-        )?;
-
-        // Compute aggregated keys and update my_keys in globals
-        // Get my_keys from globals
-        let my_keys_json = context
-            .globals
-            .get_var(&protocol_id, "my_keys")?
-            .ok_or_else(|| BitVMXError::InvalidMessage("my_keys not found in globals".to_string()))?
-            .string()?;
-
-        let mut my_keys: ParticipantKeys = serde_json::from_str(&my_keys_json)?;
-
-        // Compute aggregated keys for each aggregated key name
-        let mut computed_aggregated = std::collections::HashMap::new();
-
-        for agg_name in &my_keys.aggregated {
-            // Get my public key for this aggregated key
-            let my_key = my_keys.get_public(agg_name).map_err(|_| {
-                BitVMXError::InvalidMessage(format!(
-                    "My key '{}' not found or not a PublicKey type",
-                    agg_name
-                ))
-            })?;
-
-            // Collect all public keys from all participants for this aggregated key
-            let mut aggregated_pub_keys = Vec::new();
-            for participant_keys in &all_keys {
-                if let Some(key_type) = participant_keys.mapping.get(agg_name) {
-                    if let Some(public_key) = key_type.public() {
-                        aggregated_pub_keys.push(*public_key);
-                    } else {
-                        return Err(BitVMXError::InvalidMessage(format!(
-                            "Participant key '{}' is not a PublicKey type",
-                            agg_name
-                        )));
-                    }
-                } else {
-                    return Err(BitVMXError::InvalidMessage(format!(
-                        "Participant missing key '{}' for aggregation",
-                        agg_name
-                    )));
-                }
-            }
-
-            aggregated_pub_keys.sort();
-
-            // The local key must be one of the exchanged participant keys. In
-            // particular, the single-participant shortcut below bypasses the
-            // key manager's MuSig2 validation, so validate membership here.
-            if !aggregated_pub_keys.contains(my_key) {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "My key '{}' is not present in the participant keys",
-                    agg_name
-                )));
-            }
-
-            // Compute the aggregated key using MuSig2
-            // MuSig2 requires at least 2 participants; with a single participant,
-            // the aggregated key is simply that participant's own public key.
-            let aggregated_key = if aggregated_pub_keys.len() == 1 {
-                debug!("KeysStep: Single participant, using own key directly");
-                *my_key
-            } else {
-                context
-                    .key_manager
-                    .new_musig2_session(aggregated_pub_keys, *my_key)?
-            };
-
-            computed_aggregated.insert(agg_name.clone(), aggregated_key);
-
-            debug!(
-                "KeysStep: Computed aggregated key '{}': {}",
-                agg_name, aggregated_key
-            );
-        }
-
-        for (name, key) in protocol.get_pregenerated_aggregated_keys(context)? {
-            computed_aggregated.insert(name, key);
-        }
-
-        // Update my_keys with computed_aggregated
+        computed_aggregated.extend(protocol.get_pregenerated_aggregated_keys(context)?);
         my_keys.computed_aggregated = computed_aggregated;
-
-        // Save updated my_keys back to globals
-        context.globals.set_var(
-            &protocol_id,
-            "my_keys",
-            VariableTypes::String(serde_json::to_string(&my_keys)?),
-        )?;
+        Self::store_my_keys(&protocol_id, &my_keys, context)?;
 
         debug!(
             "KeysStep: Completed with {} participants, computed {} aggregated keys",
@@ -384,18 +378,6 @@ mod tests {
 
         step.on_step_complete(&protocol, &participants, &mut env.context)
             .unwrap();
-
-        let all_keys: Vec<ParticipantKeys> = serde_json::from_str(
-            &env.context
-                .globals
-                .get_var(&id, "all_participant_keys")
-                .unwrap()
-                .unwrap()
-                .string()
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(all_keys, vec![generated.clone()]);
 
         let completed = stored_keys(&id, "my_keys", &env.context);
         let aggregate = completed.computed_aggregated[&id.to_string()];

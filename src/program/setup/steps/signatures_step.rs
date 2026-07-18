@@ -3,7 +3,7 @@ use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
-        participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
+        participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
         variables::VariableTypes,
@@ -60,18 +60,11 @@ impl SetupStep for SignaturesStep {
         );
 
         // Get the participant's keys from the previous KeysStep
-        let my_keys_json = context
-            .globals
-            .get_var(&protocol_id, "my_keys")?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(
-                    "Keys must be exchanged before signatures (KeysStep must complete first)"
-                        .to_string(),
-                )
-            })?
-            .string()?;
-
-        let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_json)?;
+        let my_keys = super::load_my_keys(
+            &protocol_id,
+            context,
+            "Keys must be exchanged before signatures (KeysStep must complete first)",
+        )?;
 
         if my_keys.computed_aggregated.is_empty() {
             return Err(BitVMXError::InvalidMessage(

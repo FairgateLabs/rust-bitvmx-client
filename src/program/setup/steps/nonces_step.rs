@@ -3,7 +3,7 @@ use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
-        participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
+        participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
         variables::VariableTypes,
@@ -57,18 +57,11 @@ impl SetupStep for NoncesStep {
         debug!("NoncesStep: Generating nonces for protocol {}", protocol_id);
 
         // Get the participant's keys from the previous KeysStep
-        let my_keys_json = context
-            .globals
-            .get_var(&protocol_id, "my_keys")?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(
-                    "Keys must be exchanged before nonces (KeysStep must complete first)"
-                        .to_string(),
-                )
-            })?
-            .string()?;
-
-        let my_keys: ParticipantKeys = serde_json::from_str(&my_keys_json)?;
+        let my_keys = super::load_my_keys(
+            &protocol_id,
+            context,
+            "Keys must be exchanged before nonces (KeysStep must complete first)",
+        )?;
 
         if my_keys.computed_aggregated.is_empty() {
             return Err(BitVMXError::InvalidMessage(
@@ -271,5 +264,284 @@ impl SetupStep for NoncesStep {
             participants.len()
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::participant::ParticipantKeys;
+    use key_manager::key_type::BitcoinKeyType;
+    use std::rc::Rc;
+    use storage_backend::storage::Storage;
+    use uuid::Uuid;
+
+    use crate::program::protocols::protocol_handler::new_protocol_type;
+    use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
+    use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+
+    fn protocol(id: Uuid, my_idx: usize, storage: Rc<Storage>) -> ProtocolType {
+        new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, my_idx, storage).unwrap()
+    }
+
+    fn store_aggregated_key<BC: BitcoinCoordinatorApi>(
+        context: &ProgramContext<BC>,
+        id: Uuid,
+        aggregated: PublicKey,
+    ) {
+        let mut keys = ParticipantKeys::new(vec![], vec![]);
+        keys.computed_aggregated
+            .insert("test-aggregate".to_string(), aggregated);
+        context
+            .globals
+            .set_var(
+                &id,
+                "my_keys",
+                VariableTypes::String(serde_json::to_string(&keys).unwrap()),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn generation_requires_completed_keys_and_available_nonces() {
+        let mut env = TestProgramContextEnv::new("nonces-step-generation-errors").unwrap();
+        let dir = TestStorageDir::new("nonces-step-generation-errors-protocol");
+        let id = Uuid::new_v4();
+        let mut protocol = protocol(id, 0, dir.storage());
+        let step = NoncesStep::new();
+
+        assert_eq!(step.step_name(), "nonces");
+
+        let err = step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Keys must be exchanged"))
+        );
+
+        let empty_keys = ParticipantKeys::new(vec![], vec![]);
+        env.context
+            .globals
+            .set_var(
+                &id,
+                "my_keys",
+                VariableTypes::String(serde_json::to_string(&empty_keys).unwrap()),
+            )
+            .unwrap();
+        let err = step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("No aggregated keys"))
+        );
+
+        let key_without_session = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        store_aggregated_key(&env.context, id, key_without_session);
+        let err = step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Failed to generate nonces"))
+        );
+        assert!(env
+            .context
+            .globals
+            .get_var(&id, "my_nonces")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn generates_verifies_and_completes_nonce_exchange() {
+        let mut first = TestProgramContextEnv::new("nonces-step-first").unwrap();
+        let mut second = TestProgramContextEnv::new("nonces-step-second").unwrap();
+        let first_dir = TestStorageDir::new("nonces-step-first-protocol");
+        let second_dir = TestStorageDir::new("nonces-step-second-protocol");
+        let id = Uuid::new_v4();
+        let mut first_protocol = protocol(id, 0, first_dir.storage());
+        let mut second_protocol = protocol(id, 1, second_dir.storage());
+        let step = NoncesStep::new();
+
+        let first_key = first
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let second_key = second
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let participant_keys = vec![first_key, second_key];
+        let first_aggregate = first
+            .context
+            .key_manager
+            .new_musig2_session(participant_keys.clone(), first_key)
+            .unwrap();
+        let second_aggregate = second
+            .context
+            .key_manager
+            .new_musig2_session(participant_keys, second_key)
+            .unwrap();
+        assert_eq!(first_aggregate, second_aggregate);
+
+        for context in [&first.context, &second.context] {
+            context
+                .key_manager
+                .generate_nonce(
+                    "message-0",
+                    b"message-0".to_vec(),
+                    &first_aggregate,
+                    &first_protocol.context().protocol_name,
+                    None,
+                )
+                .unwrap();
+            store_aggregated_key(context, id, first_aggregate);
+        }
+
+        let (first_data, first_type) = step
+            .generate_data(&mut first_protocol, &mut first.context)
+            .unwrap()
+            .unwrap();
+        let (second_data, second_type) = step
+            .generate_data(&mut second_protocol, &mut second.context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_type, CommsMessageType::PublicNonces);
+        assert_eq!(second_type, CommsMessageType::PublicNonces);
+        assert_eq!(
+            serde_json::from_str::<PubNonceMessage>(
+                &first
+                    .context
+                    .globals
+                    .get_var(&id, "my_nonces")
+                    .unwrap()
+                    .unwrap()
+                    .string()
+                    .unwrap()
+            )
+            .unwrap(),
+            serde_json::from_value::<PubNonceMessage>(first_data.clone()).unwrap()
+        );
+
+        let first_address = first.self_address().unwrap();
+        let mut second_address = second.self_address().unwrap();
+        // TestProgramContextEnv instances use the same development comms key;
+        // give the second logical participant a distinct lookup identity.
+        second_address.pubkey_hash = "second-participant".to_string();
+        let participants = vec![first_address.clone(), second_address.clone()];
+
+        assert!(!step
+            .verify_received(
+                first_data.clone(),
+                CommsMessageType::Keys,
+                &first_address,
+                &first_protocol,
+                &participants,
+                &mut first.context,
+                true,
+            )
+            .unwrap());
+        assert!(!step
+            .can_advance(&first_protocol, &participants, &first.context)
+            .unwrap());
+
+        assert!(step
+            .verify_received(
+                first_data,
+                first_type,
+                &first_address,
+                &first_protocol,
+                &participants,
+                &mut first.context,
+                true,
+            )
+            .unwrap());
+        assert!(!step
+            .can_advance(&first_protocol, &participants, &first.context)
+            .unwrap());
+
+        let mut outsider = second_address.clone();
+        outsider.pubkey_hash = "unknown-participant".to_string();
+        assert!(step
+            .verify_received(
+                second_data.clone(),
+                second_type.clone(),
+                &outsider,
+                &first_protocol,
+                &participants,
+                &mut first.context,
+                false,
+            )
+            .is_err());
+
+        assert!(step
+            .verify_received(
+                second_data,
+                second_type,
+                &second_address,
+                &first_protocol,
+                &participants,
+                &mut first.context,
+                false,
+            )
+            .unwrap());
+        assert!(step
+            .can_advance(&first_protocol, &participants, &first.context)
+            .unwrap());
+        step.on_step_complete(&first_protocol, &participants, &mut first.context)
+            .unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_or_empty_received_nonces_and_missing_completion_data() {
+        let mut env = TestProgramContextEnv::new("nonces-step-validation").unwrap();
+        let dir = TestStorageDir::new("nonces-step-validation-protocol");
+        let id = Uuid::new_v4();
+        let protocol = protocol(id, 0, dir.storage());
+        let participant = env.self_address().unwrap();
+        let participants = vec![participant.clone(), participant.clone()];
+        let step = NoncesStep::new();
+
+        let err = step
+            .verify_received(
+                serde_json::json!({"not": "nonces"}),
+                CommsMessageType::PublicNonces,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("deserialize"))
+        );
+
+        let err = step
+            .verify_received(
+                serde_json::to_value(PubNonceMessage::new()).unwrap(),
+                CommsMessageType::PublicNonces,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("empty nonces"))
+        );
+
+        let err = step
+            .on_step_complete(&protocol, &participants, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("participant 1"))
+        );
     }
 }

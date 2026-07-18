@@ -16,7 +16,7 @@ use super::SetupStep;
 use crate::comms_helper::CommsMessageType;
 use crate::errors::BitVMXError;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use crate::program::participant::CommsAddress;
+use crate::program::participant::{CommsAddress, ParticipantKeys};
 use crate::program::protocols::protocol_handler::ProtocolType;
 use crate::types::ProgramContext;
 
@@ -52,4 +52,18 @@ pub fn create_setup_step(name: &SetupStepName) -> SetupStepEnum {
         SetupStepName::Signatures => SetupStepEnum::Signatures(SignaturesStep::new()),
         SetupStepName::Garbler => SetupStepEnum::Garbler(GarblerStep::new()),
     }
+}
+
+fn load_my_keys<BC: BitcoinCoordinatorApi>(
+    protocol_id: &Uuid,
+    context: &ProgramContext<BC>,
+    missing_message: &str,
+) -> Result<ParticipantKeys, BitVMXError> {
+    let keys_json = context
+        .globals
+        .get_var(protocol_id, "my_keys")?
+        .ok_or_else(|| BitVMXError::InvalidMessage(missing_message.to_string()))?
+        .string()?;
+
+    Ok(serde_json::from_str(&keys_json)?)
 }
