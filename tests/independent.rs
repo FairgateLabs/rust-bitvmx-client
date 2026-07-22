@@ -37,21 +37,19 @@ mod common;
 
 const MIN_TX_FEE: f64 = 2.0;
 
+/// One entry of the program input, mirroring the entries declared in the program definition yaml.
 pub enum InputType {
-    Const(String, u32, String, u32),
-    Participant(String, ParticipantRole),
-}
-impl From<(&str, u32, &str, u32)> for InputType {
-    fn from(t: (&str, u32, &str, u32)) -> Self {
-        InputType::Const(t.0.to_string(), t.1, t.2.to_string(), t.3)
-    }
+    /// A const input, as (value, entry index). It has to be set on both participants before the setup starts.
+    Const(String, u32),
+    /// An input committed on chain by a participant, as (value, input index, owner). A verifier owned input is automatically cosigned by the prover
+    Participant(String, u32, ParticipantRole),
 }
 
 pub fn test_all_aux(
     independent: bool,
     network: Network,
     program: Option<String>,
-    inputs: Option<InputType>,
+    inputs: Option<Vec<InputType>>,
     force_challenge: Option<ForcedChallenges>,
     force_winner: Option<ParticipantRole>,
 ) -> Result<()> {
@@ -174,10 +172,13 @@ pub fn test_all_aux(
     send_all(&pair_0_1_channels, &prev_protocol)?;
     send_all(&pair_0_1_channels, &prev_prefix)?;
 
-    if let Some(InputType::Const(input, index, _, _)) = &inputs {
-        let const_input = VariableTypes::Input(hex::decode(input).unwrap())
-            .set_msg(prog_id, &program_input(*index, None))?;
-        let _ = send_all(&pair_0_1_channels, &const_input);
+    // Const inputs are known upfront and have to reach both participants before the setup starts.
+    for input in inputs.iter().flatten() {
+        if let InputType::Const(value, index) = input {
+            let const_input = VariableTypes::Input(hex::decode(value).unwrap())
+                .set_msg(prog_id, &program_input(*index, None))?;
+            let _ = send_all(&pair_0_1_channels, &const_input);
+        }
     }
 
     let forced_challenge = force_challenge.unwrap_or(ForcedChallenges::Execution);
@@ -217,17 +218,34 @@ pub fn test_all_aux(
 
     helper.wait_tx_name(1, program::protocols::dispute::START_CH)?;
 
-    // Get input
-    let (role, msg, idx) = match &inputs {
-        Some(InputType::Const(_, _, input, idx)) => (ParticipantRole::Prover, input.as_str(), *idx),
-        Some(InputType::Participant(msg, role)) => (role.clone(), msg.as_str(), 0),
-        None => (ParticipantRole::Prover, "11111111", 0),
+    // Get input. Each entry is (value, input index, participant) and they are sent in input index order.
+    let mut to_dispatch = match &inputs {
+        None => vec![("11111111".to_string(), 0, 0)],
+        Some(inputs) => inputs
+            .iter()
+            .filter_map(|input| match input {
+                InputType::Const(_, _) => None,
+                InputType::Participant(value, idx, role) => {
+                    let participant_id = match role {
+                        ParticipantRole::Prover => 0,
+                        ParticipantRole::Verifier => 1,
+                    };
+                    Some((value.clone(), *idx, participant_id))
+                }
+            })
+            .collect(),
     };
-    let participant_id = match role {
-        ParticipantRole::Prover => 0,
-        ParticipantRole::Verifier => 1,
-    };
-    helper.set_input_and_send(hex::decode(msg).unwrap(), idx, participant_id, prog_id)?;
+    to_dispatch.sort_by_key(|(_, idx, _)| *idx);
+
+    let mut previous_input = None;
+    for (msg, idx, participant) in to_dispatch.iter() {
+        // A participant can only build its input transaction once it has seen the previous one on chain.
+        if let Some(previous) = previous_input {
+            helper.wait_tx_name(*participant, &input_tx_name(previous))?;
+        }
+        helper.set_input_and_send(hex::decode(msg).unwrap(), *idx, *participant, prog_id)?;
+        previous_input = Some(*idx);
+    }
 
     let role = match force_winner {
         Some(role) => role,
@@ -316,12 +334,15 @@ fn test_all() -> Result<()> {
 
 #[ignore]
 #[test]
-fn test_const() -> Result<()> {
+fn test_const_only() -> Result<()> {
     test_all_aux(
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-        Some(("0000000100000002", 0, "00000003", 1).into()),
+        Some(vec![
+            InputType::Const("0000000100000002".to_string(), 0),
+            InputType::Participant("00000003".to_string(), 1, Prover),
+        ]),
         None,
         None,
     )?;
@@ -330,7 +351,10 @@ fn test_const() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-        Some(("0000000200000003", 1, "00000001", 0).into()),
+        Some(vec![
+            InputType::Participant("00000001".to_string(), 0, Prover),
+            InputType::Const("0000000200000003".to_string(), 1),
+        ]),
         None,
         None,
     )?;
@@ -368,7 +392,10 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(("00000002", 1, "00000003", 2).into()),
+        Some(vec![
+            InputType::Const("00000002".to_string(), 1),
+            InputType::Participant("00000003".to_string(), 2, Prover),
+        ]),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
         Some(Verifier),
     )?;
@@ -376,7 +403,10 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-        Some(("0000000200000004", 1, "00000001", 0).into()),
+        Some(vec![
+            InputType::Participant("00000001".to_string(), 0, Prover),
+            InputType::Const("0000000200000004".to_string(), 1),
+        ]),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
         Some(Verifier),
     )?;
@@ -384,7 +414,10 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-        Some(("0000000100000002", 0, "00000004", 1).into()),
+        Some(vec![
+            InputType::Const("0000000100000002".to_string(), 0),
+            InputType::Participant("00000004".to_string(), 1, Prover),
+        ]),
         Some(ForcedChallenges::Personalized(fail_config)),
         Some(Verifier),
     )?;
@@ -399,7 +432,10 @@ fn test_previous_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(("00000002", 1, "00000003", 2).into()),
+        Some(vec![
+            InputType::Const("00000002".to_string(), 1),
+            InputType::Participant("00000003".to_string(), 2, Prover),
+        ]),
         None,
         None,
     )?;
@@ -410,26 +446,82 @@ fn test_previous_input() -> Result<()> {
 #[ignore]
 #[test]
 fn test_verifier_input() -> Result<()> {
+    // test_all_aux(
+    //     false,
+    //     Network::Regtest,
+    //     Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
+    //     Some(vec![InputType::Participant("11111111".to_string(), 0, Verifier)]),
+    //     None,
+    //     None,
+    // )?;
+
     test_all_aux(
         false,
         Network::Regtest,
-        Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
-        Some(InputType::Participant("11111111".to_string(), Verifier)),
+        Some("../BitVMX-CPU/docker-riscv32/riscv32/build/add-test-verifier.yaml".to_string()),
+        Some(vec![InputType::Participant(
+            "000000010000000200000003".to_string(),
+            0,
+            Verifier,
+        )]),
         None,
         None,
     )?;
 
-    // test_all_aux(
-    //     false,
-    //     Network::Regtest,
-    //     Some("../BitVMX-CPU/docker-riscv32/riscv32/build/add-test-verifier.yaml".to_string()),
-    //     Some(InputType::Participant(
-    //         "000000010000000200000003".to_string(),
-    //         Verifier,
-    //     )),
-    //     None,
-    //     None,
-    // )?;
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_prover_and_verifier_input() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-verifier.yaml".to_string()),
+        Some(vec![
+            InputType::Participant("00000001".to_string(), 0, Prover),
+            InputType::Participant("0000000200000003".to_string(), 1, Verifier),
+        ]),
+        None,
+        None,
+    )?;
+
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_const_prover_and_verifier_input() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-const-and-verifier.yaml".to_string()),
+        Some(vec![
+            InputType::Participant("00000001".to_string(), 0, Prover),
+            InputType::Const("00000002".to_string(), 1),
+            InputType::Participant("00000003".to_string(), 2, Verifier),
+        ]),
+        None,
+        None,
+    )?;
+
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn test_previous_wots_and_verifier_input() -> Result<()> {
+    test_all_aux(
+        false,
+        Network::Regtest,
+        Some("./verifiers/add-test-with-previous-wots-and-verifier.yaml".to_string()),
+        Some(vec![
+            InputType::Const("00000002".to_string(), 1),
+            InputType::Participant("00000003".to_string(), 2, Verifier),
+        ]),
+        None,
+        None,
+    )?;
 
     Ok(())
 }
@@ -818,7 +910,10 @@ fn test_input_timeout_input_prover_with_previous() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(("00000002", 1, "00000003", 2).into()),
+        Some(vec![
+            InputType::Const("00000002".to_string(), 1),
+            InputType::Participant("00000003".to_string(), 2, Prover),
+        ]),
         Some(ForcedChallenges::InputTimeOut(
             input_tx_name(2),
             ParticipantRole::Prover,
@@ -835,7 +930,11 @@ fn test_input_timeout_input_verifier() -> Result<()> {
         false,
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
-        Some(InputType::Participant("11111111".to_string(), Verifier)),
+        Some(vec![InputType::Participant(
+            "11111111".to_string(),
+            0,
+            Verifier,
+        )]),
         Some(ForcedChallenges::InputTimeOut(
             input_tx_name(0),
             ParticipantRole::Verifier,
@@ -852,7 +951,11 @@ fn test_input_timeout_input_prover_cosign() -> Result<()> {
         false,
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
-        Some(InputType::Participant("11111111".to_string(), Verifier)),
+        Some(vec![InputType::Participant(
+            "11111111".to_string(),
+            0,
+            Verifier,
+        )]),
         Some(ForcedChallenges::InputTimeOut(
             input_tx_name(1),
             ParticipantRole::Prover,
