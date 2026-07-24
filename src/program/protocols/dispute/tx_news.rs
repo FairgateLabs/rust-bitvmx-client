@@ -205,7 +205,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
             }
 
             let my_tx = ownership_table.is_my_tx(&name, drp.role());
-            let (def, program_definition) = drp.get_program_definition(program_context)?;
+            let (_def, program_definition) = drp.get_program_definition(program_context)?;
 
             let mut leaf = 0;
             let mut names = vec![];
@@ -231,20 +231,28 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                             .ok_or_else(|| BitVMXError::InvalidStringOperation(name.to_string()))?
                             .parse::<u32>()?;
 
-                        let (_, _, _, last_tx_id) =
+                        let (_, _, input_txs_offsets, last_tx_id) =
                             get_txs_configuration(&drp.ctx.id, program_context)?;
 
                         unify_witnesses(&drp.ctx.id, program_context, idx as usize)?;
 
                         if drp.role() == ParticipantRole::Prover {
                             if idx != last_tx_id as u32 {
-                                let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
-                                for (i, input_chunk) in full_input.chunks(4).enumerate() {
-                                    // It is assumed that each input chunk is 4 bytes
+                                // This branch only fires for a verifier input tx (a tx that is not ours as prover), so the next tx is its cosign.
+                                let offset = input_txs_offsets[idx as usize];
+                                let committed = program_context
+                                    .globals
+                                    .get_var_or_err(&drp.ctx.id, &program_input(idx, None))?
+                                    .input()?;
+                                for (word, input_chunk) in committed.chunks(4).enumerate() {
+                                    // Each input chunk is 4 bytes.
                                     set_input(
                                         &drp.ctx.id,
                                         program_context,
-                                        &program_input(i as u32, Some(&ParticipantRole::Prover)),
+                                        &program_input(
+                                            offset + word as u32,
+                                            Some(&ParticipantRole::Prover),
+                                        ),
                                         input_chunk.to_vec(),
                                     )?;
                                 }
@@ -272,7 +280,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                     }
 
                     PRE_COMMITMENT => {
-                        let full_input = unify_inputs(&drp.ctx.id, program_context, &def)?;
+                        let full_input = unify_inputs(&drp.ctx.id, program_context)?;
                         drp.execute_job(
                             program_context,
                             &program_context.components_config.emulator,
@@ -288,7 +296,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                     }
 
                     COMMITMENT => {
-                        let input_program = unify_inputs(&drp.ctx.id, program_context, &def)?;
+                        let input_program = unify_inputs(&drp.ctx.id, program_context)?;
 
                         let last_hash = program_context
                             .witness
