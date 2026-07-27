@@ -1,4 +1,3 @@
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
     participants::{
@@ -25,6 +24,7 @@ use crate::{
 };
 use ::bitcoin::{hashes::Hash, Network, OutPoint, PublicKey, Transaction, Txid};
 use anyhow::Result;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_client::{
     program::{
         participant::ParticipantRole,
@@ -890,7 +890,10 @@ pub fn cli_user_recover_funds() -> Result<()> {
 
     recover_user_funds(&user, address.to_string())?;
 
-    wait_for_blocks(&BitcoinWrapper::new(user.bitcoin_client, user.network_flavor), 1)?;
+    wait_for_blocks(
+        &BitcoinWrapper::new(user.bitcoin_client, user.network_flavor),
+        1,
+    )?;
     thread::sleep(Duration::from_secs(5)); // wait for the wallet to update
 
     info!("Master wallet balance after recovery:");
@@ -1031,7 +1034,8 @@ pub fn request_and_accept_pegin(
     info!("Accept peg-in TX dispatched. Txid: {}", accept_pegin_txid);
     print_link(network_flavor(), accept_pegin_txid);
 
-    if network_flavor().is_local_chain() || ask_user_confirmation("Dispatch speedup transaction?: ") {
+    if network_flavor().is_local_chain() || ask_user_confirmation("Dispatch speedup transaction?: ")
+    {
         user.create_and_dispatch_speedup(
             OutPoint {
                 txid: accept_pegin_txid.into(),
@@ -1082,7 +1086,8 @@ pub fn request_pegout() -> Result<()> {
     info!("User take TX dispatched. Txid: {}", user_take_utxo.0);
     print_link(network_flavor(), user_take_utxo.0);
 
-    if network_flavor().is_local_chain() || ask_user_confirmation("Dispatch speedup transaction?: ") {
+    if network_flavor().is_local_chain() || ask_user_confirmation("Dispatch speedup transaction?: ")
+    {
         user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), get_user_take_fee()?)?;
     }
 
@@ -1368,7 +1373,11 @@ fn confirm_to_continue() {
     }
 
     if !ask_user_confirmation(
-        format!("Running in {} network. Do you want to continue?", network_flavor()).as_str(),
+        format!(
+            "Running in {} network. Do you want to continue?",
+            network_flavor()
+        )
+        .as_str(),
     ) {
         print!("Operation cancelled by user.\n");
         std::process::exit(0);

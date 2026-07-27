@@ -31,7 +31,6 @@ use crate::common::check_bitvmx_cpu_built;
 
 mod common;
 
-
 pub enum InputType {
     Const(String, u32, String, u32),
     Participant(String, ParticipantRole),

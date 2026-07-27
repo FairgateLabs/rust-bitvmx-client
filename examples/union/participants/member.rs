@@ -1,4 +1,3 @@
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::wallet::helper::print_link;
 use crate::{
     setup::{
@@ -11,6 +10,7 @@ use crate::{
 };
 use anyhow::{Error, Result};
 use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_broker::identification::allow_list::AllowList;
 // use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
 use bitvmx_client::{

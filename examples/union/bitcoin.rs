@@ -3,13 +3,13 @@ use std::thread;
 
 use anyhow::Result;
 use bitcoin::Network;
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitcoind::{
     bitcoind::{Bitcoind, BitcoindFlags},
     config::BitcoindConfig,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_client::config::Config;
 use tracing::{debug, info};
 
@@ -33,7 +33,10 @@ impl std::ops::Deref for BitcoinWrapper {
 
 impl BitcoinWrapper {
     pub fn new(client: BitcoinClient, network_flavor: NetworkFlavor) -> Self {
-        Self { client, network_flavor }
+        Self {
+            client,
+            network_flavor,
+        }
     }
 
     pub fn new_from_config(config: &Config) -> Result<Self> {

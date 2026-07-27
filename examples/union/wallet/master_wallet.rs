@@ -31,7 +31,8 @@ impl MasterWallet {
             ));
         };
 
-        let mut config = load_config_file::<Config>(Some(network_flavor.wallet_config().to_string()))?;
+        let mut config =
+            load_config_file::<Config>(Some(network_flavor.wallet_config().to_string()))?;
         // Override database path and private key in config
         config.wallet.db_path = format!("/tmp/{}/master_wallet.db", network_flavor);
 
@@ -50,7 +51,10 @@ impl MasterWallet {
         wallet.sync_wallet()?;
         info!("Master wallet synced.");
 
-        let mut master_wallet = Self { wallet, network_flavor };
+        let mut master_wallet = Self {
+            wallet,
+            network_flavor,
+        };
         master_wallet.fund_if_we_can_mine()?;
 
         Ok(master_wallet)

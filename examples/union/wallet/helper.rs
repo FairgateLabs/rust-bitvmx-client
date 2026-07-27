@@ -77,7 +77,10 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
         amount,
         fee_rate
     );
-    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
+    non_regtest_warning(
+        wallet.network_flavor(),
+        "You are about to transfer REAL money.",
+    );
 
     let tx = wallet
         .wallet
@@ -103,7 +106,10 @@ pub fn fund_user_pegin_utxos(
         "Funding user pegin address with {} sats. UTXOs quantity: {}. fee rate: {} sats/vbyte",
         amount_in_sats, utxos_quantity, fee_rate
     );
-    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
+    non_regtest_warning(
+        wallet.network_flavor(),
+        "You are about to transfer REAL money.",
+    );
 
     let pubkey = user.public_key()?;
     let mut batch = Vec::new();
@@ -135,7 +141,10 @@ pub fn fund_user_speedup(
         "Funding user speedup with {} sats. fee rate: {} sats/vbyte",
         amount_in_sats, fee_rate
     );
-    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
+    non_regtest_warning(
+        wallet.network_flavor(),
+        "You are about to transfer REAL money.",
+    );
 
     let pubkey = user.public_key()?;
     let destination = Destination::P2WPKH(pubkey, amount_in_sats);
@@ -170,7 +179,11 @@ pub fn print_link(network_flavor: NetworkFlavor, txid: bitcoin::Txid) {
     info!("View transaction at: {}", url);
 }
 
-pub fn recover_funds(members: &[Member], address: String, network_flavor: NetworkFlavor) -> Result<()> {
+pub fn recover_funds(
+    members: &[Member],
+    address: String,
+    network_flavor: NetworkFlavor,
+) -> Result<()> {
     info!("Recovering funds to address: {}", address);
     let fee_rate = get_fee_rate(network_flavor);
     info!("Fee rate: {} sats/vbyte", fee_rate);
@@ -266,7 +279,10 @@ pub fn wallet_recover_funds(wallet: &mut MasterWallet, address: String) -> Resul
         total_balance, address
     );
     info!("Fee rate: {} sats/vbyte. Total fee: {} sats", fee_rate, fee);
-    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
+    non_regtest_warning(
+        wallet.network_flavor(),
+        "You are about to transfer REAL money.",
+    );
 
     let destination = Destination::Address(address, total_balance - fee);
     let tx = wallet.wallet.send_funds(destination, Some(fee_rate))?;
@@ -359,7 +375,10 @@ pub fn load_private_key_from_env(network_flavor: NetworkFlavor) -> Option<String
         return None;
     }
 
-    let env_var_name = &format!("{}_MASTER_WALLET_PRIVKEY", get_network_prefix(network_flavor, true));
+    let env_var_name = &format!(
+        "{}_MASTER_WALLET_PRIVKEY",
+        get_network_prefix(network_flavor, true)
+    );
 
     env_var_or_default(env_var_name, None)
 }
@@ -368,7 +387,10 @@ pub fn load_change_key_from_env(network_flavor: NetworkFlavor) -> Option<String>
     if network_flavor.is_local_chain() {
         return None;
     }
-    let env_var_name = &format!("{}_MASTER_WALLET_CHANGE_KEY", get_network_prefix(network_flavor, true));
+    let env_var_name = &format!(
+        "{}_MASTER_WALLET_CHANGE_KEY",
+        get_network_prefix(network_flavor, true)
+    );
 
     env_var_or_default(env_var_name, None)
 }

@@ -39,7 +39,8 @@ fn every_operator_config_parses() -> Result<()> {
 #[test]
 fn every_wallet_config_parses() -> Result<()> {
     for network_flavor in configured() {
-        load_wallet(network_flavor).map_err(|e| anyhow::anyhow!("{}: {e}", network_flavor.wallet_config()))?;
+        load_wallet(network_flavor)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", network_flavor.wallet_config()))?;
     }
     Ok(())
 }
@@ -48,11 +49,17 @@ fn every_wallet_config_parses() -> Result<()> {
 fn config_network_matches_the_run_target() -> Result<()> {
     for network_flavor in configured() {
         let wallet = load_wallet(network_flavor)?;
-        assert_eq!(wallet.bitcoin.network_flavor, network_flavor, "{network_flavor} wallet network");
+        assert_eq!(
+            wallet.bitcoin.network_flavor, network_flavor,
+            "{network_flavor} wallet network"
+        );
 
         for stem in network_flavor.op_configs() {
             let config = load_op(&stem)?;
-            assert_eq!(config.bitcoin.network_flavor, network_flavor, "{stem} network");
+            assert_eq!(
+                config.bitcoin.network_flavor, network_flavor,
+                "{stem} network"
+            );
         }
     }
     Ok(())
@@ -64,7 +71,11 @@ fn simchain_configs_report_live_network_capabilities() -> Result<()> {
     // single `network: simchain` field that cannot contradict itself.
     for stem in NetworkFlavor::Simchain.op_configs() {
         let config = load_op(&stem)?;
-        assert_eq!(config.bitcoin.network_flavor, NetworkFlavor::Simchain, "{stem}");
+        assert_eq!(
+            config.bitcoin.network_flavor,
+            NetworkFlavor::Simchain,
+            "{stem}"
+        );
         assert_eq!(config.bitcoin.network(), Network::Regtest, "{stem}");
         assert!(config.bitcoin.is_simchain(), "{stem}");
         assert!(!config.bitcoin.can_mine_on_demand(), "{stem}");
@@ -84,7 +95,11 @@ fn regtest_configs_are_untouched_by_the_merge() -> Result<()> {
     // files behave. `network: regtest` still means a chain we own outright.
     for stem in NetworkFlavor::Regtest.op_configs() {
         let config = load_op(&stem)?;
-        assert_eq!(config.bitcoin.network_flavor, NetworkFlavor::Regtest, "{stem}");
+        assert_eq!(
+            config.bitcoin.network_flavor,
+            NetworkFlavor::Regtest,
+            "{stem}"
+        );
         assert_eq!(config.bitcoin.network(), Network::Regtest, "{stem}");
         assert!(config.bitcoin.can_mine_on_demand(), "{stem}");
         assert!(config.bitcoin.has_node_wallet(), "{stem}");

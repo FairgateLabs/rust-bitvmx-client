@@ -4,7 +4,6 @@
 pub mod dispute;
 pub mod helper;
 
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{Amount, PublicKey, Txid, XOnlyPublicKey};
 use bitcoind::{
@@ -12,6 +11,7 @@ use bitcoind::{
     config::BitcoindConfig,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_broker::{
     channel::channel::DualChannel,
     identification::{allow_list::AllowList, identifier::Identifier},

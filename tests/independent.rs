@@ -35,7 +35,6 @@ use crate::common::check_bitvmx_cpu_built;
 
 mod common;
 
-
 pub enum InputType {
     Const(String, u32, String, u32),
     Participant(String, ParticipantRole),
@@ -470,7 +469,14 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
-    test_all_aux(false, NetworkFlavor::from_env(), None, None, Some(challenge), None)?;
+    test_all_aux(
+        false,
+        NetworkFlavor::from_env(),
+        None,
+        None,
+        Some(challenge),
+        None,
+    )?;
     Ok(())
 }
 

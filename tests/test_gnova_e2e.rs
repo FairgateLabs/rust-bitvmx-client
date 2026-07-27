@@ -29,8 +29,8 @@ use storage_backend::storage_config::StorageConfig;
 use tracing::info;
 
 mod common;
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::common::{check_gnova_built, clear_db, config_trace, helper::get_configs};
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 
 // circuit to test - use a compiled .circuit file
 const TEST_CIRCUIT_PATH: &str = "../rust-bitvmx-gc/test-circuits/simple.circuit";

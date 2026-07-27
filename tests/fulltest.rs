@@ -1,11 +1,11 @@
 #![cfg(all(feature = "cardinal", test))]
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, SecretKey},
     PublicKey as BitcoinPubKey,
 };
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_client::{
     program::{
         self,

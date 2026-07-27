@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 #![cfg(test)]
 
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{Amount, Transaction};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_broker::{
     channel::channel::DualChannel,
     identification::allow_list::AllowList,
@@ -27,7 +27,6 @@ use bitvmx_job_dispatcher_types::{
 };
 use bitvmx_settings::settings;
 use std::{
-
     sync::mpsc::{channel, Receiver, Sender},
     thread,
     time::Duration,
@@ -104,7 +103,8 @@ pub struct InternalWallet {
 impl InternalWallet {
     pub fn new(network_flavor: NetworkFlavor, client: BitcoinClient, wallet: Wallet) -> Self {
         assert_eq!(
-            wallet.network, network_flavor.bitcoin_network(),
+            wallet.network,
+            network_flavor.bitcoin_network(),
             "wallet config network does not match the {network_flavor} run target"
         );
         Self {
@@ -163,7 +163,8 @@ impl InternalWallet {
         // miner is reported after one block's worth of silence however long the
         // overall wait legitimately takes.
         let mut last_seen = initial;
-        let mut stall_deadline = std::time::Instant::now() + self.network_flavor.block_wait_timeout();
+        let mut stall_deadline =
+            std::time::Instant::now() + self.network_flavor.block_wait_timeout();
         loop {
             let current = best_block()?;
             if current >= target {
@@ -178,7 +179,8 @@ impl InternalWallet {
                     target - current
                 );
                 last_seen = current;
-                stall_deadline = std::time::Instant::now() + self.network_flavor.block_wait_timeout();
+                stall_deadline =
+                    std::time::Instant::now() + self.network_flavor.block_wait_timeout();
             }
             if std::time::Instant::now() >= stall_deadline {
                 return Err(BitVMXError::from(
@@ -281,7 +283,11 @@ impl TestHelper {
         Ok(())
     }
 
-    pub fn new(network_flavor: NetworkFlavor, independent: bool, auto_mine: Option<u64>) -> Result<Self> {
+    pub fn new(
+        network_flavor: NetworkFlavor,
+        independent: bool,
+        auto_mine: Option<u64>,
+    ) -> Result<Self> {
         info!(
             "Initializing TestHelper for {} (independent: {})",
             network_flavor, independent
@@ -337,7 +343,8 @@ impl TestHelper {
                     // funded by the test harness, so skip the extra mining.
                     bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
                 }
-                bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
+                bitcoin_client
+                    .fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
             } else {
                 // No node wallet and no mining rights: the chain must already be up
                 // and the master wallet already funded.
@@ -637,11 +644,19 @@ fn assert_funded(network_flavor: NetworkFlavor, wallet: &mut Wallet) -> Result<(
             balance.immature,
         );
     }
-    info!("{} master wallet balance: {}", network_flavor, balance.confirmed);
+    info!(
+        "{} master wallet balance: {}",
+        network_flavor, balance.confirmed
+    );
     Ok(())
 }
 
-fn run_bitvmx(network_flavor: NetworkFlavor, independent: bool, rx: Receiver<()>, tx: Sender<()>) -> Result<()> {
+fn run_bitvmx(
+    network_flavor: NetworkFlavor,
+    independent: bool,
+    rx: Receiver<()>,
+    tx: Sender<()>,
+) -> Result<()> {
     let configs = get_configs(network_flavor);
     if configs.is_err() {
         error!("Failed to load configs: {:?}", configs.err());

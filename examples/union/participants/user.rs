@@ -1,4 +1,3 @@
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::{
     bitcoin::HIGH_FEE_NODE_ENABLED,
     wait_until_msg,
@@ -16,6 +15,7 @@ use bitcoin::{
     TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_broker::identification::allow_list::AllowList;
 use protocol_builder::scripts::{
     build_taproot_spend_info, op_return_script, timelock, verify_signature, SignMode,

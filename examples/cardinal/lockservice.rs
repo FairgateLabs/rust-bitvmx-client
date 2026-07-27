@@ -1,10 +1,10 @@
-use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{
     key::{rand::rngs::OsRng, Parity, Secp256k1},
     secp256k1::{self, All, PublicKey as SecpPublicKey, SecretKey},
     Amount, PublicKey as BitcoinPubKey, Txid,
 };
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
     channel::channel::{DualChannel, LocalChannel},
