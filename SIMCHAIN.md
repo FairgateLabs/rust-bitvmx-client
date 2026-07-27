@@ -212,11 +212,12 @@ to hours.
 For the first simchain runs, set in simchain's `.env`:
 
 ```
+ENABLE_SPAM=false
 BLOCK_INTERVAL_MODE=fixed
 BLOCK_INTERVAL_MEAN_SECS=1
 ```
 
-Raise to 10 s once the suite is green. That is where the timing realism lives, and it
+Raise to 10 s and enable spam once the suite is green. That is where the timing realism lives, and it
 is exactly the regime the replacer is built for. Mining cadence is live-retunable
 (`simchainctl config set`), no restart needed.
 
