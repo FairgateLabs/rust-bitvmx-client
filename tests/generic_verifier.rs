@@ -1,6 +1,6 @@
 #![cfg(test)]
 use anyhow::Result;
-use bitcoin::Network;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_client::program;
 use bitvmx_client::program::participant::{
     CommsAddress,
@@ -14,7 +14,7 @@ use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_wallet::wallet::Destination;
 use common::dispute::{prepare_dispute, ForcedChallenges};
-use common::helper::TestHelper;
+use common::helper::{speedup_funding_factor, TestHelper};
 use common::init_utxo_new;
 use common::{config_trace, send_all};
 use key_manager::winternitz::{
@@ -31,7 +31,6 @@ use crate::common::check_bitvmx_cpu_built;
 
 mod common;
 
-const MIN_TX_FEE: f64 = 2.0;
 
 pub enum InputType {
     Const(String, u32, String, u32),
@@ -45,7 +44,7 @@ impl From<(&str, u32, &str, u32)> for InputType {
 
 pub fn test_all_aux(
     independent: bool,
-    network: Network,
+    network_flavor: NetworkFlavor,
     program: Option<String>,
     force_challenge: Option<ForcedChallenges>,
     force_winner: Option<ParticipantRole>,
@@ -55,7 +54,7 @@ pub fn test_all_aux(
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, independent, Some(3500))?;
+    let mut helper = TestHelper::new(network_flavor, independent, Some(3500))?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
     helper.send_all(command)?;
@@ -75,7 +74,10 @@ pub fn test_all_aux(
     let funding_key_1 = msgs[1].public_key().unwrap().1;
 
     info!("Creating speedup funds");
-    let speedup_amount = 200_000 * MIN_TX_FEE as u64;
+    // Generous on chains we run ourselves — see `speedup_funding_factor`. Sizing this
+    // by the fee rate alone left no headroom when the coordinator bid above
+    // `min_safe_fee_rate`, and the run died mid-protocol with `Insufficient funds`.
+    let speedup_amount = 200_000 * speedup_funding_factor(network_flavor);
 
     let fund_tx_0 = helper
         .wallet
@@ -311,7 +313,7 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
 fn test_generic_verifier() -> Result<()> {
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/generic-verifier.yaml".to_string()),
         None,
         None,

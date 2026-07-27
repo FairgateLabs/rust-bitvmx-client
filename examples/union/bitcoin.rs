@@ -3,6 +3,7 @@ use std::thread;
 
 use anyhow::Result;
 use bitcoin::Network;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitcoind::{
     bitcoind::{Bitcoind, BitcoindFlags},
     config::BitcoindConfig,
@@ -18,7 +19,7 @@ pub const HIGH_FEE_NODE_ENABLED: bool = true;
 
 pub struct BitcoinWrapper {
     client: BitcoinClient,
-    network: bitcoin::Network,
+    network_flavor: NetworkFlavor,
 }
 
 // Allow transparent access to BitcoinClient methods
@@ -31,8 +32,8 @@ impl std::ops::Deref for BitcoinWrapper {
 }
 
 impl BitcoinWrapper {
-    pub fn new(client: BitcoinClient, network: Network) -> Self {
-        Self { client, network }
+    pub fn new(client: BitcoinClient, network_flavor: NetworkFlavor) -> Self {
+        Self { client, network_flavor }
     }
 
     pub fn new_from_config(config: &Config) -> Result<Self> {
@@ -43,7 +44,7 @@ impl BitcoinWrapper {
         )?;
         Ok(Self {
             client,
-            network: config.bitcoin.network,
+            network_flavor: config.bitcoin.network_flavor,
         })
     }
 
@@ -56,15 +57,19 @@ impl BitcoinWrapper {
         let last_block = height + blocks;
         info!("Height: {}. Waiting until block: {}", height, last_block);
 
-        let sleep_secs = match self.network {
-            Network::Regtest => 1, // Give some time to bitvmx client to process new blocks and send news
-            Network::Testnet | Network::Testnet4 | Network::Signet => 10,
-            Network::Bitcoin => 60,
-            _ => return Err(anyhow::anyhow!("Unsupported network")),
+        let sleep_secs = match self.network_flavor {
+            NetworkFlavor::Regtest => 1, // Give some time to bitvmx client to process new blocks and send news
+            // Blocks land roughly every 10s; poll faster so we notice promptly.
+            NetworkFlavor::Simchain => 2,
+            NetworkFlavor::Testnet | NetworkFlavor::Testnet4 | NetworkFlavor::Signet => 10,
+            NetworkFlavor::Bitcoin => 60,
         };
 
         while height < last_block {
-            if self.network == Network::Regtest {
+            // Only where blocks are ours to mint. Simchain would happily serve
+            // `generatetoaddress` despite mining its own blocks, so this must be
+            // gated on the capability rather than on the network.
+            if self.network_flavor.can_mine_on_demand() {
                 debug!("Mining 1 block...");
                 self.mine_blocks(1)?;
             }
@@ -76,8 +81,13 @@ impl BitcoinWrapper {
         Ok(())
     }
 
+    pub fn network_flavor(&self) -> NetworkFlavor {
+        self.network_flavor
+    }
+
+    /// Address encoding identity for this chain.
     pub fn network(&self) -> Network {
-        self.network
+        self.network_flavor.bitcoin_network()
     }
 }
 
@@ -139,11 +149,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
 
     bitcoind.start()?;
 
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
 
     let _address = bitcoin_client.init_wallet(&config.bitcoin.wallet)?;
     bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
@@ -151,12 +157,10 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Bitcoind)> {
     Ok((bitcoin_client, bitcoind))
 }
 
-pub fn init_client(config: Config) -> Result<(BitcoinClient, Network)> {
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
+pub fn init_client(config: Config) -> Result<(BitcoinClient, NetworkFlavor)> {
+    // Built from the config so the simchain guard rails are armed.
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let network_flavor = config.bitcoin.network_flavor;
 
-    Ok((bitcoin_client, config.bitcoin.network))
+    Ok((bitcoin_client, network_flavor))
 }

@@ -1,6 +1,6 @@
 #![cfg(test)]
 use anyhow::Result;
-use bitcoin::Network;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_client::{
     program::{
         participant::{CommsAddress, ParticipantRole},
@@ -18,13 +18,13 @@ mod common;
 #[ignore]
 #[test]
 pub fn test_gc_generation() -> Result<()> {
-    let network = Network::Regtest;
+    let network_flavor = NetworkFlavor::from_env();
 
     check_gnova_built()?;
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, false, None)?;
+    let mut helper = TestHelper::new(network_flavor, false, None)?;
 
     // Obtain communication addresses from all participants
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());

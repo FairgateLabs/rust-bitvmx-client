@@ -1,0 +1,110 @@
+# Operator 1 on the simchain run target.
+#
+# Modeled on testnet_op_1.yaml rather than op_1.yaml: simchain uses regtest
+# encoding but a live-network operational profile, so the coordinator needs real fee
+# settings and must never be told to mine.
+#
+# Bring the chain up first (see SIMCHAIN.md), then:
+#   BITVMX_ENV=simchain cargo run --release -- --op all-simchain
+
+bitcoin:
+  network: simchain
+  url: http://127.0.0.1:18443/
+  username: foo
+  password: rpcpassword
+  wallet: test_wallet # unused: node1 has no wallet. Kept for schema compatibility.
+
+key_manager:
+  network: regtest
+  key_derivation_path: m/101/1/0/0/
+  mnemonic_sentence: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+  mnemonic_passphrase: ""
+
+key_storage:
+  password: SeCrEt_p4ssw0rd_2!
+  path: /tmp/simchain/op_1/keys.db
+
+storage:
+  path: /tmp/simchain/op_1/storage.db
+
+comms:
+  address: 127.0.0.1:61180
+  priv_key: config/keys/op_1.key
+  storage_path: /tmp/simchain/op_1/comms.db
+
+broker:
+  settings: config/broker_settings.yaml
+  allow_list: config/allow_list.yaml
+  routing_table: config/routing_table.yaml
+  port: 22222
+  ip: 127.0.0.1
+  priv_key: config/keys/services.key
+  storage:
+    path: /tmp/simchain/op_1/broker.db
+
+coordinator_settings:
+  fee:
+    # Simchain runs a spammer that holds the mempool at a fee floor (15 sat/vB with
+    # the stock .env), so min_safe_fee_rate must clear it or nothing confirms.
+    # See the fee ladder in SIMCHAIN.md for the pressure-testing variants.
+    max_feerate_sat_vb: 100
+    base_fee_multiplier: 1.0
+    min_safe_fee_rate: 20
+  monitor:
+    indexer_settings:
+      # Simchain chains are short and disposable; always index from genesis.
+      checkpoint_height: 0
+
+# Blocks arrive roughly every 10s, so regtest's tight polling wastes CPU while
+# testnet's 1000ms is sluggish for a chain this responsive.
+coordinator_throttle:
+  init_interval: 100
+  busy_interval: 100
+  idle_interval: 300
+
+bitvmx_throttle:
+  busy_interval: 20
+  idle_interval: 200
+
+components:
+  l2:
+    pubkey_hash: 7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f
+    id: 0
+  bitvmx:
+    pubkey_hash: 1d10fa43ebbf6674d74caa3e9032711ade09d98ea7d20f89459f61152bebda1e
+    id: 0
+  emulator:
+    pubkey_hash: c356750c04776008418c31cb1fd3d9dad936e5487358eeb8961b68831f419125
+    id: 0
+  prover:
+    pubkey_hash: 054dba5c41ee2926a7d909cc3443fa78f2f2e257cb1d008fd75e0d3534e3ba0d
+    id: 0
+  garbler:
+    pubkey_hash: cca0b69255be0d66bc92fdc219425c51fffc15d90f4cc75574e77a284646bcf2
+    id: 0
+
+testing:
+  l2:
+    priv_key: config/keys/l2.key
+    id: 0
+  emulator:
+    priv_key: config/keys/emulator.key
+    id: 0
+  prover:
+    priv_key: config/keys/prover.key
+    id: 0
+  garbler:
+    priv_key: config/keys/garbler.key
+    id: 0
+
+client:
+  # Number of retries for requests
+  retry: 1
+  # Delay between retries in milliseconds
+  retry_delay: 1000
+
+wallet:
+  db_path: /tmp/simchain/op_1/wallet.db
+  # Simchain chains are short, so a full scan from genesis is cheap and avoids
+  # depending on a checkpoint height that changes with every fresh chain.
+  start_height: 0

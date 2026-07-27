@@ -1,9 +1,10 @@
 #![cfg(all(feature = "cardinal", test))]
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, PublicKey as SecpPublicKey, SecretKey},
-    Network, PublicKey as BitcoinPubKey,
+    PublicKey as BitcoinPubKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 use bitvmx_client::{
@@ -38,35 +39,21 @@ mod common;
 mod fixtures;
 
 pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, InternalWallet)> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
+    let network_flavor = NetworkFlavor::from_env();
+    let config = Config::new(Some(format!("config/{}.yaml", network_flavor.op_config(1))))?;
 
-    let bitcoin_client = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-
-    let bitcoin_client2 = BitcoinClient::new(
-        &config.bitcoin.url,
-        &config.bitcoin.username,
-        &config.bitcoin.password,
-    )?;
-
-    let config_path = match config.bitcoin.network {
-        Network::Regtest => "config/wallet_regtest.yaml",
-        Network::Testnet => "config/wallet_testnet.yaml",
-        Network::Testnet4 => "config/wallet_testnet4.yaml",
-        _ => panic!("Not supported network {}", config.bitcoin.network),
-    };
+    // Built from the config so the simchain guard rails are armed.
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
 
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::wallet::config::Config,
-    >(Some(config_path.to_string()))?;
+    >(Some(network_flavor.wallet_config().to_string()))?;
 
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
     wallet.sync_wallet()?;
-    let internal_wallet = InternalWallet::new(bitcoin_client2, wallet);
+    let internal_wallet = InternalWallet::new(network_flavor, bitcoin_client2, wallet);
     Ok((bitcoin_client, internal_wallet))
 }
 
@@ -86,7 +73,8 @@ pub fn test_integration() -> Result<()> {
 pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     config_trace();
 
-    const NETWORK: Network = Network::Regtest;
+    // Address encoding only: simchain uses regtest addresses.
+    let network = NetworkFlavor::from_env().bitcoin_network();
 
     let (bitcoin_client, bitcoind, mut wallet) = if independent {
         let (bitcoin_client, wallet) = prepare_bitcoin_running()?;
@@ -246,7 +234,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
     let (txid, pubuser, ordinal_fee) = create_lockreq_ready(
         aggregated_pub_key,
         hash.clone(),
-        NETWORK,
+        network,
         lock_protocol_dust_cost(4),
         &bitcoin_client,
         4000,
@@ -433,7 +421,7 @@ pub fn test_send_lockreq_tx() -> Result<()> {
     let (txid, pubuser, ordinal_fee) = fixtures::create_lockreq_ready(
         ops_agg_pubkey,
         hash,
-        Network::Regtest,
+        NetworkFlavor::from_env().bitcoin_network(),
         lock_protocol_dust_cost(4),
         &bitcoin_client,
         1000,

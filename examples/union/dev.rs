@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bitcoin::Network;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use reqwest::blocking::Client;
 use serde_json::json;
 use std::env;
@@ -33,8 +33,8 @@ fn measure_latency(url: &str, payload: Option<serde_json::Value>) -> f64 {
     elapsed
 }
 
-pub fn latency(network: Network) -> Result<()> {
-    let prefix = get_network_prefix(network, true);
+pub fn latency(network_flavor: NetworkFlavor) -> Result<()> {
+    let prefix = get_network_prefix(network_flavor, true);
     let env_var_name = &format!("{}_BITCOIN_API", prefix);
 
     let url = match env::var(env_var_name) {

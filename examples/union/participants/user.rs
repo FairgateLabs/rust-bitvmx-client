@@ -1,3 +1,4 @@
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::{
     bitcoin::HIGH_FEE_NODE_ENABLED,
     wait_until_msg,
@@ -43,7 +44,11 @@ pub struct User {
     pub bitcoin_client: BitcoinClient,
     pub address: BitcoinAddress,
     secret_key: SecretKey,
-    pub network: Network,
+    /// Which chain this user is on, including simnets.
+    ///
+    /// The encoding identity is derived via [`User::network`] rather than stored
+    /// alongside, so the two can never drift apart.
+    pub network_flavor: NetworkFlavor,
     pub secp: Secp256k1<All>,
     pub rsk_address: &'static str, // This is a placeholder, should be replaced with actual RSK address
     request_pegin_utxos: Vec<PartialUtxo>,
@@ -61,13 +66,10 @@ impl User {
             &config.testing.l2,
             allow_list,
         )?;
-        let bitcoin_client = BitcoinClient::new(
-            &config.bitcoin.url,
-            &config.bitcoin.username,
-            &config.bitcoin.password,
-        )?;
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
 
-        let network = config.bitcoin.network;
+        let network_flavor = config.bitcoin.network_flavor;
+        let network = config.bitcoin.network();
         let priv_key = PrivateKey::from_str(&config.wallet.clone().receive_key.unwrap())?;
         let user_sk: SecretKey = priv_key.inner;
 
@@ -84,7 +86,7 @@ impl User {
             public_key: user_pubkey,
             address: user_address,
             secret_key: user_sk,
-            network,
+            network_flavor,
             secp,
             rsk_address: "7ac5496aee77c1ba1f0854206a26dda82a81d6d8",
             request_pegin_utxos: vec![],
@@ -141,7 +143,7 @@ impl User {
         };
 
         info!("Sent request pegin Tx: {}", txid);
-        print_link(self.network, txid);
+        print_link(self.network_flavor, txid);
 
         Ok((txid, signed_transaction))
     }
@@ -203,7 +205,7 @@ impl User {
             "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
             stream_value, fee, input_value, change_value
         );
-        non_regtest_warning(self.network, "You are about to transfer REAL money.");
+        non_regtest_warning(self.network_flavor, "You are about to transfer REAL money.");
 
         // RSK Pegin values
         let rootstock_address = self.address_to_bytes(self.rsk_address)?;
@@ -466,7 +468,7 @@ impl User {
     ) -> Result<Transaction> {
         let user_bitcoin_privkey = PrivateKey {
             compressed: true,
-            network: self.network.into(),
+            network: self.network().into(),
             inner: self.secret_key,
         };
 
@@ -524,20 +526,31 @@ impl User {
         self.speedup_utxo = Some(utxo);
     }
 
+    /// Address encoding identity for this user's chain.
+    pub fn network(&self) -> Network {
+        self.network_flavor.bitcoin_network()
+    }
+
     fn get_speedup_utxo(&self) -> Option<PartialUtxo> {
         self.speedup_utxo.clone()
     }
 
     fn get_extra_fee(&self) -> u64 {
-        match self.network {
-            Network::Regtest => {
+        match self.network_flavor {
+            NetworkFlavor::Regtest => {
                 if HIGH_FEE_NODE_ENABLED {
                     4000
                 } else {
                     200
                 }
             }
-            _ => 0,
+            // Simchain has real fee competition, so the padding regtest uses for its
+            // high-fee node applies here too.
+            NetworkFlavor::Simchain => 4000,
+            NetworkFlavor::Testnet
+            | NetworkFlavor::Testnet4
+            | NetworkFlavor::Signet
+            | NetworkFlavor::Bitcoin => 0,
         }
     }
 

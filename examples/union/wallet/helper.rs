@@ -1,7 +1,8 @@
 use crate::participants::user::User;
 use crate::{participants::member::Member, MasterWallet};
 use anyhow::{anyhow, Result};
-use bitcoin::{Address, CompressedPublicKey, Network, Txid};
+use bitcoin::{Address, CompressedPublicKey, Txid};
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_wallet::wallet::{Destination, Wallet};
 use core::option::Option;
 use key_manager::create_key_manager_from_config;
@@ -14,7 +15,8 @@ use tracing::warn;
 const MIN_FUNDS_RECOVERY: u64 = 5000;
 const TX_SIZE: u64 = 140;
 
-pub fn create_wallet(network: Network) -> Result<()> {
+pub fn create_wallet(network_flavor: NetworkFlavor) -> Result<()> {
+    let network = network_flavor.bitcoin_network();
     info!("Generating wallet for network {}...", network);
 
     let mut config = bitvmx_client::config::Config::new(Some("config/op_1.yaml".to_string()))?;
@@ -46,7 +48,7 @@ pub fn create_wallet(network: Network) -> Result<()> {
 }
 
 pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) -> Result<Txid> {
-    let fee_rate = get_fee_rate(wallet.network());
+    let fee_rate = get_fee_rate(wallet.network_flavor());
 
     let balance = wallet.wallet.balance();
     info!("Master wallet balance:");
@@ -75,7 +77,7 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
         amount,
         fee_rate
     );
-    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
 
     let tx = wallet
         .wallet
@@ -83,7 +85,7 @@ pub fn fund_members(wallet: &mut MasterWallet, members: &[Member], amount: u64) 
 
     let txid = tx.compute_txid();
     info!("Funded members with txid: {}", txid);
-    print_link(wallet.network(), txid);
+    print_link(wallet.network_flavor(), txid);
 
     info!("Master wallet balance after funding members:");
     print_balance(wallet)?;
@@ -96,12 +98,12 @@ pub fn fund_user_pegin_utxos(
     amount_in_sats: u64,
     utxos_quantity: usize,
 ) -> Result<()> {
-    let fee_rate = get_fee_rate(wallet.network());
+    let fee_rate = get_fee_rate(wallet.network_flavor());
     info!(
         "Funding user pegin address with {} sats. UTXOs quantity: {}. fee rate: {} sats/vbyte",
         amount_in_sats, utxos_quantity, fee_rate
     );
-    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
 
     let pubkey = user.public_key()?;
     let mut batch = Vec::new();
@@ -118,7 +120,7 @@ pub fn fund_user_pegin_utxos(
         user.add_request_pegin_utxo((txid, i as u32, Some(amount_in_sats), None));
     }
     info!("Pegin UTXOs Added. Txid: {}", txid);
-    print_link(wallet.network(), txid);
+    print_link(wallet.network_flavor(), txid);
 
     Ok(())
 }
@@ -128,12 +130,12 @@ pub fn fund_user_speedup(
     user: &mut User,
     amount_in_sats: u64,
 ) -> Result<()> {
-    let fee_rate = get_fee_rate(wallet.network());
+    let fee_rate = get_fee_rate(wallet.network_flavor());
     info!(
         "Funding user speedup with {} sats. fee rate: {} sats/vbyte",
         amount_in_sats, fee_rate
     );
-    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
 
     let pubkey = user.public_key()?;
     let destination = Destination::P2WPKH(pubkey, amount_in_sats);
@@ -154,25 +156,25 @@ pub fn print_members_balances(members: &[Member]) -> Result<()> {
     Ok(())
 }
 
-pub fn print_link(network: Network, txid: bitcoin::Txid) {
-    if network == Network::Regtest {
-        return;
-    }
-
-    let url = match network {
-        Network::Testnet => format!("https://mempool.space/testnet/tx/{}", txid),
-        Network::Testnet4 => format!("https://mempool.space/testnet4/tx/{}", txid),
-        Network::Bitcoin => format!("https://mempool.space/tx/{}", txid),
-        _ => "Unsupported network".to_string(),
+pub fn print_link(network_flavor: NetworkFlavor, txid: bitcoin::Txid) {
+    let url = match network_flavor {
+        NetworkFlavor::Regtest => return,
+        // Only reachable with simchain's `mempool` or `all-tools` compose profile;
+        // harmless to print either way.
+        NetworkFlavor::Simchain => format!("http://localhost:1080/tx/{}", txid),
+        NetworkFlavor::Testnet => format!("https://mempool.space/testnet/tx/{}", txid),
+        NetworkFlavor::Testnet4 => format!("https://mempool.space/testnet4/tx/{}", txid),
+        NetworkFlavor::Signet => format!("https://mempool.space/signet/tx/{}", txid),
+        NetworkFlavor::Bitcoin => format!("https://mempool.space/tx/{}", txid),
     };
     info!("View transaction at: {}", url);
 }
 
-pub fn recover_funds(members: &[Member], address: String, network: Network) -> Result<()> {
+pub fn recover_funds(members: &[Member], address: String, network_flavor: NetworkFlavor) -> Result<()> {
     info!("Recovering funds to address: {}", address);
-    let fee_rate = get_fee_rate(network);
+    let fee_rate = get_fee_rate(network_flavor);
     info!("Fee rate: {} sats/vbyte", fee_rate);
-    non_regtest_warning(network, "You are about to transfer REAL money.");
+    non_regtest_warning(network_flavor, "You are about to transfer REAL money.");
 
     for member in members {
         let balance = member.get_funding_balance()?;
@@ -188,7 +190,7 @@ pub fn recover_funds(members: &[Member], address: String, network: Network) -> R
         let amount = balance - fee_rate * TX_SIZE * 2; // leave some sats for fees. 2 factor is to considerate multiple inputs
 
         info!("Recovering {} sats from member {}", amount, member.id);
-        non_regtest_warning(network, "You are about to transfer REAL money.");
+        non_regtest_warning(network_flavor, "You are about to transfer REAL money.");
 
         let txid = match member.send_funds(amount, address.clone(), Some(fee_rate)) {
             Ok(txid) => txid,
@@ -200,7 +202,7 @@ pub fn recover_funds(members: &[Member], address: String, network: Network) -> R
                 continue;
             }
         };
-        print_link(network, txid);
+        print_link(network_flavor, txid);
     }
     Ok(())
 }
@@ -225,7 +227,7 @@ pub fn recover_user_funds(user: &User, address: String) -> Result<()> {
     }
 
     let utxos_quantity = wallet.list_unspent()?.len();
-    let fee_rate = get_fee_rate(user.network);
+    let fee_rate = get_fee_rate(user.network_flavor);
     // Some magic numbers here
     let fee = (46 + utxos_quantity as u64 * 68) * fee_rate; // rough estimate
     info!(
@@ -235,13 +237,13 @@ pub fn recover_user_funds(user: &User, address: String) -> Result<()> {
     info!("{} UTXOs will be used for the recovery.", utxos_quantity);
     info!("Fee rate: {} sats/vbyte", fee_rate);
     info!("Estimated fee: {} sats", fee);
-    non_regtest_warning(user.network, "You are about to transfer REAL money.");
+    non_regtest_warning(user.network_flavor, "You are about to transfer REAL money.");
 
     let txid = wallet
         .send_funds(Destination::Address(address, balance - fee), Some(fee_rate))
         .map_err(|e| anyhow::anyhow!("Failed to recover funds from user to address: {}", e))?
         .compute_txid();
-    print_link(user.network, txid);
+    print_link(user.network_flavor, txid);
 
     Ok(())
 }
@@ -256,7 +258,7 @@ pub fn wallet_recover_funds(wallet: &mut MasterWallet, address: String) -> Resul
         return Ok(());
     }
 
-    let fee_rate = get_fee_rate(wallet.network());
+    let fee_rate = get_fee_rate(wallet.network_flavor());
     let fee = (50 + 68 * utxos_quantity as u64) * fee_rate; // rough estimate
 
     info!(
@@ -264,14 +266,14 @@ pub fn wallet_recover_funds(wallet: &mut MasterWallet, address: String) -> Resul
         total_balance, address
     );
     info!("Fee rate: {} sats/vbyte. Total fee: {} sats", fee_rate, fee);
-    non_regtest_warning(wallet.network(), "You are about to transfer REAL money.");
+    non_regtest_warning(wallet.network_flavor(), "You are about to transfer REAL money.");
 
     let destination = Destination::Address(address, total_balance - fee);
     let tx = wallet.wallet.send_funds(destination, Some(fee_rate))?;
     let txid = tx.compute_txid();
 
     info!("Returned funds with txid: {}", txid);
-    print_link(wallet.network(), txid);
+    print_link(wallet.network_flavor(), txid);
 
     Ok(())
 }
@@ -299,12 +301,16 @@ pub fn ask_user_confirmation(prompt: &str) -> bool {
     }
 }
 
-pub fn non_regtest_warning(network: Network, message: &str) {
-    if network == Network::Regtest {
+/// Warn and prompt before doing something that costs real money.
+///
+/// Silent on regtest and simchain: both are play money, and prompting there would
+/// stall non-interactive runs.
+pub fn non_regtest_warning(network_flavor: NetworkFlavor, message: &str) {
+    if network_flavor.is_local_chain() {
         return;
     }
 
-    print!("\nWarning: {}. {:?} network.\n", message, network);
+    print!("\nWarning: {}. {} network.\n", message, network_flavor);
     print!("This may incur real costs and is not recommended for testing purposes.\n");
     if !ask_user_confirmation("Do you want to proceed?") {
         print!("Operation cancelled by user.\n");
@@ -312,67 +318,57 @@ pub fn non_regtest_warning(network: Network, message: &str) {
     }
 }
 
-pub fn get_network_prefix(network: Network, env_var: bool) -> &'static str {
-    match (network, env_var) {
-        (Network::Regtest, false) => "regtest",
-        (Network::Regtest, true) => "REGTEST",
+pub fn get_network_prefix(network_flavor: NetworkFlavor, env_var: bool) -> &'static str {
+    match (network_flavor, env_var) {
+        (NetworkFlavor::Regtest, false) => "regtest",
+        (NetworkFlavor::Regtest, true) => "REGTEST",
 
-        (Network::Testnet, false) => "testnet",
-        (Network::Testnet, true) => "TESTNET",
+        (NetworkFlavor::Simchain, false) => "simchain",
+        (NetworkFlavor::Simchain, true) => "SIMCHAIN",
 
-        (Network::Testnet4, false) => "testnet4",
-        (Network::Testnet4, true) => "TESTNET4",
+        (NetworkFlavor::Testnet, false) => "testnet",
+        (NetworkFlavor::Testnet, true) => "TESTNET",
 
-        (Network::Bitcoin, false) => "mainnet",
-        (Network::Bitcoin, true) => "MAINNET",
+        (NetworkFlavor::Testnet4, false) => "testnet4",
+        (NetworkFlavor::Testnet4, true) => "TESTNET4",
 
-        (other, _) => panic!("Unsupported network: {:?}", other),
+        (NetworkFlavor::Signet, false) => "signet",
+        (NetworkFlavor::Signet, true) => "SIGNET",
+
+        (NetworkFlavor::Bitcoin, false) => "mainnet",
+        (NetworkFlavor::Bitcoin, true) => "MAINNET",
     }
 }
 
-pub fn string_to_network(network: Option<&String>) -> Result<Network> {
-    let network = match network {
-        Some(net) => match net.as_str() {
-            "regtest" => Network::Regtest,
-            "testnet" => Network::Testnet,
-            "testnet4" => Network::Testnet4,
-            "mainnet" => Network::Bitcoin,
-            _ => {
-                return Err(anyhow!(
-                    "Unsupported network string: {}. Use 'regtest' or 'testnet'.",
-                    net
-                ));
-            }
-        },
+pub fn string_to_network(network: Option<&String>) -> Result<NetworkFlavor> {
+    match network {
+        Some(net) => NetworkFlavor::parse(net).map_err(|e| anyhow!("{e}")),
         None => {
             warn!("No network specified. Using regtest.");
-            Network::Regtest
+            Ok(NetworkFlavor::Regtest)
         }
-    };
-    Ok(network)
+    }
 }
 
-pub fn load_private_key_from_env(network: Network) -> Option<String> {
-    if network == Network::Regtest {
+/// Master wallet keys come from the environment only where they are secrets.
+///
+/// Regtest and simchain both keep theirs in the checked-in wallet config, so there is
+/// nothing to look up.
+pub fn load_private_key_from_env(network_flavor: NetworkFlavor) -> Option<String> {
+    if network_flavor.is_local_chain() {
         return None;
     }
 
-    let env_var_name = &format!(
-        "{}_MASTER_WALLET_PRIVKEY",
-        get_network_prefix(network, true)
-    );
+    let env_var_name = &format!("{}_MASTER_WALLET_PRIVKEY", get_network_prefix(network_flavor, true));
 
     env_var_or_default(env_var_name, None)
 }
 
-pub fn load_change_key_from_env(network: Network) -> Option<String> {
-    if network == Network::Regtest {
+pub fn load_change_key_from_env(network_flavor: NetworkFlavor) -> Option<String> {
+    if network_flavor.is_local_chain() {
         return None;
     }
-    let env_var_name = &format!(
-        "{}_MASTER_WALLET_CHANGE_KEY",
-        get_network_prefix(network, true)
-    );
+    let env_var_name = &format!("{}_MASTER_WALLET_CHANGE_KEY", get_network_prefix(network_flavor, true));
 
     env_var_or_default(env_var_name, None)
 }
@@ -400,12 +396,15 @@ pub fn print_balance(wallet: &MasterWallet) -> Result<()> {
     Ok(())
 }
 
-fn get_fee_rate(network: Network) -> u64 {
-    match network {
-        Network::Regtest => 10,
-        Network::Testnet => 1,
-        Network::Testnet4 => 1,
-        Network::Bitcoin => 1,
-        _ => 1,
+fn get_fee_rate(network_flavor: NetworkFlavor) -> u64 {
+    match network_flavor {
+        NetworkFlavor::Regtest => 10,
+        // Must clear simchain's spammer floor (15 sat/vB with the stock .env),
+        // otherwise the transaction never gets mined.
+        NetworkFlavor::Simchain => network_flavor.default_fee_rate(),
+        NetworkFlavor::Testnet
+        | NetworkFlavor::Testnet4
+        | NetworkFlavor::Signet
+        | NetworkFlavor::Bitcoin => 1,
     }
 }

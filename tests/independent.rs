@@ -1,6 +1,6 @@
 #![cfg(test)]
 use anyhow::Result;
-use bitcoin::Network;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_client::program;
 use bitvmx_client::program::participant::{
     CommsAddress,
@@ -16,7 +16,7 @@ use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_wallet::wallet::Destination;
 use common::dispute::{prepare_dispute, ForcedChallenges};
-use common::helper::TestHelper;
+use common::helper::{speedup_funding_factor, TestHelper};
 use common::init_utxo_new;
 use common::{config_trace, send_all};
 use emulator::decision::challenge::{ForceChallenge, ForceCondition};
@@ -35,7 +35,6 @@ use crate::common::check_bitvmx_cpu_built;
 
 mod common;
 
-const MIN_TX_FEE: f64 = 2.0;
 
 pub enum InputType {
     Const(String, u32, String, u32),
@@ -49,7 +48,7 @@ impl From<(&str, u32, &str, u32)> for InputType {
 
 pub fn test_all_aux(
     independent: bool,
-    network: Network,
+    network_flavor: NetworkFlavor,
     program: Option<String>,
     inputs: Option<InputType>,
     force_challenge: Option<ForcedChallenges>,
@@ -60,7 +59,7 @@ pub fn test_all_aux(
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, independent, Some(1000))?;
+    let mut helper = TestHelper::new(network_flavor, independent, Some(1000))?;
     helper.wallet.sync_wallet()?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
@@ -82,7 +81,10 @@ pub fn test_all_aux(
     let _funding_key_2 = msgs[2].public_key().unwrap().1;
 
     info!("Creating speedup funds");
-    let speedup_amount = 100_000 * MIN_TX_FEE as u64;
+    // Generous on chains we run ourselves — see `speedup_funding_factor`. Sizing this
+    // by the fee rate alone left no headroom when the coordinator bid above
+    // `min_safe_fee_rate`, and the run died mid-protocol with `Insufficient funds`.
+    let speedup_amount = 100_000 * speedup_funding_factor(network_flavor);
 
     let fund_tx_0 = helper
         .wallet
@@ -297,20 +299,20 @@ pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSi
 #[ignore]
 #[test]
 fn test_independent_testnet() -> Result<()> {
-    test_all_aux(true, Network::Testnet, None, None, None, None)?;
+    test_all_aux(true, NetworkFlavor::Testnet, None, None, None, None)?;
     Ok(())
 }*/
 /*
 #[ignore]
 #[test]
 fn test_independent_regtest() -> Result<()> {
-    test_all_aux(true, Network::Regtest, None, None, None, None)?;
+    test_all_aux(true, NetworkFlavor::from_env(), None, None, None, None)?;
     Ok(())
 }*/
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, None, None)?;
+    test_all_aux(false, NetworkFlavor::from_env(), None, None, None, None)?;
     Ok(())
 }
 
@@ -319,7 +321,7 @@ fn test_all() -> Result<()> {
 fn test_const() -> Result<()> {
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000003", 1).into()),
         None,
@@ -328,7 +330,7 @@ fn test_const() -> Result<()> {
 
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000003", 1, "00000001", 0).into()),
         None,
@@ -366,7 +368,7 @@ fn test_const_fail_input() -> Result<()> {
 
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2).into()),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
@@ -374,7 +376,7 @@ fn test_const_fail_input() -> Result<()> {
     )?;
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
         Some(("0000000200000004", 1, "00000001", 0).into()),
         Some(ForcedChallenges::Personalized(fail_config.clone())),
@@ -382,7 +384,7 @@ fn test_const_fail_input() -> Result<()> {
     )?;
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
         Some(("0000000100000002", 0, "00000004", 1).into()),
         Some(ForcedChallenges::Personalized(fail_config)),
@@ -397,7 +399,7 @@ fn test_const_fail_input() -> Result<()> {
 fn test_previous_input() -> Result<()> {
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2).into()),
         None,
@@ -412,7 +414,7 @@ fn test_previous_input() -> Result<()> {
 fn test_verifier_input() -> Result<()> {
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
         Some(InputType::Participant("11111111".to_string(), Verifier)),
         None,
@@ -439,7 +441,7 @@ fn test_verifier_input() -> Result<()> {
 #[test]
 fn test_zkp() -> Result<()> {
     config_trace();
-    let mut helper = TestHelper::new(Network::Regtest, false, Some(1000))?;
+    let mut helper = TestHelper::new(NetworkFlavor::from_env(), false, Some(1000))?;
 
     let id = Uuid::new_v4();
 
@@ -468,7 +470,7 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
+    test_all_aux(false, NetworkFlavor::from_env(), None, None, Some(challenge), None)?;
     Ok(())
 }
 
@@ -816,7 +818,7 @@ fn test_input_timeout_input_prover() -> Result<()> {
 fn test_input_timeout_input_prover_with_previous() -> Result<()> {
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
         Some(("00000002", 1, "00000003", 2).into()),
         Some(ForcedChallenges::InputTimeOut(
@@ -833,7 +835,7 @@ fn test_input_timeout_input_prover_with_previous() -> Result<()> {
 fn test_input_timeout_input_verifier() -> Result<()> {
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
         Some(InputType::Participant("11111111".to_string(), Verifier)),
         Some(ForcedChallenges::InputTimeOut(
@@ -850,7 +852,7 @@ fn test_input_timeout_input_verifier() -> Result<()> {
 fn test_input_timeout_input_prover_cosign() -> Result<()> {
     test_all_aux(
         false,
-        Network::Regtest,
+        NetworkFlavor::from_env(),
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
         Some(InputType::Participant("11111111".to_string(), Verifier)),
         Some(ForcedChallenges::InputTimeOut(

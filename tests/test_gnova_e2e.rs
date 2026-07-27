@@ -29,6 +29,7 @@ use storage_backend::storage_config::StorageConfig;
 use tracing::info;
 
 mod common;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::common::{check_gnova_built, clear_db, config_trace, helper::get_configs};
 
 // circuit to test - use a compiled .circuit file
@@ -194,7 +195,7 @@ pub fn test_gnova_e2e() -> Result<()> {
 }
 
 fn init_broker_server() -> Result<BrokerSync> {
-    let configs = get_configs(bitcoin::Network::Regtest)?;
+    let configs = get_configs(NetworkFlavor::from_env())?;
     let config = &configs[0]; // Use the first config for the dispatcher
 
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
@@ -215,7 +216,7 @@ fn init_broker_server() -> Result<BrokerSync> {
 }
 
 fn run_garbled_dispatcher(stop_rx: Receiver<()>) -> Result<()> {
-    let configs = get_configs(bitcoin::Network::Regtest)?;
+    let configs = get_configs(NetworkFlavor::from_env())?;
     let config = &configs[0]; // Use the first config for the dispatcher
 
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
@@ -250,7 +251,7 @@ fn run_garbled_dispatcher(stop_rx: Receiver<()>) -> Result<()> {
 }
 
 fn run_garbled_client_test() -> Result<()> {
-    let configs = get_configs(bitcoin::Network::Regtest)?;
+    let configs = get_configs(NetworkFlavor::from_env())?;
     let config = &configs[0]; // Use the first config for the dispatcher
 
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;

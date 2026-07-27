@@ -1,5 +1,6 @@
 use anyhow::{Error, Result};
-use bitcoin::{Network, Txid};
+use bitcoin::Txid;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::union::common::{
     estimate_fee, get_accept_pegin_pid, get_dispute_aggregated_key_pid, get_take_aggreated_key_pid,
@@ -40,16 +41,12 @@ pub struct Committee {
 }
 
 impl Committee {
-    pub fn new(stream_denomination: u64, network: Network) -> Result<Self> {
-        non_regtest_warning(network, "You are working with REAL money.");
+    pub fn new(stream_denomination: u64, network_flavor: NetworkFlavor) -> Result<Self> {
+        non_regtest_warning(network_flavor, "You are working with REAL money.");
 
-        let network_prefix = match network {
-            Network::Bitcoin => "mainnet",
-            Network::Testnet => "testnet",
-            Network::Testnet4 => "testnet4",
-            Network::Regtest => "",
-            _ => panic!("Unsupported network"),
-        };
+        // Empty for regtest, matching the unprefixed `op_1.yaml` convention;
+        // "simchain" resolves member configs to `simchain_op_1.yaml` and so on.
+        let network_prefix = network_flavor.prefix();
 
         let members = vec![
             Member::new(
@@ -337,7 +334,10 @@ impl Committee {
     }
 
     fn get_speedup_funds_value(&self) -> u64 {
-        return if self.bitcoin_client.network() == Network::Regtest {
+        // Same shape as the original `== Regtest` test, widened to cover simchain:
+        // funding our own chains is free, so give speedups generous headroom, and
+        // simchain has real fee competition so they genuinely get bumped.
+        return if self.bitcoin_client.network_flavor().is_local_chain() {
             1_000_000
         } else {
             30_000 // min speedup funds

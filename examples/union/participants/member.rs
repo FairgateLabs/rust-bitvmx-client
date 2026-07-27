@@ -1,3 +1,4 @@
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::wallet::helper::print_link;
 use crate::{
     setup::{
@@ -612,7 +613,7 @@ impl Member {
         );
 
         info!("Funded. Txid: {}", txid);
-        print_link(self.config.bitcoin.network, txid);
+        print_link(self.config.bitcoin.network_flavor, txid);
 
         let wpkh = public_key.wpubkey_hash().expect("key is compressed");
         let script_pubkey = ScriptBuf::new_p2wpkh(&wpkh);
@@ -660,10 +661,16 @@ impl Member {
     }
 
     fn get_fee_rate(&self) -> u64 {
-        if self.config.bitcoin.network == bitcoin::Network::Regtest {
-            10
-        } else {
-            1
+        match self.config.bitcoin.network_flavor {
+            NetworkFlavor::Regtest => 10,
+            // Simchain's spammer holds the mempool at a fee floor (15 sat/vB with the
+            // stock .env), so the 1 sat/vB used on the live networks would never be
+            // mined here.
+            NetworkFlavor::Simchain => NetworkFlavor::Simchain.default_fee_rate(),
+            NetworkFlavor::Testnet
+            | NetworkFlavor::Testnet4
+            | NetworkFlavor::Signet
+            | NetworkFlavor::Bitcoin => 1,
         }
     }
 

@@ -2,7 +2,8 @@ use core::time::Duration;
 use std::thread;
 
 use anyhow::Result;
-use bitcoin::{Address, Network, Transaction};
+use bitcoin::{Address, Transaction};
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_settings::settings::load_config_file;
 use bitvmx_wallet::{
     wallet::config::Config,
@@ -13,35 +14,26 @@ use tracing::info;
 /// Master wallet for funding Bitcoin addresses using bitvmx wallet
 pub struct MasterWallet {
     pub wallet: Wallet,
-    network: Network,
+    network_flavor: NetworkFlavor,
 }
 
 impl MasterWallet {
     pub fn new(
-        network: Network,
+        network_flavor: NetworkFlavor,
         private_key: Option<String>,
         change_key: Option<String>,
     ) -> Result<Self> {
-        if network != Network::Regtest && (private_key.is_none() || change_key.is_none()) {
+        // Only the live networks keep their keys outside the repo. Regtest and
+        // simchain both carry theirs in the checked-in wallet config.
+        if !network_flavor.is_local_chain() && (private_key.is_none() || change_key.is_none()) {
             return Err(anyhow::anyhow!(
-                "Private and change key required for non-regtest networks"
+                "Private and change key required for the {network_flavor} network"
             ));
         };
 
-        // Load configuration from appropriate config file
-        let config_path = match network {
-            Network::Regtest => "config/wallet_regtest.yaml",
-            Network::Testnet => "config/wallet_testnet.yaml",
-            Network::Testnet4 => "config/wallet_testnet4.yaml",
-            _ => return Err(anyhow::anyhow!("Unsupported network: {}", network)),
-        };
-
-        let mut config = load_config_file::<Config>(Some(config_path.to_string()))?;
+        let mut config = load_config_file::<Config>(Some(network_flavor.wallet_config().to_string()))?;
         // Override database path and private key in config
-        config.wallet.db_path = format!(
-            "/tmp/{}/master_wallet.db",
-            network.to_string().to_lowercase()
-        );
+        config.wallet.db_path = format!("/tmp/{}/master_wallet.db", network_flavor);
 
         if private_key.is_some() {
             config.wallet.receive_key = private_key.clone();
@@ -58,29 +50,34 @@ impl MasterWallet {
         wallet.sync_wallet()?;
         info!("Master wallet synced.");
 
-        let mut master_wallet = Self { wallet, network };
-        master_wallet.fund_if_regtest()?;
+        let mut master_wallet = Self { wallet, network_flavor };
+        master_wallet.fund_if_we_can_mine()?;
 
         Ok(master_wallet)
     }
 
-    /// Auto-fund wallet if on regtest network
-    fn fund_if_regtest(&mut self) -> Result<()> {
-        if self.network == Network::Regtest {
-            match self.wallet.fund() {
-                Ok(_) => {
-                    info!("Master wallet funded with 150 BTC on regtest");
-                }
-                Err(e) => {
-                    info!("Warning: Failed to fund master wallet on regtest: {}", e);
-                    info!("Make sure Bitcoin Core is running and accessible");
-                    // Don't fail the whole initialization, just warn
-                }
-            }
-
-            info!("Waiting for regtest wallet to sync...");
-            thread::sleep(Duration::from_secs(25)); // wait for the wallet to update the 100 blocks. It only happens in regtest
+    /// Mint funds for the wallet, where minting is something we are allowed to do.
+    ///
+    /// Not on simchain: it is regtest, but its blocks come from the simnet's own
+    /// miners and its coins from the bootstrap, so the wallet must already be funded.
+    fn fund_if_we_can_mine(&mut self) -> Result<()> {
+        if !self.network_flavor.can_mine_on_demand() {
+            return Ok(());
         }
+
+        match self.wallet.fund() {
+            Ok(_) => {
+                info!("Master wallet funded with 150 BTC on regtest");
+            }
+            Err(e) => {
+                info!("Warning: Failed to fund master wallet on regtest: {}", e);
+                info!("Make sure Bitcoin Core is running and accessible");
+                // Don't fail the whole initialization, just warn
+            }
+        }
+
+        info!("Waiting for regtest wallet to sync...");
+        thread::sleep(Duration::from_secs(25)); // wait for the wallet to update the 100 blocks. It only happens in regtest
         Ok(())
     }
 
@@ -112,8 +109,14 @@ impl MasterWallet {
         Ok(balance.total().to_sat())
     }
 
-    pub fn network(&self) -> Network {
-        self.network
+    /// The run target this wallet belongs to, including simnets.
+    pub fn network_flavor(&self) -> NetworkFlavor {
+        self.network_flavor
+    }
+
+    /// Address encoding identity. `network()` means `bitcoin::Network` everywhere.
+    pub fn network(&self) -> bitcoin::Network {
+        self.network_flavor.bitcoin_network()
     }
 
     /// Sync wallet with the blockchain

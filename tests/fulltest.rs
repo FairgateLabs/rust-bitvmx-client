@@ -1,9 +1,10 @@
 #![cfg(all(feature = "cardinal", test))]
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{
     key::rand::rngs::OsRng,
     secp256k1::{self, SecretKey},
-    Network, PublicKey as BitcoinPubKey,
+    PublicKey as BitcoinPubKey,
 };
 use bitvmx_client::{
     program::{
@@ -43,7 +44,9 @@ mod fixtures;
 pub fn test_full() -> Result<()> {
     config_trace();
 
-    const NETWORK: Network = Network::Regtest;
+    // Address encoding only: simchain uses regtest addresses. The run target comes
+    // from BITVMX_NETWORK_FLAVOR (unset => regtest).
+    let network = NetworkFlavor::from_env().bitcoin_network();
 
     let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
 
@@ -288,7 +291,7 @@ pub fn test_full() -> Result<()> {
     let (txid, pubuser, ordinal_fee) = fixtures::create_lockreq_ready(
         aggregated_pub_key,
         hash.clone(),
-        NETWORK,
+        network,
         lock_protocol_dust_cost(3),
         &bitcoin_client,
         2000,

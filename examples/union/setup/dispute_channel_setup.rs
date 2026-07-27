@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bitcoin::{Network, PublicKey};
+use bitcoin::PublicKey;
 use emulator::decision::challenge::{ForceChallenge, ForceCondition};
 use std::collections::HashMap;
 use tracing::info;
@@ -10,7 +10,7 @@ use key_manager::winternitz::{
     WinternitzType,
 };
 
-use crate::{participants::common::set_program_input, wait_until_msg, NETWORK};
+use crate::{network_flavor, participants::common::set_program_input, wait_until_msg};
 use bitvmx_client::{
     client::BitVMXClient,
     program::{
@@ -324,8 +324,8 @@ impl DisputeChannelSetup {
 
 // Just for testing purposes, DO NOT USE THIS IN PRODUCTION.
 pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> WinternitzPublicKey {
-    if NETWORK != Network::Regtest {
-        panic!("This function is only for testing purposes on regtest");
+    if !network_flavor().is_local_chain() {
+        panic!("This function is only for testing purposes on disposable chains");
     }
 
     let message_digits_length = winternitz::message_digits_length(message_size_in_bytes);
@@ -352,8 +352,8 @@ pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> Winternitz
 
 // Just for testing purposes, DO NOT USE THIS IN PRODUCTION.
 pub fn sign_winternitz_message(message_bytes: &[u8], index: u32) -> WinternitzSignature {
-    if NETWORK != Network::Regtest {
-        panic!("This function is only for testing purposes on regtest");
+    if !network_flavor().is_local_chain() {
+        panic!("This function is only for testing purposes on disposable chains");
     }
     let message_digits_length = winternitz::message_digits_length(message_bytes.len());
     let checksummed_message = to_checksummed_message(message_bytes);

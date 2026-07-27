@@ -4,6 +4,7 @@
 pub mod dispute;
 pub mod helper;
 
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{Amount, PublicKey, Txid, XOnlyPublicKey};
 use bitcoind::{
@@ -233,9 +234,15 @@ pub const FUNDING_ID: &str = "fund_1";
 pub const FEE: u64 = 500;
 
 pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWallet)> {
+    prepare_bitcoin_for(NetworkFlavor::from_env())
+}
+
+pub fn prepare_bitcoin_for(
+    network_flavor: NetworkFlavor,
+) -> Result<(BitcoinClient, Option<Bitcoind>, InternalWallet)> {
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::wallet::config::Config,
-    >(Some("config/wallet_regtest.yaml".to_string()))?;
+    >(Some(network_flavor.wallet_config().to_string()))?;
 
     // Clear indexer, monitor, key manager and wallet data.
     clear_db(&wallet_config.storage.path);
@@ -245,7 +252,11 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
 
     let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
 
-    let bitcoind = if is_ci {
+    let bitcoind = if !network_flavor.spawns_own_bitcoind() {
+        // The chain is somebody else's: simchain's compose stack, or a live testnet.
+        info!("Using an externally managed node for {}", network_flavor);
+        None
+    } else if is_ci {
         info!("Running in CI - using external bitcoind from docker-compose");
         std::thread::sleep(std::time::Duration::from_secs(2));
         None
@@ -308,35 +319,25 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
         Some(bitcoind_instance)
     };
 
-    let (bitcoin_client, bc2) = if is_ci {
+    // Built from the config so the client carries its network_flavor and the simchain guard
+    // rails in bitvmx-bitcoin-rpc are armed.
+    let (bitcoin_client, bc2) = if is_ci && network_flavor.has_node_wallet() {
         // In CI mode, use the wallet-specific endpoint to avoid RPC wallet errors
         (
-            BitcoinClient::new_with_wallet(
-                &wallet_config.bitcoin.url,
-                &wallet_config.bitcoin.username,
-                &wallet_config.bitcoin.password,
+            BitcoinClient::new_from_config_with_wallet(
+                &wallet_config.bitcoin,
                 &wallet_config.bitcoin.wallet,
             )?,
-            BitcoinClient::new_with_wallet(
-                &wallet_config.bitcoin.url,
-                &wallet_config.bitcoin.username,
-                &wallet_config.bitcoin.password,
+            BitcoinClient::new_from_config_with_wallet(
+                &wallet_config.bitcoin,
                 &wallet_config.bitcoin.wallet,
             )?,
         )
     } else {
         // Local mode uses the regular client
         (
-            BitcoinClient::new(
-                &wallet_config.bitcoin.url,
-                &wallet_config.bitcoin.username,
-                &wallet_config.bitcoin.password,
-            )?,
-            BitcoinClient::new(
-                &wallet_config.bitcoin.url,
-                &wallet_config.bitcoin.username,
-                &wallet_config.bitcoin.password,
-            )?,
+            BitcoinClient::new_from_config(&wallet_config.bitcoin)?,
+            BitcoinClient::new_from_config(&wallet_config.bitcoin)?,
         )
     };
 
@@ -344,7 +345,11 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
 
-    if is_ci {
+    if !network_flavor.has_node_wallet() {
+        // No node wallet and no mining rights: the chain must already be up and the
+        // master wallet already funded by the simnet bootstrap or a faucet.
+        info!("{}: using pre-funded master wallet", network_flavor);
+    } else if is_ci {
         info!("CI mode: initializing wallet and funding from pre-existing test_wallet");
         let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
         info!("Funding local wallet from test_wallet in CI mode");
@@ -359,7 +364,11 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
 
-    Ok((bitcoin_client, bitcoind, InternalWallet::new(bc2, wallet)))
+    Ok((
+        bitcoin_client,
+        bitcoind,
+        InternalWallet::new(network_flavor, bc2, wallet),
+    ))
 }
 
 /// Same as prepare_bitcoin but wraps bitcoind in a guard for automatic cleanup.
@@ -515,31 +524,94 @@ pub fn mine_and_wait_blocks(
     dispatchers: Option<(&mut Vec<DispatcherHandler<EmulatorJobType>>, bool)>,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
     //MINE AND WAIT
-    let iters = blocks * 10;
     let (dispatchers, multiple_tries) = match dispatchers {
         Some((d, t)) => (d, t),
         None => (&mut vec![], false),
     };
     let mut result = false;
-    wallet.mine(blocks as u64)?;
-    for i in 0..iters {
-        if dispatchers.len() > 0 && (!result || multiple_tries) {
-            result = process_dispatcher_non_blocking(dispatchers, instances)?;
+    let sleep_ms = if std::env::var("GITHUB_ACTIONS").is_ok() {
+        CI_SLEEP_MS
+    } else {
+        LOCAL_SLEEP_MS
+    };
+
+    if wallet.can_mine_on_demand() {
+        // We own the chain, so produce the blocks up front and then spin long enough
+        // for the instances to notice them.
+        let iters = blocks * 10;
+        wallet.mine(blocks as u64)?;
+        for i in 0..iters {
+            if dispatchers.len() > 0 && (!result || multiple_tries) {
+                result = process_dispatcher_non_blocking(dispatchers, instances)?;
+            }
+            if i % 10 == 0 {
+                wallet.mine(1)?;
+            }
+
+            for instance in instances.iter_mut() {
+                instance.tick()?;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
         }
-        if i % 10 == 0 {
-            wallet.mine(1)?;
+    } else {
+        // Blocks arrive on the chain's own schedule. Waiting inside `wallet.mine()`
+        // would block this thread, so the instances would stop ticking and miss the
+        // very blocks we are waiting for. Poll the height here instead, ticking
+        // between polls.
+        let start = wallet.best_block()?;
+        let target = start + blocks;
+        info!(
+            "Waiting for {} block(s): height {} -> {}",
+            blocks, start, target
+        );
+
+        // Bounded on lack of progress, not on total elapsed time, so a dead chain is
+        // reported after one block's worth of silence rather than after the whole
+        // multi-block budget.
+        let mut last_logged = start;
+        let mut stall_deadline = std::time::Instant::now() + wallet.block_wait_timeout();
+        loop {
+            if dispatchers.len() > 0 && (!result || multiple_tries) {
+                result = process_dispatcher_non_blocking(dispatchers, instances)?;
+            }
+            for instance in instances.iter_mut() {
+                instance.tick()?;
+            }
+
+            let height = wallet.best_block()?;
+            if height >= target {
+                break;
+            }
+            if height > last_logged {
+                info!("height {} / {} ({} to go)", height, target, target - height);
+                last_logged = height;
+                stall_deadline = std::time::Instant::now() + wallet.block_wait_timeout();
+            }
+            if std::time::Instant::now() >= stall_deadline {
+                anyhow::bail!(
+                    "no new block for {:?} while waiting for {} block(s): height stuck at \
+                     {} of {}. Is the chain still producing blocks?",
+                    wallet.block_wait_timeout(),
+                    blocks,
+                    height,
+                    target
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
         }
 
-        for instance in instances.iter_mut() {
-            instance.tick()?;
+        // Give the instances a chance to process the final block before we collect.
+        for _ in 0..10 {
+            if dispatchers.len() > 0 && (!result || multiple_tries) {
+                result = process_dispatcher_non_blocking(dispatchers, instances)?;
+            }
+            for instance in instances.iter_mut() {
+                instance.tick()?;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
         }
-        let sleep_ms = if std::env::var("GITHUB_ACTIONS").is_ok() {
-            CI_SLEEP_MS
-        } else {
-            LOCAL_SLEEP_MS
-        };
-        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }
+
     let msgs = get_all(&channels, instances, false)?;
 
     Ok(msgs)

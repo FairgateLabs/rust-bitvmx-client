@@ -1,0 +1,40 @@
+# Master wallet for the simchain run target.
+#
+# Simchain is regtest at the consensus layer (bcrt1 addresses, regtest WIFs, and the
+# node reports chain == "regtest"), but it behaves like a live network: mining is
+# external, node1 runs with -disablewallet, and funds must already exist on chain.
+# `network: simchain` is what tells the code the second half of that.
+#
+# The keys below are deliberately NOT the ones in wallet_regtest.yaml, so a stray
+# regtest run can never spend simchain coins or vice versa.
+#
+# The receive address derived from `receive_key` must be set as USER_ADDRESS in
+# simchain's .env so the bootstrap funds it. Print it with:
+#   cargo test --release --test print_env_address -- --nocapture
+bitcoin:
+  network: simchain
+  url: http://127.0.0.1:18443
+  username: "foo"
+  password: "rpcpassword"
+  wallet: test_wallet # unused: node1 has no wallet. Kept for schema compatibility.
+
+key_manager:
+  # Encoding only (BIP-44 coin type, key version bytes), so this stays `regtest`:
+  # the key manager parses it as a bitcoin::Network and knows nothing about simnets.
+  network: regtest
+
+key_storage:
+  password: SeCrEt_p4ssw0rd_1!
+  path: /tmp/simchain/wallet/keys.db
+
+storage:
+  path: /tmp/simchain/wallet/storage.db
+
+wallet:
+  # bcrt1qmj09uwj7rulcf7cc899t627wl2gq4ujt5vpxkg -> simchain .env USER_ADDRESS
+  receive_key: cQ5J65TDnDi1ox8AVkWkEnxByhr4yRyjToqEDVeNnhNSKtfPWzW3
+  change_key: cVaWhDZjBJFBuBP31UGaCMVP1jJG7XWXDPEacybyUbjYeeVhPCWc
+  db_path: /tmp/simchain/wallet/wallet.db
+  # Simchain bootstraps a short chain, so a full scan from genesis is cheap and
+  # removes any dependence on knowing the funding height in advance.
+  start_height: 0

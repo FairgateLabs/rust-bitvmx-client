@@ -1,3 +1,4 @@
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use crate::{
     bitcoin::{BitcoinWrapper, HIGH_FEE_NODE_ENABLED},
     participants::{
@@ -47,7 +48,7 @@ use bitvmx_client::{
     types::OutgoingBitVMXApiMessages,
 };
 use core::convert::Into;
-use std::{env, thread, time::Duration};
+use std::{env, sync::OnceLock, thread, time::Duration};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -60,7 +61,23 @@ mod setup;
 mod wallet;
 
 // Network and stream denomination configuration
-pub const NETWORK: Network = Network::Regtest;
+//
+// The run target used to be a `const`, which made simchain impossible to express:
+// simchain *is* `Network::Regtest`, so every regtest branch would have fired and the
+// example would have tried to mine a chain that mines itself. It is now resolved once
+// at runtime from `BITVMX_NETWORK_FLAVOR` (unset => regtest, so existing invocations are
+// unchanged), and the branches ask about capabilities rather than about the network.
+static NETWORK_FLAVOR: OnceLock<NetworkFlavor> = OnceLock::new();
+
+/// Run target for this example, including simnets.
+pub fn network_flavor() -> NetworkFlavor {
+    *NETWORK_FLAVOR.get_or_init(NetworkFlavor::from_env)
+}
+
+/// Address encoding identity for the current run target.
+pub fn network() -> Network {
+    network_flavor().bitcoin_network()
+}
 pub const STREAM_DENOMINATION: u64 = 100_000;
 
 // Challenge tests settings
@@ -257,14 +274,14 @@ pub fn cli_watchtowers_start_enabler() -> Result<()> {
 }
 
 pub fn cli_request_pegin() -> Result<()> {
-    let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
 
     request_pegin(&committee, &mut user)?;
     Ok(())
 }
 
 pub fn cli_reject_pegin() -> Result<()> {
-    let (committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
 
     let (txid, _, _) = request_pegin(&committee, &mut user)?;
 
@@ -278,14 +295,14 @@ pub fn cli_reject_pegin() -> Result<()> {
 }
 
 pub fn cli_accept_pegin() -> Result<()> {
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
 
     request_and_accept_pegin(&mut committee, &mut user)?;
     Ok(())
 }
 
 pub fn cli_cancel_take0() -> Result<()> {
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
 
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     thread::sleep(Duration::from_secs(1));
@@ -315,7 +332,7 @@ pub fn cli_request_pegout() -> Result<()> {
 }
 
 pub fn cli_advance_funds() -> Result<()> {
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     advance_funds(&mut committee, user.public_key()?, slot_index, true)?;
@@ -323,7 +340,7 @@ pub fn cli_advance_funds() -> Result<()> {
 }
 
 pub fn cli_advance_funds_twice() -> Result<()> {
-    let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(2, network_flavor().is_local_chain())?;
 
     // First advance should use funding UTXO
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
@@ -341,7 +358,7 @@ pub fn cli_solidity_txs() -> Result<()> {
         info!("This example run faster with a client node with low fees. You can disable it setting HIGH_FEE_NODE_ENABLED to false.");
     }
 
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
     let (slot_index, _, _, request_pegin_tx) = request_and_accept_pegin(&mut committee, &mut user)?;
     let op_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
 
@@ -494,7 +511,7 @@ pub fn cli_challenge(winner: Option<&String>) -> Result<()> {
         _ => 1,
     };
 
-    let (mut committee, mut user, _) = pegin_setup(total_slots, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(total_slots, network_flavor().is_local_chain())?;
 
     if VERIFIER == DRPVerifier::Union {
         // Accept slots until reach the challenged slot
@@ -548,7 +565,7 @@ pub fn cli_challenge_reason(input: Option<&String>) -> Result<()> {
         _ => 1,
     };
 
-    let (mut committee, mut user, _) = pegin_setup(total_slots, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(total_slots, network_flavor().is_local_chain())?;
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
@@ -570,7 +587,7 @@ pub fn cli_wt_disabler() -> Result<()> {
         return Ok(());
     }
 
-    let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(2, network_flavor().is_local_chain())?;
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     // First challenge where WT are penalized. Operator 0 wins.
@@ -618,7 +635,7 @@ pub fn cli_op_no_cosign() -> Result<()> {
         return Ok(());
     }
 
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
 
     let op_index = 1;
@@ -653,7 +670,7 @@ pub fn cli_wt_no_challenge() -> Result<()> {
         return Ok(());
     }
 
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     let op_index = 1;
 
@@ -694,7 +711,7 @@ pub fn cli_input_not_revealed() -> Result<()> {
         return Ok(());
     }
 
-    let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(1, network_flavor().is_local_chain())?;
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
     wait_for_blocks(&committee.bitcoin_client, get_blocks_to_wait())?;
 
@@ -772,7 +789,7 @@ pub fn cli_double_challenge() -> Result<()> {
         return Ok(());
     }
 
-    let (mut committee, mut user, _) = pegin_setup(2, NETWORK == Network::Regtest)?;
+    let (mut committee, mut user, _) = pegin_setup(2, network_flavor().is_local_chain())?;
 
     // Accept 2 pegins to have 2 operator take TXs to dispatch
     let (slot_index, _, _, _) = request_and_accept_pegin(&mut committee, &mut user)?;
@@ -810,7 +827,7 @@ pub fn cli_double_challenge() -> Result<()> {
 }
 
 pub fn cli_members_balance() -> Result<()> {
-    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    let mut committee = Committee::new(STREAM_DENOMINATION, network_flavor())?;
     committee.setup_keys()?;
 
     info!("Members balances:");
@@ -841,7 +858,7 @@ pub fn cli_wallet_recover_funds() -> Result<()> {
 }
 
 pub fn cli_members_recover_funds() -> Result<()> {
-    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    let mut committee = Committee::new(STREAM_DENOMINATION, network_flavor())?;
     committee.setup_keys()?;
 
     let mut wallet = get_master_wallet()?;
@@ -850,7 +867,7 @@ pub fn cli_members_recover_funds() -> Result<()> {
     recover_funds(
         committee.members.as_slice(),
         address.to_string(),
-        wallet.network(),
+        wallet.network_flavor(),
     )?;
 
     wait_for_blocks(&committee.bitcoin_client, 1)?;
@@ -873,7 +890,7 @@ pub fn cli_user_recover_funds() -> Result<()> {
 
     recover_user_funds(&user, address.to_string())?;
 
-    wait_for_blocks(&BitcoinWrapper::new(user.bitcoin_client, user.network), 1)?;
+    wait_for_blocks(&BitcoinWrapper::new(user.bitcoin_client, user.network_flavor), 1)?;
     thread::sleep(Duration::from_secs(5)); // wait for the wallet to update
 
     info!("Master wallet balance after recovery:");
@@ -883,7 +900,7 @@ pub fn cli_user_recover_funds() -> Result<()> {
 }
 
 pub fn cli_fund_members() -> Result<()> {
-    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    let mut committee = Committee::new(STREAM_DENOMINATION, network_flavor())?;
     committee.setup_keys()?;
 
     info!("Balances before funding:");
@@ -907,7 +924,7 @@ pub fn cli_fund_members() -> Result<()> {
 pub fn committee(wallet: &mut MasterWallet) -> Result<Committee> {
     // A new package is created. A committee is selected. Union client requests the setup of the
     // corresponding keys and programs.
-    let mut committee = Committee::new(STREAM_DENOMINATION, NETWORK)?;
+    let mut committee = Committee::new(STREAM_DENOMINATION, network_flavor())?;
     committee.setup_keys()?;
 
     info!("Balances before funding:");
@@ -1012,9 +1029,9 @@ pub fn request_and_accept_pegin(
     let accept_pegin_txid = accept_pegin_tx.compute_txid();
 
     info!("Accept peg-in TX dispatched. Txid: {}", accept_pegin_txid);
-    print_link(NETWORK, accept_pegin_txid);
+    print_link(network_flavor(), accept_pegin_txid);
 
-    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction?: ") {
+    if network_flavor().is_local_chain() || ask_user_confirmation("Dispatch speedup transaction?: ") {
         user.create_and_dispatch_speedup(
             OutPoint {
                 txid: accept_pegin_txid.into(),
@@ -1063,9 +1080,9 @@ pub fn request_pegout() -> Result<()> {
     )?;
 
     info!("User take TX dispatched. Txid: {}", user_take_utxo.0);
-    print_link(NETWORK, user_take_utxo.0);
+    print_link(network_flavor(), user_take_utxo.0);
 
-    if NETWORK == Network::Regtest || ask_user_confirmation("Dispatch speedup transaction?: ") {
+    if network_flavor().is_local_chain() || ask_user_confirmation("Dispatch speedup transaction?: ") {
         user.create_and_dispatch_user_take_speedup(user_take_utxo.clone(), get_user_take_fee()?)?;
     }
 
@@ -1346,12 +1363,12 @@ fn get_and_increment_slot_index() -> usize {
 }
 
 fn confirm_to_continue() {
-    if NETWORK == Network::Regtest {
+    if network_flavor().is_local_chain() {
         return;
     }
 
     if !ask_user_confirmation(
-        format!("Running in {} network. Do you want to continue?", NETWORK).as_str(),
+        format!("Running in {} network. Do you want to continue?", network_flavor()).as_str(),
     ) {
         print!("Operation cancelled by user.\n");
         std::process::exit(0);
@@ -1360,17 +1377,17 @@ fn confirm_to_continue() {
 
 fn get_master_wallet() -> Result<MasterWallet> {
     let wallet = MasterWallet::new(
-        NETWORK,
-        load_private_key_from_env(NETWORK),
-        load_change_key_from_env(NETWORK),
+        network_flavor(),
+        load_private_key_from_env(network_flavor()),
+        load_change_key_from_env(network_flavor()),
     )?;
     Ok(wallet)
 }
 
 fn get_user() -> Result<User> {
-    let id = if NETWORK == Network::Testnet {
+    let id = if network_flavor() == NetworkFlavor::Testnet {
         "testnet_user_1"
-    } else if NETWORK == Network::Testnet4 {
+    } else if network_flavor() == NetworkFlavor::Testnet4 {
         "testnet4_user_1"
     } else {
         "user_1"
@@ -1402,48 +1419,62 @@ fn pegin_setup(
     Ok((committee, user, wallet))
 }
 
+// Simchain keeps the generous regtest fees rather than the testnets' 300 sats: its
+// spammer holds the mempool at a fee floor, so a transaction budgeted for an empty
+// testnet mempool would sit unconfirmed forever.
 fn get_user_take_fee() -> Result<u64, anyhow::Error> {
-    match NETWORK {
-        Network::Regtest => Ok(3000),
-        Network::Testnet | Network::Testnet4 => Ok(300),
-        _ => Err(anyhow::anyhow!("Unsupported network")),
+    match network_flavor() {
+        NetworkFlavor::Regtest | NetworkFlavor::Simchain => Ok(3000),
+        NetworkFlavor::Testnet
+        | NetworkFlavor::Testnet4
+        | NetworkFlavor::Signet
+        | NetworkFlavor::Bitcoin => Ok(300),
     }
 }
 
 fn get_accept_pegin_fee() -> Result<u64, anyhow::Error> {
-    match NETWORK {
-        Network::Regtest => Ok(5000),
-        Network::Testnet | Network::Testnet4 => Ok(300),
-        _ => Err(anyhow::anyhow!("Unsupported network")),
+    match network_flavor() {
+        NetworkFlavor::Regtest | NetworkFlavor::Simchain => Ok(5000),
+        NetworkFlavor::Testnet
+        | NetworkFlavor::Testnet4
+        | NetworkFlavor::Signet
+        | NetworkFlavor::Bitcoin => Ok(300),
     }
 }
 
 fn get_advance_funds_fee() -> Result<u64, anyhow::Error> {
-    match NETWORK {
-        Network::Regtest => Ok(3000),
-        Network::Testnet | Network::Testnet4 => Ok(300),
-        _ => Err(anyhow::anyhow!("Unsupported network")),
+    match network_flavor() {
+        NetworkFlavor::Regtest | NetworkFlavor::Simchain => Ok(3000),
+        NetworkFlavor::Testnet
+        | NetworkFlavor::Testnet4
+        | NetworkFlavor::Signet
+        | NetworkFlavor::Bitcoin => Ok(300),
     }
 }
 
 fn get_blocks_to_wait() -> u32 {
-    match NETWORK {
-        Network::Regtest => {
+    match network_flavor() {
+        NetworkFlavor::Regtest => {
             if HIGH_FEE_NODE_ENABLED {
                 20 + PEGIN_CONFIRMATIONS as u32
             } else {
                 2 + PEGIN_CONFIRMATIONS as u32
             }
         }
-        Network::Testnet | Network::Testnet4 => 1,
-        _ => Err(anyhow::anyhow!("Unsupported network")).unwrap(),
+        // Real blocks, on the chain's own schedule: waiting for many would take
+        // minutes of wall clock for no extra signal.
+        NetworkFlavor::Simchain => 2 + PEGIN_CONFIRMATIONS as u32,
+        NetworkFlavor::Testnet
+        | NetworkFlavor::Testnet4
+        | NetworkFlavor::Signet
+        | NetworkFlavor::Bitcoin => 1,
     }
 }
 
 fn wait_for_blocks(bitcoin_client: &BitcoinWrapper, mut blocks: u32) -> Result<()> {
     bitcoin_client.wait_for_blocks(blocks)?;
 
-    if NETWORK != Network::Regtest {
+    if !network_flavor().is_local_chain() {
         while ask_user_confirmation(
             format!("{} blocks waited. Wait for an extra block?: ", blocks).as_str(),
         ) {

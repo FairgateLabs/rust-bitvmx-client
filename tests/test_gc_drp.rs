@@ -1,6 +1,6 @@
 #![cfg(test)]
 use anyhow::Result;
-use bitcoin::Network;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use bitvmx_broker::rpc::errors::BrokerError;
 use bitvmx_client::{
     program::{
@@ -33,18 +33,18 @@ fn test_aux(
     circuit_input: Vec<bool>,
     winner_role: ParticipantRole,
     independent: Option<bool>,
-    network: Option<Network>,
+    network_flavor: Option<NetworkFlavor>,
     circuit_path: String,
     import_proof_path: Option<String>,
 ) -> Result<()> {
     let independent = independent.unwrap_or(false);
-    let network = network.unwrap_or(Network::Regtest);
+    let network_flavor = network_flavor.unwrap_or_else(NetworkFlavor::from_env);
 
     check_gnova_built()?;
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, independent, Some(1000))?;
+    let mut helper = TestHelper::new(network_flavor, independent, Some(1000))?;
     helper.wallet.sync_wallet()?;
 
     // Obtain communication addresses from all participants
@@ -432,7 +432,7 @@ fn test_sha512_wrong_input() -> Result<()> {
         circuit_input[512..].to_vec(),
         winner_role,
         Some(true),
-        Some(Network::Testnet4),
+        Some(NetworkFlavor::Testnet4),
         "../rust-bitvmx-gc/test-circuits/full-sha512.json".to_string(),
         Some("../rust-bitvmx-gc/test-proof".to_string()),
     )

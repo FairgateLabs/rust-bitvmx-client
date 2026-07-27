@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::Result;
-use bitcoin::Network;
 use bitvmx_wallet::wallet::{RegtestWallet, Wallet};
 use clap::{Arg, Command};
 use tracing::{info, info_span};
@@ -66,7 +65,9 @@ fn init_bitvmx(opn: &str, fresh: bool) -> Result<BitVMX> {
         clear_db(&config.broker.storage.path);
         clear_db(&config.comms.storage_path);
 
-        if config.bitcoin.network == Network::Regtest {
+        // Disposable chains (regtest and simchain) can always rebuild local wallet
+        // state by rescanning, so wiping it is safe. On a live network it is not.
+        if config.bitcoin.is_disposable_chain() {
             Wallet::clear_db(&config.wallet)?;
         }
     }
@@ -84,6 +85,12 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     // Determine which operators to run
     let operator_names: Vec<&str> = match opn {
         "all" => vec!["op_1", "op_2", "op_3", "op_4"],
+        "all-simchain" => vec![
+            "simchain_op_1",
+            "simchain_op_2",
+            "simchain_op_3",
+            "simchain_op_4",
+        ],
         "all-testnet" => vec![
             "testnet_op_1",
             "testnet_op_2",
@@ -194,7 +201,10 @@ fn main() -> Result<()> {
             Arg::new("operator")
                 .required(true)
                 .value_name("OPERATOR")
-                .help("Operator profile to run: op_1 | op_2 | op_3 | op_4 | all | all-testnet"),
+                .help(
+                    "Operator profile to run: op_1 | op_2 | op_3 | op_4 | \
+                     all | all-simchain | all-testnet",
+                ),
         )
         .arg(
             Arg::new("fresh")

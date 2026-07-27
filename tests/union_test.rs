@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use anyhow::Result;
-use bitcoin::Network;
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 
 use crate::common::{check_bitvmx_cpu_built, clear_db, config_trace, helper::TestHelper};
 
@@ -9,17 +9,17 @@ mod common;
 
 fn test_union_aux(name: &str) -> Result<()> {
     let independent = true;
-    let network = Network::Regtest;
+    let network_flavor = NetworkFlavor::from_env();
 
     // Check if BitVMX-CPU is built before running the test
     check_bitvmx_cpu_built()?;
 
     config_trace();
 
-    TestHelper::clear_regtest_dbs()?;
+    TestHelper::clear_local_dbs(network_flavor)?;
     clear_db("/tmp/regtest/master_wallet.db");
 
-    let _helper = TestHelper::new(network, independent, None)?;
+    let _helper = TestHelper::new(network_flavor, independent, None)?;
 
     // execute cargo run --release --example union request_pegout in a separate process
     let mut child = std::process::Command::new("cargo")

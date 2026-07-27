@@ -1,8 +1,9 @@
+use bitvmx_bitcoin_rpc::rpc_config::NetworkFlavor;
 use anyhow::Result;
 use bitcoin::{
     key::{rand::rngs::OsRng, Parity, Secp256k1},
     secp256k1::{self, All, PublicKey as SecpPublicKey, SecretKey},
-    Amount, Network, PublicKey as BitcoinPubKey, Txid,
+    Amount, PublicKey as BitcoinPubKey, Txid,
 };
 use bitvmx_broker::{
     broker_storage::BrokerStorage,
@@ -58,20 +59,30 @@ pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, Ident
     panic!("Timeout waiting for message from channel");
 }
 pub fn prepare_bitcoin_running() -> Result<Wallet> {
-    let config = Config::new(Some("config/op_1.yaml".to_string()))?;
-
-    let wallet_config_file = match config.bitcoin.network {
-        Network::Regtest => "config/wallet_regtest.yaml",
-        Network::Testnet => "config/wallet_testnet.yaml",
-        Network::Testnet4 => "config/wallet_testnet4.yaml",
-        _ => panic!("Not supported network {}", config.bitcoin.network),
-    };
+    let network_flavor = NetworkFlavor::from_env();
+    let config = Config::new(Some(format!("config/{}.yaml", network_flavor.op_config(1))))?;
 
     let wallet_config = bitvmx_settings::settings::load_config_file::<
         bitvmx_wallet::wallet::config::Config,
-    >(Some(wallet_config_file.to_string()))?;
+    >(Some(network_flavor.wallet_config().to_string()))?;
     let mut wallet = Wallet::from_config(config.bitcoin, wallet_config.wallet)?;
-    wallet.fund()?;
+
+    if network_flavor.can_mine_on_demand() {
+        // Mints 150 BTC by mining. Only possible on a chain we own.
+        wallet.fund()?;
+    } else {
+        // Simchain and the live testnets must already be funded: simchain by the
+        // simnet bootstrap sending to USER_ADDRESS, testnets by a faucet.
+        wallet.sync_wallet()?;
+        let balance = wallet.balance().confirmed;
+        if balance.to_sat() == 0 {
+            anyhow::bail!(
+                "the {network_flavor} wallet at {} has no confirmed funds; see SIMCHAIN.md",
+                wallet.receive_address()?
+            );
+        }
+        info!("{} wallet balance: {}", network_flavor, balance);
+    }
 
     Ok(wallet)
 }
