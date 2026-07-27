@@ -111,9 +111,10 @@ pub fn get_required_keys<BC: BitcoinCoordinatorApi>(
             }
             ProgramInputType::Const(words, offset) => {
                 //similar to split_input
+                let tx_idx = input_txs.len() as u32;
                 let full_input = program_context
                     .globals
-                    .get_var_or_err(id, &program_input(idx as u32, None))?
+                    .get_var_or_err(id, &program_input(tx_idx, None))?
                     .input()?;
 
                 for i in 0..*words {
@@ -265,20 +266,27 @@ pub fn unify_witnesses<BC: BitcoinCoordinatorApi>(
 pub fn unify_inputs<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
     program_context: &ProgramContext<BC>,
-    program_def: &ProgramDefinition,
 ) -> Result<Vec<u8>, BitVMXError> {
     let (input_txs, input_txs_sizes, _, _) = get_txs_configuration(&id, program_context)?;
 
     let mut full_input = vec![];
-    for idx in 0..program_def.inputs.len() {
-        if input_txs[idx] == "prover_prev" {
+    // We walk tx space, but keep a separate entry counter.
+    let mut entry = 0;
+    for (idx, owner) in input_txs.iter().enumerate() {
+        // The cosign row re-commits the same verifier words already contributed by the verifier row, so we skip it
+        // to avoid duplicating those bytes.
+        if owner == "prover_cosign" {
+            continue;
+        }
+
+        if owner == "prover_prev" {
             let previous_protocol = program_context
                 .globals
-                .get_var_or_err(id, &program_input_prev_protocol(idx as u32))?
+                .get_var_or_err(id, &program_input_prev_protocol(entry))?
                 .uuid()?;
             let previous_prefix = program_context
                 .globals
-                .get_var_or_err(id, &program_input_prev_prefix(idx as u32))?
+                .get_var_or_err(id, &program_input_prev_prefix(entry))?
                 .string()?;
 
             info!(
@@ -308,6 +316,7 @@ pub fn unify_inputs<BC: BitcoinCoordinatorApi>(
                 input_txs_sizes[idx],
                 hex::encode(&full_input)
             );
+            entry += 1;
             continue;
         }
 
@@ -318,6 +327,7 @@ pub fn unify_inputs<BC: BitcoinCoordinatorApi>(
             key,
             hex::encode(&full_input)
         );
+        entry += 1;
     }
 
     Ok(full_input)
