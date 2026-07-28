@@ -47,6 +47,18 @@ pub enum InputType {
     PreviousInput(String, u32),
 }
 
+impl InputType {
+    /// hello-world's single prover input word, the default program input.
+    pub fn hello_world() -> Self {
+        InputType::Participant("11111111".to_string(), 0, Prover)
+    }
+
+    /// The add tests previous input: entry 0, single word value one, delivered from a simulated previous protocol.
+    pub fn default_previous() -> Self {
+        InputType::PreviousInput("00000001".to_string(), 0)
+    }
+}
+
 /// Fail fast if the test inputs disagree with the program yaml. Checks every yaml entry lines up by owner kind and byte size.
 fn check_inputs_match_yaml(inputs: &[InputType], program_path: &str) {
     let program_def =
@@ -69,26 +81,18 @@ fn check_inputs_match_yaml(inputs: &[InputType], program_path: &str) {
     };
 
     for (index, entry) in program_def.inputs.iter().enumerate() {
-        match listed(index) {
-            Some((owner, bytes)) => {
-                assert_eq!(
-                    entry.owner, owner,
-                    "entry {index}: yaml is {}, test is {owner}",
-                    entry.owner
-                );
-                assert_eq!(
-                    entry.size, bytes as u64,
-                    "entry {index}: yaml is {} bytes, test value is {bytes}",
-                    entry.size
-                );
-            }
-            // A prover_prev entry may be left unlisted, in which case the harness wires it with default values.
-            None => assert_eq!(
-                entry.owner, "prover_prev",
-                "entry {index} ({}) missing from test inputs",
-                entry.owner
-            ),
-        }
+        let (owner, bytes) = listed(index)
+            .unwrap_or_else(|| panic!("entry {index} ({}) missing from test inputs", entry.owner));
+        assert_eq!(
+            entry.owner, owner,
+            "entry {index}: yaml is {}, test is {owner}",
+            entry.owner
+        );
+        assert_eq!(
+            entry.size, bytes as u64,
+            "entry {index}: yaml is {} bytes, test value is {bytes}",
+            entry.size
+        );
     }
 }
 
@@ -96,7 +100,7 @@ pub fn test_all_aux(
     independent: bool,
     network: Network,
     program: Option<String>,
-    inputs: Option<Vec<InputType>>,
+    inputs: Vec<InputType>,
     force_challenge: Option<ForcedChallenges>,
     force_winner: Option<ParticipantRole>,
 ) -> Result<()> {
@@ -201,8 +205,8 @@ pub fn test_all_aux(
     ];
     let prog_id = Uuid::new_v4();
 
-    if let (Some(program_path), Some(inputs)) = (&program, &inputs) {
-        check_inputs_match_yaml(inputs, program_path);
+    if let Some(program_path) = &program {
+        check_inputs_match_yaml(&inputs, program_path);
     }
 
     // Each verifier entry expands into two input txs (verifier plus its cosign), so an entry's tx index is its
@@ -210,42 +214,42 @@ pub fn test_all_aux(
     let tx_index_of = |entry: u32| -> u32 {
         let verifiers_before = inputs
             .iter()
-            .flatten()
             .filter(|i| matches!(i, InputType::Participant(_, idx, Verifier) if *idx < entry))
             .count() as u32;
         entry + verifiers_before
     };
 
-    // Simulate a protocol with a prover previous input. It defaults to the single word used by the add
-    // tests, and a test can list a PreviousInput to replace the value and entry
-    let (prev_value, prev_entry) = inputs
-        .iter()
-        .flatten()
-        .find_map(|input| match input {
-            InputType::PreviousInput(value, entry) => Some((value.clone(), *entry)),
-            _ => None,
-        })
-        .unwrap_or(("00000001".to_string(), 0));
-    let prev_bytes = hex::decode(&prev_value).unwrap();
-    let previous_protocol = Uuid::new_v4();
-    let pub_key = derive_winternitz(prev_bytes.len(), 0);
-    let signature = sign_winternitz_message(&prev_bytes, 0);
-    let set_pub_key =
-        VariableTypes::WinternitzPubKey(pub_key).set_msg(previous_protocol, "previous_input_0")?;
-    let set_witness =
-        WitnessTypes::Winternitz(signature).set_msg(previous_protocol, "previous_input_0")?;
-    send_all(&pair_0_1_channels, &set_pub_key)?;
+    // A prover_prev input comes from a previous protocol, simulated here. Only wire it when a test lists a
+    // PreviousInput, and deliver its witness later, once the dispute is set up.
+    let prev = inputs.iter().find_map(|input| match input {
+        InputType::PreviousInput(value, entry) => Some((value.clone(), *entry)),
+        _ => None,
+    });
+    let set_witness = match prev {
+        Some((prev_value, prev_entry)) => {
+            let prev_bytes = hex::decode(&prev_value).unwrap();
+            let previous_protocol = Uuid::new_v4();
+            let pub_key = derive_winternitz(prev_bytes.len(), 0);
+            let signature = sign_winternitz_message(&prev_bytes, 0);
+            let set_pub_key = VariableTypes::WinternitzPubKey(pub_key)
+                .set_msg(previous_protocol, "previous_input_0")?;
+            let set_witness = WitnessTypes::Winternitz(signature)
+                .set_msg(previous_protocol, "previous_input_0")?;
+            send_all(&pair_0_1_channels, &set_pub_key)?;
 
-    //configure the dispute so is able to retrive the data
-    let prev_protocol = VariableTypes::Uuid(previous_protocol)
-        .set_msg(prog_id, &program_input_prev_protocol(prev_entry))?;
-    let prev_prefix = VariableTypes::String("previous_input_".to_string())
-        .set_msg(prog_id, &program_input_prev_prefix(prev_entry))?;
-    send_all(&pair_0_1_channels, &prev_protocol)?;
-    send_all(&pair_0_1_channels, &prev_prefix)?;
+            let prev_protocol = VariableTypes::Uuid(previous_protocol)
+                .set_msg(prog_id, &program_input_prev_protocol(prev_entry))?;
+            let prev_prefix = VariableTypes::String("previous_input_".to_string())
+                .set_msg(prog_id, &program_input_prev_prefix(prev_entry))?;
+            send_all(&pair_0_1_channels, &prev_protocol)?;
+            send_all(&pair_0_1_channels, &prev_prefix)?;
+            Some(set_witness)
+        }
+        None => None,
+    };
 
     // Const inputs are known upfront and have to reach both participants before the setup starts.
-    for input in inputs.iter().flatten() {
+    for input in inputs.iter() {
         if let InputType::Const(value, index) = input {
             let const_input = VariableTypes::Input(hex::decode(value).unwrap())
                 .set_msg(prog_id, &program_input(tx_index_of(*index), None))?;
@@ -277,7 +281,9 @@ pub fn test_all_aux(
     info!("Waiting for funding ready");
 
     //the witness is observed and then the challenge is sent
-    send_all(&pair_0_1_channels, &set_witness)?;
+    if let Some(set_witness) = &set_witness {
+        send_all(&pair_0_1_channels, set_witness)?;
+    }
 
     let _ = helper.id_channel_pairs[1].channel.send(
         &helper.id_channel_pairs[1].id,
@@ -299,18 +305,15 @@ pub fn test_all_aux(
     };
 
     // Get input. Each entry becomes (value, tx index, role). Inputs are dispatched in tx order.
-    let mut to_dispatch = match &inputs {
-        None => vec![("11111111".to_string(), 0, Prover)],
-        Some(inputs) => inputs
-            .iter()
-            .filter_map(|input| match input {
-                InputType::Const(_, _) | InputType::PreviousInput(_, _) => None,
-                InputType::Participant(value, idx, role) => {
-                    Some((value.clone(), tx_index_of(*idx), role.clone()))
-                }
-            })
-            .collect(),
-    };
+    let mut to_dispatch: Vec<_> = inputs
+        .iter()
+        .filter_map(|input| match input {
+            InputType::Const(_, _) | InputType::PreviousInput(_, _) => None,
+            InputType::Participant(value, idx, role) => {
+                Some((value.clone(), tx_index_of(*idx), role.clone()))
+            }
+        })
+        .collect();
     to_dispatch.sort_by_key(|(_, tx_idx, _)| *tx_idx);
 
     let mut previous_tx = None;
@@ -410,7 +413,14 @@ fn test_independent_regtest() -> Result<()> {
 #[ignore]
 #[test]
 fn test_all() -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, None, None)?;
+    test_all_aux(
+        false,
+        Network::Regtest,
+        None,
+        vec![InputType::hello_world()],
+        None,
+        None,
+    )?;
     Ok(())
 }
 
@@ -421,10 +431,10 @@ fn test_const_only() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-        Some(vec![
+        vec![
             InputType::Const("0000000100000002".to_string(), 0),
             InputType::Participant("00000003".to_string(), 1, Prover),
-        ]),
+        ],
         None,
         None,
     )?;
@@ -433,10 +443,10 @@ fn test_const_only() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-        Some(vec![
+        vec![
             InputType::Participant("00000001".to_string(), 0, Prover),
             InputType::Const("0000000200000003".to_string(), 1),
-        ]),
+        ],
         None,
         None,
     )?;
@@ -474,10 +484,11 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(vec![
+        vec![
+            InputType::default_previous(),
             InputType::Const("00000002".to_string(), 1),
             InputType::Participant("00000003".to_string(), 2, Prover),
-        ]),
+        ],
         Some(ForcedChallenges::Personalized(fail_config.clone())),
         Some(Verifier),
     )?;
@@ -485,10 +496,10 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-post.yaml".to_string()),
-        Some(vec![
+        vec![
             InputType::Participant("00000001".to_string(), 0, Prover),
             InputType::Const("0000000200000004".to_string(), 1),
-        ]),
+        ],
         Some(ForcedChallenges::Personalized(fail_config.clone())),
         Some(Verifier),
     )?;
@@ -496,10 +507,10 @@ fn test_const_fail_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-pre.yaml".to_string()),
-        Some(vec![
+        vec![
             InputType::Const("0000000100000002".to_string(), 0),
             InputType::Participant("00000004".to_string(), 1, Prover),
-        ]),
+        ],
         Some(ForcedChallenges::Personalized(fail_config)),
         Some(Verifier),
     )?;
@@ -514,10 +525,11 @@ fn test_previous_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(vec![
+        vec![
+            InputType::default_previous(),
             InputType::Const("00000002".to_string(), 1),
             InputType::Participant("00000003".to_string(), 2, Prover),
-        ]),
+        ],
         None,
         None,
     )?;
@@ -532,11 +544,7 @@ fn test_verifier_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
-        Some(vec![InputType::Participant(
-            "11111111".to_string(),
-            0,
-            Verifier,
-        )]),
+        vec![InputType::Participant("11111111".to_string(), 0, Verifier)],
         None,
         None,
     )?;
@@ -545,11 +553,11 @@ fn test_verifier_input() -> Result<()> {
     //     false,
     //     Network::Regtest,
     //     Some("../BitVMX-CPU/docker-riscv32/riscv32/build/add-test-verifier.yaml".to_string()),
-    //     Some(vec![InputType::Participant(
+    //     vec![InputType::Participant(
     //         "000000010000000200000003".to_string(),
     //         0,
     //         Verifier,
-    //     )]),
+    //     )],
     //     None,
     //     None,
     // )?;
@@ -564,10 +572,10 @@ fn test_prover_and_verifier_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-verifier.yaml".to_string()),
-        Some(vec![
+        vec![
             InputType::Participant("00000001".to_string(), 0, Prover),
             InputType::Participant("0000000200000003".to_string(), 1, Verifier),
-        ]),
+        ],
         None,
         None,
     )?;
@@ -582,11 +590,11 @@ fn test_const_prover_and_verifier_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-const-and-verifier.yaml".to_string()),
-        Some(vec![
+        vec![
             InputType::Participant("00000001".to_string(), 0, Prover),
             InputType::Const("00000002".to_string(), 1),
             InputType::Participant("00000003".to_string(), 2, Verifier),
-        ]),
+        ],
         None,
         None,
     )?;
@@ -601,10 +609,11 @@ fn test_previous_wots_and_verifier_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots-and-verifier.yaml".to_string()),
-        Some(vec![
+        vec![
+            InputType::default_previous(),
             InputType::Const("00000002".to_string(), 1),
             InputType::Participant("00000003".to_string(), 2, Verifier),
-        ]),
+        ],
         None,
         None,
     )?;
@@ -619,10 +628,10 @@ fn test_verifier_first_input() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-verifier-first.yaml".to_string()),
-        Some(vec![
+        vec![
             InputType::Participant("00000001".to_string(), 0, Verifier),
             InputType::Participant("0000000200000003".to_string(), 1, Prover),
-        ]),
+        ],
         None,
         None,
     )?;
@@ -630,33 +639,25 @@ fn test_verifier_first_input() -> Result<()> {
     Ok(())
 }
 
-// Check that a 128 byte verifier input and its cosign fit within limits. TODO: it is failing
+// Verifier commits `count` data bytes (byte i == i) after a prover count word. Change `count` here and the
+// verifier input size in the yaml to test a different length.
 #[ignore]
 #[test]
-fn test_verifier_input_128_bytes() -> Result<()> {
-    let value: String = (0u8..128).map(|b| format!("{b:02x}")).collect();
+fn test_verifier_input_count() -> Result<()> {
+    let count: u32 = 64;
+
+    // Prover puts the count in the first 4 byte word, verifier commits the count data bytes as byte i == i.
+    let count_word = hex::encode(count.to_le_bytes());
+    let data: String = (0..count).map(|i| format!("{:02x}", i as u8)).collect();
+
     test_all_aux(
         false,
         Network::Regtest,
-        Some("./verifiers/test_128.yaml".to_string()),
-        Some(vec![InputType::Participant(value, 0, Verifier)]),
-        None,
-        None,
-    )?;
-
-    Ok(())
-}
-
-// Check that a 64 byte verifier input and its cosign fit within limits.
-#[ignore]
-#[test]
-fn test_verifier_input_64_bytes() -> Result<()> {
-    let value: String = (0u8..64).map(|b| format!("{b:02x}")).collect();
-    test_all_aux(
-        false,
-        Network::Regtest,
-        Some("./verifiers/test_64.yaml".to_string()),
-        Some(vec![InputType::Participant(value, 0, Verifier)]),
+        Some("./verifiers/test_input_count.yaml".to_string()),
+        vec![
+            InputType::Participant(count_word, 0, Prover),
+            InputType::Participant(data, 1, Verifier),
+        ],
         None,
         None,
     )?;
@@ -698,7 +699,14 @@ fn test_zkp() -> Result<()> {
 }
 
 fn test_challenge(challenge: ForcedChallenges) -> Result<()> {
-    test_all_aux(false, Network::Regtest, None, None, Some(challenge), None)?;
+    test_all_aux(
+        false,
+        Network::Regtest,
+        None,
+        vec![InputType::hello_world()],
+        Some(challenge),
+        None,
+    )?;
     Ok(())
 }
 
@@ -1048,10 +1056,11 @@ fn test_input_timeout_input_prover_with_previous() -> Result<()> {
         false,
         Network::Regtest,
         Some("./verifiers/add-test-with-previous-wots.yaml".to_string()),
-        Some(vec![
+        vec![
+            InputType::default_previous(),
             InputType::Const("00000002".to_string(), 1),
             InputType::Participant("00000003".to_string(), 2, Prover),
-        ]),
+        ],
         Some(ForcedChallenges::InputTimeOut(
             input_tx_name(2),
             ParticipantRole::Prover,
@@ -1068,11 +1077,7 @@ fn test_input_timeout_input_verifier() -> Result<()> {
         false,
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
-        Some(vec![InputType::Participant(
-            "11111111".to_string(),
-            0,
-            Verifier,
-        )]),
+        vec![InputType::Participant("11111111".to_string(), 0, Verifier)],
         Some(ForcedChallenges::InputTimeOut(
             input_tx_name(0),
             ParticipantRole::Verifier,
@@ -1089,11 +1094,7 @@ fn test_input_timeout_input_prover_cosign() -> Result<()> {
         false,
         Network::Regtest,
         Some("../BitVMX-CPU/docker-riscv32/riscv32/build/hello-world-verifier.yaml".to_string()),
-        Some(vec![InputType::Participant(
-            "11111111".to_string(),
-            0,
-            Verifier,
-        )]),
+        vec![InputType::Participant("11111111".to_string(), 0, Verifier)],
         Some(ForcedChallenges::InputTimeOut(
             input_tx_name(1),
             ParticipantRole::Prover,
