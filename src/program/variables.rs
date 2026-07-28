@@ -36,6 +36,7 @@ pub enum VariableTypes {
     GcInput(Vec<bool>),
     Uuid(Uuid),
     Bool(bool),
+    JsonValue(serde_json::Value),
 }
 
 impl VariableTypes {
@@ -125,6 +126,12 @@ impl VariableTypes {
     pub fn bool(&self) -> Result<bool, BitVMXError> {
         match self {
             VariableTypes::Bool(flag) => Ok(flag.clone()),
+            _ => Err(BitVMXError::InvalidVariableType(self.err())),
+        }
+    }
+    pub fn json_value(&self) -> Result<serde_json::Value, BitVMXError> {
+        match self {
+            VariableTypes::JsonValue(value) => Ok(value.clone()),
             _ => Err(BitVMXError::InvalidVariableType(self.err())),
         }
     }
@@ -351,6 +358,16 @@ mod tests {
         let id = Uuid::new_v4();
         assert_eq!(VariableTypes::Uuid(id).uuid().unwrap(), id);
         assert_eq!(VariableTypes::Bool(true).bool().unwrap(), true);
+
+        let json = serde_json::json!({
+            "name": "bitvmx",
+            "enabled": true,
+            "values": [1, 2, 3]
+        });
+        assert_eq!(
+            VariableTypes::JsonValue(json.clone()).json_value().unwrap(),
+            json
+        );
     }
 
     #[test]
@@ -406,6 +423,10 @@ mod tests {
         ));
         assert!(matches!(
             wrong.bool(),
+            Err(BitVMXError::InvalidVariableType(_))
+        ));
+        assert!(matches!(
+            wrong.json_value(),
             Err(BitVMXError::InvalidVariableType(_))
         ));
         assert!(matches!(
@@ -480,6 +501,30 @@ mod tests {
         globals.unset_var(&id, "num").unwrap();
         assert!(!globals.contains_var(&id, "num").unwrap());
         assert!(globals.get_var(&id, "num").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_globals_json_value_round_trips() {
+        let dir = test_storage_dir();
+        let globals = Globals::new(dir.storage());
+        let id = Uuid::new_v4();
+        let json = serde_json::json!({
+            "nested": { "count": 2 },
+            "items": ["one", null]
+        });
+
+        globals
+            .set_var(&id, "json", VariableTypes::JsonValue(json.clone()))
+            .unwrap();
+
+        assert_eq!(
+            globals
+                .get_var_or_err(&id, "json")
+                .unwrap()
+                .json_value()
+                .unwrap(),
+            json
+        );
     }
 
     #[test]
