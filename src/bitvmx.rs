@@ -580,9 +580,10 @@ impl BitVMX {
             let ack_news: AckNews;
 
             match monitor_news {
-                MonitorNews::Transaction(tx_id, tx_status, context_data) => {
-                    self.handle_news(tx_id, tx_status, context_data.clone(), None)?;
-                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(tx_id, context_data));
+                MonitorNews::Transaction(n) => {
+                    self.handle_news(n.tx_id, n.status, n.context.clone(), None)?;
+                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(n.tx_id, n.context));
+                    //TODO: Handle reorg case with n.resent_due_to_reorg
                 }
                 MonitorNews::SpendingUTXOTransaction(
                     tx_id,
