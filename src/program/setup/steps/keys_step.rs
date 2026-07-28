@@ -33,6 +33,7 @@ impl KeysStep {
     }
 
     fn collect_participant_keys<BC: BitcoinCoordinatorApi>(
+        &self,
         protocol_id: &uuid::Uuid,
         participants: &[CommsAddress],
         context: &ProgramContext<BC>,
@@ -41,13 +42,7 @@ impl KeysStep {
             .iter()
             .enumerate()
             .map(|(idx, _)| {
-                let keys_json = context
-                    .globals
-                    .get_var(protocol_id, &format!("participant_{}_keys", idx))?
-                    .ok_or_else(|| {
-                        BitVMXError::InvalidMessage(format!("Missing keys for participant {}", idx))
-                    })?
-                    .string()?;
+                let keys_json = self.get_participant_data(&context.globals, protocol_id, idx)?;
 
                 Ok(serde_json::from_str(&keys_json)?)
             })
@@ -211,10 +206,11 @@ impl SetupStep for KeysStep {
         let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_keys"
-        context.globals.set_var(
+        self.store_participant_data(
+            &context.globals,
             &protocol_id,
-            &format!("participant_{}_keys", idx),
-            VariableTypes::String(serde_json::to_string(&keys)?),
+            idx,
+            &serde_json::to_string(&keys)?,
         )?;
 
         debug!(
@@ -235,11 +231,7 @@ impl SetupStep for KeysStep {
 
         // Verify that all participants have sent their keys
         for (idx, participant) in participants.iter().enumerate() {
-            if context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_keys", idx))?
-                .is_none()
-            {
+            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
                 debug!(
                     "KeysStep: Still waiting for keys from participant {} (index {})",
                     participant.pubkey_hash, idx
@@ -265,7 +257,7 @@ impl SetupStep for KeysStep {
 
         debug!("KeysStep: Step complete, aggregating all participant keys");
 
-        let all_keys = Self::collect_participant_keys(&protocol_id, participants, context)?;
+        let all_keys = self.collect_participant_keys(&protocol_id, participants, context)?;
         let mut my_keys =
             super::load_my_keys(&protocol_id, context, "my_keys not found in globals")?;
         let mut computed_aggregated = Self::compute_aggregated_keys(&my_keys, &all_keys, context)?;
@@ -430,12 +422,9 @@ mod tests {
                 false,
             )
             .unwrap());
-        assert!(env
-            .context
-            .globals
-            .get_var(&id, "participant_0_keys")
-            .unwrap()
-            .is_none());
+        assert!(!step
+            .has_participant_data(&env.context.globals, &id, 0)
+            .unwrap());
 
         let err = step
             .verify_received(
@@ -507,14 +496,13 @@ mod tests {
                 VariableTypes::String(serde_json::to_string(&my_keys).unwrap()),
             )
             .unwrap();
-        env.context
-            .globals
-            .set_var(
-                &id,
-                "participant_0_keys",
-                VariableTypes::String(serde_json::to_string(&participant_keys).unwrap()),
-            )
-            .unwrap();
+        step.store_participant_data(
+            &env.context.globals,
+            &id,
+            0,
+            &serde_json::to_string(&participant_keys).unwrap(),
+        )
+        .unwrap();
 
         let err = step
             .on_step_complete(&protocol, &participants, &mut env.context)

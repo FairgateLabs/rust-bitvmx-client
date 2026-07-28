@@ -6,7 +6,6 @@ use crate::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
-        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -30,9 +29,7 @@ pub type PubNonceMessage = Vec<(
 /// 3. Serializing and exchanging nonces with other participants
 /// 4. Verifying and storing received nonces from all participants
 ///
-/// The nonces are stored in globals with the following conventions:
-/// - Own nonces: "my_nonces"
-/// - Participant i nonces: "participant_{i}_nonces"
+/// Participant nonces are stored in globals as "participant_{i}_nonces".
 #[derive(Debug, Clone, Default)]
 pub struct NoncesStep;
 
@@ -105,13 +102,6 @@ impl SetupStep for NoncesStep {
             ));
         }
 
-        // Save to globals
-        context.globals.set_var(
-            &protocol_id,
-            "my_nonces",
-            VariableTypes::String(serde_json::to_string(&public_nonce_msg)?),
-        )?;
-
         // Serialize to send
         let serialized = serde_json::to_value(&public_nonce_msg)?;
         debug!("NoncesStep: Serialized");
@@ -160,10 +150,11 @@ impl SetupStep for NoncesStep {
         let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_nonces"
-        context.globals.set_var(
+        self.store_participant_data(
+            &context.globals,
             &protocol_id,
-            &format!("participant_{}_nonces", idx),
-            VariableTypes::String(serde_json::to_string(&nonces)?),
+            idx,
+            &serde_json::to_string(&nonces)?,
         )?;
 
         debug!(
@@ -184,11 +175,7 @@ impl SetupStep for NoncesStep {
 
         // Verify that all participants have sent their nonces
         for (idx, participant) in participants.iter().enumerate() {
-            if context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
-                .is_none()
-            {
+            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
                 debug!(
                     "NoncesStep: Still waiting for nonces from participant {} (index {})",
                     participant.pubkey_hash, idx
@@ -226,13 +213,7 @@ impl SetupStep for NoncesStep {
                 continue; // Skip our own nonces
             }
 
-            let nonces_json = context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
-                .ok_or_else(|| {
-                    BitVMXError::InvalidMessage(format!("Missing nonces for participant {}", idx))
-                })?
-                .string()?;
+            let nonces_json = self.get_participant_data(&context.globals, &protocol_id, idx)?;
 
             let participant_nonces: PubNonceMessage = serde_json::from_str(&nonces_json)?;
 
@@ -270,7 +251,7 @@ impl SetupStep for NoncesStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::participant::ParticipantKeys;
+    use crate::program::{participant::ParticipantKeys, variables::VariableTypes};
     use key_manager::key_type::BitcoinKeyType;
     use std::rc::Rc;
     use storage_backend::storage::Storage;
@@ -347,12 +328,6 @@ mod tests {
         assert!(
             matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Failed to generate nonces"))
         );
-        assert!(env
-            .context
-            .globals
-            .get_var(&id, "my_nonces")
-            .unwrap()
-            .is_none());
     }
 
     #[test]
@@ -413,19 +388,10 @@ mod tests {
             .unwrap();
         assert_eq!(first_type, CommsMessageType::PublicNonces);
         assert_eq!(second_type, CommsMessageType::PublicNonces);
-        assert_eq!(
-            serde_json::from_str::<PubNonceMessage>(
-                &first
-                    .context
-                    .globals
-                    .get_var(&id, "my_nonces")
-                    .unwrap()
-                    .unwrap()
-                    .string()
-                    .unwrap()
-            )
-            .unwrap(),
-            serde_json::from_value::<PubNonceMessage>(first_data.clone()).unwrap()
+        assert!(
+            !serde_json::from_value::<PubNonceMessage>(first_data.clone())
+                .unwrap()
+                .is_empty()
         );
 
         let first_address = first.self_address().unwrap();

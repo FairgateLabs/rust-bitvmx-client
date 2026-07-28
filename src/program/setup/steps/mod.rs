@@ -18,6 +18,7 @@ use crate::errors::BitVMXError;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::{CommsAddress, ParticipantKeys};
 use crate::program::protocols::protocol_handler::ProtocolType;
+use crate::program::variables::Globals;
 use crate::types::ProgramContext;
 
 /// Enum representing the available setup step types.

@@ -1,4 +1,7 @@
-use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::{
+    ports::bitcoin_coordinator::BitcoinCoordinatorApi,
+    program::variables::{Globals, VariableTypes},
+};
 use enum_dispatch::enum_dispatch;
 use serde_json::Value;
 use uuid::Uuid;
@@ -13,16 +16,15 @@ use crate::{
 /// Trait that defines a generic step of a protocol setup.
 ///
 /// Each step manages its own lifecycle in 4 phases:
-/// 1. **Generate**: Generate own data (stores in `context.globals`)
+/// 1. **Generate**: Generate own data
 /// 2. **Exchange**: Exchange with participants (handled by `Program`)
 /// 3. **Verify**: Verify received data (validates and stores in `context.globals`)
 /// 4. **Advance**: Verify if it can advance to the next step
 ///
 /// ## Storage conventions in globals:
 ///
-/// - My data: `"my_{step_name}"`
 /// - Participant i data: `"participant_{i}_{step_name}"`
-/// - Aggregates: `"all_{step_name}"`
+/// - Step-specific data may use additional keys such as `"my_keys"`
 #[enum_dispatch]
 pub trait SetupStep {
     /// Identifying name of the step (e.g.: "keys", "nonces", "signatures", "proof")
@@ -31,9 +33,6 @@ pub trait SetupStep {
     /// **GENERATE** data to send.
     ///
     /// Returns serialized bytes or `None` if this step does not generate data.
-    ///
-    /// **IMPORTANT**: Must store the generated data in `context.globals`
-    /// using the convention `"my_{step_name}"` for later use.
     fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,
@@ -99,5 +98,45 @@ pub trait SetupStep {
 
     fn verify_async(&self) -> bool {
         false
+    }
+
+    fn store_participant_data(
+        &self,
+        globals: &Globals,
+        uuid: &Uuid,
+        idx: usize,
+        data: &str,
+    ) -> Result<(), BitVMXError> {
+        let key = format!("participant_{}_{}", idx, self.step_name());
+        globals.set_var(uuid, &key, VariableTypes::String(data.to_string()))
+    }
+
+    fn get_participant_data(
+        &self,
+        globals: &Globals,
+        uuid: &Uuid,
+        idx: usize,
+    ) -> Result<String, BitVMXError> {
+        let step_name = self.step_name();
+        let key = format!("participant_{}_{}", idx, step_name);
+        globals
+            .get_var(uuid, &key)?
+            .ok_or_else(|| {
+                BitVMXError::InvalidMessage(format!(
+                    "Missing {} for participant {}",
+                    step_name, idx
+                ))
+            })?
+            .string()
+    }
+
+    fn has_participant_data(
+        &self,
+        globals: &Globals,
+        uuid: &Uuid,
+        idx: usize,
+    ) -> Result<bool, BitVMXError> {
+        let key = format!("participant_{}_{}", idx, self.step_name());
+        globals.contains_var(uuid, &key)
     }
 }

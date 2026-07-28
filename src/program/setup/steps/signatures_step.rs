@@ -6,7 +6,6 @@ use crate::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
-        variables::VariableTypes,
     },
     types::ProgramContext,
 };
@@ -30,9 +29,7 @@ pub type PartialSignatureMessage = Vec<(
 /// 3. Serializing and exchanging signatures with other participants
 /// 4. Verifying and storing received signatures from all participants
 ///
-/// The signatures are stored in globals with the following conventions:
-/// - Own signatures: "my_signatures"
-/// - Participant i signatures: "participant_{i}_signatures"
+/// Participant signatures are stored in globals as "participant_{i}_signatures".
 #[derive(Debug, Clone, Default)]
 pub struct SignaturesStep;
 
@@ -110,13 +107,6 @@ impl SetupStep for SignaturesStep {
             ));
         }
 
-        // Save to globals
-        context.globals.set_var(
-            &protocol_id,
-            "my_signatures",
-            VariableTypes::String(serde_json::to_string(&partial_sig_msg)?),
-        )?;
-
         // Serialize to send
         let serialized = serde_json::to_value(&partial_sig_msg)?;
         debug!("SignaturesStep: Serialized");
@@ -168,10 +158,11 @@ impl SetupStep for SignaturesStep {
         let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_signatures"
-        context.globals.set_var(
+        self.store_participant_data(
+            &context.globals,
             &protocol_id,
-            &format!("participant_{}_signatures", idx),
-            VariableTypes::String(serde_json::to_string(&signatures)?),
+            idx,
+            &serde_json::to_string(&signatures)?,
         )?;
 
         debug!(
@@ -192,11 +183,7 @@ impl SetupStep for SignaturesStep {
 
         // Verify that all participants have sent their signatures
         for (idx, participant) in participants.iter().enumerate() {
-            if context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_signatures", idx))?
-                .is_none()
-            {
+            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
                 debug!(
                     "SignaturesStep: Still waiting for signatures from participant {} (index {})",
                     participant.pubkey_hash, idx
@@ -236,16 +223,7 @@ impl SetupStep for SignaturesStep {
                 continue; // Skip our own signatures
             }
 
-            let signatures_json = context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_signatures", idx))?
-                .ok_or_else(|| {
-                    BitVMXError::InvalidMessage(format!(
-                        "Missing signatures for participant {}",
-                        idx
-                    ))
-                })?
-                .string()?;
+            let signatures_json = self.get_participant_data(&context.globals, &protocol_id, idx)?;
 
             let participant_signatures: PartialSignatureMessage =
                 serde_json::from_str(&signatures_json)?;
