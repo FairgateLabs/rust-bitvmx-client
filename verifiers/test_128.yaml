@@ -1,0 +1,7 @@
+elf: test_128.elf
+nary_search: 8
+max_steps: 1000
+input_section_name: .input
+inputs:
+  - size: 128
+    owner: verifier
