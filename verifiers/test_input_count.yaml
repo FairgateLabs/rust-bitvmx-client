@@ -1,0 +1,12 @@
+# This test checks that the verifier can commit a number of data bytes after a prover count word.
+elf: test_input_count.elf
+nary_search: 8
+max_steps: 1000
+input_section_name: .input
+inputs:
+  # The number of data bytes below.
+  - size: 4
+    owner: prover
+  # Data bytes. Change this size (and `count` in the test) to test a different length.
+  - size: 64
+    owner: verifier
