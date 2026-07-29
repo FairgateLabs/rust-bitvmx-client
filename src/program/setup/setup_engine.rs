@@ -45,18 +45,15 @@ pub struct SetupEngineState {
     pub participants_completed: Vec<usize>,
     /// Whether all steps have been completed
     pub all_steps_completed: bool,
-    /// Total number of steps (for validation during restore)
-    pub total_steps: usize,
 }
 
 impl SetupEngineState {
-    pub fn new(total_steps: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             current_step_index: 0,
             current_step_state: StepState::Generating,
             participants_completed: Vec::new(),
             all_steps_completed: false,
-            total_steps,
         }
     }
 
@@ -73,8 +70,8 @@ impl SetupEngineState {
     }
 
     /// Reset state for next step
-    pub fn advance_to_next_step(&mut self) {
-        if self.current_step_index < self.total_steps - 1 {
+    pub fn advance_to_next_step(&mut self, total_steps: usize) {
+        if self.current_step_index < total_steps - 1 {
             self.current_step_index += 1;
             self.current_step_state = StepState::Generating;
             self.participants_completed.clear();
@@ -126,7 +123,7 @@ impl SetupEngine {
 
         Self {
             steps,
-            state: SetupEngineState::new(step_names.len()),
+            state: SetupEngineState::new(),
         }
     }
 
@@ -136,16 +133,41 @@ impl SetupEngine {
     }
 
     /// Restores engine state from a saved state (used during load).
-    /// Validates that step index is within bounds.
+    ///
+    /// Validates invariants maintained by the engine's public operations. The
+    /// final step remains at its index when setup completes; the index is never
+    /// advanced one past the end.
     pub fn restore_state(&mut self, saved_state: SetupEngineState) -> Result<(), BitVMXError> {
-        // Validate step index is within bounds (or equal to len for completed state)
-        if saved_state.current_step_index > self.steps.len() {
+        let total_steps = self.total_steps();
+        if saved_state.current_step_index >= total_steps {
             return Err(BitVMXError::InvalidMessage(format!(
                 "Invalid step index {} for engine with {} steps",
-                saved_state.current_step_index,
-                self.steps.len()
+                saved_state.current_step_index, total_steps
             )));
         }
+
+        let is_final_step = saved_state.current_step_index == total_steps - 1;
+        match (
+            saved_state.all_steps_completed,
+            &saved_state.current_step_state,
+        ) {
+            // advance_to_next_step leaves the final step in Completed state.
+            (true, StepState::Completed) if is_final_step => {}
+            (true, _) => {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Completed setup has inconsistent state at step {}: {:?}",
+                    saved_state.current_step_index, saved_state.current_step_state
+                )));
+            }
+            (false, StepState::Completed) => {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Incomplete setup cannot have a Completed current step at index {}",
+                    saved_state.current_step_index
+                )));
+            }
+            (false, _) => {}
+        }
+
         self.state = saved_state;
         Ok(())
     }
@@ -216,7 +238,7 @@ impl SetupEngine {
             "SetupEngine: Generating data for step '{}' ({}/{}). Participants completed: {}/{}",
             step_name,
             self.state.current_step_index + 1,
-            self.state.total_steps,
+            self.total_steps(),
             self.state.participants_completed.len(),
             total_participants
         );
@@ -446,7 +468,8 @@ impl SetupEngine {
         self.state.current_step_state = StepState::Completed;
 
         // Advance to next step
-        self.state.advance_to_next_step();
+        let total_steps = self.total_steps();
+        self.state.advance_to_next_step(total_steps);
 
         if self.is_complete() {
             info!("SetupEngine: All steps completed!");
@@ -456,7 +479,7 @@ impl SetupEngine {
                 "SetupEngine: Advanced to step '{}' ({}/{})",
                 next_step_name,
                 self.state.current_step_index + 1,
-                self.state.total_steps
+                self.total_steps()
             );
         }
 
@@ -863,7 +886,7 @@ mod tests {
 
     #[test]
     fn test_step_state_transitions() {
-        let mut state = SetupEngineState::new(2);
+        let mut state = SetupEngineState::new();
 
         assert_eq!(state.current_step_state, StepState::Generating);
         assert_eq!(state.current_step_index, 0);
@@ -877,7 +900,7 @@ mod tests {
         assert!(state.has_participant_completed(1));
         assert_eq!(state.participants_completed.len(), 2);
 
-        state.advance_to_next_step();
+        state.advance_to_next_step(2);
         assert_eq!(state.current_step_index, 1);
         assert_eq!(state.current_step_state, StepState::Generating);
         assert!(state.participants_completed.is_empty());
@@ -891,7 +914,57 @@ mod tests {
         assert!(!engine.is_complete());
 
         // Simulate advancing past all steps
-        engine.state_mut().advance_to_next_step();
+        engine.state_mut().advance_to_next_step(1);
         assert!(engine.is_complete());
+    }
+
+    #[test]
+    fn restore_rejects_index_at_or_past_end() {
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys]);
+
+        for index in [1, 2] {
+            let mut saved_state = SetupEngineState::new();
+            saved_state.current_step_index = index;
+
+            assert!(engine.restore_state(saved_state).is_err());
+            assert_eq!(engine.state(), &SetupEngineState::new());
+        }
+    }
+
+    #[test]
+    fn restore_rejects_completion_before_final_step() {
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys, SetupStepName::Nonces]);
+        let mut saved_state = SetupEngineState::new();
+        saved_state.all_steps_completed = true;
+        saved_state.current_step_state = StepState::Completed;
+
+        assert!(engine.restore_state(saved_state).is_err());
+        assert_eq!(engine.state(), &SetupEngineState::new());
+    }
+
+    #[test]
+    fn restore_rejects_completed_runtime_state_for_incomplete_setup() {
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys]);
+        let mut saved_state = SetupEngineState::new();
+        saved_state.current_step_state = StepState::Completed;
+
+        assert!(engine.restore_state(saved_state).is_err());
+        assert_eq!(engine.state(), &SetupEngineState::new());
+    }
+
+    #[test]
+    fn restore_accepts_active_final_step_and_completed_setup() {
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys, SetupStepName::Nonces]);
+        let mut active_final_step = SetupEngineState::new();
+        active_final_step.current_step_index = 1;
+        active_final_step.current_step_state = StepState::AllParticipantsCompleted;
+        engine.restore_state(active_final_step.clone()).unwrap();
+        assert_eq!(engine.state(), &active_final_step);
+
+        let mut completed = active_final_step;
+        completed.current_step_state = StepState::Completed;
+        completed.all_steps_completed = true;
+        engine.restore_state(completed.clone()).unwrap();
+        assert_eq!(engine.state(), &completed);
     }
 }
