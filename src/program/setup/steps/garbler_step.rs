@@ -135,11 +135,18 @@ impl SetupStep for GarblerStep {
     fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &self,
         result: Value,
-        _msg_type: CommsMessageType,
+        msg_type: CommsMessageType,
         sub_step: &str,
         context: &mut ProgramContext<BC>,
         protocol_id: &Uuid,
     ) -> Result<Value, BitVMXError> {
+        if msg_type != CommsMessageType::GarbledCircuit {
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Expected message type GarbledCircuit, but got: {:?}",
+                msg_type
+            )));
+        }
+
         if sub_step == GC_JOB_GENERATE_STEP {
             let prove_result: GCJobProveResult =
                 serde_json::from_value(result.clone()).map_err(|e| {
