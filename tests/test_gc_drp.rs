@@ -23,7 +23,12 @@ use sha2::{Digest, Sha512};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::common::{check_gnova_built, config_trace, helper::TestHelper, init_utxo_new};
+use crate::common::{
+    check_gnova_built,
+    config_trace,
+    helper::{Mode, TestHelper},
+    init_utxo_new,
+};
 
 mod common;
 
@@ -44,7 +49,7 @@ fn test_aux(
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, independent, Some(1000))?;
+    let mut helper = TestHelper::new(Mode::select(network, independent), Some(1000))?;
     helper.wallet.sync_wallet()?;
 
     // Obtain communication addresses from all participants

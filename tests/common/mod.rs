@@ -359,7 +359,11 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
     // Sync the wallet with the Bitcoin node to the latest block
     wallet.sync_wallet()?;
 
-    Ok((bitcoin_client, bitcoind, InternalWallet::new(bc2, wallet)))
+    Ok((
+        bitcoin_client,
+        bitcoind,
+        InternalWallet::new(bc2, wallet, true),
+    ))
 }
 
 /// Same as prepare_bitcoin but wraps bitcoind in a guard for automatic cleanup.
