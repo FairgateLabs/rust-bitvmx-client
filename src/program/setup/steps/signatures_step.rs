@@ -12,7 +12,7 @@ use crate::{
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PartialSignature};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 
 pub type PartialSignatureMessage = Vec<(
@@ -36,6 +36,53 @@ pub struct SignaturesStep;
 impl SignaturesStep {
     pub fn new() -> Self {
         Self
+    }
+
+    fn validate_received_signatures(
+        signatures: &PartialSignatureMessage,
+        expected_aggregated_keys: &HashSet<PublicKey>,
+    ) -> Result<(), BitVMXError> {
+        if signatures.is_empty() {
+            return Err(BitVMXError::InvalidMessage(
+                "Received empty signatures from participant".to_string(),
+            ));
+        }
+
+        let mut received_aggregated_keys = HashSet::new();
+
+        for (aggregated, _, message_signatures) in signatures {
+            if !expected_aggregated_keys.contains(aggregated) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received signatures for unexpected aggregated key {}",
+                    aggregated
+                )));
+            }
+            if !received_aggregated_keys.insert(*aggregated) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received duplicate signatures for aggregated key {}",
+                    aggregated
+                )));
+            }
+            if message_signatures.is_empty() {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received no message signatures for aggregated key {}",
+                    aggregated
+                )));
+            }
+
+            let mut message_ids = HashSet::new();
+            if message_signatures
+                .iter()
+                .any(|(message_id, _)| !message_ids.insert(message_id))
+            {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received duplicate signature message IDs for aggregated key {}",
+                    aggregated
+                )));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -98,7 +145,7 @@ impl SetupStep for SignaturesStep {
                 aggregated
             );
 
-            partial_sig_msg.push((aggregated.clone(), my_pub, signatures.unwrap()));
+            partial_sig_msg.push((*aggregated, my_pub, signatures.unwrap()));
         }
 
         if partial_sig_msg.is_empty() {
@@ -142,12 +189,23 @@ impl SetupStep for SignaturesStep {
             BitVMXError::InvalidMessage(format!("Failed to deserialize signatures: {}", e))
         })?;
 
-        // Basic validation
         if signatures.is_empty() {
             return Err(BitVMXError::InvalidMessage(
                 "Received empty signatures from participant".to_string(),
             ));
         }
+
+        let my_keys = super::load_my_keys(
+            &protocol_id,
+            context,
+            "Keys must be exchanged before signatures can be verified",
+        )?;
+        let expected_aggregated_keys = my_keys
+            .computed_aggregated
+            .values()
+            .copied()
+            .collect::<HashSet<_>>();
+        Self::validate_received_signatures(&signatures, &expected_aggregated_keys)?;
 
         debug!(
             "SignaturesStep: Received {} partial signatures",
@@ -231,10 +289,17 @@ impl SetupStep for SignaturesStep {
             // PartialSignatureMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PartialSignature)>)>
             // where first PublicKey is aggregated key, second is participant's public key
             for (aggregated, participant_pub_key, signatures) in participant_signatures {
-                map_of_maps
+                if map_of_maps
                     .entry(aggregated)
-                    .or_insert_with(HashMap::new)
-                    .insert(participant_pub_key, signatures);
+                    .or_default()
+                    .insert(participant_pub_key, signatures)
+                    .is_some()
+                {
+                    return Err(BitVMXError::InvalidMessage(format!(
+                        "Received duplicate signatures from participant key {}",
+                        participant_pub_key
+                    )));
+                }
             }
         }
 
@@ -256,5 +321,116 @@ impl SetupStep for SignaturesStep {
             participants.len()
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::{
+        participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type,
+        variables::VariableTypes,
+    };
+    use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
+    use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+    use uuid::Uuid;
+
+    #[test]
+    fn generation_requires_completed_keys() {
+        let mut env = TestProgramContextEnv::new("signatures-step-generation-errors").unwrap();
+        let dir = TestStorageDir::new("signatures-step-generation-errors-protocol");
+        let id = Uuid::new_v4();
+        let mut protocol =
+            new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap();
+        let step = SignaturesStep::new();
+
+        let err = step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Keys must be exchanged"))
+        );
+
+        let empty_keys = ParticipantKeys::new(vec![], vec![]);
+        env.context
+            .globals
+            .set_var(
+                &id,
+                "my_keys",
+                VariableTypes::String(serde_json::to_string(&empty_keys).unwrap()),
+            )
+            .unwrap();
+
+        let err = step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("No aggregated keys"))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_received_signatures_and_missing_completion_data() {
+        let mut env = TestProgramContextEnv::new("signatures-step-validation").unwrap();
+        let dir = TestStorageDir::new("signatures-step-validation-protocol");
+        let id = Uuid::new_v4();
+        let protocol =
+            new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap();
+        let participant = env.self_address().unwrap();
+        let participants = vec![participant.clone(), participant.clone()];
+        let step = SignaturesStep::new();
+
+        assert!(!step
+            .verify_received(
+                Value::Null,
+                CommsMessageType::PublicNonces,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap());
+
+        let err = step
+            .verify_received(
+                serde_json::json!({"not": "signatures"}),
+                CommsMessageType::PartialSignatures,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("deserialize"))
+        );
+
+        let err = step
+            .verify_received(
+                serde_json::to_value(PartialSignatureMessage::new()).unwrap(),
+                CommsMessageType::PartialSignatures,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("empty signatures"))
+        );
+
+        assert!(!step
+            .can_advance(&protocol, &participants, &env.context)
+            .unwrap());
+
+        let err = step
+            .on_step_complete(&protocol, &participants, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("participant 1"))
+        );
     }
 }

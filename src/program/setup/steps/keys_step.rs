@@ -11,6 +11,7 @@ use crate::{
     types::ProgramContext,
 };
 use serde_json::Value;
+use std::collections::HashSet;
 use tracing::{debug, info};
 
 /// Template step for exchanging public keys in MuSig2 protocols.
@@ -54,6 +55,24 @@ impl KeysStep {
         all_keys: &[ParticipantKeys],
         context: &mut ProgramContext<BC>,
     ) -> Result<std::collections::HashMap<String, bitcoin::PublicKey>, BitVMXError> {
+        let expected_aggregated_names = my_keys.aggregated.iter().collect::<HashSet<_>>();
+        if expected_aggregated_names.len() != my_keys.aggregated.len() {
+            return Err(BitVMXError::InvalidMessage(
+                "My keys contain duplicate aggregated key names".to_string(),
+            ));
+        }
+
+        for (idx, participant_keys) in all_keys.iter().enumerate() {
+            let participant_aggregated_names =
+                participant_keys.aggregated.iter().collect::<HashSet<_>>();
+            if participant_aggregated_names != expected_aggregated_names {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Participant {} has an inconsistent aggregated key set",
+                    idx
+                )));
+            }
+        }
+
         let mut computed_aggregated = std::collections::HashMap::new();
 
         for agg_name in &my_keys.aggregated {
