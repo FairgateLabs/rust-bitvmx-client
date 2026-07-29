@@ -333,7 +333,26 @@ mod tests {
     };
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+    use key_manager::{key_type::BitcoinKeyType, musig2::musig::MuSig2SignerApi};
     use uuid::Uuid;
+
+    fn store_aggregated_key<BC: BitcoinCoordinatorApi>(
+        context: &ProgramContext<BC>,
+        id: Uuid,
+        aggregated: PublicKey,
+    ) {
+        let mut keys = ParticipantKeys::new(vec![], vec![]);
+        keys.computed_aggregated
+            .insert("test-aggregate".to_string(), aggregated);
+        context
+            .globals
+            .set_var(
+                &id,
+                "my_keys",
+                VariableTypes::String(serde_json::to_string(&keys).unwrap()),
+            )
+            .unwrap();
+    }
 
     #[test]
     fn generation_requires_completed_keys() {
@@ -343,6 +362,8 @@ mod tests {
         let mut protocol =
             new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap();
         let step = SignaturesStep::new();
+
+        assert_eq!(step.step_name(), "signatures");
 
         let err = step
             .generate_data(&mut protocol, &mut env.context)
@@ -367,6 +388,323 @@ mod tests {
         assert!(
             matches!(err, BitVMXError::InvalidMessage(message) if message.contains("No aggregated keys"))
         );
+
+        let my_key = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let other_key = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let aggregate = env
+            .context
+            .key_manager
+            .new_musig2_session(vec![my_key, other_key], my_key)
+            .unwrap();
+        store_aggregated_key(&env.context, id, aggregate);
+        let err = step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Failed to generate signatures for any aggregated key"))
+        );
+    }
+
+    #[test]
+    fn exchanges_partial_signatures_and_produces_a_valid_final_signature() {
+        let mut first = TestProgramContextEnv::new("signatures-step-first").unwrap();
+        let mut second = TestProgramContextEnv::new("signatures-step-second").unwrap();
+        let first_dir = TestStorageDir::new("signatures-step-first-protocol");
+        let second_dir = TestStorageDir::new("signatures-step-second-protocol");
+        let id = Uuid::new_v4();
+        let mut first_protocol =
+            new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, first_dir.storage()).unwrap();
+        let mut second_protocol =
+            new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 1, second_dir.storage()).unwrap();
+        assert_eq!(
+            first_protocol.context().protocol_name,
+            second_protocol.context().protocol_name
+        );
+        let session_id = first_protocol.context().protocol_name.clone();
+        let step = SignaturesStep::new();
+
+        let first_key = first
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let second_key = second
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let participant_keys = vec![first_key, second_key];
+        let first_aggregate = first
+            .context
+            .key_manager
+            .new_musig2_session(participant_keys.clone(), first_key)
+            .unwrap();
+        let second_aggregate = second
+            .context
+            .key_manager
+            .new_musig2_session(participant_keys, second_key)
+            .unwrap();
+        assert_eq!(first_aggregate, second_aggregate);
+
+        let message_id = "setup-transaction";
+        let message = b"transaction digest covered by both participants".to_vec();
+        for context in [&first.context, &second.context] {
+            context
+                .key_manager
+                .generate_nonce(
+                    message_id,
+                    message.clone(),
+                    &first_aggregate,
+                    &session_id,
+                    None,
+                )
+                .unwrap();
+            store_aggregated_key(context, id, first_aggregate);
+        }
+
+        let first_nonces = first
+            .context
+            .key_manager
+            .get_my_pub_nonces(&first_aggregate, &session_id)
+            .unwrap();
+        let second_nonces = second
+            .context
+            .key_manager
+            .get_my_pub_nonces(&first_aggregate, &session_id)
+            .unwrap();
+        first
+            .context
+            .key_manager
+            .aggregate_nonces(
+                &first_aggregate,
+                &session_id,
+                HashMap::from([(second_key, second_nonces)]),
+            )
+            .unwrap();
+        second
+            .context
+            .key_manager
+            .aggregate_nonces(
+                &first_aggregate,
+                &session_id,
+                HashMap::from([(first_key, first_nonces)]),
+            )
+            .unwrap();
+
+        let (first_data, first_type) = step
+            .generate_data(&mut first_protocol, &mut first.context)
+            .unwrap()
+            .unwrap();
+        let (second_data, second_type) = step
+            .generate_data(&mut second_protocol, &mut second.context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_type, CommsMessageType::PartialSignatures);
+        assert_eq!(second_type, CommsMessageType::PartialSignatures);
+
+        let first_signatures: PartialSignatureMessage =
+            serde_json::from_value(first_data.clone()).unwrap();
+        let second_signatures: PartialSignatureMessage =
+            serde_json::from_value(second_data.clone()).unwrap();
+        assert_eq!(first_signatures.len(), 1);
+        assert_eq!(first_signatures[0].0, first_aggregate);
+        assert_eq!(first_signatures[0].1, first_key);
+        assert_eq!(first_signatures[0].2.len(), 1);
+        assert_eq!(first_signatures[0].2[0].0, message_id);
+        assert_eq!(second_signatures[0].1, second_key);
+
+        let first_address = first.self_address().unwrap();
+        let mut second_address = second.self_address().unwrap();
+        second_address.pubkey_hash = "second-participant".to_string();
+        let participants = vec![first_address.clone(), second_address.clone()];
+
+        assert!(!step
+            .can_advance(&first_protocol, &participants, &first.context)
+            .unwrap());
+        assert!(step
+            .verify_received(
+                first_data.clone(),
+                first_type,
+                &first_address,
+                &first_protocol,
+                &participants,
+                &mut first.context,
+                true,
+            )
+            .unwrap());
+        assert!(!step
+            .can_advance(&first_protocol, &participants, &first.context)
+            .unwrap());
+
+        let mut outsider = second_address.clone();
+        outsider.pubkey_hash = "unknown-participant".to_string();
+        assert!(step
+            .verify_received(
+                second_data.clone(),
+                second_type.clone(),
+                &outsider,
+                &first_protocol,
+                &participants,
+                &mut first.context,
+                false,
+            )
+            .is_err());
+        assert!(step
+            .verify_received(
+                second_data.clone(),
+                second_type,
+                &second_address,
+                &first_protocol,
+                &participants,
+                &mut first.context,
+                false,
+            )
+            .unwrap());
+        assert!(step
+            .can_advance(&first_protocol, &participants, &first.context)
+            .unwrap());
+
+        let stored_second: PartialSignatureMessage = serde_json::from_str(
+            &step
+                .get_participant_data(&first.context.globals, &id, 1)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(stored_second).unwrap(),
+            serde_json::to_value(&second_signatures).unwrap()
+        );
+
+        step.on_step_complete(&first_protocol, &participants, &mut first.context)
+            .unwrap();
+        let final_signature = first
+            .context
+            .key_manager
+            .musig2()
+            .get_aggregated_signature(&first_aggregate, &session_id, message_id)
+            .unwrap();
+        assert!(first
+            .context
+            .key_manager
+            .musig2()
+            .verify_final_signature(message_id, final_signature, first_aggregate, &session_id)
+            .unwrap());
+
+        // A participant key may contribute only once. Reusing the second
+        // participant's otherwise-valid payload under another index is rejected.
+        step.store_participant_data(
+            &first.context.globals,
+            &id,
+            2,
+            &serde_json::to_string(&second_signatures).unwrap(),
+        )
+        .unwrap();
+        let mut third_address = second_address.clone();
+        third_address.pubkey_hash = "third-participant".to_string();
+        let err = step
+            .on_step_complete(
+                &first_protocol,
+                &[first_address, second_address, third_address],
+                &mut first.context,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("duplicate signatures"))
+        );
+    }
+
+    #[test]
+    fn validates_signature_payload_structure() {
+        let first = TestProgramContextEnv::new("signatures-validation-first").unwrap();
+        let second = TestProgramContextEnv::new("signatures-validation-second").unwrap();
+        let first_key = first
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let second_key = second
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let aggregated = first
+            .context
+            .key_manager
+            .new_musig2_session(vec![first_key, second_key], first_key)
+            .unwrap();
+        let session_id = "signature-validation";
+        first
+            .context
+            .key_manager
+            .generate_nonce(
+                "message",
+                b"message".to_vec(),
+                &aggregated,
+                session_id,
+                None,
+            )
+            .unwrap();
+        let own_nonces = first
+            .context
+            .key_manager
+            .get_my_pub_nonces(&aggregated, session_id)
+            .unwrap();
+        first
+            .context
+            .key_manager
+            .aggregate_nonces(
+                &aggregated,
+                session_id,
+                HashMap::from([(second_key, own_nonces)]),
+            )
+            .unwrap();
+        let valid = vec![(
+            aggregated,
+            first_key,
+            first
+                .context
+                .key_manager
+                .get_my_partial_signatures(&aggregated, session_id)
+                .unwrap(),
+        )];
+        let expected = HashSet::from([aggregated]);
+        assert!(SignaturesStep::validate_received_signatures(&valid, &expected).is_ok());
+
+        let error_message = |payload: &PartialSignatureMessage| {
+            SignaturesStep::validate_received_signatures(payload, &expected)
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(error_message(&vec![]).contains("empty signatures"));
+
+        let unexpected_key = first
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let mut unexpected = valid.clone();
+        unexpected[0].0 = unexpected_key;
+        assert!(error_message(&unexpected).contains("unexpected aggregated key"));
+
+        let duplicate_aggregate = vec![valid[0].clone(), valid[0].clone()];
+        assert!(error_message(&duplicate_aggregate).contains("duplicate signatures"));
+
+        let mut no_messages = valid.clone();
+        no_messages[0].2.clear();
+        assert!(error_message(&no_messages).contains("no message signatures"));
+
+        let mut duplicate_message = valid;
+        let repeated_signature = duplicate_message[0].2[0].clone();
+        duplicate_message[0].2.push(repeated_signature);
+        assert!(error_message(&duplicate_message).contains("duplicate signature message IDs"));
     }
 
     #[test]
