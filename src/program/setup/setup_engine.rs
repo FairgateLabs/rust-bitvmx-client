@@ -68,17 +68,6 @@ impl SetupEngineState {
             self.participants_completed.push(participant_idx);
         }
     }
-
-    /// Reset state for next step
-    pub fn advance_to_next_step(&mut self, total_steps: usize) {
-        if self.current_step_index < total_steps - 1 {
-            self.current_step_index += 1;
-            self.current_step_state = StepState::Generating;
-            self.participants_completed.clear();
-        } else {
-            self.all_steps_completed = true;
-        }
-    }
 }
 
 /// Result of a SetupEngine tick operation.
@@ -107,24 +96,42 @@ pub struct SetupTickResult {
 pub struct SetupEngine {
     /// The steps to execute in order
     steps: Vec<SetupStepEnum>,
+    /// Number of participants fixed when the owning Program is created
+    total_participants: usize,
     /// Current state of the engine
     state: SetupEngineState,
 }
 
 impl SetupEngine {
-    /// Creates a new SetupEngine with the given step names.
+    /// Creates a new SetupEngine with the given step names and participant count.
     ///
-    /// Steps will be created from the names using the factory and executed in the order provided.
-    pub fn new(step_names: Vec<SetupStepName>) -> Self {
+    /// The owning Program fixes its participant list at creation, so runtime
+    /// operations can rely on both values being non-empty.
+    pub fn new(
+        step_names: Vec<SetupStepName>,
+        total_participants: usize,
+    ) -> Result<Self, BitVMXError> {
+        if step_names.is_empty() {
+            return Err(BitVMXError::InvalidParameter(
+                "SetupEngine requires at least one step".to_string(),
+            ));
+        }
+        if total_participants == 0 {
+            return Err(BitVMXError::InvalidParameter(
+                "SetupEngine requires at least one participant".to_string(),
+            ));
+        }
+
         let steps: Vec<SetupStepEnum> = step_names
             .iter()
             .map(|name| create_setup_step(name))
             .collect();
 
-        Self {
+        Ok(Self {
             steps,
+            total_participants,
             state: SetupEngineState::new(),
-        }
+        })
     }
 
     /// Returns the current state of the engine.
@@ -200,6 +207,17 @@ impl SetupEngine {
         self.steps.len()
     }
 
+    /// Resets state for the next step or marks the final step complete.
+    fn advance_to_next_step(&mut self) {
+        if self.state.current_step_index < self.total_steps() - 1 {
+            self.state.current_step_index += 1;
+            self.state.current_step_state = StepState::Generating;
+            self.state.participants_completed.clear();
+        } else {
+            self.state.all_steps_completed = true;
+        }
+    }
+
     fn if_not_completed(&self) -> Result<(), BitVMXError> {
         if self.is_complete() {
             Err(BitVMXError::InvalidMessage(
@@ -220,7 +238,6 @@ impl SetupEngine {
         &mut self,
         protocol: &mut ProtocolType,
         context: &mut ProgramContext<BC>,
-        total_participants: usize,
     ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         self.if_not_completed()?;
 
@@ -240,15 +257,15 @@ impl SetupEngine {
             self.state.current_step_index + 1,
             self.total_steps(),
             self.state.participants_completed.len(),
-            total_participants
+            self.total_participants
         );
 
         // Now get the step and generate data
         let step = &self.steps[self.state.current_step_index];
         let data_and_type = step.generate_data(protocol, context)?;
 
-        if (total_participants == 1
-            || self.state.participants_completed.len() == total_participants - 1)
+        if (self.total_participants == 1
+            || self.state.participants_completed.len() == self.total_participants - 1)
             && !step.generate_async()
         {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
@@ -321,7 +338,7 @@ impl SetupEngine {
             //TODO: obtain participant index from context instead of assuming it's always the other participant (in 2-party case)
             self.state.mark_participant_completed(1 - my_idx);
         }
-        if self.state.participants_completed.len() == participants.len() {
+        if self.state.participants_completed.len() == self.total_participants {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
         }
 
@@ -399,7 +416,7 @@ impl SetupEngine {
         // Mark participant as completed
         self.state.mark_participant_completed(participant_idx);
 
-        if self.state.participants_completed.len() == participants.len() {
+        if self.state.participants_completed.len() == self.total_participants {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
         }
 
@@ -407,7 +424,7 @@ impl SetupEngine {
             "SetupEngine::receive_current_step_data() - Step '{}': {}/{} participants completed (participant {} just completed) {:?}",
             step_name,
             self.state.participants_completed.len(),
-            participants.len(),
+            self.total_participants,
             participant_idx,
             self.state.current_step_state
         );
@@ -444,7 +461,7 @@ impl SetupEngine {
                 "SetupEngine::try_advance_current_step() - Step '{}' cannot advance yet ({}/{} participants completed)",
                 step_name,
                 self.state.participants_completed.len(),
-                participants.len()
+                self.total_participants
             );
             return Ok(false);
         }
@@ -453,7 +470,7 @@ impl SetupEngine {
             "SetupEngine::try_advance_current_step() - Step '{}' can advance! ({}/{} participants completed)",
             step_name,
             self.state.participants_completed.len(),
-            participants.len()
+            self.total_participants
         );
 
         info!(
@@ -468,8 +485,7 @@ impl SetupEngine {
         self.state.current_step_state = StepState::Completed;
 
         // Advance to next step
-        let total_steps = self.total_steps();
-        self.state.advance_to_next_step(total_steps);
+        self.advance_to_next_step();
 
         if self.is_complete() {
             info!("SetupEngine: All steps completed!");
@@ -605,7 +621,7 @@ impl SetupEngine {
             "SetupEngine::receive_setup_data() - Processing data for step '{}' (completed before: {}/{})",
             step_name,
             participants_completed_before,
-            participants.len()
+            self.total_participants
         );
 
         // Receive and verify the data
@@ -628,8 +644,7 @@ impl SetupEngine {
         let participants_completed_after = self.state.participants_completed.len();
         info!(
             "SetupEngine::receive_setup_data() - After processing: {}/{} participants completed",
-            participants_completed_after,
-            participants.len()
+            participants_completed_after, self.total_participants
         );
 
         // Leader broadcast: If I'm the leader and have all messages, broadcast to non-leaders
@@ -731,8 +746,7 @@ impl SetupEngine {
                     step_name
                 );
                 // Generate data for this step
-                let data_and_type =
-                    self.generate_current_step_data(protocol, context, participants.len())?;
+                let data_and_type = self.generate_current_step_data(protocol, context)?;
                 if let Some((ref d, ref msg_type)) = data_and_type {
                     info!(
                         "SetupEngine::tick() - Generated {} - type {:?}",
@@ -775,7 +789,7 @@ impl SetupEngine {
                     "SetupEngine::tick() - Step '{}' is AllParticipantsCompleted (completed: {}/{}), trying to advance",
                     step_name,
                     self.state.participants_completed.len(),
-                    participants.len()
+                    self.total_participants
                 );
                 // Try to advance if possible
                 let advanced = self.try_advance_current_step(protocol, participants, context)?;
@@ -834,7 +848,7 @@ impl SetupEngine {
             "SetupEngine::tick() - type: {:?} - Broadcasting for step '{}' to {} participants",
             msg_type,
             &step_name,
-            participants.len() - 1
+            self.total_participants - 1
         );
 
         // Broadcast the data if it's not leader
@@ -875,7 +889,7 @@ mod tests {
             SetupStepName::Signatures,
         ];
 
-        let engine = SetupEngine::new(step_names);
+        let engine = SetupEngine::new(step_names, 2).unwrap();
 
         assert_eq!(engine.total_steps(), 3);
         assert_eq!(engine.state().current_step_index, 0);
@@ -885,42 +899,50 @@ mod tests {
     }
 
     #[test]
+    fn setup_engine_creation_rejects_empty_steps_or_participants() {
+        assert!(SetupEngine::new(Vec::new(), 1).is_err());
+        assert!(SetupEngine::new(vec![SetupStepName::Keys], 0).is_err());
+    }
+
+    #[test]
     fn test_step_state_transitions() {
-        let mut state = SetupEngineState::new();
+        let mut engine =
+            SetupEngine::new(vec![SetupStepName::Keys, SetupStepName::Nonces], 2).unwrap();
 
-        assert_eq!(state.current_step_state, StepState::Generating);
-        assert_eq!(state.current_step_index, 0);
-        assert!(state.participants_completed.is_empty());
+        assert_eq!(engine.state().current_step_state, StepState::Generating);
+        assert_eq!(engine.state().current_step_index, 0);
+        assert!(engine.state().participants_completed.is_empty());
 
-        state.mark_participant_completed(0);
-        assert!(state.has_participant_completed(0));
-        assert!(!state.has_participant_completed(1));
+        engine.state_mut().mark_participant_completed(0);
+        assert!(engine.state().has_participant_completed(0));
+        assert!(!engine.state().has_participant_completed(1));
 
-        state.mark_participant_completed(1);
-        assert!(state.has_participant_completed(1));
-        assert_eq!(state.participants_completed.len(), 2);
+        engine.state_mut().mark_participant_completed(1);
+        assert!(engine.state().has_participant_completed(1));
+        assert_eq!(engine.state().participants_completed.len(), 2);
 
-        state.advance_to_next_step(2);
-        assert_eq!(state.current_step_index, 1);
-        assert_eq!(state.current_step_state, StepState::Generating);
-        assert!(state.participants_completed.is_empty());
+        engine.advance_to_next_step();
+        assert_eq!(engine.state().current_step_index, 1);
+        assert_eq!(engine.state().current_step_state, StepState::Generating);
+        assert!(engine.state().participants_completed.is_empty());
     }
 
     #[test]
     fn test_engine_completion() {
         let step_names = vec![SetupStepName::Keys];
 
-        let mut engine = SetupEngine::new(step_names);
+        let mut engine = SetupEngine::new(step_names, 1).unwrap();
         assert!(!engine.is_complete());
 
-        // Simulate advancing past all steps
-        engine.state_mut().advance_to_next_step(1);
+        // Simulate completing and advancing past the final step
+        engine.state_mut().current_step_state = StepState::Completed;
+        engine.advance_to_next_step();
         assert!(engine.is_complete());
     }
 
     #[test]
     fn restore_rejects_index_at_or_past_end() {
-        let mut engine = SetupEngine::new(vec![SetupStepName::Keys]);
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 1).unwrap();
 
         for index in [1, 2] {
             let mut saved_state = SetupEngineState::new();
@@ -933,7 +955,8 @@ mod tests {
 
     #[test]
     fn restore_rejects_completion_before_final_step() {
-        let mut engine = SetupEngine::new(vec![SetupStepName::Keys, SetupStepName::Nonces]);
+        let mut engine =
+            SetupEngine::new(vec![SetupStepName::Keys, SetupStepName::Nonces], 1).unwrap();
         let mut saved_state = SetupEngineState::new();
         saved_state.all_steps_completed = true;
         saved_state.current_step_state = StepState::Completed;
@@ -944,7 +967,7 @@ mod tests {
 
     #[test]
     fn restore_rejects_completed_runtime_state_for_incomplete_setup() {
-        let mut engine = SetupEngine::new(vec![SetupStepName::Keys]);
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 1).unwrap();
         let mut saved_state = SetupEngineState::new();
         saved_state.current_step_state = StepState::Completed;
 
@@ -954,7 +977,8 @@ mod tests {
 
     #[test]
     fn restore_accepts_active_final_step_and_completed_setup() {
-        let mut engine = SetupEngine::new(vec![SetupStepName::Keys, SetupStepName::Nonces]);
+        let mut engine =
+            SetupEngine::new(vec![SetupStepName::Keys, SetupStepName::Nonces], 1).unwrap();
         let mut active_final_step = SetupEngineState::new();
         active_final_step.current_step_index = 1;
         active_final_step.current_step_state = StepState::AllParticipantsCompleted;

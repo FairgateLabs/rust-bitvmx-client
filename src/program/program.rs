@@ -90,17 +90,20 @@ impl Program {
         }
     }
 
-    /// Creates a SetupEngine for the protocol using its setup_steps() method
-    fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
+    /// Creates a SetupEngine for the protocol using its setup_steps() method.
+    fn try_create_setup_engine(
+        protocol: &ProtocolType,
+        total_participants: usize,
+    ) -> Result<Option<SetupEngine>, BitVMXError> {
         if let Some(step_names) = protocol.setup_steps() {
             debug!(
                 "Protocol supports SetupEngine with {} steps",
                 step_names.len()
             );
-            Some(SetupEngine::new(step_names))
+            Ok(Some(SetupEngine::new(step_names, total_participants)?))
         } else {
             debug!("Protocol does not use SetupEngine");
-            None
+            Ok(None)
         }
     }
 
@@ -150,7 +153,7 @@ impl Program {
         protocol.set_storage(storage.clone());
 
         // Try to create SetupEngine if protocol supports it
-        let setup_engine = Self::try_create_setup_engine(&protocol);
+        let setup_engine = Self::try_create_setup_engine(&protocol, peers.len())?;
 
         let mut program = Program {
             program_id,
@@ -173,11 +176,11 @@ impl Program {
     }
 
     /// Loads a Program from storage
-    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
+    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, BitVMXError> {
         let key = format!("program/{}", program_id);
         let mut program: Program = storage
             .get(&key, None)?
-            .ok_or(ProgramError::ProgramNotFound(*program_id))?;
+            .ok_or(BitVMXError::ProgramNotFound(*program_id))?;
 
         debug!(
             "Program::load() - Loaded program {} with state: {:?}",
@@ -188,7 +191,8 @@ impl Program {
         program.protocol.set_storage(storage.clone());
 
         // Recreate SetupEngine if protocol supports it
-        program.setup_engine = Self::try_create_setup_engine(&program.protocol);
+        program.setup_engine =
+            Self::try_create_setup_engine(&program.protocol, program.participants.len())?;
 
         program.state = storage
             .get(&format!("program/{}/state", program_id), None)?
@@ -202,12 +206,7 @@ impl Program {
                 "Program::load() - Restoring SetupEngine state for program {}",
                 program_id
             );
-            engine.restore_state(saved_state.clone()).map_err(|e| {
-                ProgramError::InvalidProgramStoragePath(format!(
-                    "Failed to restore engine state: {}",
-                    e
-                ))
-            })?;
+            engine.restore_state(saved_state.clone())?;
         }
 
         Ok(program)
