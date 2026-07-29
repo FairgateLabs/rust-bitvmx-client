@@ -31,6 +31,8 @@ pub const GC_PUBLIC_DATA: &str = "GC_PUBLIC_DATA";
 pub const GC_CAN_CONTINUE: &str = "GC_CAN_CONTINUE";
 pub const GC_PUBLIC_INPUT_PK: &str = "GC_PUBLIC_INPUT_PK";
 pub const GC_PUBLIC_INPUT_SIGNATURE: &str = "GC_PUBLIC_INPUT_SIGNATURE";
+const GC_JOB_GENERATE_STEP: &str = "generate";
+const GC_JOB_VERIFY_STEP: &str = "verify";
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct GCConfiguration {
@@ -115,7 +117,7 @@ impl SetupStep for GarblerStep {
             job_id: Context::SetupStep(
                 protocol_id,
                 self.step_name().to_string(),
-                "generate".to_string(),
+                GC_JOB_GENERATE_STEP.to_string(),
                 CommsMessageType::GarbledCircuit,
             )
             .to_string()?,
@@ -137,8 +139,8 @@ impl SetupStep for GarblerStep {
         sub_step: &str,
         context: &mut ProgramContext<BC>,
         protocol_id: &Uuid,
-    ) -> Result<Option<Value>, BitVMXError> {
-        if sub_step == "generate" {
+    ) -> Result<Value, BitVMXError> {
+        if sub_step == GC_JOB_GENERATE_STEP {
             let prove_result: GCJobProveResult =
                 serde_json::from_value(result.clone()).map_err(|e| {
                     BitVMXError::InvalidMessage(format!(
@@ -187,10 +189,10 @@ impl SetupStep for GarblerStep {
                 public_input_signature: public_input_signature.to_bytes(),
             })?;
 
-            return Ok(Some(result_bytes));
+            return Ok(result_bytes);
         }
 
-        if sub_step == "verify" {
+        if sub_step == GC_JOB_VERIFY_STEP {
             info!(" result[\"status\"]: {}", result["status"]);
             info!(" result[\"type\"]: {}", result["type"]);
             info!(" result[\"valid\"]: {}", result["valid"]);
@@ -205,7 +207,7 @@ impl SetupStep for GarblerStep {
             context
                 .globals
                 .set_var(protocol_id, GC_CAN_CONTINUE, VariableTypes::Bool(true))?;
-            return Ok(Some(Value::Null));
+            return Ok(Value::Null);
         }
 
         return Err(BitVMXError::InvalidState(format!(
@@ -468,7 +470,7 @@ fn dispatch_proof_verification<BC: BitcoinCoordinatorApi>(
         job_id: Context::SetupStep(
             protocol_id,
             step_name.to_string(),
-            "verify".to_string(),
+            GC_JOB_VERIFY_STEP.to_string(),
             CommsMessageType::GarbledCircuit,
         )
         .to_string()?,

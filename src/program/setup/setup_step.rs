@@ -84,12 +84,17 @@ pub trait SetupStep {
     fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &self,
         _result: serde_json::Value,
-        _msg_type: CommsMessageType,
-        _sub_step: &str,
+        msg_type: CommsMessageType,
+        sub_step: &str,
         _program_context: &mut ProgramContext<BC>,
         _protocol_id: &Uuid,
-    ) -> Result<Option<Value>, BitVMXError> {
-        Ok(Some(Value::Null))
+    ) -> Result<Value, BitVMXError> {
+        Err(BitVMXError::NotImplemented(format!(
+            "{} step received msg_type: {:?} sub_type: {} but does not implement a handler",
+            self.step_name(),
+            msg_type,
+            sub_step
+        )))
     }
 
     fn generate_async(&self) -> bool {
@@ -267,16 +272,14 @@ mod tests {
             .unwrap());
         step.on_step_complete(&protocol, &participants, &mut env.context)
             .unwrap();
-        let result = step
-            .receive_dispatcher_result(
-                serde_json::json!({"ignored": true}),
-                CommsMessageType::Keys,
-                "ignored",
-                &mut env.context,
-                &id,
-            )
-            .unwrap();
+        let result = step.receive_dispatcher_result(
+            serde_json::json!({"ignored": true}),
+            CommsMessageType::Keys,
+            "ignored",
+            &mut env.context,
+            &id,
+        );
 
-        assert_eq!(result, Some(Value::Null));
+        assert!(matches!(result, Err(BitVMXError::NotImplemented(_))));
     }
 }

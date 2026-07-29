@@ -316,28 +316,24 @@ impl SetupEngine {
 
         let step = &self.steps[self.state.current_step_index];
 
-        //TODO: Handle error
-        if let Some(data) = step.receive_dispatcher_result(
+        let data = step.receive_dispatcher_result(
             result,
             msg_type.clone(),
             sub_step,
             program_context,
             program_id,
-        )? {
-            self.process_produced_data(
-                data,
-                msg_type.clone(),
-                my_idx,
-                leader,
-                participants,
-                program_id,
-                program_context,
-            )?;
-        } else {
-            // If not produced data but did not error, we still want to mark the participant as completed for this step
-            //TODO: obtain participant index from context instead of assuming it's always the other participant (in 2-party case)
-            self.state.mark_participant_completed(1 - my_idx);
-        }
+        )?;
+
+        self.process_produced_data(
+            data,
+            msg_type.clone(),
+            my_idx,
+            leader,
+            participants,
+            program_id,
+            program_context,
+        )?;
+
         if self.state.participants_completed.len() == self.total_participants {
             self.state.current_step_state = StepState::AllParticipantsCompleted;
         }
