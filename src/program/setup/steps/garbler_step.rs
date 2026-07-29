@@ -147,6 +147,24 @@ impl SetupStep for GarblerStep {
             )));
         }
 
+        let expected_role = match sub_step {
+            GC_JOB_GENERATE_STEP => ParticipantRole::Prover,
+            GC_JOB_VERIFY_STEP => ParticipantRole::Verifier,
+            _ => {
+                return Err(BitVMXError::InvalidState(format!(
+                    "Unknown sub_step for GarblerStep result: {}",
+                    sub_step
+                )));
+            }
+        };
+        let config = GCConfiguration::load(protocol_id, &context.globals)?;
+        if config.role != expected_role {
+            return Err(BitVMXError::InvalidState(format!(
+                "Garbler sub-step '{}' requires role {:?}, but local role is {:?}",
+                sub_step, expected_role, config.role
+            )));
+        }
+
         if sub_step == GC_JOB_GENERATE_STEP {
             let prove_result: GCJobProveResult =
                 serde_json::from_value(result.clone()).map_err(|e| {
@@ -156,7 +174,6 @@ impl SetupStep for GarblerStep {
                     ))
                 })?;
 
-            let config = GCConfiguration::load(protocol_id, &context.globals)?;
             import_input_private_keys(&prove_result, &config, context)?;
 
             info!("[Prover] Imported Garbled Circuit Input Private Key");
@@ -217,10 +234,7 @@ impl SetupStep for GarblerStep {
             return Ok(Value::Null);
         }
 
-        return Err(BitVMXError::InvalidState(format!(
-            "Unknown sub_step for GarblerStep result: {}",
-            sub_step
-        )));
+        unreachable!("sub-step was validated before processing")
     }
 
     fn verify_received<BC: BitcoinCoordinatorApi>(
@@ -543,4 +557,53 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
     info!("Lamport imported successfully ({:?})", name);
 
     Ok(public_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestProgramContextEnv;
+
+    fn store_config(
+        context: &ProgramContext<impl BitcoinCoordinatorApi>,
+        id: &Uuid,
+        role: ParticipantRole,
+    ) {
+        let config = GCConfiguration::new(*id, role, "test".to_string(), Vec::new(), None);
+        context
+            .globals
+            .set_var(
+                id,
+                GCConfiguration::NAME,
+                VariableTypes::String(serde_json::to_string(&config).unwrap()),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn dispatcher_sub_steps_require_the_corresponding_role() {
+        let mut env = TestProgramContextEnv::new("garbler-dispatcher-role").unwrap();
+        let id = Uuid::new_v4();
+        let step = GarblerStep::new();
+
+        store_config(&env.context, &id, ParticipantRole::Verifier);
+        let result = step.receive_dispatcher_result(
+            Value::Null,
+            CommsMessageType::GarbledCircuit,
+            GC_JOB_GENERATE_STEP,
+            &mut env.context,
+            &id,
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidState(_))));
+
+        store_config(&env.context, &id, ParticipantRole::Prover);
+        let result = step.receive_dispatcher_result(
+            Value::Null,
+            CommsMessageType::GarbledCircuit,
+            GC_JOB_VERIFY_STEP,
+            &mut env.context,
+            &id,
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidState(_))));
+    }
 }

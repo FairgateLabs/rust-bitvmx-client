@@ -314,6 +314,20 @@ impl SetupEngine {
             }
         };
 
+        if self.state.current_step_state != StepState::WaitingForParticipants {
+            return Err(BitVMXError::InvalidState(format!(
+                "Dispatcher result for step '{}' received while in {:?} state",
+                current_step_name, self.state.current_step_state
+            )));
+        }
+
+        if self.state.has_participant_completed(my_idx) {
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Duplicate dispatcher result for participant {} in step '{}'",
+                my_idx, current_step_name
+            )));
+        }
+
         let step = &self.steps[self.state.current_step_index];
 
         let data = step.receive_dispatcher_result(
@@ -876,6 +890,7 @@ impl SetupEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestProgramContextEnv;
 
     #[test]
     fn test_setup_engine_creation() {
@@ -934,6 +949,45 @@ mod tests {
         engine.state_mut().current_step_state = StepState::Completed;
         engine.advance_to_next_step();
         assert!(engine.is_complete());
+    }
+
+    #[test]
+    fn dispatcher_result_requires_waiting_state_and_is_not_duplicated() {
+        let mut env = TestProgramContextEnv::new("setup-engine-dispatcher-validation").unwrap();
+        let participant = env.self_address().unwrap();
+        let participants = vec![participant];
+        let program_id = Uuid::new_v4();
+        let context = Context::SetupStep(
+            program_id,
+            "garbler".to_string(),
+            "generate".to_string(),
+            CommsMessageType::GarbledCircuit,
+        );
+        let mut engine = SetupEngine::new(vec![SetupStepName::Garbler], 1).unwrap();
+
+        let result = engine.receive_dispatcher_result(
+            Value::Null,
+            &context,
+            0,
+            &program_id,
+            0,
+            &participants,
+            &mut env.context,
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidState(_))));
+
+        engine.state_mut().current_step_state = StepState::WaitingForParticipants;
+        engine.state_mut().mark_participant_completed(0);
+        let result = engine.receive_dispatcher_result(
+            Value::Null,
+            &context,
+            0,
+            &program_id,
+            0,
+            &participants,
+            &mut env.context,
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
     }
 
     #[test]
