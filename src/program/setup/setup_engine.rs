@@ -890,7 +890,26 @@ impl SetupEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestProgramContextEnv;
+    use crate::program::participant::ParticipantKeys;
+    use crate::program::protocols::protocol_handler::new_protocol_type;
+    use crate::program::variables::VariableTypes;
+    use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
+    use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+
+    fn aggregated_key_protocol(id: Uuid, dir: &TestStorageDir) -> ProtocolType {
+        new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap()
+    }
+
+    fn set_optional_keys<BC: BitcoinCoordinatorApi>(id: &Uuid, context: &ProgramContext<BC>) {
+        context
+            .globals
+            .set_var(
+                id,
+                "optional_keys",
+                VariableTypes::String("null".to_string()),
+            )
+            .unwrap();
+    }
 
     #[test]
     fn test_setup_engine_creation() {
@@ -949,6 +968,146 @@ mod tests {
         engine.state_mut().current_step_state = StepState::Completed;
         engine.advance_to_next_step();
         assert!(engine.is_complete());
+    }
+
+    #[test]
+    fn single_participant_tick_runs_keys_step_to_completion() {
+        let mut env = TestProgramContextEnv::new("setup-engine-keys-lifecycle").unwrap();
+        let dir = TestStorageDir::new("setup-engine-keys-protocol");
+        let id = Uuid::new_v4();
+        let mut protocol = aggregated_key_protocol(id, &dir);
+        let participants = vec![env.self_address().unwrap()];
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 1).unwrap();
+        set_optional_keys(&id, &env.context);
+
+        assert!(
+            engine
+                .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+                .unwrap()
+                .state_changed
+        );
+        assert_eq!(
+            engine.state().current_step_state,
+            StepState::AllParticipantsCompleted
+        );
+        assert_eq!(engine.state().participants_completed, vec![0]);
+
+        assert!(
+            engine
+                .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+                .unwrap()
+                .state_changed
+        );
+        assert!(engine.is_complete());
+        assert!(
+            !engine
+                .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+                .unwrap()
+                .state_changed
+        );
+        assert!(engine.if_not_completed().is_err());
+    }
+
+    #[test]
+    fn receive_data_handles_unverified_and_duplicate_messages() {
+        let mut env = TestProgramContextEnv::new_with_peers("setup-engine-receive", 1).unwrap();
+        let dir = TestStorageDir::new("setup-engine-receive-protocol");
+        let id = Uuid::new_v4();
+        let protocol = aggregated_key_protocol(id, &dir);
+        let own = env.self_address().unwrap();
+        let peer = env.peer_address(0).unwrap();
+        let participants = vec![own.clone(), peer.clone()];
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 2).unwrap();
+        let data = serde_json::to_value(ParticipantKeys::new(vec![], vec![])).unwrap();
+
+        assert_eq!(
+            engine
+                .receive_current_step_data(
+                    data.clone(),
+                    CommsMessageType::PublicNonces,
+                    0,
+                    &peer,
+                    &protocol,
+                    &participants,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::RetryLater
+        );
+        assert_eq!(
+            engine
+                .receive_current_step_data(
+                    data.clone(),
+                    CommsMessageType::Keys,
+                    0,
+                    &peer,
+                    &protocol,
+                    &participants,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::Processed
+        );
+        assert_eq!(
+            engine
+                .receive_current_step_data(
+                    data.clone(),
+                    CommsMessageType::Keys,
+                    0,
+                    &peer,
+                    &protocol,
+                    &participants,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::RetryLater
+        );
+
+        engine.state_mut().mark_participant_completed(0);
+        assert_eq!(
+            engine
+                .receive_current_step_data(
+                    data,
+                    CommsMessageType::Keys,
+                    0,
+                    &own,
+                    &protocol,
+                    &participants,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::Processed
+        );
+    }
+
+    #[test]
+    fn generation_and_advance_require_the_expected_states() {
+        let mut env = TestProgramContextEnv::new("setup-engine-state-validation").unwrap();
+        let dir = TestStorageDir::new("setup-engine-state-protocol");
+        let id = Uuid::new_v4();
+        let mut protocol = aggregated_key_protocol(id, &dir);
+        let participants = vec![env.self_address().unwrap()];
+        let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 1).unwrap();
+        set_optional_keys(&id, &env.context);
+
+        assert!(!engine
+            .try_advance_current_step(&protocol, &participants, &mut env.context)
+            .unwrap());
+        engine.state_mut().current_step_state = StepState::WaitingForParticipants;
+        assert!(matches!(
+            engine.generate_current_step_data(&mut protocol, &mut env.context),
+            Err(BitVMXError::InvalidState(_))
+        ));
+
+        let waiting = engine
+            .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+            .unwrap();
+        assert!(!waiting.state_changed);
+        engine.state_mut().current_step_state = StepState::Completed;
+        let completed = engine
+            .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+            .unwrap();
+        assert!(!completed.state_changed);
     }
 
     #[test]

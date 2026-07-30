@@ -474,6 +474,78 @@ mod tests {
     }
 
     #[test]
+    fn aggregation_rejects_malformed_key_sets() {
+        let mut env = TestProgramContextEnv::new("keys-step-malformed-sets").unwrap();
+        let name = "aggregate".to_string();
+        let key = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let valid = ParticipantKeys::new(vec![(name.clone(), key.into())], vec![name.clone()]);
+
+        let mut duplicate = valid.clone();
+        duplicate.aggregated.push(name.clone());
+        assert!(matches!(
+            KeysStep::compute_aggregated_keys(&duplicate, &[valid.clone()], &mut env.context),
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("duplicate")
+        ));
+
+        let inconsistent = ParticipantKeys::new(vec![], vec![]);
+        assert!(matches!(
+            KeysStep::compute_aggregated_keys(&valid, &[inconsistent], &mut env.context),
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("inconsistent")
+        ));
+
+        let missing_own_key = ParticipantKeys::new(vec![], vec![name.clone()]);
+        assert!(matches!(
+            KeysStep::compute_aggregated_keys(
+                &missing_own_key,
+                &[missing_own_key.clone()],
+                &mut env.context,
+            ),
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("My key")
+        ));
+
+        let participant_missing_mapping = ParticipantKeys::new(vec![], vec![name]);
+        assert!(matches!(
+            KeysStep::compute_aggregated_keys(
+                &valid,
+                &[participant_missing_mapping],
+                &mut env.context,
+            ),
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("missing key")
+        ));
+    }
+
+    #[test]
+    fn aggregation_uses_musig_for_multiple_participants() {
+        let mut env = TestProgramContextEnv::new("keys-step-multisig").unwrap();
+        let name = "aggregate".to_string();
+        let first = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let second = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let my_keys = ParticipantKeys::new(vec![(name.clone(), first.into())], vec![name.clone()]);
+        let other_keys =
+            ParticipantKeys::new(vec![(name.clone(), second.into())], vec![name.clone()]);
+
+        let computed = KeysStep::compute_aggregated_keys(
+            &my_keys,
+            &[my_keys.clone(), other_keys],
+            &mut env.context,
+        )
+        .unwrap();
+        assert!(computed.contains_key(&name));
+    }
+
+    #[test]
     fn completion_rejects_missing_or_inconsistent_keys() {
         let mut env = TestProgramContextEnv::new("keys-step-completion-errors").unwrap();
         let dir = TestStorageDir::new("keys-step-completion-errors-protocol");

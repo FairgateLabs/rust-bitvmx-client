@@ -601,8 +601,23 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestProgramContextEnv;
+    use crate::program::protocols::protocol_handler::new_protocol_type;
+    use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
+    use crate::types::PROGRAM_TYPE_GC_GENERATION;
+    use bitcoin::hashes::{sha256, Hash};
     use serde_json::json;
+
+    fn protocol(id: Uuid, dir: &TestStorageDir) -> ProtocolType {
+        new_protocol_type(id, PROGRAM_TYPE_GC_GENERATION, 0, dir.storage()).unwrap()
+    }
+
+    fn commitment(byte0: u8, byte1: u8) -> Sha256CommitmentHex {
+        serde_json::from_value(json!({
+            "h0": sha256::Hash::hash(&[byte0; 32]).to_string(),
+            "h1": sha256::Hash::hash(&[byte1; 32]).to_string(),
+        }))
+        .unwrap()
+    }
 
     fn prove_result(num_inputs: usize, input_commitment_indices: Vec<usize>) -> GCJobProveResult {
         serde_json::from_value(json!({
@@ -643,6 +658,77 @@ mod tests {
     }
 
     #[test]
+    fn configuration_round_trips_and_step_reports_async_behavior() {
+        let env = TestProgramContextEnv::new("garbler-configuration").unwrap();
+        let id = Uuid::new_v4();
+        let config = GCConfiguration::new(
+            id,
+            ParticipantRole::Verifier,
+            "circuit".to_string(),
+            vec![true, false],
+            Some("proof.bin".to_string()),
+        );
+        env.context
+            .globals
+            .set_var(
+                &id,
+                GCConfiguration::NAME,
+                VariableTypes::String(serde_json::to_string(&config).unwrap()),
+            )
+            .unwrap();
+
+        let loaded = GCConfiguration::load(&id, &env.context.globals).unwrap();
+        assert_eq!(loaded.id, id);
+        assert_eq!(loaded.role, ParticipantRole::Verifier);
+        assert!(config
+            .get_setup_message()
+            .unwrap()
+            .contains(GCConfiguration::NAME));
+
+        let step = GarblerStep::new();
+        assert_eq!(step.step_name(), "garbler");
+        assert!(step.generate_async());
+        assert!(step.verify_async());
+    }
+
+    #[test]
+    fn generation_dispatches_only_for_prover() {
+        let mut env = TestProgramContextEnv::new("garbler-generation").unwrap();
+        let dir = TestStorageDir::new("garbler-generation-protocol");
+        let id = Uuid::new_v4();
+        let mut protocol = protocol(id, &dir);
+        let step = GarblerStep::new();
+
+        store_config(&env.context, &id, ParticipantRole::Verifier);
+        assert!(step
+            .generate_data(&mut protocol, &mut env.context)
+            .unwrap()
+            .is_none());
+
+        for import_path in [None, Some("existing-proof".to_string())] {
+            let config = GCConfiguration::new(
+                id,
+                ParticipantRole::Prover,
+                "test".to_string(),
+                Vec::new(),
+                import_path,
+            );
+            env.context
+                .globals
+                .set_var(
+                    &id,
+                    GCConfiguration::NAME,
+                    VariableTypes::String(serde_json::to_string(&config).unwrap()),
+                )
+                .unwrap();
+            assert!(step
+                .generate_data(&mut protocol, &mut env.context)
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[test]
     fn malformed_public_key_data_returns_errors() {
         let mut env = TestProgramContextEnv::new("garbler-malformed-public-keys").unwrap();
         let id = Uuid::new_v4();
@@ -676,6 +762,196 @@ mod tests {
             &id,
         );
         assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
+    }
+
+    #[test]
+    fn public_and_private_lamport_material_can_be_imported() {
+        let mut env = TestProgramContextEnv::new("garbler-valid-key-import").unwrap();
+        let files = TestStorageDir::new("garbler-key-files");
+        std::fs::create_dir_all(files.path()).unwrap();
+        let id = Uuid::new_v4();
+        let config = GCConfiguration::new(
+            id,
+            ParticipantRole::Prover,
+            "test".to_string(),
+            vec![true],
+            None,
+        );
+        let commitments = vec![commitment(1, 2), commitment(3, 4), commitment(5, 6)];
+        let mut result = prove_result(2, vec![0, 1, 2]);
+        result.sha256_commitments = commitments;
+        result.io_inputs_path = format!("{}/inputs.bin", files.path());
+        let private_bytes = [vec![1; 32], vec![2; 32], vec![3; 32], vec![4; 32]].concat();
+        std::fs::write(&result.io_inputs_path, private_bytes).unwrap();
+
+        import_input_private_keys(&result, &config, &env.context).unwrap();
+        let [public_input, _, _] =
+            import_public_keys(&result, &config, &mut env.context, &id).unwrap();
+        let signature = env
+            .context
+            .key_manager
+            .sign_lamport_message_by_pubkey(&config.circuit_public_input, &public_input)
+            .unwrap()
+            .to_bytes();
+        import_public_input_signature(&signature, &config, public_input, &env.context, &id)
+            .unwrap();
+        assert!(env
+            .context
+            .globals
+            .get_var(&id, GC_PUBLIC_INPUT_SIGNATURE)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn malformed_lamport_material_returns_errors() {
+        let env = TestProgramContextEnv::new("garbler-malformed-material").unwrap();
+        let files = TestStorageDir::new("garbler-malformed-files");
+        std::fs::create_dir_all(files.path()).unwrap();
+        let id = Uuid::new_v4();
+        let config = GCConfiguration::new(
+            id,
+            ParticipantRole::Prover,
+            "test".to_string(),
+            vec![true],
+            None,
+        );
+        let mut result = prove_result(1, vec![0, 1]);
+        result.io_inputs_path = format!("{}/short.bin", files.path());
+        std::fs::write(&result.io_inputs_path, [0u8; 3]).unwrap();
+        assert!(matches!(
+            import_input_private_keys(&result, &config, &env.context),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
+
+        let invalid: Sha256CommitmentHex =
+            serde_json::from_value(json!({"h0": "not-hex", "h1": "00"})).unwrap();
+        assert!(matches!(
+            import_public_lamport(&[invalid], "bad", &env.context, &id),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
+    }
+
+    #[test]
+    fn verifier_result_and_empty_messages_control_advancement() {
+        let mut env = TestProgramContextEnv::new("garbler-verifier-result").unwrap();
+        let dir = TestStorageDir::new("garbler-verifier-protocol");
+        let id = Uuid::new_v4();
+        let protocol = protocol(id, &dir);
+        let step = GarblerStep::new();
+        let participant = env.self_address().unwrap();
+
+        store_config(&env.context, &id, ParticipantRole::Verifier);
+        assert!(!step
+            .verify_received(
+                Value::Null,
+                CommsMessageType::Keys,
+                &participant,
+                &protocol,
+                &[],
+                &mut env.context,
+                true,
+            )
+            .unwrap());
+        assert!(step
+            .verify_received(
+                Value::Null,
+                CommsMessageType::GarbledCircuit,
+                &participant,
+                &protocol,
+                &[],
+                &mut env.context,
+                true,
+            )
+            .unwrap());
+        assert!(!step.can_advance(&protocol, &[], &env.context).unwrap());
+        assert!(matches!(
+            step.verify_received(
+                json!({"unexpected": true}),
+                CommsMessageType::GarbledCircuit,
+                &participant,
+                &protocol,
+                &[],
+                &mut env.context,
+                true,
+            ),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
+
+        assert!(matches!(
+            step.receive_dispatcher_result(
+                json!({"valid": false}),
+                CommsMessageType::GarbledCircuit,
+                GC_JOB_VERIFY_STEP,
+                &mut env.context,
+                &id,
+            ),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
+        assert_eq!(
+            step.receive_dispatcher_result(
+                json!({"valid": true}),
+                CommsMessageType::GarbledCircuit,
+                GC_JOB_VERIFY_STEP,
+                &mut env.context,
+                &id,
+            )
+            .unwrap(),
+            Value::Null
+        );
+        assert!(step.can_advance(&protocol, &[], &env.context).unwrap());
+
+        store_config(&env.context, &id, ParticipantRole::Prover);
+        assert!(step
+            .verify_received(
+                Value::Null,
+                CommsMessageType::GarbledCircuit,
+                &participant,
+                &protocol,
+                &[],
+                &mut env.context,
+                false,
+            )
+            .unwrap());
+    }
+
+    #[test]
+    fn dispatcher_rejects_wrong_type_unknown_step_and_bad_payload() {
+        let mut env = TestProgramContextEnv::new("garbler-dispatcher-errors").unwrap();
+        let id = Uuid::new_v4();
+        let step = GarblerStep::new();
+        store_config(&env.context, &id, ParticipantRole::Prover);
+
+        assert!(matches!(
+            step.receive_dispatcher_result(
+                Value::Null,
+                CommsMessageType::Keys,
+                GC_JOB_GENERATE_STEP,
+                &mut env.context,
+                &id,
+            ),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
+        assert!(matches!(
+            step.receive_dispatcher_result(
+                Value::Null,
+                CommsMessageType::GarbledCircuit,
+                "unknown",
+                &mut env.context,
+                &id,
+            ),
+            Err(BitVMXError::InvalidState(_))
+        ));
+        assert!(matches!(
+            step.receive_dispatcher_result(
+                Value::Null,
+                CommsMessageType::GarbledCircuit,
+                GC_JOB_GENERATE_STEP,
+                &mut env.context,
+                &id,
+            ),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
     }
 
     #[test]
