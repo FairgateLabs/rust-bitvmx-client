@@ -379,6 +379,19 @@ impl Program {
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
+        // Setup dispatcher results may be delivered more than once or arrive after
+        // setup has completed. They are no longer actionable once the program is
+        // ready and must not turn an otherwise harmless replay into a fatal tick
+        // error. ProgramStep results remain valid after setup.
+        if matches!(&context, Context::SetupStep(_, _, _, _))
+            && matches!(self.state, ProgramState::Ready)
+        {
+            debug!(
+                "Program::receive_dispatcher_result() - Ignoring setup result for ready program"
+            );
+            return Ok(());
+        }
+
         match dispatcher {
             JobDispatcherType::Garbler => {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
@@ -438,11 +451,6 @@ impl Program {
             }
         };
 
-        // Only handle setup data if we're in setup state
-        if matches!(self.state, ProgramState::Ready) {
-            debug!("Program::receive_dispatcher_result() - Not in SettingUp state, ignoring");
-            return Ok(());
-        }
         Ok(())
     }
 

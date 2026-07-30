@@ -290,17 +290,28 @@ impl SetupEngine {
         participants: &[CommsAddress],
         program_context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
-        self.if_not_completed()?;
+        // Dispatcher delivery is at-least-once. A result received after all
+        // setup steps completed is a harmless replay, not a protocol error.
+        if self.is_complete() {
+            info!(
+                "SetupEngine::receive_dispatcher_result() - Ignoring result because setup is complete"
+            );
+            return Ok(false);
+        }
 
         let current_step_name = self.current_step_name().to_string();
 
         let (sub_step, msg_type) = match context {
             Context::SetupStep(_, step_name, sub_step, msg_type) => {
+                // A result from an earlier step may arrive after the engine has
+                // advanced. It cannot be useful for the current step, so discard
+                // it without making the client fail its tick.
                 if step_name != &current_step_name {
-                    return Err(BitVMXError::InvalidMessage(format!(
-                        "Dispatcher result for step '{}', but current step is '{}'",
+                    info!(
+                        "SetupEngine::receive_dispatcher_result() - Ignoring result for step '{}'; current step is '{}'",
                         step_name, current_step_name
-                    )));
+                    );
+                    return Ok(false);
                 }
                 info!(
                     "SetupEngine::receive_dispatcher_result() - Received dispatcher result for step '{}', sub_step '{}'",
@@ -316,17 +327,20 @@ impl SetupEngine {
             }
         };
 
+        // Check for a replay before validating the state: the original result
+        // may already have moved the step to AllParticipantsCompleted.
+        if self.state.has_participant_completed(my_idx) {
+            info!(
+                "SetupEngine::receive_dispatcher_result() - Ignoring duplicate result for participant {} in step '{}'",
+                my_idx, current_step_name
+            );
+            return Ok(false);
+        }
+
         if self.state.current_step_state != StepState::WaitingForParticipants {
             return Err(BitVMXError::InvalidState(format!(
                 "Dispatcher result for step '{}' received while in {:?} state",
                 current_step_name, self.state.current_step_state
-            )));
-        }
-
-        if self.state.has_participant_completed(my_idx) {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Duplicate dispatcher result for participant {} in step '{}'",
-                my_idx, current_step_name
             )));
         }
 
@@ -1111,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatcher_result_requires_waiting_state_and_is_not_duplicated() {
+    fn dispatcher_result_requires_waiting_state_and_ignores_replays() {
         let mut env = TestProgramContextEnv::new("setup-engine-dispatcher-validation").unwrap();
         let participant = env.self_address().unwrap();
         let participants = vec![participant];
@@ -1146,7 +1160,19 @@ mod tests {
             &participants,
             &mut env.context,
         );
-        assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
+        assert_eq!(result.unwrap(), false);
+
+        engine.state_mut().all_steps_completed = true;
+        let result = engine.receive_dispatcher_result(
+            Value::Null,
+            &context,
+            0,
+            &program_id,
+            0,
+            &participants,
+            &mut env.context,
+        );
+        assert_eq!(result.unwrap(), false);
     }
 
     #[test]
