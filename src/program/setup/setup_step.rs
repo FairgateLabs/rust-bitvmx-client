@@ -84,12 +84,17 @@ pub trait SetupStep {
     fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &self,
         _result: serde_json::Value,
-        _msg_type: CommsMessageType,
-        _sub_step: &str,
+        msg_type: CommsMessageType,
+        sub_step: &str,
         _program_context: &mut ProgramContext<BC>,
         _protocol_id: &Uuid,
-    ) -> Result<Option<Value>, BitVMXError> {
-        Ok(Some(Value::Null))
+    ) -> Result<Value, BitVMXError> {
+        Err(BitVMXError::NotImplemented(format!(
+            "{} step received msg_type: {:?} sub_type: {} but does not implement a handler",
+            self.step_name(),
+            msg_type,
+            sub_step
+        )))
     }
 
     fn generate_async(&self) -> bool {
@@ -138,5 +143,143 @@ pub trait SetupStep {
     ) -> Result<bool, BitVMXError> {
         let key = format!("participant_{}_{}", idx, self.step_name());
         globals.contains_var(uuid, &key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        program::protocols::protocol_handler::new_protocol_type,
+        test_utils::{TestProgramContextEnv, TestStorageDir},
+        types::PROGRAM_TYPE_AGGREGATED_KEY,
+    };
+
+    struct TestStep;
+
+    impl SetupStep for TestStep {
+        fn step_name(&self) -> &str {
+            "test"
+        }
+
+        fn generate_data<BC: BitcoinCoordinatorApi>(
+            &self,
+            _protocol: &mut ProtocolType,
+            _context: &mut ProgramContext<BC>,
+        ) -> Result<Option<(Value, CommsMessageType)>, BitVMXError> {
+            Ok(None)
+        }
+
+        fn verify_received<BC: BitcoinCoordinatorApi>(
+            &self,
+            _data: Value,
+            _msg_type: CommsMessageType,
+            _from_participant: &CommsAddress,
+            _protocol: &ProtocolType,
+            _participants: &[CommsAddress],
+            _context: &mut ProgramContext<BC>,
+            _your_data: bool,
+        ) -> Result<bool, BitVMXError> {
+            Ok(false)
+        }
+
+        fn can_advance<BC: BitcoinCoordinatorApi>(
+            &self,
+            _protocol: &ProtocolType,
+            _participants: &[CommsAddress],
+            _context: &ProgramContext<BC>,
+        ) -> Result<bool, BitVMXError> {
+            Ok(false)
+        }
+    }
+
+    #[test]
+    fn async_defaults_are_disabled() {
+        let step = TestStep;
+
+        assert!(!step.generate_async());
+        assert!(!step.verify_async());
+    }
+
+    #[test]
+    fn participant_data_defaults_store_and_load_strings() {
+        let dir = TestStorageDir::new("setup-step-participant-data");
+        let globals = Globals::new(dir.storage());
+        let id = Uuid::new_v4();
+        let step = TestStep;
+
+        assert!(!step.has_participant_data(&globals, &id, 2).unwrap());
+        step.store_participant_data(&globals, &id, 2, "payload")
+            .unwrap();
+        assert!(step.has_participant_data(&globals, &id, 2).unwrap());
+        assert_eq!(
+            step.get_participant_data(&globals, &id, 2).unwrap(),
+            "payload"
+        );
+    }
+
+    #[test]
+    fn participant_data_default_reports_missing_and_invalid_values() {
+        let dir = TestStorageDir::new("setup-step-participant-errors");
+        let globals = Globals::new(dir.storage());
+        let id = Uuid::new_v4();
+        let step = TestStep;
+
+        let missing = step.get_participant_data(&globals, &id, 1).unwrap_err();
+        assert!(matches!(
+            missing,
+            BitVMXError::InvalidMessage(message)
+                if message == "Missing test for participant 1"
+        ));
+
+        globals
+            .set_var(&id, "participant_1_test", VariableTypes::Number(1))
+            .unwrap();
+        assert!(matches!(
+            step.get_participant_data(&globals, &id, 1),
+            Err(BitVMXError::InvalidVariableType(_))
+        ));
+    }
+
+    #[test]
+    fn test_step_methods_and_default_hooks_return_expected_values() {
+        let mut env = TestProgramContextEnv::new("setup-step-default-hooks").unwrap();
+        let dir = TestStorageDir::new("setup-step-default-hooks-protocol");
+        let id = Uuid::new_v4();
+        let mut protocol =
+            new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap();
+        let participant = env.self_address().unwrap();
+        let participants = vec![participant.clone()];
+        let step = TestStep;
+
+        assert_eq!(
+            step.generate_data(&mut protocol, &mut env.context).unwrap(),
+            None
+        );
+        assert!(!step
+            .verify_received(
+                Value::Null,
+                CommsMessageType::Keys,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap());
+        assert!(!step
+            .can_advance(&protocol, &participants, &env.context)
+            .unwrap());
+        step.on_step_complete(&protocol, &participants, &mut env.context)
+            .unwrap();
+        let result = step.receive_dispatcher_result(
+            serde_json::json!({"ignored": true}),
+            CommsMessageType::Keys,
+            "ignored",
+            &mut env.context,
+            &id,
+        );
+
+        assert!(matches!(result, Err(BitVMXError::NotImplemented(_))));
     }
 }

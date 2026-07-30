@@ -17,7 +17,7 @@ use crate::{
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
-    types::{OutgoingBitVMXApiMessages, ProgramContext},
+    types::{MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
@@ -90,17 +90,20 @@ impl Program {
         }
     }
 
-    /// Creates a SetupEngine for the protocol using its setup_steps() method
-    fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
+    /// Creates a SetupEngine for the protocol using its setup_steps() method.
+    fn try_create_setup_engine(
+        protocol: &ProtocolType,
+        total_participants: usize,
+    ) -> Result<Option<SetupEngine>, BitVMXError> {
         if let Some(step_names) = protocol.setup_steps() {
             debug!(
                 "Protocol supports SetupEngine with {} steps",
                 step_names.len()
             );
-            Some(SetupEngine::new(step_names))
+            Ok(Some(SetupEngine::new(step_names, total_participants)?))
         } else {
             debug!("Protocol does not use SetupEngine");
-            None
+            Ok(None)
         }
     }
 
@@ -150,7 +153,7 @@ impl Program {
         protocol.set_storage(storage.clone());
 
         // Try to create SetupEngine if protocol supports it
-        let setup_engine = Self::try_create_setup_engine(&protocol);
+        let setup_engine = Self::try_create_setup_engine(&protocol, peers.len())?;
 
         let mut program = Program {
             program_id,
@@ -173,11 +176,11 @@ impl Program {
     }
 
     /// Loads a Program from storage
-    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
+    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, BitVMXError> {
         let key = format!("program/{}", program_id);
         let mut program: Program = storage
             .get(&key, None)?
-            .ok_or(ProgramError::ProgramNotFound(*program_id))?;
+            .ok_or(BitVMXError::ProgramNotFound(*program_id))?;
 
         debug!(
             "Program::load() - Loaded program {} with state: {:?}",
@@ -188,7 +191,8 @@ impl Program {
         program.protocol.set_storage(storage.clone());
 
         // Recreate SetupEngine if protocol supports it
-        program.setup_engine = Self::try_create_setup_engine(&program.protocol);
+        program.setup_engine =
+            Self::try_create_setup_engine(&program.protocol, program.participants.len())?;
 
         program.state = storage
             .get(&format!("program/{}/state", program_id), None)?
@@ -202,12 +206,7 @@ impl Program {
                 "Program::load() - Restoring SetupEngine state for program {}",
                 program_id
             );
-            engine.restore_state(saved_state.clone()).map_err(|e| {
-                ProgramError::InvalidProgramStoragePath(format!(
-                    "Failed to restore engine state: {}",
-                    e
-                ))
-            })?;
+            engine.restore_state(saved_state.clone())?;
         }
 
         Ok(program)
@@ -454,16 +453,16 @@ impl Program {
         msg_type: CommsMessageType,
         from: &PubKeyHash,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         // Only handle setup data if we're in setup state
         if matches!(self.state, ProgramState::Ready) {
             debug!("Program::receive_setup_data() - Not in SettingUp state, ignoring");
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         // Track state changes and completion status for save/log after borrow ends
-        let (message_processed, engine_state) = if let Some(engine) = &mut self.setup_engine {
-            let message_processed = engine.receive_setup_data(
+        let (disposition, engine_state) = if let Some(engine) = &mut self.setup_engine {
+            let disposition = engine.receive_setup_data(
                 data,
                 msg_type,
                 from,
@@ -474,13 +473,13 @@ impl Program {
                 &self.protocol,
                 program_context,
             )?;
-            (message_processed, engine.state().current_step_state.clone())
+            (disposition, engine.state().current_step_state.clone())
         } else {
-            (false, StepState::Completed) // Default to complete if no engine (should not happen since receive_setup_data should only be called in setup)
+            (MessageDisposition::RetryLater, StepState::Completed) // Preserve the previous Ok(false) behavior.
         };
 
-        // Always save when state changes to avoid data loss on crash
-        if message_processed {
+        // Preserve the previous behavior: save messages reported as processed.
+        if disposition == MessageDisposition::Processed {
             if engine_state == StepState::WaitingForParticipants {
                 self.state = ProgramState::WaitingData;
             } else {
@@ -493,7 +492,7 @@ impl Program {
             );
         }
 
-        Ok(message_processed)
+        Ok(disposition)
     }
 
     /// Returns the protocol ID
@@ -518,7 +517,7 @@ impl Program {
         msg_type: &CommsMessageType,
         data: Value,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         debug!(
             "Program::process_comms_message() - Received {:?}  from {}",
             msg_type, comms_address
@@ -545,7 +544,7 @@ impl Program {
             }
         }
 
-        Ok(true)
+        Ok(MessageDisposition::Processed)
     }
 
     /// Gets a transaction by name from the protocol

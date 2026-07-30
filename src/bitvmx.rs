@@ -18,8 +18,8 @@ use crate::{
     },
     signature_verifier::SignatureVerifier,
     types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+        IncomingBitVMXApiMessages, MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext,
+        ProgramStatus, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -288,9 +288,8 @@ impl BitVMX {
         }
     }
 
-    /// Processes a message for a Program.
-    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
-    /// or Err if there was an error.
+    /// Processes a message for a Program and reports whether it was processed
+    /// or should be retried later.
     fn process_program_message(
         &mut self,
         program_id: &Uuid,
@@ -301,7 +300,7 @@ impl BitVMX {
         timestamp: i64,
         signature: Vec<u8>,
         version: String,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         debug!(
             "BitVMX::process_program_message() - Processing {:?} for program {} from {}",
             msg_type, program_id, peer_address.pubkey_hash
@@ -319,7 +318,7 @@ impl BitVMX {
                 "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
                 program_id
             );
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         // If this operator is the leader and the message type should be broadcast, store the original message
@@ -343,7 +342,7 @@ impl BitVMX {
                         "There is a message already stored for program {}",
                         program_id
                     );
-                    return Ok(false);
+                    return Ok(MessageDisposition::RetryLater);
                 }
             }
         }
@@ -413,7 +412,7 @@ impl BitVMX {
                 return Ok(());
             }
         }
-        let message_consumed = if let Ok(mut program) = self.load_program(&program_id) {
+        let disposition = if let Ok(mut program) = self.load_program(&program_id) {
             let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
             if is_verification_msg {
@@ -424,10 +423,10 @@ impl BitVMX {
                     &data,
                     &peer_address,
                 ) {
-                    Ok(_) => true,
+                    Ok(_) => MessageDisposition::Processed,
                     Err(e) => {
                         error!("Error handling verification message: {:?}", e);
-                        false
+                        MessageDisposition::RetryLater
                     }
                 }
             } else {
@@ -444,11 +443,11 @@ impl BitVMX {
             }
         } else {
             debug!("Program {} not found", program_id);
-            false
+            MessageDisposition::RetryLater
         };
 
-        if !message_consumed {
-            // Message needs to be buffered (not processed or program not found)
+        if disposition == MessageDisposition::RetryLater {
+            // Preserve the previous false outcome by buffering for retry.
             info!(
                 "Pending message to back: {:?} for program {:?} from: {:?}",
                 msg_type, program_id, msg.identifier.pubkey_hash,

@@ -32,6 +32,15 @@ use crate::{
 pub use bitcoin_coordinator::OutputPatternFilter;
 pub const RSK_PEGIN_TAG: &[u8] = b"RSK_PEGIN";
 
+/// Outcome of handling an incoming message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageDisposition {
+    /// The message was processed and should not be retried.
+    Processed,
+    /// The message could not be processed yet and should be queued for retry.
+    RetryLater,
+}
+
 // The coordinator is statically dispatched: production code uses the default
 // `BitcoinCoordinator`, unit tests can instantiate with a mock implementing
 // `BitcoinCoordinatorApi`.
