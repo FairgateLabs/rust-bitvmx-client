@@ -8,7 +8,7 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::ProgramContext,
+    types::{MessageDisposition, ProgramContext},
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -367,7 +367,7 @@ impl SetupEngine {
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         self.if_not_completed()?;
 
         let step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
@@ -380,14 +380,14 @@ impl SetupEngine {
         if self.state.has_participant_completed(participant_idx) {
             if participant_idx == my_idx {
                 warn!("Getting data from ourselves again for step '{}', ignoring since we already processed it.", step_name);
-                return Ok(true);
+                return Ok(MessageDisposition::Processed);
             }
 
             info!(
                 "SetupEngine: Already received data from participant {} for step '{}'",
                 participant_idx, step_name
             );
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         debug!(
@@ -412,7 +412,7 @@ impl SetupEngine {
                 "SetupEngine: Step '{}' is async and data from participant {} is not verified yet, waiting for async verification to complete",
                 step_name, participant_idx
              );
-            return Ok(true);
+            return Ok(MessageDisposition::Processed);
         }*/
 
         if !verified {
@@ -420,7 +420,7 @@ impl SetupEngine {
                 "SetupEngine: Data from participant {} for step '{}' did not verify, ignoring",
                 participant_idx, step_name
             );
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         // Mark participant as completed
@@ -439,7 +439,7 @@ impl SetupEngine {
             self.state.current_step_state
         );
 
-        Ok(true)
+        Ok(MessageDisposition::Processed)
     }
 
     /// Checks if the current step can advance to the next step.
@@ -593,7 +593,7 @@ impl SetupEngine {
     /// 2. Handles leader broadcast pattern (if leader has all messages, broadcasts)
     /// 3. Tries to advance the current step
     ///
-    /// Returns whether the engine state changed.
+    /// Returns whether the message was processed or should be retried later.
     pub fn receive_setup_data<BC: BitcoinCoordinatorApi>(
         &mut self,
         data: Value,
@@ -605,20 +605,20 @@ impl SetupEngine {
         participants: &[CommsAddress],
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         info!(
             "SetupEngine::receive_setup_data() - Received data of type {:?} from participant {}",
             msg_type, from
         );
 
-        // Check if setup is already complete - if so, ignore the message
-        // This can happen when a non-leader receives the broadcast containing their own message
+        // Check if setup is already complete. Preserve the existing retry
+        // behavior represented previously by Ok(false).
         if self.is_complete() {
             warn!(
                 "SetupEngine::receive_setup_data() - Setup already complete, ignoring message from {}",
                 from
             );
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         // Find the participant
@@ -635,7 +635,7 @@ impl SetupEngine {
         );
 
         // Receive and verify the data
-        if !self.receive_current_step_data(
+        let disposition = self.receive_current_step_data(
             data,
             msg_type,
             my_idx,
@@ -643,12 +643,13 @@ impl SetupEngine {
             protocol,
             participants,
             context,
-        )? {
+        )?;
+        if disposition == MessageDisposition::RetryLater {
             debug!(
-                "SetupEngine::receive_setup_data() - Data from participant {} did not change state for step '{}'",
+                "SetupEngine::receive_setup_data() - Data from participant {} could not be processed for step '{}'",
                 from, step_name
             );
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         let participants_completed_after = self.state.participants_completed.len();
@@ -662,8 +663,7 @@ impl SetupEngine {
             self.send_broadcast_data_to_non_leaders(context, program_id, participants, msg_type)?;
         }
 
-        // Receiving data always changes the engine state
-        Ok(true)
+        Ok(MessageDisposition::Processed)
     }
 
     fn send_broadcast_data_to_non_leaders<BC: BitcoinCoordinatorApi>(
