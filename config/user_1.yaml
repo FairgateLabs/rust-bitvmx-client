@@ -20,10 +20,11 @@ comms:
   address: 127.0.0.1:61180
   priv_key: config/keys/op_1.key
   storage_path: /tmp/regtest/op_1/comms.db
+  allow_list: config/comms_allow_list.yaml
 
 broker:
   settings: config/broker_settings.yaml
-  allow_list: config/allow_list.yaml
+  allow_list: config/broker_allow_list.yaml
   routing_table: config/routing_table.yaml
   port: 22222
   ip: 127.0.0.1

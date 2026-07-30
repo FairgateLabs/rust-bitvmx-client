@@ -41,7 +41,7 @@ class OperatorConfigGenerator:
             },
             "broker": {
                 "settings": "config/broker_settings.yaml",
-                "allow_list": "config/allow_list.yaml",
+                "allow_list": "config/broker_allow_list.yaml",
                 "routing_table": "config/routing_table.yaml", 
                 "ip": "127.0.0.1",
                 "priv_key": "config/keys/services.key"
@@ -182,7 +182,8 @@ class OperatorConfigGenerator:
         config["comms"] = {
             "address": f"127.0.0.1:{61180 + (operator_num - 1)}",
             "priv_key": f"config/keys/op_{operator_num}.key",
-            "storage_path": f"/tmp/regtest/op_{operator_num}/comms.db"
+            "storage_path": f"/tmp/regtest/op_{operator_num}/comms.db",
+            "allow_list": "config/comms_allow_list.yaml"
         }
         
         # Broker port pattern - using 20000+ range to avoid macOS conflicts and stay under 65000

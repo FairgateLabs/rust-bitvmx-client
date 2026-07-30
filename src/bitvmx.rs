@@ -134,7 +134,7 @@ impl BitVMX {
             &config.comms.priv_key,
             store.clone(),
             Some(config.comms.storage_path.clone()),
-            &config.broker.allow_list, //TODO: should be different from broker
+            &config.comms.allow_list,
             &config.broker.routing_table,
             config.broker.settings.clone(),
         )?;

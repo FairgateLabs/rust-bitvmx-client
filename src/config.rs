@@ -30,6 +30,7 @@ pub struct CommsConfig {
     pub address: SocketAddr,
     pub priv_key: String,
     pub storage_path: String,
+    pub allow_list: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
