@@ -113,7 +113,7 @@ impl Mode {
 pub struct SimchainStack;
 
 impl SimchainStack {
-    const PROFILE: &'static str = "minimal-api";
+    const PROFILE: &'static str = "all-tools";
 
     // Height the bootstrap reaches before it settles into its normal cadence.
     const BOOTSTRAP_HEIGHT: u32 = 204;
@@ -140,7 +140,7 @@ impl SimchainStack {
             .env("USER_ADDRESS", user_address)
             .env("ENABLE_SPAM", "false")
             .env("BLOCK_INTERVAL_MODE", "fixed")
-            .env("BLOCK_INTERVAL_MEAN_SECS", "5")
+            .env("BLOCK_INTERVAL_MEAN_SECS", "4")
             .status()?;
         anyhow::ensure!(status.success(), "Simchain start failed. Status: {status}");
         Ok(Self)
