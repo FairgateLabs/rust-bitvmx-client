@@ -383,26 +383,45 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
     protocol_id: &Uuid,
 ) -> Result<[LamportPublicKey; 3], BitVMXError> {
     let indices = &prove_result.input_commitment_indices;
-    let unordered_commitments = prove_result.sha256_commitments.clone();
-    let commitments: Vec<Sha256CommitmentHex> = indices
-        .iter()
-        .map(|&i| unordered_commitments[i].clone())
-        .collect();
-
-    info!("Total deduped commitments: {}", commitments.len());
-
+    let unordered_commitments = &prove_result.sha256_commitments;
     let num_inputs = prove_result.num_inputs;
     let public_input_size = config.circuit_public_input.len();
-    let num_outputs = 1; // we assume only one output
+    let num_outputs = 1usize; // we assume only one output
 
-    let expected = num_inputs + num_outputs;
-    if commitments.len() != expected {
+    if public_input_size > num_inputs {
         return Err(BitVMXError::InvalidMessage(format!(
-            "Not enough commitments: expected at least {}, got {}",
-            expected,
-            commitments.len()
+            "Public input size {} exceeds total input count {}",
+            public_input_size, num_inputs
         )));
     }
+
+    let expected = num_inputs.checked_add(num_outputs).ok_or_else(|| {
+        BitVMXError::InvalidMessage("Garbler commitment count overflow".to_string())
+    })?;
+    if indices.len() != expected {
+        return Err(BitVMXError::InvalidMessage(format!(
+            "Invalid commitment index count: expected {}, got {}",
+            expected,
+            indices.len()
+        )));
+    }
+
+    let commitments: Vec<Sha256CommitmentHex> = indices
+        .iter()
+        .enumerate()
+        .map(|(position, &index)| {
+            unordered_commitments.get(index).cloned().ok_or_else(|| {
+                BitVMXError::InvalidMessage(format!(
+                    "Commitment index {} at position {} is out of range for {} commitments",
+                    index,
+                    position,
+                    unordered_commitments.len()
+                ))
+            })
+        })
+        .collect::<Result<_, _>>()?;
+
+    info!("Total deduped commitments: {}", commitments.len());
 
     let public_input_pk = import_public_lamport(
         &commitments[..public_input_size],
@@ -436,21 +455,41 @@ fn import_input_private_keys<BC: BitcoinCoordinatorApi>(
     let io_inputs_path = &prove_result.io_inputs_path;
     let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
     let hash_type = LamportType::SHA256;
-    let chunks = io_inputs.chunks(hash_type.hash_size());
+    let hash_size = hash_type.hash_size();
+    let public_input_size = config.circuit_public_input.len();
+    let num_inputs = prove_result.num_inputs;
 
-    let mut bytes_0s: Vec<&[u8]> = Vec::new();
-    let mut bytes_1s: Vec<&[u8]> = Vec::new();
+    if public_input_size > num_inputs {
+        return Err(BitVMXError::InvalidMessage(format!(
+            "Public input size {} exceeds total input count {}",
+            public_input_size, num_inputs
+        )));
+    }
 
-    for (i, chunk) in chunks.enumerate() {
+    let expected_chunks = num_inputs.checked_mul(2).ok_or_else(|| {
+        BitVMXError::InvalidMessage("Garbler private-key chunk count overflow".to_string())
+    })?;
+    let expected_bytes = expected_chunks.checked_mul(hash_size).ok_or_else(|| {
+        BitVMXError::InvalidMessage("Garbler private-key byte count overflow".to_string())
+    })?;
+    if io_inputs.len() != expected_bytes {
+        return Err(BitVMXError::InvalidMessage(format!(
+            "Invalid garbler private-key data length: expected {} bytes for {} inputs, got {}",
+            expected_bytes,
+            num_inputs,
+            io_inputs.len()
+        )));
+    }
+
+    let mut bytes_0s: Vec<&[u8]> = Vec::with_capacity(num_inputs);
+    let mut bytes_1s: Vec<&[u8]> = Vec::with_capacity(num_inputs);
+    for (i, chunk) in io_inputs.chunks_exact(hash_size).enumerate() {
         if i % 2 == 0 {
             bytes_0s.push(chunk);
         } else {
             bytes_1s.push(chunk);
         }
     }
-
-    let public_input_size = config.circuit_public_input.len();
-    let num_inputs = prove_result.num_inputs;
 
     context.key_manager.import_lamport_private_key(
         &bytes_0s[..public_input_size].concat(),
@@ -563,6 +602,29 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
 mod tests {
     use super::*;
     use crate::test_utils::TestProgramContextEnv;
+    use serde_json::json;
+
+    fn prove_result(num_inputs: usize, input_commitment_indices: Vec<usize>) -> GCJobProveResult {
+        serde_json::from_value(json!({
+            "status": "ok",
+            "type": "prove",
+            "circuit_file": "test",
+            "num_gates": 0,
+            "num_inputs": num_inputs,
+            "proof_path": "",
+            "lamport_proof_path": "",
+            "io_inputs_path": "",
+            "digest_circ": "",
+            "digest_ct": "",
+            "digest_io": "",
+            "digest_labels": "",
+            "digest_lamport": "",
+            "garbling_public": { "gates": [] },
+            "sha256_commitments": [],
+            "input_commitment_indices": input_commitment_indices,
+        }))
+        .unwrap()
+    }
 
     fn store_config(
         context: &ProgramContext<impl BitcoinCoordinatorApi>,
@@ -578,6 +640,42 @@ mod tests {
                 VariableTypes::String(serde_json::to_string(&config).unwrap()),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn malformed_public_key_data_returns_errors() {
+        let mut env = TestProgramContextEnv::new("garbler-malformed-public-keys").unwrap();
+        let id = Uuid::new_v4();
+
+        let too_many_public_inputs = GCConfiguration::new(
+            id,
+            ParticipantRole::Prover,
+            "test".to_string(),
+            vec![true],
+            None,
+        );
+        let result = import_public_keys(
+            &prove_result(0, vec![0]),
+            &too_many_public_inputs,
+            &mut env.context,
+            &id,
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
+
+        let no_public_inputs = GCConfiguration::new(
+            id,
+            ParticipantRole::Prover,
+            "test".to_string(),
+            Vec::new(),
+            None,
+        );
+        let result = import_public_keys(
+            &prove_result(0, vec![0]),
+            &no_public_inputs,
+            &mut env.context,
+            &id,
+        );
+        assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
     }
 
     #[test]
