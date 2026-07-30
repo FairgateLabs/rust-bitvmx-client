@@ -89,10 +89,13 @@ pub struct SetupTickResult {
 ///
 /// For each step:
 /// ```text
-/// Generating → WaitingForParticipants → Completed
+/// Generating ──→ WaitingForParticipants ──→ AllParticipantsCompleted ──→ Completed
+/// Generating ─────────────────────────────────→ AllParticipantsCompleted
 /// ```
 ///
-/// Once a step is Completed, the engine advances to the next step.
+/// Synchronous generation can move directly to `AllParticipantsCompleted` when
+/// no other participant data is needed. `Completed` is transient: the engine
+/// immediately advances to the next step or marks the whole setup complete.
 pub struct SetupEngine {
     /// The steps to execute in order
     steps: Vec<SetupStepEnum>,
@@ -241,7 +244,6 @@ impl SetupEngine {
     ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
         self.if_not_completed()?;
 
-        // Get step name first before any mutable borrows (copy to owned String)
         let step_name = self.current_step_name().to_string();
 
         if self.state.current_step_state != StepState::Generating {
@@ -290,7 +292,7 @@ impl SetupEngine {
     ) -> Result<bool, BitVMXError> {
         self.if_not_completed()?;
 
-        let current_step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
+        let current_step_name = self.current_step_name().to_string();
 
         let (sub_step, msg_type) = match context {
             Context::SetupStep(_, step_name, sub_step, msg_type) => {
@@ -370,7 +372,7 @@ impl SetupEngine {
     ) -> Result<MessageDisposition, BitVMXError> {
         self.if_not_completed()?;
 
-        let step_name = self.current_step_name().to_string(); // Copy to owned String to avoid borrow issues
+        let step_name = self.current_step_name().to_string();
 
         // Find participant index
         let participant_idx =
@@ -460,7 +462,7 @@ impl SetupEngine {
             return Ok(false);
         }
 
-        let step_name = self.current_step_name().to_string(); // Copy to owned String
+        let step_name = self.current_step_name().to_string();
 
         // Check if we can advance
         let step = &self.steps[self.state.current_step_index];
@@ -514,9 +516,8 @@ impl SetupEngine {
 
     /// Broadcasts setup data using leader broadcast pattern.
     ///
-    /// Uses `CommsMessageType::SetupStepData` which is a generic message type for
-    /// any SetupEngine step data. The actual step type (keys, nonces, signatures, etc.)
-    /// is determined by the SetupEngine's current step, not by the message type.
+    /// Each setup step uses its concrete `CommsMessageType` (`Keys`,
+    /// `PublicNonces`, `PartialSignatures`, or `GarbledCircuit`).
     ///
     /// Leader broadcast pattern:
     /// - Non-leaders send their data only to the leader
@@ -739,7 +740,6 @@ impl SetupEngine {
             });
         }
 
-        // Clone step name to owned String before any mutable borrows
         let step_name = self.current_step_name().to_string();
 
         // Save engine state before tick to detect changes
