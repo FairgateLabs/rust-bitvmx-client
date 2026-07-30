@@ -382,7 +382,7 @@ impl TestHelper {
         let bitvmx_handle = thread::spawn(move || {
             run_bitvmx(
                 network,
-                !mode.clears_local_state(),
+                mode.clears_local_state(),
                 bitvmx_stop_rx,
                 bitvmx_ready_tx,
             )
@@ -617,7 +617,7 @@ pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     Ok(configs)
 }
 
-fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<()>) -> Result<()> {
+fn run_bitvmx(network: Network, clear_state: bool, rx: Receiver<()>, tx: Sender<()>) -> Result<()> {
     let configs = get_configs(network);
     if configs.is_err() {
         error!("Failed to load configs: {:?}", configs.err());
@@ -625,7 +625,7 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
     }
     let configs = configs.unwrap();
     info!("Loaded configs");
-    if !independent {
+    if clear_state {
         for config in &configs {
             clear_db(&config.storage.path);
             clear_db(&config.key_storage.path);
