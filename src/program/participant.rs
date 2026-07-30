@@ -2,7 +2,12 @@ use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::PubkHash;
 use key_manager::{lamport::LamportPublicKey, winternitz::WinternitzPublicKey};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    net::SocketAddr,
+    str::FromStr,
+};
 use tracing::warn;
 
 use crate::errors::BitVMXError;
@@ -180,6 +185,31 @@ impl CommsAddress {
     }
 }
 
+/// Validates the identity invariants required by participant-indexed protocol state.
+///
+/// A public-key hash identifies exactly one logical participant. Allowing the
+/// same hash at multiple indices would make hash-based lookups ambiguous and
+/// leave later indices impossible to complete during setup.
+pub fn validate_participants(participants: &[CommsAddress]) -> Result<(), BitVMXError> {
+    if participants.is_empty() {
+        return Err(BitVMXError::InvalidMessage(
+            "Participant list cannot be empty".to_string(),
+        ));
+    }
+
+    let mut identities = HashSet::with_capacity(participants.len());
+    for participant in participants {
+        if !identities.insert(&participant.pubkey_hash) {
+            return Err(BitVMXError::InvalidMessage(format!(
+                "Duplicate participant public-key hash: {}",
+                participant.pubkey_hash
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 pub fn get_comms_address_by_pubkey_hash(
     participants: &[CommsAddress],
     pubkey_hash: &PubkHash,
@@ -226,5 +256,43 @@ impl FromStr for CommsAddress {
         let pubkey_hash = parts[1].to_string();
 
         Ok(CommsAddress::new(address, pubkey_hash))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn participant(port: u16, pubkey_hash: &str) -> CommsAddress {
+        CommsAddress::new(
+            format!("127.0.0.1:{port}").parse().unwrap(),
+            pubkey_hash.to_string(),
+        )
+    }
+
+    #[test]
+    fn rejects_empty_participant_list() {
+        assert!(matches!(
+            validate_participants(&[]),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_participant_identities() {
+        let participants = vec![participant(1000, "alice"), participant(2000, "alice")];
+
+        assert!(matches!(
+            validate_participants(&participants),
+            Err(BitVMXError::InvalidMessage(message))
+                if message.contains("Duplicate participant public-key hash")
+        ));
+    }
+
+    #[test]
+    fn accepts_unique_participant_identities() {
+        let participants = vec![participant(1000, "alice"), participant(2000, "bob")];
+
+        assert!(validate_participants(&participants).is_ok());
     }
 }

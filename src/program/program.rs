@@ -11,7 +11,7 @@ use crate::{
     errors::{BitVMXError, ProgramError},
     ping_helper::JobDispatcherType,
     program::{
-        participant::get_comms_address_by_pubkey_hash,
+        participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
         setup::{SetupEngine, SetupEngineState, StepState},
         state::ProgramState,
@@ -121,6 +121,9 @@ impl Program {
             "Program: Setting up program {} with type {}",
             program_id, program_type
         );
+
+        // Participant public-key hashes define protocol indices and must be unique.
+        validate_participants(&peers)?;
 
         // Validate leader index
         if leader >= peers.len() {
