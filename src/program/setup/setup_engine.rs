@@ -904,7 +904,7 @@ impl SetupEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::participant::ParticipantKeys;
+    use crate::program::participant::ParticipantKeyDeclaration;
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::program::variables::VariableTypes;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
@@ -1032,7 +1032,7 @@ mod tests {
         let peer = env.peer_address(0).unwrap();
         let participants = vec![own.clone(), peer.clone()];
         let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 2).unwrap();
-        let data = serde_json::to_value(ParticipantKeys::empty().unwrap()).unwrap();
+        let data = serde_json::to_value(ParticipantKeyDeclaration::empty()).unwrap();
 
         assert_eq!(
             engine

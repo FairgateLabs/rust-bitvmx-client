@@ -3,7 +3,9 @@ use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
-        participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
+        participant::{
+            get_index_by_pubkey_hash, CommsAddress, ParticipantKeyDeclaration, ParticipantKeys,
+        },
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
         variables::VariableTypes,
@@ -45,7 +47,8 @@ impl KeysStep {
             .map(|(idx, _)| {
                 let keys_json = self.get_participant_data(&context.globals, protocol_id, idx)?;
 
-                Ok(serde_json::from_str(&keys_json)?)
+                let declaration: ParticipantKeyDeclaration = serde_json::from_str(&keys_json)?;
+                Ok(declaration.into())
             })
             .collect()
     }
@@ -180,8 +183,10 @@ impl SetupStep for KeysStep {
         // Save to globals with the convention "my_keys"
         Self::store_my_keys(&protocol_id, &keys, context)?;
 
-        // Serialize to send to other participants
-        let serialized = serde_json::to_value(&keys)?;
+        // Send only participant-declared material. Locally derived fields in
+        // ParticipantKeys must never cross this trust boundary.
+        let declaration = ParticipantKeyDeclaration::from(&keys);
+        let serialized = serde_json::to_value(&declaration)?;
         debug!("KeysStep: Serialized");
 
         Ok(Some((serialized, CommsMessageType::Keys)))
@@ -210,9 +215,10 @@ impl SetupStep for KeysStep {
             from_participant.pubkey_hash
         );
 
-        // Deserialize the received keys
-        let keys: ParticipantKeys = serde_json::from_value(data).map_err(|e| {
-            BitVMXError::InvalidMessage(format!("Failed to deserialize keys: {}", e))
+        // Deserialize only the wire-safe declaration. In particular, reject
+        // peer-supplied locally derived fields such as computed_aggregated.
+        let keys: ParticipantKeyDeclaration = serde_json::from_value(data).map_err(|e| {
+            BitVMXError::InvalidMessage(format!("Failed to deserialize key declaration: {}", e))
         })?;
 
         debug!(
@@ -364,10 +370,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(msg_type, CommsMessageType::Keys);
-        let generated: ParticipantKeys = serde_json::from_value(data.clone()).unwrap();
+        let generated: ParticipantKeyDeclaration = serde_json::from_value(data.clone()).unwrap();
         assert_eq!(generated.mapping.len(), 1);
         assert_eq!(generated.aggregated, vec![id.to_string()]);
-        assert_eq!(stored_keys(&id, "my_keys", &env.context), generated);
+        assert_eq!(
+            stored_keys(&id, "my_keys", &env.context),
+            generated.clone().into()
+        );
 
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
@@ -392,7 +401,12 @@ mod tests {
 
         let completed = stored_keys(&id, "my_keys", &env.context);
         let aggregate = completed.computed_aggregated[&id.to_string()];
-        assert_eq!(aggregate, *generated.get_public(&id.to_string()).unwrap());
+        assert_eq!(
+            aggregate,
+            *ParticipantKeys::from(generated)
+                .get_public(&id.to_string())
+                .unwrap()
+        );
         assert_eq!(
             env.context
                 .globals
@@ -420,15 +434,15 @@ mod tests {
             .unwrap();
         assert_eq!(empty_type, CommsMessageType::Keys);
         assert_eq!(
-            serde_json::from_value::<ParticipantKeys>(empty_data).unwrap(),
-            ParticipantKeys::empty().unwrap()
+            serde_json::from_value::<ParticipantKeyDeclaration>(empty_data).unwrap(),
+            ParticipantKeyDeclaration::empty()
         );
 
         let id = Uuid::new_v4();
         let protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, id, storage);
         let participant = env.self_address().unwrap();
         let participants = vec![participant.clone()];
-        let valid = serde_json::to_value(ParticipantKeys::empty().unwrap()).unwrap();
+        let valid = serde_json::to_value(ParticipantKeyDeclaration::empty()).unwrap();
 
         assert!(!step
             .verify_received(
@@ -448,6 +462,24 @@ mod tests {
         let err = step
             .verify_received(
                 serde_json::json!({"not": "participant keys"}),
+                CommsMessageType::Keys,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(err, BitVMXError::InvalidMessage(_)));
+
+        let injected_derived_key = serde_json::json!({
+            "mapping": {},
+            "aggregated": [],
+            "computed_aggregated": {}
+        });
+        let err = step
+            .verify_received(
+                injected_derived_key,
                 CommsMessageType::Keys,
                 &participant,
                 &protocol,
@@ -595,7 +627,7 @@ mod tests {
             &env.context.globals,
             &id,
             0,
-            &serde_json::to_string(&participant_keys).unwrap(),
+            &serde_json::to_string(&ParticipantKeyDeclaration::from(&participant_keys)).unwrap(),
         )
         .unwrap();
 

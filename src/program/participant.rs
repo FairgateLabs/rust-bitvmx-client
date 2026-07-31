@@ -112,14 +112,18 @@ impl Into<PublicKeyType> for LamportPublicKey {
     }
 }
 
+/// Public-key material declared by a participant and exchanged on the wire.
+///
+/// Locally derived values intentionally do not belong in this type so peers
+/// cannot provide values such as computed aggregated keys.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
-pub struct ParticipantKeys {
+#[serde(deny_unknown_fields)]
+pub struct ParticipantKeyDeclaration {
     pub mapping: HashMap<String, PublicKeyType>,
     pub aggregated: Vec<String>,
-    pub computed_aggregated: HashMap<String, PublicKey>,
 }
 
-impl ParticipantKeys {
+impl ParticipantKeyDeclaration {
     pub fn new(
         keys: Vec<(String, PublicKeyType)>,
         aggregated: Vec<String>,
@@ -135,16 +139,57 @@ impl ParticipantKeys {
         Ok(Self {
             mapping,
             aggregated,
-            computed_aggregated: HashMap::new(),
         })
     }
 
-    pub fn empty() -> Result<Self, BitVMXError> {
-        Ok(Self {
+    pub fn empty() -> Self {
+        Self {
             mapping: HashMap::new(),
             aggregated: Vec::new(),
+        }
+    }
+}
+
+/// A participant's declared keys together with locally derived key material.
+///
+/// This type is persisted locally but must not be deserialized directly from
+/// participant messages. Use [`ParticipantKeyDeclaration`] at that boundary.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct ParticipantKeys {
+    pub mapping: HashMap<String, PublicKeyType>,
+    pub aggregated: Vec<String>,
+    pub computed_aggregated: HashMap<String, PublicKey>,
+}
+
+impl From<ParticipantKeyDeclaration> for ParticipantKeys {
+    fn from(declaration: ParticipantKeyDeclaration) -> Self {
+        Self {
+            mapping: declaration.mapping,
+            aggregated: declaration.aggregated,
             computed_aggregated: HashMap::new(),
-        })
+        }
+    }
+}
+
+impl From<&ParticipantKeys> for ParticipantKeyDeclaration {
+    fn from(keys: &ParticipantKeys) -> Self {
+        Self {
+            mapping: keys.mapping.clone(),
+            aggregated: keys.aggregated.clone(),
+        }
+    }
+}
+
+impl ParticipantKeys {
+    pub fn new(
+        keys: Vec<(String, PublicKeyType)>,
+        aggregated: Vec<String>,
+    ) -> Result<Self, BitVMXError> {
+        Ok(ParticipantKeyDeclaration::new(keys, aggregated)?.into())
+    }
+
+    pub fn empty() -> Result<Self, BitVMXError> {
+        Ok(ParticipantKeyDeclaration::empty().into())
     }
 
     pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {
