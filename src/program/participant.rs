@@ -1,3 +1,4 @@
+use crate::errors::BitVMXError;
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::PubkHash;
 use key_manager::{lamport::LamportPublicKey, winternitz::WinternitzPublicKey};
@@ -8,9 +9,6 @@ use std::{
     net::SocketAddr,
     str::FromStr,
 };
-use tracing::warn;
-
-use crate::errors::BitVMXError;
 
 impl TryFrom<&str> for ParticipantRole {
     type Error = BitVMXError;
@@ -39,13 +37,6 @@ impl ParticipantRole {
 
     pub fn is_verifier(&self) -> bool {
         matches!(self, ParticipantRole::Verifier)
-    }
-
-    pub fn to_string(&self) -> String {
-        match self {
-            ParticipantRole::Prover => "prover".to_string(),
-            ParticipantRole::Verifier => "verifier".to_string(),
-        }
     }
 
     pub fn opposite(&self) -> ParticipantRole {
@@ -94,21 +85,21 @@ impl PublicKeyType {
     }
 }
 
-impl Into<PublicKeyType> for PublicKey {
-    fn into(self) -> PublicKeyType {
-        PublicKeyType::Public(self)
+impl From<PublicKey> for PublicKeyType {
+    fn from(key: PublicKey) -> Self {
+        PublicKeyType::Public(key)
     }
 }
 
-impl Into<PublicKeyType> for WinternitzPublicKey {
-    fn into(self) -> PublicKeyType {
-        PublicKeyType::Winternitz(self)
+impl From<WinternitzPublicKey> for PublicKeyType {
+    fn from(key: WinternitzPublicKey) -> Self {
+        PublicKeyType::Winternitz(key)
     }
 }
 
-impl Into<PublicKeyType> for LamportPublicKey {
-    fn into(self) -> PublicKeyType {
-        PublicKeyType::Lamport(self)
+impl From<LamportPublicKey> for PublicKeyType {
+    fn from(key: LamportPublicKey) -> Self {
+        PublicKeyType::Lamport(key)
     }
 }
 
@@ -193,36 +184,50 @@ impl ParticipantKeys {
     }
 
     pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {
-        Ok(self
-            .mapping
-            .get(name)
-            .ok_or_else(|| {
-                warn!("Winternitz {} not found.", name);
-                BitVMXError::InvalidMessageFormat
-            })?
-            .winternitz()
-            .ok_or_else(|| {
-                warn!("Winternitz {} not found.", name);
-                BitVMXError::InvalidMessageFormat
-            })?)
+        const EXPECTED: &str = "Winternitz public key";
+        let key = self.get_key(name, EXPECTED)?;
+        key.winternitz()
+            .ok_or_else(|| Self::wrong_key_type(name, EXPECTED, key))
     }
 
     pub fn get_lamport(&self, name: &str) -> Result<&LamportPublicKey, BitVMXError> {
-        Ok(self
-            .mapping
-            .get(name)
-            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?
-            .lamport()
-            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?)
+        const EXPECTED: &str = "Lamport public key";
+        let key = self.get_key(name, EXPECTED)?;
+        key.lamport()
+            .ok_or_else(|| Self::wrong_key_type(name, EXPECTED, key))
     }
 
     pub fn get_public(&self, name: &str) -> Result<&PublicKey, BitVMXError> {
-        Ok(self
-            .mapping
+        const EXPECTED: &str = "Bitcoin public key";
+        let key = self.get_key(name, EXPECTED)?;
+        key.public()
+            .ok_or_else(|| Self::wrong_key_type(name, EXPECTED, key))
+    }
+
+    fn get_key(
+        &self,
+        name: &str,
+        expected_type: &'static str,
+    ) -> Result<&PublicKeyType, BitVMXError> {
+        self.mapping
             .get(name)
-            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?
-            .public()
-            .ok_or_else(|| BitVMXError::InvalidMessageFormat)?)
+            .ok_or_else(|| BitVMXError::ParticipantKeyNotFound {
+                name: name.to_string(),
+                expected_type,
+            })
+    }
+
+    fn wrong_key_type(name: &str, expected_type: &'static str, key: &PublicKeyType) -> BitVMXError {
+        let actual_type = match key {
+            PublicKeyType::Public(_) => "Bitcoin public key",
+            PublicKeyType::Winternitz(_) => "Winternitz public key",
+            PublicKeyType::Lamport(_) => "Lamport public key",
+        };
+        BitVMXError::ParticipantKeyTypeMismatch {
+            name: name.to_string(),
+            expected_type,
+            actual_type,
+        }
     }
 
     pub fn speedup(&self) -> Result<&PublicKey, BitVMXError> {
@@ -476,6 +481,31 @@ mod tests {
             result,
             Err(BitVMXError::InvalidMessage(message))
                 if message == "Duplicate participant key name: duplicate"
+        ));
+    }
+
+    #[test]
+    fn participant_key_getters_distinguish_missing_and_wrong_types() {
+        let key = PublicKey::from_str(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        )
+        .unwrap();
+        let keys = ParticipantKeys::new(vec![("bitcoin".to_string(), key.into())], vec![]).unwrap();
+
+        assert!(matches!(
+            keys.get_public("missing"),
+            Err(BitVMXError::ParticipantKeyNotFound {
+                name,
+                expected_type: "Bitcoin public key",
+            }) if name == "missing"
+        ));
+        assert!(matches!(
+            keys.get_winternitz("bitcoin"),
+            Err(BitVMXError::ParticipantKeyTypeMismatch {
+                name,
+                expected_type: "Winternitz public key",
+                actual_type: "Bitcoin public key",
+            }) if name == "bitcoin"
         ));
     }
 }

@@ -976,7 +976,6 @@ impl BitVMX {
             leader as usize,
             &mut self.program_context,
             self.store.clone(),
-            &self.config.client,
         )?;
 
         self.add_new_program(&id)?;
@@ -1094,7 +1093,6 @@ impl BitVMX {
             leader_idx as usize,
             &mut self.program_context,
             self.store.clone(),
-            &self.config.client,
         )?;
 
         // Add the program to the programs list

@@ -901,8 +901,7 @@ mod tests {
 
     #[test]
     fn test_tx_ownership_table() {
-        let table =
-            create_ownership_table(4, vec![(0, ParticipantRole::Prover.to_string())]).unwrap();
+        let table = create_ownership_table(4, vec![(0, "prover".to_string())]).unwrap();
 
         assert_eq!(
             table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap().0,

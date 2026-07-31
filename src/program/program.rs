@@ -7,7 +7,6 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    config::ClientConfig,
     errors::{BitVMXError, ProgramError},
     ping_helper::JobDispatcherType,
     program::{
@@ -48,7 +47,6 @@ pub struct Program {
     pub setup_engine: Option<SetupEngine>,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
-    config: ClientConfig,
 }
 
 impl Program {
@@ -109,7 +107,6 @@ impl Program {
         leader: usize,
         context: &mut ProgramContext<BC>,
         storage: Rc<Storage>,
-        config: &ClientConfig,
     ) -> Result<(), BitVMXError> {
         info!(
             "Program: Setting up program {} with type {}",
@@ -162,7 +159,6 @@ impl Program {
             setup_engine_state: None, // Will be set when saving
             setup_engine,
             storage: Some(storage.clone()),
-            config: config.clone(),
         };
 
         // Save the initial program and its separately serialized state.
@@ -657,10 +653,6 @@ mod tests {
             setup_engine_state: None,
             setup_engine,
             storage: Some(storage),
-            config: ClientConfig {
-                retry: 3,
-                retry_delay: 10,
-            },
         }
     }
 
