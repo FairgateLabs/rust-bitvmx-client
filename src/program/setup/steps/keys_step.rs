@@ -13,7 +13,6 @@ use crate::{
     types::ProgramContext,
 };
 use serde_json::Value;
-use std::collections::HashSet;
 use tracing::{debug, info};
 
 /// Template step for exchanging public keys in MuSig2 protocols.
@@ -305,6 +304,7 @@ mod tests {
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::{PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION};
+    use std::collections::HashSet;
 
     fn protocol(name: &str, id: Uuid, storage: Rc<Storage>) -> ProtocolType {
         new_protocol_type(id, name, 0, storage).unwrap()
