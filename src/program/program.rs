@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use super::participant::CommsAddress;
@@ -56,38 +56,26 @@ impl Program {
         format!("program/{}", self.program_id)
     }
 
-    /// Attempts to send SetupCompleted message to the L2 channel.
-    /// Returns true if the message was sent (meaning state changed and should be saved).
+    /// Sends SetupCompleted to the L2 channel.
     /// Some protocols (e.g., AggregatedKeyProtocol) suppress this message.
     fn send_setup_completed<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
-    ) -> bool {
+    ) -> Result<(), BitVMXError> {
         if !self.protocol.send_setup_completed() {
-            return false;
+            return Ok(());
         }
 
-        match OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string() {
-            Ok(msg) => {
-                if let Err(e) = program_context
-                    .broker_channel
-                    .send(&program_context.components_config.l2, msg)
-                {
-                    warn!("Program: Error sending SetupCompleted message: {:?}", e);
-                    false
-                } else {
-                    info!(
-                        "Program: Sent SetupCompleted for program {}",
-                        self.program_id
-                    );
-                    true
-                }
-            }
-            Err(e) => {
-                warn!("Program: Error serializing SetupCompleted message: {:?}", e);
-                false
-            }
-        }
+        let msg = OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.l2, msg)?;
+
+        info!(
+            "Program: Sent SetupCompleted for program {}",
+            self.program_id
+        );
+        Ok(())
     }
 
     /// Creates a SetupEngine for the protocol using its setup_steps() method.
@@ -367,7 +355,7 @@ impl Program {
                 .monitor(vout_to_monitor)?;
         }
 
-        self.send_setup_completed(program_context);
+        self.send_setup_completed(program_context)?;
         Ok(())
     }
 
