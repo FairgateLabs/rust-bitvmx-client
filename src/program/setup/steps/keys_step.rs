@@ -58,17 +58,8 @@ impl KeysStep {
         all_keys: &[ParticipantKeys],
         context: &mut ProgramContext<BC>,
     ) -> Result<std::collections::HashMap<String, bitcoin::PublicKey>, BitVMXError> {
-        let expected_aggregated_names = my_keys.aggregated.iter().collect::<HashSet<_>>();
-        if expected_aggregated_names.len() != my_keys.aggregated.len() {
-            return Err(BitVMXError::InvalidMessage(
-                "My keys contain duplicate aggregated key names".to_string(),
-            ));
-        }
-
         for (idx, participant_keys) in all_keys.iter().enumerate() {
-            let participant_aggregated_names =
-                participant_keys.aggregated.iter().collect::<HashSet<_>>();
-            if participant_aggregated_names != expected_aggregated_names {
+            if participant_keys.aggregated != my_keys.aggregated {
                 return Err(BitVMXError::InvalidMessage(format!(
                     "Participant {} has an inconsistent aggregated key set",
                     idx
@@ -371,7 +362,7 @@ mod tests {
         assert_eq!(msg_type, CommsMessageType::Keys);
         let generated: ParticipantKeyDeclaration = serde_json::from_value(data.clone()).unwrap();
         assert_eq!(generated.mapping.len(), 1);
-        assert_eq!(generated.aggregated, vec![id.to_string()]);
+        assert_eq!(generated.aggregated, HashSet::from([id.to_string()]));
         assert_eq!(
             stored_keys(&id, "my_keys", &env.context),
             generated.clone().into()
@@ -515,13 +506,6 @@ mod tests {
             .unwrap();
         let valid =
             ParticipantKeys::new(vec![(name.clone(), key.into())], vec![name.clone()]).unwrap();
-
-        let mut duplicate = valid.clone();
-        duplicate.aggregated.push(name.clone());
-        assert!(matches!(
-            KeysStep::compute_aggregated_keys(&duplicate, &[valid.clone()], &mut env.context),
-            Err(BitVMXError::InvalidMessage(message)) if message.contains("duplicate")
-        ));
 
         let inconsistent = ParticipantKeys::empty().unwrap();
         assert!(matches!(

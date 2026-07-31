@@ -2,7 +2,10 @@ use crate::errors::BitVMXError;
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::PubkHash;
 use key_manager::{lamport::LamportPublicKey, winternitz::WinternitzPublicKey};
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{MapAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -110,8 +113,60 @@ impl From<LamportPublicKey> for PublicKeyType {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ParticipantKeyDeclaration {
+    #[serde(deserialize_with = "deserialize_unique_key_mapping")]
     pub mapping: HashMap<String, PublicKeyType>,
-    pub aggregated: Vec<String>,
+    #[serde(deserialize_with = "deserialize_unique_aggregated_names")]
+    pub aggregated: HashSet<String>,
+}
+
+fn deserialize_unique_key_mapping<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, PublicKeyType>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct UniqueKeyMappingVisitor;
+
+    impl<'de> Visitor<'de> for UniqueKeyMappingVisitor {
+        type Value = HashMap<String, PublicKeyType>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a participant key mapping with unique names")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut keys = HashMap::with_capacity(map.size_hint().unwrap_or(0));
+            while let Some((name, key)) = map.next_entry::<String, PublicKeyType>()? {
+                if keys.insert(name.clone(), key).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "Duplicate participant key name: {name}"
+                    )));
+                }
+            }
+            Ok(keys)
+        }
+    }
+
+    deserializer.deserialize_map(UniqueKeyMappingVisitor)
+}
+
+fn deserialize_unique_aggregated_names<'de, D>(deserializer: D) -> Result<HashSet<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let names = Vec::<String>::deserialize(deserializer)?;
+    let mut unique_names = HashSet::with_capacity(names.len());
+    for name in names {
+        if !unique_names.insert(name.clone()) {
+            return Err(serde::de::Error::custom(format!(
+                "Duplicate aggregated key name: {name}"
+            )));
+        }
+    }
+    Ok(unique_names)
 }
 
 impl ParticipantKeyDeclaration {
@@ -127,16 +182,26 @@ impl ParticipantKeyDeclaration {
                 )));
             }
         }
+
+        let mut aggregated_names = HashSet::with_capacity(aggregated.len());
+        for name in aggregated {
+            if !aggregated_names.insert(name.clone()) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Duplicate aggregated key name: {name}"
+                )));
+            }
+        }
+
         Ok(Self {
             mapping,
-            aggregated,
+            aggregated: aggregated_names,
         })
     }
 
     pub fn empty() -> Self {
         Self {
             mapping: HashMap::new(),
-            aggregated: Vec::new(),
+            aggregated: HashSet::new(),
         }
     }
 }
@@ -147,8 +212,10 @@ impl ParticipantKeyDeclaration {
 /// participant messages. Use [`ParticipantKeyDeclaration`] at that boundary.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ParticipantKeys {
+    #[serde(deserialize_with = "deserialize_unique_key_mapping")]
     pub mapping: HashMap<String, PublicKeyType>,
-    pub aggregated: Vec<String>,
+    #[serde(deserialize_with = "deserialize_unique_aggregated_names")]
+    pub aggregated: HashSet<String>,
     pub computed_aggregated: HashMap<String, PublicKey>,
 }
 
@@ -460,6 +527,45 @@ mod tests {
         });
 
         assert!(serde_json::from_value::<CommsAddress>(value).is_err());
+    }
+
+    #[test]
+    fn participant_key_declaration_deserialization_rejects_duplicate_mapping_names() {
+        let key = PublicKey::from_str(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        )
+        .unwrap();
+        let serialized_key = serde_json::to_string(&PublicKeyType::Public(key)).unwrap();
+        let duplicate = format!(
+            r#"{{"mapping":{{"duplicate":{serialized_key},"duplicate":{serialized_key}}},"aggregated":[]}}"#
+        );
+
+        let error = serde_json::from_str::<ParticipantKeyDeclaration>(&duplicate).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Duplicate participant key name: duplicate"));
+    }
+
+    #[test]
+    fn participant_key_declaration_rejects_duplicate_aggregated_names() {
+        let duplicate = serde_json::json!({
+            "mapping": {},
+            "aggregated": ["aggregate", "aggregate"]
+        });
+
+        let error = serde_json::from_value::<ParticipantKeyDeclaration>(duplicate).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Duplicate aggregated key name: aggregate"));
+
+        assert!(matches!(
+            ParticipantKeyDeclaration::new(
+                vec![],
+                vec!["aggregate".to_string(), "aggregate".to_string()]
+            ),
+            Err(BitVMXError::InvalidMessage(message))
+                if message == "Duplicate aggregated key name: aggregate"
+        ));
     }
 
     #[test]
