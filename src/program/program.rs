@@ -38,9 +38,10 @@ pub struct Program {
     pub participants: Vec<CommsAddress>,
     pub leader: usize,
     pub protocol: ProtocolType,
+    /// Stored separately so program states can be queried without loading whole programs.
     #[serde(skip)]
     state: ProgramState,
-    /// Serializable state of the SetupEngine (saved separately since SetupEngine contains trait objects)
+    /// Serializable snapshot embedded in the program since SetupEngine contains trait objects.
     setup_engine_state: Option<SetupEngineState>,
     /// All participant keys collected during setup (populated by build_protocol)
     #[serde(skip)]
@@ -51,9 +52,14 @@ pub struct Program {
 }
 
 impl Program {
-    /// Returns the storage key for this program
-    fn storage_key(&self) -> String {
-        format!("program/{}", self.program_id)
+    /// Returns the storage key for a program.
+    fn key_program(program_id: &Uuid) -> String {
+        format!("program/{program_id}")
+    }
+
+    /// Returns the storage key for a program's separately serialized state.
+    fn key_program_state(program_id: &Uuid) -> String {
+        format!("program/{program_id}/state")
     }
 
     /// Sends SetupCompleted to the L2 channel.
@@ -159,7 +165,7 @@ impl Program {
             config: config.clone(),
         };
 
-        // Save initial program (includes state)
+        // Save the initial program and its separately serialized state.
         program.save()?;
 
         info!("Program: Setup complete for program {}", program_id);
@@ -168,15 +174,9 @@ impl Program {
 
     /// Loads a Program from storage
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, BitVMXError> {
-        let key = format!("program/{}", program_id);
         let mut program: Program = storage
-            .get(&key, None)?
+            .get(&Self::key_program(program_id), None)?
             .ok_or(BitVMXError::ProgramNotFound(*program_id))?;
-
-        debug!(
-            "Program::load() - Loaded program {} with state: {:?}",
-            program_id, program.state
-        );
 
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage.clone());
@@ -186,8 +186,13 @@ impl Program {
             Self::try_create_setup_engine(&program.protocol, program.participants.len())?;
 
         program.state = storage
-            .get(&format!("program/{}/state", program_id), None)?
+            .get(&Self::key_program_state(program_id), None)?
             .unwrap_or_default();
+
+        debug!(
+            "Program::load() - Loaded program {} with state: {:?}",
+            program_id, program.state
+        );
 
         // Restore SetupEngine state if it was saved
         if let (Some(engine), Some(saved_state)) =
@@ -206,10 +211,11 @@ impl Program {
     /// Saves the program to storage
     ///
     /// This method:
-    /// 1. Extracts the SetupEngine state (which cannot be serialized) into `setup_engine_state`
-    /// 2. Saves the entire program struct (including state as a field) in a single storage key
+    /// 1. Snapshots the non-serializable SetupEngine into `setup_engine_state`.
+    /// 2. Saves the program without its runtime-only fields or state.
+    /// 3. Saves the state separately so it can be queried without loading the whole program.
     ///
-    /// Note: Fields marked with `#[serde(skip)]` (setup_engine, storage) are excluded from serialization
+    /// Fields marked with `#[serde(skip)]` are excluded from program serialization.
     pub fn save(&mut self) -> Result<(), ProgramError> {
         let storage = self
             .storage
@@ -226,10 +232,13 @@ impl Program {
             self.program_id, self.state
         );
 
-        let state_key = format!("program/{}/state", self.program_id);
-        storage.set(&state_key, &self.state, None)?;
+        storage.set(
+            &Self::key_program_state(&self.program_id),
+            &self.state,
+            None,
+        )?;
 
-        storage.set(&self.storage_key(), self, None)?;
+        storage.set(&Self::key_program(&self.program_id), self, None)?;
 
         Ok(())
     }
@@ -618,7 +627,107 @@ impl Program {
 }
 
 pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
-    let key = format!("program/{}/state", uuid);
-    let state: ProgramState = storage.get(&key, None)?.unwrap_or_default();
+    let state: ProgramState = storage
+        .get(&Program::key_program_state(uuid), None)?
+        .unwrap_or_default();
     Ok(state.is_active())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{test_utils::TestStorageDir, types::PROGRAM_TYPE_AGGREGATED_KEY};
+
+    fn test_program(storage: Rc<Storage>, program_id: Uuid) -> Program {
+        let participants = vec![CommsAddress::new(
+            "127.0.0.1:10000".parse().unwrap(),
+            "participant".to_string(),
+        )];
+        let protocol =
+            new_protocol_type(program_id, PROGRAM_TYPE_AGGREGATED_KEY, 0, storage.clone()).unwrap();
+        let setup_engine = Program::try_create_setup_engine(&protocol, participants.len()).unwrap();
+
+        Program {
+            program_id,
+            my_idx: 0,
+            participants,
+            leader: 0,
+            protocol,
+            state: ProgramState::SettingUp,
+            setup_engine_state: None,
+            setup_engine,
+            storage: Some(storage),
+            config: ClientConfig {
+                retry: 3,
+                retry_delay: 10,
+            },
+        }
+    }
+
+    #[test]
+    fn test_save_serializes_program_and_state_separately() {
+        let dir = TestStorageDir::new("program-save");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+        program.state = ProgramState::WaitingData;
+
+        program.save().unwrap();
+
+        let serialized_program: Program = storage
+            .get(&Program::key_program(&program_id), None)
+            .unwrap()
+            .unwrap();
+        let serialized_state: ProgramState = storage
+            .get(&Program::key_program_state(&program_id), None)
+            .unwrap()
+            .unwrap();
+
+        // A directly deserialized Program has the default state because state is
+        // deliberately excluded from the whole-program value.
+        assert_eq!(serialized_program.state, ProgramState::SettingUp);
+        assert_eq!(serialized_state, ProgramState::WaitingData);
+        assert_eq!(serialized_program.program_id, program_id);
+        assert!(serialized_program.setup_engine_state.is_some());
+    }
+
+    #[test]
+    fn test_load_restores_program_state_and_runtime_fields() {
+        let dir = TestStorageDir::new("program-load");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+        program.state = ProgramState::Ready;
+        program.save().unwrap();
+
+        let loaded = Program::load(storage, &program_id).unwrap();
+
+        assert_eq!(loaded.program_id, program_id);
+        assert_eq!(loaded.state, ProgramState::Ready);
+        assert!(loaded.storage.is_some());
+        assert!(loaded.protocol.context().storage.is_some());
+        assert_eq!(
+            loaded.setup_engine.as_ref().unwrap().state(),
+            loaded.setup_engine_state.as_ref().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_is_active_program_reads_separately_saved_state() {
+        let dir = TestStorageDir::new("program-active-state");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+
+        program.save().unwrap();
+        assert!(is_active_program(&storage, &program_id).unwrap());
+
+        program.state = ProgramState::WaitingData;
+        program.save().unwrap();
+        assert!(!is_active_program(&storage, &program_id).unwrap());
+
+        program.state = ProgramState::Ready;
+        program.save().unwrap();
+        assert!(!is_active_program(&storage, &program_id).unwrap());
+    }
 }
