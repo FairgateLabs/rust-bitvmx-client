@@ -641,7 +641,7 @@ mod tests {
     fn test_program(storage: Rc<Storage>, program_id: Uuid) -> Program {
         let participants = vec![CommsAddress::new(
             "127.0.0.1:10000".parse().unwrap(),
-            "participant".to_string(),
+            "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f".to_string(),
         )];
         let protocol =
             new_protocol_type(program_id, PROGRAM_TYPE_AGGREGATED_KEY, 0, storage.clone()).unwrap();

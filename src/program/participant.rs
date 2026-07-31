@@ -185,18 +185,63 @@ impl ParticipantKeys {
     }
 }
 
+const PUBKEY_HASH_HEX_LEN: usize = 64;
+
+fn validate_pubkey_hash(pubkey_hash: &str) -> Result<(), String> {
+    if pubkey_hash.len() != PUBKEY_HASH_HEX_LEN {
+        return Err(format!(
+            "Invalid public-key hash length: expected {PUBKEY_HASH_HEX_LEN} lowercase hex characters, got {}",
+            pubkey_hash.len()
+        ));
+    }
+
+    if !pubkey_hash
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("Invalid public-key hash: expected lowercase hexadecimal SHA-256".to_string());
+    }
+
+    Ok(())
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
+#[serde(try_from = "UncheckedCommsAddress")]
 pub struct CommsAddress {
     pub address: SocketAddr,
     pub pubkey_hash: PubkHash,
 }
 
+#[derive(Deserialize)]
+struct UncheckedCommsAddress {
+    address: SocketAddr,
+    pubkey_hash: PubkHash,
+}
+
+impl TryFrom<UncheckedCommsAddress> for CommsAddress {
+    type Error = String;
+
+    fn try_from(value: UncheckedCommsAddress) -> Result<Self, Self::Error> {
+        CommsAddress::try_new(value.address, value.pubkey_hash)
+    }
+}
+
 impl CommsAddress {
+    /// Constructs an address without validation for compatibility with trusted internal callers.
+    /// External input must use `try_new`, `FromStr`, or serde deserialization.
     pub fn new(address: SocketAddr, pubkey_hash: PubkHash) -> Self {
         Self {
             address,
             pubkey_hash,
         }
+    }
+
+    pub fn try_new(address: SocketAddr, pubkey_hash: PubkHash) -> Result<Self, String> {
+        validate_pubkey_hash(&pubkey_hash)?;
+        Ok(Self {
+            address,
+            pubkey_hash,
+        })
     }
 }
 
@@ -214,6 +259,8 @@ pub fn validate_participants(participants: &[CommsAddress]) -> Result<(), BitVMX
 
     let mut identities = HashSet::with_capacity(participants.len());
     for participant in participants {
+        validate_pubkey_hash(&participant.pubkey_hash).map_err(BitVMXError::InvalidMessage)?;
+
         if !identities.insert(&participant.pubkey_hash) {
             return Err(BitVMXError::InvalidMessage(format!(
                 "Duplicate participant public-key hash: {}",
@@ -270,7 +317,7 @@ impl FromStr for CommsAddress {
 
         let pubkey_hash = parts[1].to_string();
 
-        Ok(CommsAddress::new(address, pubkey_hash))
+        CommsAddress::try_new(address, pubkey_hash)
     }
 }
 
@@ -295,7 +342,8 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_participant_identities() {
-        let participants = vec![participant(1000, "alice"), participant(2000, "alice")];
+        let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
+        let participants = vec![participant(1000, hash), participant(2000, hash)];
 
         assert!(matches!(
             validate_participants(&participants),
@@ -306,9 +354,62 @@ mod tests {
 
     #[test]
     fn accepts_unique_participant_identities() {
-        let participants = vec![participant(1000, "alice"), participant(2000, "bob")];
+        let participants = vec![
+            participant(
+                1000,
+                "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f",
+            ),
+            participant(
+                2000,
+                "1d10fa43ebbf6674d74caa3e9032711ade09d98ea7d20f89459f61152bebda1e",
+            ),
+        ];
 
         assert!(validate_participants(&participants).is_ok());
+    }
+
+    #[test]
+    fn participant_validation_rejects_unchecked_malformed_hash() {
+        let participants = vec![participant(1000, "not-a-fingerprint")];
+
+        assert!(matches!(
+            validate_participants(&participants),
+            Err(BitVMXError::InvalidMessage(message))
+                if message.contains("Invalid public-key hash")
+        ));
+    }
+
+    #[test]
+    fn parses_valid_comms_address() {
+        let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
+        let parsed: CommsAddress = format!("127.0.0.1:1000,{hash}").parse().unwrap();
+
+        assert_eq!(parsed.pubkey_hash, hash);
+    }
+
+    #[test]
+    fn rejects_malformed_comms_address_hashes() {
+        for hash in [
+            "",
+            "abc123",
+            "7005E4A0325B644BAA2B66C3FA2ED2A795CAE584B6D3A57CA45EBF5D0EB0011F",
+            "g005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f",
+            " 005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f",
+        ] {
+            assert!(format!("127.0.0.1:1000,{hash}")
+                .parse::<CommsAddress>()
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn serde_rejects_malformed_comms_address_hash() {
+        let value = serde_json::json!({
+            "address": "127.0.0.1:1000",
+            "pubkey_hash": "not-a-fingerprint"
+        });
+
+        assert!(serde_json::from_value::<CommsAddress>(value).is_err());
     }
 
     #[test]
