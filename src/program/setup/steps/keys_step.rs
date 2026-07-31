@@ -421,14 +421,14 @@ mod tests {
         assert_eq!(empty_type, CommsMessageType::Keys);
         assert_eq!(
             serde_json::from_value::<ParticipantKeys>(empty_data).unwrap(),
-            ParticipantKeys::new(vec![], vec![]).unwrap()
+            ParticipantKeys::empty().unwrap()
         );
 
         let id = Uuid::new_v4();
         let protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, id, storage);
         let participant = env.self_address().unwrap();
         let participants = vec![participant.clone()];
-        let valid = serde_json::to_value(ParticipantKeys::new(vec![], vec![]).unwrap()).unwrap();
+        let valid = serde_json::to_value(ParticipantKeys::empty().unwrap()).unwrap();
 
         assert!(!step
             .verify_received(
@@ -492,7 +492,7 @@ mod tests {
             Err(BitVMXError::InvalidMessage(message)) if message.contains("duplicate")
         ));
 
-        let inconsistent = ParticipantKeys::new(vec![], vec![]).unwrap();
+        let inconsistent = ParticipantKeys::empty().unwrap();
         assert!(matches!(
             KeysStep::compute_aggregated_keys(&valid, &[inconsistent], &mut env.context),
             Err(BitVMXError::InvalidMessage(message)) if message.contains("inconsistent")

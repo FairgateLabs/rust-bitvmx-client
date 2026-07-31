@@ -117,8 +117,10 @@ pub trait ProtocolHandler {
 
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError>;
+        _program_context: &mut ProgramContext<BC>,
+    ) -> Result<ParticipantKeys, BitVMXError> {
+        ParticipantKeys::empty()
+    }
 
     fn set_storage(&mut self, storage: Rc<Storage>) {
         self.context_mut().storage = Some(storage);

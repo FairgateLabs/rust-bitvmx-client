@@ -52,13 +52,6 @@ impl ProtocolHandler for RejectPegInProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
-        &self,
-        _context: &ProgramContext<BC>,
-    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        Ok([].to_vec())
-    }
-
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         context: &mut ProgramContext<BC>,

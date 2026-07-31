@@ -139,6 +139,14 @@ impl ParticipantKeys {
         })
     }
 
+    pub fn empty() -> Result<Self, BitVMXError> {
+        Ok(Self {
+            mapping: HashMap::new(),
+            aggregated: Vec::new(),
+            computed_aggregated: HashMap::new(),
+        })
+    }
+
     pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {
         Ok(self
             .mapping
