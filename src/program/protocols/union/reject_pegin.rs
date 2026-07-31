@@ -76,7 +76,7 @@ impl ProtocolHandler for RejectPegInProtocol {
             SPEEDUP_KEY,
             VariableTypes::PubKey(speedup_key),
         )?;
-        Ok(ParticipantKeys::new(keys.to_vec(), vec![]))
+        ParticipantKeys::new(keys.to_vec(), vec![])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

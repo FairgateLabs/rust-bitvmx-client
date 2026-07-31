@@ -120,16 +120,23 @@ pub struct ParticipantKeys {
 }
 
 impl ParticipantKeys {
-    pub fn new(keys: Vec<(String, PublicKeyType)>, aggregated: Vec<String>) -> Self {
+    pub fn new(
+        keys: Vec<(String, PublicKeyType)>,
+        aggregated: Vec<String>,
+    ) -> Result<Self, BitVMXError> {
         let mut mapping = HashMap::new();
         for (name, key) in keys {
-            mapping.insert(name.to_string(), key);
+            if mapping.insert(name.clone(), key).is_some() {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Duplicate participant key name: {name}"
+                )));
+            }
         }
-        Self {
+        Ok(Self {
             mapping,
             aggregated,
             computed_aggregated: HashMap::new(),
-        }
+        })
     }
 
     pub fn get_winternitz(&self, name: &str) -> Result<&WinternitzPublicKey, BitVMXError> {
@@ -294,5 +301,27 @@ mod tests {
         let participants = vec![participant(1000, "alice"), participant(2000, "bob")];
 
         assert!(validate_participants(&participants).is_ok());
+    }
+
+    #[test]
+    fn participant_keys_reject_duplicate_names() {
+        let key = PublicKey::from_str(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        )
+        .unwrap();
+
+        let result = ParticipantKeys::new(
+            vec![
+                ("duplicate".to_string(), key.into()),
+                ("duplicate".to_string(), key.into()),
+            ],
+            vec![],
+        );
+
+        assert!(matches!(
+            result,
+            Err(BitVMXError::InvalidMessage(message))
+                if message == "Duplicate participant key name: duplicate"
+        ));
     }
 }

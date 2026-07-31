@@ -425,7 +425,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }
 
-        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
+        ParticipantKeys::new(keys, vec!["aggregated_1".to_string()])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(

@@ -98,7 +98,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             VariableTypes::PubKey(speedup_key),
         )?;
 
-        Ok(ParticipantKeys::new(keys, vec![]))
+        ParticipantKeys::new(keys, vec![])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

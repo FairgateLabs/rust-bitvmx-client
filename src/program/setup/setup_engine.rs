@@ -1032,7 +1032,7 @@ mod tests {
         let peer = env.peer_address(0).unwrap();
         let participants = vec![own.clone(), peer.clone()];
         let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 2).unwrap();
-        let data = serde_json::to_value(ParticipantKeys::new(vec![], vec![])).unwrap();
+        let data = serde_json::to_value(ParticipantKeys::new(vec![], vec![]).unwrap()).unwrap();
 
         assert_eq!(
             engine

@@ -399,7 +399,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             }
         }
 
-        Ok(ParticipantKeys::new(keys, vec![]))
+        ParticipantKeys::new(keys, vec![])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

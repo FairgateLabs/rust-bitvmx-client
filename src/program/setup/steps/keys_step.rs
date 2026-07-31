@@ -421,14 +421,14 @@ mod tests {
         assert_eq!(empty_type, CommsMessageType::Keys);
         assert_eq!(
             serde_json::from_value::<ParticipantKeys>(empty_data).unwrap(),
-            ParticipantKeys::new(vec![], vec![])
+            ParticipantKeys::new(vec![], vec![]).unwrap()
         );
 
         let id = Uuid::new_v4();
         let protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, id, storage);
         let participant = env.self_address().unwrap();
         let participants = vec![participant.clone()];
-        let valid = serde_json::to_value(ParticipantKeys::new(vec![], vec![])).unwrap();
+        let valid = serde_json::to_value(ParticipantKeys::new(vec![], vec![]).unwrap()).unwrap();
 
         assert!(!step
             .verify_received(
@@ -482,7 +482,8 @@ mod tests {
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)
             .unwrap();
-        let valid = ParticipantKeys::new(vec![(name.clone(), key.into())], vec![name.clone()]);
+        let valid =
+            ParticipantKeys::new(vec![(name.clone(), key.into())], vec![name.clone()]).unwrap();
 
         let mut duplicate = valid.clone();
         duplicate.aggregated.push(name.clone());
@@ -491,13 +492,13 @@ mod tests {
             Err(BitVMXError::InvalidMessage(message)) if message.contains("duplicate")
         ));
 
-        let inconsistent = ParticipantKeys::new(vec![], vec![]);
+        let inconsistent = ParticipantKeys::new(vec![], vec![]).unwrap();
         assert!(matches!(
             KeysStep::compute_aggregated_keys(&valid, &[inconsistent], &mut env.context),
             Err(BitVMXError::InvalidMessage(message)) if message.contains("inconsistent")
         ));
 
-        let missing_own_key = ParticipantKeys::new(vec![], vec![name.clone()]);
+        let missing_own_key = ParticipantKeys::new(vec![], vec![name.clone()]).unwrap();
         assert!(matches!(
             KeysStep::compute_aggregated_keys(
                 &missing_own_key,
@@ -507,7 +508,7 @@ mod tests {
             Err(BitVMXError::InvalidMessage(message)) if message.contains("My key")
         ));
 
-        let participant_missing_mapping = ParticipantKeys::new(vec![], vec![name]);
+        let participant_missing_mapping = ParticipantKeys::new(vec![], vec![name]).unwrap();
         assert!(matches!(
             KeysStep::compute_aggregated_keys(
                 &valid,
@@ -532,9 +533,10 @@ mod tests {
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)
             .unwrap();
-        let my_keys = ParticipantKeys::new(vec![(name.clone(), first.into())], vec![name.clone()]);
+        let my_keys =
+            ParticipantKeys::new(vec![(name.clone(), first.into())], vec![name.clone()]).unwrap();
         let other_keys =
-            ParticipantKeys::new(vec![(name.clone(), second.into())], vec![name.clone()]);
+            ParticipantKeys::new(vec![(name.clone(), second.into())], vec![name.clone()]).unwrap();
 
         let computed = KeysStep::compute_aggregated_keys(
             &my_keys,
@@ -576,9 +578,11 @@ mod tests {
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)
             .unwrap();
-        let my_keys = ParticipantKeys::new(vec![(name.clone(), my_key.into())], vec![name.clone()]);
+        let my_keys =
+            ParticipantKeys::new(vec![(name.clone(), my_key.into())], vec![name.clone()]).unwrap();
         let participant_keys =
-            ParticipantKeys::new(vec![(name.clone(), other_key.into())], vec![name.clone()]);
+            ParticipantKeys::new(vec![(name.clone(), other_key.into())], vec![name.clone()])
+                .unwrap();
         env.context
             .globals
             .set_var(

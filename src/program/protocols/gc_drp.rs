@@ -219,7 +219,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             (SPEEDUP_KEY.to_string(), speedup.into()),
         ];
 
-        Ok(ParticipantKeys::new(keys, vec![AGGREGATED_KEY.to_string()]))
+        ParticipantKeys::new(keys, vec![AGGREGATED_KEY.to_string()])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

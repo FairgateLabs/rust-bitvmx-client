@@ -37,7 +37,7 @@ impl ProtocolHandler for GCGenerationProtocol {
         &self,
         _program_context: &mut ProgramContext<BC>,
     ) -> Result<ParticipantKeys, BitVMXError> {
-        Ok(ParticipantKeys::new(vec![], vec![]))
+        ParticipantKeys::new(vec![], vec![])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

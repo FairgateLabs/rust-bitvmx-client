@@ -71,10 +71,10 @@ impl ProtocolHandler for AggregatedKeyProtocol {
 
         // Return participant keys with a single aggregated key named after the protocol ID
         let aggregated_name = self.ctx.id.to_string();
-        Ok(ParticipantKeys::new(
+        ParticipantKeys::new(
             vec![(aggregated_name.clone(), key.into())],
             vec![aggregated_name],
-        ))
+        )
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

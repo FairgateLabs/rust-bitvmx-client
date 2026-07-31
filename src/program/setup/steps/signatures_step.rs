@@ -341,7 +341,7 @@ mod tests {
         id: Uuid,
         aggregated: PublicKey,
     ) {
-        let mut keys = ParticipantKeys::new(vec![], vec![]);
+        let mut keys = ParticipantKeys::new(vec![], vec![]).unwrap();
         keys.computed_aggregated
             .insert("test-aggregate".to_string(), aggregated);
         context
@@ -372,7 +372,7 @@ mod tests {
             matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Keys must be exchanged"))
         );
 
-        let empty_keys = ParticipantKeys::new(vec![], vec![]);
+        let empty_keys = ParticipantKeys::new(vec![], vec![]).unwrap();
         env.context
             .globals
             .set_var(

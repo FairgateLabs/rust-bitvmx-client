@@ -84,7 +84,7 @@ impl ProtocolHandler for LockProtocol {
 
         let keys = vec![("speedup".to_string(), speedup.into())];
 
-        Ok(ParticipantKeys::new(keys, vec![]))
+        ParticipantKeys::new(keys, vec![])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(

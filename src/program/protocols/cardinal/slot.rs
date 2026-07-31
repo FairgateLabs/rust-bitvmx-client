@@ -168,7 +168,7 @@ impl ProtocolHandler for SlotProtocol {
             .next_winternitz(4, WinternitzType::HASH160)?;
         keys.push((group_id(self.ctx.my_idx), gid.into()));
 
-        Ok(ParticipantKeys::new(keys, vec![]))
+        ParticipantKeys::new(keys, vec![])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(
