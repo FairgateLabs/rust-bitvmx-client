@@ -166,26 +166,25 @@ impl SetupStep for KeysStep {
 
         debug!("KeysStep: Generating keys for protocol {}", protocol_id);
 
-        // Call the protocol to generate its specific keys
-        let keys = protocol.generate_keys(context)?;
+        // Protocols generate only the material that participants declare to
+        // one another. Derived key material is added locally after exchange.
+        let declaration = protocol.generate_keys(context)?;
 
         // Validate that keys were generated
-        if keys.mapping.is_empty() && keys.aggregated.is_empty() {
+        if declaration.mapping.is_empty() && declaration.aggregated.is_empty() {
             info!("KeysStep: Protocol did not generate any keys, using empty defaults");
         }
 
         debug!(
             "KeysStep: Generated {} individual keys and {} aggregated keys",
-            keys.mapping.len(),
-            keys.aggregated.len()
+            declaration.mapping.len(),
+            declaration.aggregated.len()
         );
 
-        // Save to globals with the convention "my_keys"
+        // Save the declaration as local key state with no derived keys yet.
+        let keys = ParticipantKeys::from(declaration.clone());
         Self::store_my_keys(&protocol_id, &keys, context)?;
 
-        // Send only participant-declared material. Locally derived fields in
-        // ParticipantKeys must never cross this trust boundary.
-        let declaration = ParticipantKeyDeclaration::from(&keys);
         let serialized = serde_json::to_value(&declaration)?;
         debug!("KeysStep: Serialized");
 

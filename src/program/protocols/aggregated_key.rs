@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeyDeclaration, ParticipantKeys},
         protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
         setup::steps::SetupStepName,
         variables::VariableTypes,
@@ -51,7 +51,7 @@ impl ProtocolHandler for AggregatedKeyProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let optional_keys = program_context
             .globals
             .get_var_or_err(&self.ctx.id, "optional_keys")?
@@ -71,7 +71,7 @@ impl ProtocolHandler for AggregatedKeyProtocol {
 
         // Return participant keys with a single aggregated key named after the protocol ID
         let aggregated_name = self.ctx.id.to_string();
-        ParticipantKeys::new(
+        ParticipantKeyDeclaration::new(
             vec![(aggregated_name.clone(), key.into())],
             vec![aggregated_name],
         )

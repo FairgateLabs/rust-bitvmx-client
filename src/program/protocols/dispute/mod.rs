@@ -43,7 +43,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
+        participant::{ParticipantKeyDeclaration, ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             claim::ClaimGate,
             dispute::{
@@ -290,7 +290,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
         let nary_def = program_def.nary_def();
         init_trace_vars(nary_def.total_rounds())?;
@@ -428,7 +428,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
         }
 
-        ParticipantKeys::new(keys, vec!["aggregated_1".to_string()])
+        ParticipantKeyDeclaration::new(keys, vec!["aggregated_1".to_string()])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(

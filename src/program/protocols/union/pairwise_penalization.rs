@@ -10,7 +10,7 @@ use tracing::info;
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeyDeclaration, ParticipantKeys},
         protocols::protocol_handler::{ProtocolContext, ProtocolHandler},
     },
     types::ProgramContext,
@@ -40,7 +40,7 @@ impl ProtocolHandler for PairwisePenalizationProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         _program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         todo!()
     }
 

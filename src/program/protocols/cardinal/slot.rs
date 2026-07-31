@@ -24,7 +24,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeyDeclaration, ParticipantKeys},
         protocols::{
             cardinal::{
                 slot_config::SlotProtocolConfiguration, OPERATORS, OPERATORS_AGGREGATED_PUB,
@@ -142,7 +142,7 @@ impl ProtocolHandler for SlotProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let speedup = program_context
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)?;
@@ -168,7 +168,7 @@ impl ProtocolHandler for SlotProtocol {
             .next_winternitz(4, WinternitzType::HASH160)?;
         keys.push((group_id(self.ctx.my_idx), gid.into()));
 
-        ParticipantKeys::new(keys, vec![])
+        ParticipantKeyDeclaration::new(keys, vec![])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(

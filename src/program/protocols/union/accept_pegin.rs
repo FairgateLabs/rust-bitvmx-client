@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
+        participant::{ParticipantKeyDeclaration, ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
@@ -81,7 +81,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let speedup_key = program_context
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)?;
@@ -98,7 +98,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
             VariableTypes::PubKey(speedup_key),
         )?;
 
-        ParticipantKeys::new(keys, vec![])
+        ParticipantKeyDeclaration::new(keys, vec![])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(
