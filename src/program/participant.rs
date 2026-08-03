@@ -614,4 +614,110 @@ mod tests {
             }) if name == "bitcoin"
         ));
     }
+
+    #[test]
+    fn participant_roles_parse_report_and_invert_consistently() {
+        let prover = ParticipantRole::try_from("prover").unwrap();
+        let verifier = ParticipantRole::try_from("verifier").unwrap();
+
+        assert!(prover.is_prover());
+        assert!(!prover.is_verifier());
+        assert_eq!(prover.opposite(), verifier);
+        assert!(verifier.is_verifier());
+        assert!(!verifier.is_prover());
+        assert_eq!(verifier.opposite(), prover);
+        assert_eq!(prover.to_string(), "Prover");
+        assert_eq!(verifier.to_string(), "Verifier");
+        assert!(matches!(
+            ParticipantRole::try_from("operator"),
+            Err(BitVMXError::InvalidConversion(message)) if message == "Invalid role: operator"
+        ));
+    }
+
+    #[test]
+    fn participant_key_accessors_return_each_declared_key_type() {
+        use key_manager::{
+            lamport::LamportType,
+            winternitz::{WinternitzPublicKey, WinternitzType},
+        };
+
+        let bitcoin = PublicKey::from_str(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        )
+        .unwrap();
+        let winternitz =
+            WinternitzPublicKey::from_bytes(&[7u8; 20], WinternitzType::HASH160).unwrap();
+        let lamport = LamportPublicKey::new(LamportType::SHA256, None);
+        let keys = ParticipantKeys::new(
+            vec![
+                ("speedup".to_string(), bitcoin.into()),
+                ("wots".to_string(), winternitz.clone().into()),
+                ("lamport".to_string(), lamport.clone().into()),
+            ],
+            vec!["group".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(keys.speedup().unwrap(), &bitcoin);
+        assert_eq!(keys.get_winternitz("wots").unwrap(), &winternitz);
+        assert_eq!(keys.get_lamport("lamport").unwrap(), &lamport);
+        assert!(keys.mapping["speedup"].winternitz().is_none());
+        assert!(keys.mapping["wots"].public().is_none());
+        assert!(keys.mapping["lamport"].public().is_none());
+        assert!(keys.aggregated.contains("group"));
+    }
+
+    #[test]
+    fn wire_declaration_excludes_locally_computed_aggregates() {
+        let key = PublicKey::from_str(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        )
+        .unwrap();
+        let mut keys = ParticipantKeys::new(
+            vec![("declared".to_string(), key.into())],
+            vec!["group".to_string()],
+        )
+        .unwrap();
+        keys.computed_aggregated.insert("group".to_string(), key);
+
+        let declaration = ParticipantKeyDeclaration::from(&keys);
+        let restored = ParticipantKeys::from(declaration.clone());
+        assert_eq!(declaration.mapping, keys.mapping);
+        assert_eq!(declaration.aggregated, keys.aggregated);
+        assert!(restored.computed_aggregated.is_empty());
+        assert!(ParticipantKeys::empty().unwrap().mapping.is_empty());
+    }
+
+    #[test]
+    fn comms_address_round_trips_and_lookups_preserve_identity() {
+        let first_hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
+        let second_hash = "1d10fa43ebbf6674d74caa3e9032711ade09d98ea7d20f89459f61152bebda1e";
+        let participants = vec![
+            participant(1000, first_hash),
+            participant(2000, second_hash),
+        ];
+
+        let encoded = participants[0].to_string();
+        assert_eq!(encoded.parse::<CommsAddress>().unwrap(), participants[0]);
+        assert_eq!(
+            get_comms_address_by_pubkey_hash(&participants, &second_hash.to_string()).unwrap(),
+            participants[1]
+        );
+        assert_eq!(
+            get_index_by_pubkey_hash(&participants, &second_hash.to_string()).unwrap(),
+            1
+        );
+
+        let missing =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+        assert!(matches!(
+            get_comms_address_by_pubkey_hash(&participants, &missing),
+            Err(BitVMXError::InvalidCommsAddress(hash)) if hash == missing
+        ));
+        assert!(get_index_by_pubkey_hash(&participants, &missing).is_err());
+        assert!("127.0.0.1:1000".parse::<CommsAddress>().is_err());
+        assert!(format!("not-an-address,{first_hash}")
+            .parse::<CommsAddress>()
+            .is_err());
+    }
 }

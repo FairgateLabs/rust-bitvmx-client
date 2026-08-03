@@ -632,7 +632,10 @@ pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, Bit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_utils::TestStorageDir, types::PROGRAM_TYPE_AGGREGATED_KEY};
+    use crate::{
+        test_utils::{TestProgramContextEnv, TestStorageDir},
+        types::PROGRAM_TYPE_AGGREGATED_KEY,
+    };
 
     fn test_program(storage: Rc<Storage>, program_id: Uuid) -> Program {
         let participants = vec![CommsAddress::new(
@@ -721,5 +724,211 @@ mod tests {
         program.state = ProgramState::Ready;
         program.save().unwrap();
         assert!(!is_active_program(&storage, &program_id).unwrap());
+    }
+
+    #[test]
+    fn test_missing_program_and_storage_are_reported_explicitly() {
+        let dir = TestStorageDir::new("program-missing");
+        let missing_id = Uuid::new_v4();
+        assert!(matches!(
+            Program::load(dir.storage(), &missing_id),
+            Err(BitVMXError::ProgramNotFound(id)) if id == missing_id
+        ));
+
+        let storage = dir.storage();
+        let mut program = test_program(storage, Uuid::new_v4());
+        program.storage = None;
+        assert!(matches!(
+            program.save(),
+            Err(ProgramError::StorageUnavailable)
+        ));
+    }
+
+    #[test]
+    fn test_new_validates_participants_leader_and_local_membership() {
+        let mut env = TestProgramContextEnv::new("program-new-validation").unwrap();
+        let dir = TestStorageDir::new("program-new-validation-storage");
+        let self_address = env.self_address().unwrap();
+
+        let empty_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(empty_result, Err(BitVMXError::InvalidMessage(_))));
+
+        let bad_leader_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address.clone()],
+            1,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            bad_leader_result,
+            Err(BitVMXError::InvalidMessageFormat)
+        ));
+
+        let stranger = CommsAddress::try_new(
+            "127.0.0.1:29999".parse().unwrap(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        )
+        .unwrap();
+        let missing_local_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![stranger],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            missing_local_result,
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("Peer not found")
+        ));
+    }
+
+    #[test]
+    fn test_new_persists_a_loadable_program_for_the_local_participant() {
+        let mut env = TestProgramContextEnv::new("program-new-success").unwrap();
+        let dir = TestStorageDir::new("program-new-success-storage");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let self_address = env.self_address().unwrap();
+
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address.clone()],
+            0,
+            &mut env.context,
+            storage.clone(),
+        )
+        .unwrap();
+
+        let loaded = Program::load(storage, &program_id).unwrap();
+        assert_eq!(loaded.program_id, program_id);
+        assert_eq!(loaded.protocol_id(), program_id);
+        assert_eq!(loaded.my_idx, 0);
+        assert_eq!(loaded.leader, 0);
+        assert_eq!(loaded.participants, vec![self_address]);
+        assert_eq!(loaded.state, ProgramState::SettingUp);
+        assert!(loaded.setup_engine.is_some());
+    }
+
+    #[test]
+    fn test_control_messages_are_processed_without_mutating_setup() {
+        let mut env = TestProgramContextEnv::new("program-control-messages").unwrap();
+        let dir = TestStorageDir::new("program-control-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        let sender = program.participants[0].pubkey_hash.clone();
+        let initial_engine_state = program.setup_engine.as_ref().unwrap().state().clone();
+
+        for message_type in [
+            CommsMessageType::VerificationKey,
+            CommsMessageType::VerificationKeyRequest,
+            CommsMessageType::Broadcasted,
+        ] {
+            let disposition = program
+                .process_comms_message(
+                    &sender,
+                    &message_type,
+                    serde_json::json!({"ignored": true}),
+                    &mut env.context,
+                )
+                .unwrap();
+            assert_eq!(disposition, MessageDisposition::Processed);
+        }
+        assert_eq!(
+            program.setup_engine.as_ref().unwrap().state(),
+            &initial_engine_state
+        );
+        assert_eq!(program.state, ProgramState::SettingUp);
+    }
+
+    #[test]
+    fn test_ready_program_defers_setup_data_and_ignores_replayed_setup_job() {
+        let mut env = TestProgramContextEnv::new("program-ready-replays").unwrap();
+        let dir = TestStorageDir::new("program-ready-replays-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        program.state = ProgramState::Ready;
+        let sender = program.participants[0].pubkey_hash.clone();
+
+        let disposition = program
+            .process_comms_message(
+                &sender,
+                &CommsMessageType::Keys,
+                serde_json::json!({}),
+                &mut env.context,
+            )
+            .unwrap();
+        assert_eq!(disposition, MessageDisposition::RetryLater);
+
+        let context = Context::SetupStep(
+            program.program_id,
+            "keys".to_string(),
+            "".to_string(),
+            CommsMessageType::Keys,
+        );
+        program
+            .receive_dispatcher_result(
+                serde_json::json!({"stale": true}),
+                context,
+                JobDispatcherType::Garbler,
+                &mut env.context,
+            )
+            .unwrap();
+        assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_program_queries_and_unknown_dispatcher_errors_are_precise() {
+        let mut env = TestProgramContextEnv::new("program-query-errors").unwrap();
+        let dir = TestStorageDir::new("program-query-errors-storage");
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(dir.storage(), program_id);
+        let participant = program.participants[0].clone();
+
+        assert_eq!(program.protocol_id(), program_id);
+        assert_eq!(
+            program
+                .get_address_from_pubkey_hash(&participant.pubkey_hash)
+                .unwrap(),
+            participant
+        );
+        assert!(program
+            .get_address_from_pubkey_hash(
+                &"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
+            )
+            .is_err());
+
+        let error = program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program_id),
+                JobDispatcherType::ZKP,
+                &mut env.context,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BitVMXError::InvalidMessage(message) if message.contains("Unknown dispatcher type: ZKP")
+        ));
+    }
+
+    #[test]
+    fn test_aggregated_key_monitoring_registers_nothing_and_suppresses_completion() {
+        let mut env = TestProgramContextEnv::new("program-monitoring").unwrap();
+        let dir = TestStorageDir::new("program-monitoring-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+
+        program.start_monitoring(&mut env.context).unwrap();
+
+        assert!(env.coordinator_mock().monitored().is_empty());
+        assert!(!program.protocol.send_setup_completed());
     }
 }
