@@ -14,7 +14,7 @@ use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_wallet::wallet::Destination;
 use common::dispute::{prepare_dispute, ForcedChallenges};
-use common::helper::TestHelper;
+use common::helper::{Mode, TestHelper};
 use common::init_utxo_new;
 use common::{config_trace, send_all};
 use key_manager::winternitz::{
@@ -55,7 +55,7 @@ pub fn test_all_aux(
 
     config_trace();
 
-    let mut helper = TestHelper::new(network, independent, Some(3500))?;
+    let mut helper = TestHelper::new(Mode::select(network, independent), Some(3500))?;
 
     let command = IncomingBitVMXApiMessages::GetCommInfo(Uuid::new_v4());
     helper.send_all(command)?;
