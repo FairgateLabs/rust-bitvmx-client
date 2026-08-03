@@ -27,9 +27,10 @@ use bitvmx_job_dispatcher_types::{
 use bitvmx_settings::settings;
 use std::{
     env,
+    process::Command,
     sync::mpsc::{channel, Receiver, Sender},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tracing::{error, info, info_span};
 use uuid::Uuid;
@@ -42,6 +43,138 @@ use bitvmx_wallet::{wallet::errors::WalletError, Destination, RegtestWallet, Wal
 
 use crate::common::{clear_db, send_all, INITIAL_BLOCK_COUNT};
 const MIN_TX_FEE: f64 = 2.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Regtest, // Local regtest whose bitcoind the harness spawns, funds, and mines itself.
+    RegtestIndependent, // A regtest node the harness connects to but does not spawn or fund.
+    Testnet,
+    Testnet4,
+    Simchain, // Regtest encoding, but with an external self-mining docker stack.
+}
+
+impl std::fmt::Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Mode {
+    pub fn network(self) -> Network {
+        match self {
+            Mode::Regtest | Mode::RegtestIndependent | Mode::Simchain => Network::Regtest,
+            Mode::Testnet => Network::Testnet,
+            Mode::Testnet4 => Network::Testnet4,
+        }
+    }
+
+    /// Whether the harness spawns and owns a local bitcoind.
+    pub fn spawns_own_bitcoind(self) -> bool {
+        matches!(self, Mode::Regtest)
+    }
+
+    /// Whether blocks are produced on demand by the harness.
+    pub fn mines_on_demand(self) -> bool {
+        matches!(self, Mode::Regtest | Mode::RegtestIndependent)
+    }
+
+    /// Whether the harness starts from clean databases.
+    pub fn clears_local_state(self) -> bool {
+        matches!(self, Mode::Regtest | Mode::Simchain)
+    }
+
+    /// Whether the harness brings the simchain docker stack up and down around the test.
+    pub fn manages_simchain(self) -> bool {
+        matches!(self, Mode::Simchain)
+    }
+
+    fn wallet_config_path(self) -> &'static str {
+        match self {
+            Mode::Regtest | Mode::RegtestIndependent | Mode::Simchain => {
+                "config/wallet_regtest.yaml"
+            }
+            Mode::Testnet => "config/wallet_testnet.yaml",
+            Mode::Testnet4 => "config/wallet_testnet4.yaml",
+        }
+    }
+
+    pub fn select(network: Network, independent: bool) -> Self {
+        match (network, independent) {
+            (Network::Regtest, false) => Mode::Regtest,
+            (Network::Regtest, true) => Mode::RegtestIndependent,
+            (Network::Testnet, true) => Mode::Testnet,
+            (Network::Testnet4, true) => Mode::Testnet4,
+            other => panic!("unsupported network/independent combination: {:?}", other),
+        }
+    }
+}
+
+/// Brings the simchain docker stack up for the lifetime of this value and tears it down.
+pub struct SimchainStack;
+
+impl SimchainStack {
+    const PROFILE: &'static str = "all-tools";
+
+    // Height the bootstrap reaches before it settles into its normal cadence.
+    const BOOTSTRAP_HEIGHT: u32 = 204;
+
+    fn dir() -> String {
+        env::var("SIMCHAIN_DIR").unwrap_or_else(|_| "../simchain".to_string())
+    }
+
+    fn compose(args: &[&str]) -> Command {
+        let mut cmd = Command::new("docker");
+        cmd.current_dir(Self::dir())
+            .args(["compose", "--profile", Self::PROFILE])
+            .args(args);
+        cmd
+    }
+
+    /// Boots a fresh chain whose bootstrap funds `user_address`.
+    pub fn up(user_address: &str) -> Result<Self> {
+        info!("Starting simchain, funding {}", user_address);
+        // Wipe any prior chain so the fresh bootstrap honors our USER_ADDRESS.
+        let _ = Self::compose(&["down", "-v"]).status();
+
+        let status = Self::compose(&["up", "-d"])
+            .env("USER_ADDRESS", user_address)
+            .env("ENABLE_SPAM", "false")
+            .env("BLOCK_INTERVAL_MODE", "fixed")
+            .env("BLOCK_INTERVAL_MEAN_SECS", "4")
+            .status()?;
+        anyhow::ensure!(status.success(), "Simchain start failed. Status: {status}");
+        Ok(Self)
+    }
+
+    /// Blocks until the freshly booted chain finishes its bootstrap.
+    pub fn wait_for_bootstrap(&self, client: &BitcoinClient) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(300);
+        loop {
+            match client.get_best_block() {
+                Ok(height) if height >= Self::BOOTSTRAP_HEIGHT => return Ok(()),
+                Ok(height) => info!(
+                    "simchain bootstrapping: height {} / {}",
+                    height,
+                    Self::BOOTSTRAP_HEIGHT
+                ),
+                Err(e) => info!("simchain not ready yet: {}", e),
+            }
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "simchain did not reach height {} within the timeout",
+                Self::BOOTSTRAP_HEIGHT
+            );
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+}
+
+impl Drop for SimchainStack {
+    fn drop(&mut self) {
+        info!("Stopping simchain");
+        let _ = Self::compose(&["down", "-v"]).status();
+    }
+}
 
 fn get_fee_rate_from_env(network: Network) -> u64 {
     match env::var("FEE_RATE") {
@@ -67,17 +200,17 @@ fn get_default_fee_rate(network: Network) -> u64 {
 }
 
 pub struct InternalWallet {
-    network: Network,
     wallet: Wallet,
     client: BitcoinClient,
+    mines_on_demand: bool, // Whether the harness produces blocks itself.
 }
 
 impl InternalWallet {
-    pub fn new(client: BitcoinClient, wallet: Wallet) -> Self {
+    pub fn new(client: BitcoinClient, wallet: Wallet, mines_on_demand: bool) -> Self {
         Self {
-            network: wallet.network,
             wallet,
             client,
+            mines_on_demand,
         }
     }
 
@@ -87,7 +220,7 @@ impl InternalWallet {
     }
 
     pub fn mine(&self, num_blocks: u64) -> Result<Vec<Transaction>, BitVMXError> {
-        if self.network == Network::Regtest {
+        if self.mines_on_demand {
             return Ok(self.wallet.mine(num_blocks)?);
         } else {
             let initial = self
@@ -113,10 +246,10 @@ impl InternalWallet {
         &mut self,
         destination: Destination,
     ) -> Result<Transaction, WalletError> {
-        if self.network == Network::Regtest {
+        if self.mines_on_demand {
             self.wallet.fund_destination(destination)
         } else {
-            let fee_rate = get_fee_rate_from_env(self.network);
+            let fee_rate = get_fee_rate_from_env(self.wallet.network);
             self.wallet.send_funds(destination, Some(fee_rate))
         }
     }
@@ -124,6 +257,7 @@ impl InternalWallet {
 
 pub struct TestHelper {
     pub bitcoind: Option<Bitcoind>,
+    _simchain: Option<SimchainStack>,
     pub wallet: InternalWallet,
     pub bitvmx_handle: Option<thread::JoinHandle<Result<()>>>,
     pub bitvmx_stop_tx: Sender<()>,
@@ -163,17 +297,10 @@ impl TestHelper {
         Ok(())
     }
 
-    pub fn new(network: Network, independent: bool, auto_mine: Option<u64>) -> Result<Self> {
-        info!(
-            "Initializing TestHelper for network: {:?} {}",
-            network, independent
-        );
-        let config_path = match network {
-            Network::Regtest => "config/wallet_regtest.yaml",
-            Network::Testnet => "config/wallet_testnet.yaml",
-            Network::Testnet4 => "config/wallet_testnet4.yaml",
-            _ => panic!("Not supported network {}", network),
-        };
+    pub fn new(mode: Mode, auto_mine: Option<u64>) -> Result<Self> {
+        info!("Initializing TestHelper for {}", mode);
+        let network = mode.network();
+        let config_path = mode.wallet_config_path();
 
         let wallet_config = bitvmx_settings::settings::load_config_file::<
             bitvmx_wallet::wallet::config::Config,
@@ -181,14 +308,15 @@ impl TestHelper {
 
         info!("Wallet settings loaded");
 
-        let bitcoind = if independent {
-            None
-        } else {
-            assert!(network == Network::Regtest);
+        // Chains whose state we own start from clean databases.
+        if mode.clears_local_state() {
             clear_db(&wallet_config.storage.path);
             clear_db(&wallet_config.key_storage.path);
             Wallet::clear_db(&wallet_config.wallet)?;
+        }
 
+        // Only self-hosted regtest spawns its own bitcoind.
+        let bitcoind = if mode.spawns_own_bitcoind() {
             // In CI, bitcoind is provided by docker-compose on the same port.
             // Spawning another container would collide on 0.0.0.0:18443.
             if std::env::var("GITHUB_ACTIONS").is_ok() {
@@ -210,16 +338,28 @@ impl TestHelper {
                 bitcoind_instance.start()?;
                 Some(bitcoind_instance)
             }
+        } else {
+            None
         };
 
         let mut wallet =
             Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
+
+        // Simchain funds a single address once, at bootstrap.
+        let simchain = if mode.manages_simchain() {
+            let user_address = wallet.receive_address()?;
+            Some(SimchainStack::up(&user_address.to_string())?)
+        } else {
+            None
+        };
+
         let bitcoin_client = BitcoinClient::new(
             &wallet_config.bitcoin.url,
             &wallet_config.bitcoin.username,
             &wallet_config.bitcoin.password,
         )?;
-        if !independent {
+
+        if mode.spawns_own_bitcoind() {
             let address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
             if std::env::var("GITHUB_ACTIONS").is_err() {
                 // Locally we control bitcoind; in CI the shared bitcoind is already
@@ -230,12 +370,22 @@ impl TestHelper {
             wallet.sync_wallet()?;
         }
 
+        if let Some(simchain) = &simchain {
+            simchain.wait_for_bootstrap(&bitcoin_client)?;
+            wallet.sync_wallet()?;
+        }
+
         info!("Wallet ready");
 
         let (bitvmx_stop_tx, bitvmx_stop_rx) = channel::<()>();
         let (bitvmx_ready_tx, bitvmx_ready_rx) = channel::<()>();
         let bitvmx_handle = thread::spawn(move || {
-            run_bitvmx(network, independent, bitvmx_stop_rx, bitvmx_ready_tx)
+            run_bitvmx(
+                network,
+                mode.clears_local_state(),
+                bitvmx_stop_rx,
+                bitvmx_ready_tx,
+            )
         });
         info!("BitVMX instances started");
 
@@ -263,12 +413,8 @@ impl TestHelper {
         let garbled_handle =
             thread::spawn(move || run_garbled(network, garbled_stop_rx, garbled_ready_tx));
 
-        let automine_interval = if network == Network::Regtest {
-            if let Some(interval) = auto_mine {
-                interval
-            } else {
-                0
-            }
+        let automine_interval = if mode.mines_on_demand() {
+            auto_mine.unwrap_or(0)
         } else {
             0
         };
@@ -314,7 +460,8 @@ impl TestHelper {
 
         Ok(TestHelper {
             bitcoind,
-            wallet: InternalWallet::new(bitcoin_client, wallet),
+            _simchain: simchain,
+            wallet: InternalWallet::new(bitcoin_client, wallet, mode.mines_on_demand()),
             bitvmx_handle: Some(bitvmx_handle),
             bitvmx_stop_tx,
             disp_handle: Some(disp_handle),
@@ -470,7 +617,7 @@ pub fn get_configs(network: Network) -> Result<Vec<Config>> {
     Ok(configs)
 }
 
-fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<()>) -> Result<()> {
+fn run_bitvmx(network: Network, clear_state: bool, rx: Receiver<()>, tx: Sender<()>) -> Result<()> {
     let configs = get_configs(network);
     if configs.is_err() {
         error!("Failed to load configs: {:?}", configs.err());
@@ -478,7 +625,7 @@ fn run_bitvmx(network: Network, independent: bool, rx: Receiver<()>, tx: Sender<
     }
     let configs = configs.unwrap();
     info!("Loaded configs");
-    if !independent {
+    if clear_state {
         for config in &configs {
             clear_db(&config.storage.path);
             clear_db(&config.key_storage.path);
