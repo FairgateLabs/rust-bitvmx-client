@@ -998,6 +998,22 @@ impl BitVMX {
     }
 
     /// send replies via the broker channel
+    //TODO: the change itself cannot fail, but a poisoned allow list lock makes
+    //this return Err before replying, so the caller waiting on `id` gets
+    //nothing back at all. Same for the ListAllowList arm. Should we reply with
+    //an error instead?
+    fn mutate_allow_list<F>(&self, id: Uuid, from: Identifier, change: F) -> Result<(), BitVMXError>
+    where
+        F: FnOnce(&mut AllowList),
+    {
+        let allow_list = self.program_context.comms.get_allow_list();
+        let persisted = comms_allow_list::mutate(&self.store, &allow_list, change)?;
+        self.reply(
+            from,
+            OutgoingBitVMXApiMessages::AllowListUpdated(id, persisted),
+        )
+    }
+
     fn reply(&self, to: Identifier, message: OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
         debug!("> {:?}", message);
         self.program_context
@@ -1679,6 +1695,28 @@ impl BitVMX {
                     }
                 };
                 self.reply(from, message)?;
+            }
+            IncomingBitVMXApiMessages::ListAllowList(id) => {
+                let allow_list = self.program_context.comms.get_allow_list();
+                let (entries, allow_all) = comms_allow_list::snapshot(&allow_list)?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::AllowListEntries(id, entries, allow_all),
+                )?;
+            }
+            IncomingBitVMXApiMessages::AddToAllowList(id, pubk_hash, addr) => {
+                info!("Allowing comms peer {} from {:?}", pubk_hash, addr);
+                self.mutate_allow_list(id, from, |allow_list| {
+                    allow_list.add_entry(pubk_hash, addr)
+                })?;
+            }
+            IncomingBitVMXApiMessages::RemoveFromAllowList(id, pubk_hash) => {
+                info!("Removing comms peer {}", pubk_hash);
+                self.mutate_allow_list(id, from, |allow_list| allow_list.remove(&pubk_hash))?;
+            }
+            IncomingBitVMXApiMessages::SetAllowAll(id, allow_all) => {
+                info!("Setting comms allow_all to {}", allow_all);
+                self.mutate_allow_list(id, from, |allow_list| allow_list.set_allow_all(allow_all))?;
             }
             IncomingBitVMXApiMessages::Shutdown() => {
                 info!("Shutdown message received. Initiating shutdown...");

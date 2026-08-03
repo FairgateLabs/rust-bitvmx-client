@@ -14,7 +14,7 @@ use std::{
 use bitvmx_broker::identification::{allow_list::AllowList, identifier::PubkHash};
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::errors::BitVMXError;
 
@@ -44,11 +44,49 @@ pub fn save(store: &Rc<Storage>, allow_list: &AllowList) -> Result<(), BitVMXErr
     Ok(())
 }
 
-/// Build the comms allow list, preferring the persisted one over `yaml_path`.
-pub fn build(
+/// The entries and blanket flag, for a list request.
+pub fn snapshot(
+    allow_list: &Arc<Mutex<AllowList>>,
+) -> Result<(Vec<(PubkHash, Option<IpAddr>)>, bool), BitVMXError> {
+    let guard = allow_list
+        .lock()
+        .map_err(|e| BitVMXError::PoisonedLockError(e.to_string()))?;
+    Ok((guard.entries(), guard.is_allow_all()))
+}
+
+/// Apply `change` to the allow list and persist the result, reporting whether
+/// the write succeeded.
+///
+/// A failed write leaves the in-memory change in place: a peer we are willing
+/// to talk to should not be blocked because the disk is unavailable. The
+/// caller is told so it can warn that the change will not survive a restart.
+pub fn mutate<F>(
     store: &Rc<Storage>,
-    yaml_path: &str,
-) -> Result<Arc<Mutex<AllowList>>, BitVMXError> {
+    allow_list: &Arc<Mutex<AllowList>>,
+    change: F,
+) -> Result<bool, BitVMXError>
+where
+    F: FnOnce(&mut AllowList),
+{
+    let mut guard = allow_list
+        .lock()
+        .map_err(|e| BitVMXError::PoisonedLockError(e.to_string()))?;
+    change(&mut guard);
+    match save(store, &guard) {
+        Ok(()) => Ok(true),
+        Err(e) => {
+            warn!(
+                "Comms allow list changed but could not be saved: {}. \
+                 The change is in effect but will be lost on restart.",
+                e
+            );
+            Ok(false)
+        }
+    }
+}
+
+/// Build the comms allow list, preferring the persisted one over `yaml_path`.
+pub fn build(store: &Rc<Storage>, yaml_path: &str) -> Result<Arc<Mutex<AllowList>>, BitVMXError> {
     let Some(persisted) = load(store)? else {
         return Ok(AllowList::from_file(yaml_path)?);
     };
@@ -135,6 +173,147 @@ mod tests {
         assert!(!loaded.allow_all);
     }
 
+    /// The first API call snapshots the whole live list, so entries that came
+    /// from the YAML are carried into storage rather than lost when the YAML
+    /// stops being consulted.
+    #[test]
+    fn the_first_mutation_absorbs_the_yaml_entries() {
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let yaml = yaml_with(&dir, "from-yaml");
+
+        let allow_list = build(&store, &yaml).unwrap();
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("from-api".to_string(), None)
+        })
+        .unwrap();
+
+        let mut persisted = load(&store).unwrap().unwrap().entries;
+        persisted.sort();
+        assert_eq!(
+            persisted,
+            vec![
+                ("from-api".to_string(), None),
+                ("from-yaml".to_string(), None)
+            ],
+        );
+    }
+
+    #[test]
+    fn re_adding_a_hash_replaces_its_address() {
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), Some(addr("10.0.0.1")))
+        })
+        .unwrap();
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), Some(addr("10.0.0.2")))
+        })
+        .unwrap();
+
+        assert_eq!(
+            load(&store).unwrap().unwrap().entries,
+            vec![("peer".to_string(), Some(addr("10.0.0.2")))],
+            "re-adding updates the address rather than creating a second entry",
+        );
+        let guard = allow_list.lock().unwrap();
+        assert!(!guard.is_allowed(&"peer".to_string(), addr("10.0.0.1")));
+        assert!(guard.is_allowed(&"peer".to_string(), addr("10.0.0.2")));
+    }
+
+    /// Entries and the blanket flag are independent: a rule added or removed
+    /// while `allow_all` is on is recorded without becoming operative, and
+    /// without quietly closing or opening the door.
+    #[test]
+    fn adding_and_removing_leave_allow_all_alone() {
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+
+        mutate(&store, &allow_list, |al| al.set_allow_all(true)).unwrap();
+
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), None)
+        })
+        .unwrap();
+        assert!(
+            load(&store).unwrap().unwrap().allow_all,
+            "adding a rule must not clear allow_all",
+        );
+
+        mutate(&store, &allow_list, |al| al.remove(&"peer".to_string())).unwrap();
+        assert!(
+            load(&store).unwrap().unwrap().allow_all,
+            "removing a rule must not clear allow_all",
+        );
+
+        // and the reverse: with the flag off, neither call turns it back on
+        mutate(&store, &allow_list, |al| al.set_allow_all(false)).unwrap();
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), None)
+        })
+        .unwrap();
+        mutate(&store, &allow_list, |al| al.remove(&"peer".to_string())).unwrap();
+        assert!(
+            !load(&store).unwrap().unwrap().allow_all,
+            "neither call may enable allow_all",
+        );
+    }
+
+    #[test]
+    fn removing_an_absent_entry_is_a_no_op() {
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), None)
+        })
+        .unwrap();
+
+        let persisted = mutate(&store, &allow_list, |al| al.remove(&"ghost".to_string())).unwrap();
+
+        assert!(persisted, "removing an absent entry still reports success");
+        assert_eq!(
+            load(&store).unwrap().unwrap().entries,
+            vec![("peer".to_string(), None)],
+            "the existing entry must be untouched",
+        );
+    }
+
+    /// Locking down to nobody is a legitimate end state, and it does not lock
+    /// the operator out: the API arrives over the local broker channel, not
+    /// over comms.
+    #[test]
+    fn an_empty_list_without_allow_all_denies_everyone() {
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), None);
+            al.set_allow_all(true);
+        })
+        .unwrap();
+
+        mutate(&store, &allow_list, |al| {
+            al.set_allow_all(false);
+            al.remove(&"peer".to_string());
+        })
+        .unwrap();
+
+        let guard = allow_list.lock().unwrap();
+        assert!(!guard.is_allowed(&"peer".to_string(), addr("10.0.0.1")));
+        assert!(!guard.is_allowed(&"anyone".to_string(), addr("10.0.0.1")));
+
+        let persisted = load(&store).unwrap().unwrap();
+        assert!(persisted.entries.is_empty());
+        assert!(!persisted.allow_all);
+    }
+
     #[test]
     fn allow_all_survives_the_round_trip() {
         let dir = test_storage_dir();
@@ -189,6 +368,64 @@ mod tests {
             .is_allowed(&"from-yaml".to_string(), addr("127.0.0.1")));
     }
 
+    #[test]
+    fn snapshot_reports_entries_and_the_flag() {
+        let allow_list = AllowList::new();
+        {
+            let mut guard = allow_list.lock().unwrap();
+            guard.add_entry("peer".to_string(), Some(addr("10.0.0.1")));
+            guard.set_allow_all(true);
+        }
+
+        let (entries, allow_all) = snapshot(&allow_list).unwrap();
+        assert_eq!(entries, vec![("peer".to_string(), Some(addr("10.0.0.1")))]);
+        assert!(allow_all);
+    }
+
+    #[test]
+    fn mutate_applies_the_change_and_persists_it() {
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+
+        let persisted = mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), None)
+        })
+        .unwrap();
+
+        assert!(persisted, "a healthy store must report a successful write");
+        assert!(allow_list
+            .lock()
+            .unwrap()
+            .is_allowed(&"peer".to_string(), addr("10.0.0.1")));
+        assert_eq!(
+            load(&store).unwrap().unwrap().entries,
+            vec![("peer".to_string(), None)],
+        );
+    }
+
+    #[test]
+    fn mutate_persists_a_removal() {
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+
+        mutate(&store, &allow_list, |al| {
+            al.add_entry("peer".to_string(), None)
+        })
+        .unwrap();
+        mutate(&store, &allow_list, |al| al.remove(&"peer".to_string())).unwrap();
+
+        assert!(
+            load(&store).unwrap().unwrap().entries.is_empty(),
+            "the removal must reach storage, not just memory",
+        );
+        assert!(!allow_list
+            .lock()
+            .unwrap()
+            .is_allowed(&"peer".to_string(), addr("10.0.0.1")));
+    }
+
     /// The deployment case: the shipped YAML says `allow_all`, the operator
     /// has since locked down through the API. A restart must not reopen it.
     #[test]
@@ -218,7 +455,10 @@ mod tests {
         let allow_list = build(&store, &yaml).unwrap();
         let guard = allow_list.lock().unwrap();
 
-        assert!(!guard.is_allow_all(), "the YAML must not reopen blanket mode");
+        assert!(
+            !guard.is_allow_all(),
+            "the YAML must not reopen blanket mode"
+        );
         assert!(guard.is_allowed(&"known-peer".to_string(), addr("127.0.0.1")));
         assert!(
             !guard.is_allowed(&"stranger".to_string(), addr("127.0.0.1")),

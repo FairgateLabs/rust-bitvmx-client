@@ -1,4 +1,4 @@
-use std::{rc::Rc, str::FromStr};
+use std::{net::IpAddr, rc::Rc, str::FromStr};
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{
@@ -11,7 +11,7 @@ use bitvmx_broker::{
         channel::{DualChannel, LocalChannel},
         queue_channel::QueueChannel,
     },
-    identification::identifier::Identifier,
+    identification::identifier::{Identifier, PubkHash},
 };
 use bitvmx_wallet::wallet::Destination;
 use key_manager::key_manager::KeyManager;
@@ -123,6 +123,10 @@ pub enum IncomingBitVMXApiMessages {
     GetFundingBalance(Uuid),
     SendFunds(Uuid, Destination, Option<u64>),
     GetProtocolVisualization(Uuid),
+    ListAllowList(Uuid),
+    AddToAllowList(Uuid, PubkHash, Option<IpAddr>), // An absent address matches any source IP.
+    RemoveFromAllowList(Uuid, PubkHash),
+    SetAllowAll(Uuid, bool), // Blanket accept-everyone. Independent of the entries above.
     Shutdown(),
 }
 impl IncomingBitVMXApiMessages {
@@ -177,6 +181,11 @@ pub enum OutgoingBitVMXApiMessages {
     ProtocolVisualization(Uuid, String),
     SetInput(Vec<u8>),
     NewBlock(BlockHash, u32),
+    // Comms allow list: entries, then the blanket allow_all flag.
+    AllowListEntries(Uuid, Vec<(PubkHash, Option<IpAddr>)>, bool),
+    // A mutation was applied. `false` means it could not be persisted and will
+    // not survive a restart.
+    AllowListUpdated(Uuid, bool),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -341,6 +350,8 @@ impl OutgoingBitVMXApiMessages {
             }
             OutgoingBitVMXApiMessages::SetInput(_) => "SetInput".to_string(),
             OutgoingBitVMXApiMessages::NewBlock(_, _) => "NewBlock".to_string(),
+            OutgoingBitVMXApiMessages::AllowListEntries(_, _, _) => "AllowListEntries".to_string(),
+            OutgoingBitVMXApiMessages::AllowListUpdated(_, _) => "AllowListUpdated".to_string(),
         }
     }
 }
