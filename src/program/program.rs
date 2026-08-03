@@ -633,9 +633,11 @@ pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, Bit
 mod tests {
     use super::*;
     use crate::{
+        program::variables::VariableTypes,
         test_utils::{TestProgramContextEnv, TestStorageDir},
         types::PROGRAM_TYPE_AGGREGATED_KEY,
     };
+    use bitcoin::{absolute::LockTime, transaction::Version};
 
     fn test_program(storage: Rc<Storage>, program_id: Uuid) -> Program {
         let participants = vec![CommsAddress::new(
@@ -821,6 +823,81 @@ mod tests {
     }
 
     #[test]
+    fn test_tick_completes_single_participant_setup_and_persists_progress() {
+        let mut env = TestProgramContextEnv::new("program-tick-lifecycle").unwrap();
+        let dir = TestStorageDir::new("program-tick-lifecycle-storage");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+        env.context
+            .globals
+            .set_var(
+                &program_id,
+                "optional_keys",
+                VariableTypes::String("null".to_string()),
+            )
+            .unwrap();
+
+        program.tick(&mut env.context).unwrap();
+        assert_eq!(program.state, ProgramState::SettingUp);
+        assert_eq!(
+            program
+                .setup_engine
+                .as_ref()
+                .unwrap()
+                .state()
+                .current_step_state,
+            StepState::AllParticipantsCompleted
+        );
+        let after_generation = Program::load(storage.clone(), &program_id).unwrap();
+        assert_eq!(after_generation.state, ProgramState::SettingUp);
+        assert_eq!(
+            after_generation
+                .setup_engine
+                .as_ref()
+                .unwrap()
+                .state()
+                .current_step_state,
+            StepState::AllParticipantsCompleted
+        );
+
+        program.tick(&mut env.context).unwrap();
+        assert_eq!(program.state, ProgramState::Ready);
+        assert!(program.setup_engine.as_ref().unwrap().is_complete());
+        assert!(env
+            .context
+            .globals
+            .get_var_or_err(&program_id, "final_aggregated_key")
+            .unwrap()
+            .pubkey()
+            .is_ok());
+        assert!(env.coordinator_mock().monitored().is_empty());
+
+        let completed = Program::load(storage, &program_id).unwrap();
+        assert_eq!(completed.state, ProgramState::Ready);
+        assert!(completed.setup_engine.as_ref().unwrap().is_complete());
+
+        program.tick(&mut env.context).unwrap();
+        assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_tick_rejects_setting_up_without_an_engine() {
+        let mut env = TestProgramContextEnv::new("program-tick-no-engine").unwrap();
+        let dir = TestStorageDir::new("program-tick-no-engine-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        program.setup_engine = None;
+
+        let error = program.tick(&mut env.context).unwrap_err();
+        assert!(matches!(
+            error,
+            BitVMXError::InvalidMessage(message)
+                if message.contains("Protocol must return setup steps")
+        ));
+        assert_eq!(program.state, ProgramState::SettingUp);
+    }
+
+    #[test]
     fn test_control_messages_are_processed_without_mutating_setup() {
         let mut env = TestProgramContextEnv::new("program-control-messages").unwrap();
         let dir = TestStorageDir::new("program-control-storage");
@@ -883,6 +960,83 @@ mod tests {
             )
             .unwrap();
         assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_invalid_dispatcher_routes_are_rejected() {
+        let mut env = TestProgramContextEnv::new("program-dispatcher-routes").unwrap();
+        let dir = TestStorageDir::new("program-dispatcher-routes-storage");
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(dir.storage(), program_id);
+
+        let error = program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program_id),
+                JobDispatcherType::Garbler,
+                &mut env.context,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BitVMXError::InvalidMessage(message)
+                if message.contains("Invalid context for Garbler result")
+        ));
+
+        assert!(program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program_id),
+                JobDispatcherType::Emulator,
+                &mut env.context,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_transaction_api_reports_unsupported_aggregated_key_operations() {
+        let mut env = TestProgramContextEnv::new("program-transaction-api").unwrap();
+        let dir = TestStorageDir::new("program-transaction-api-storage");
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(dir.storage(), program_id);
+        let tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+        let txid = tx.compute_txid();
+
+        assert!(matches!(
+            program.get_transaction_by_name("missing", &env.context),
+            Err(BitVMXError::InvalidTransactionName(message)) if message.contains("missing")
+        ));
+        assert!(matches!(
+            program.get_tx_by_id(txid),
+            Err(BitVMXError::InvalidMessage(message))
+                if message.contains("Transaction not found")
+        ));
+        assert!(program
+            .dispatch_transaction_name("missing", &mut env.context)
+            .is_err());
+        assert!(env.coordinator_mock().dispatched().is_empty());
+
+        let status: TransactionStatus = serde_json::from_value(serde_json::json!({
+            "tx": null,
+            "block_info": null,
+            "confirmations": 0,
+            "status": "NotFound"
+        }))
+        .unwrap();
+        program
+            .notify_news(
+                txid,
+                Some(0),
+                status,
+                Context::ProgramId(program_id).to_string().unwrap(),
+                &env.context,
+            )
+            .unwrap();
     }
 
     #[test]
