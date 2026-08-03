@@ -1,0 +1,9 @@
+# Files copied verbatim into rust-bitvmx-client-types on release.
+# One repo-relative path per line. Blank lines and # comments are ignored.
+src/types/shared.rs
+src/spv_proof.rs
+src/program/participant.rs
+src/program/variables/shared.rs
+src/program/protocols/union/types.rs
+src/program/protocols/union/common/shared.rs
+src/program/protocols/union/transport.rs
