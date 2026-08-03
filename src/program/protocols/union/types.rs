@@ -37,6 +37,21 @@ pub const OPERATOR_PENALIZED: &str = "OPERATOR_PENALIZED";
 pub const WATCHTOWER_PENALIZED: &str = "WATCHTOWER_PENALIZED";
 pub const MY_IDX: &str = "MY_IDX";
 
+// UnionMessage keys
+pub const COMMITTEE: &str = "committee";
+pub const DISPUTE_CORE_DATA: &str = "dispute_core_data";
+pub const INIT_DATA: &str = "init_data";
+pub const PEGIN_REQUEST: &str = "pegin_request";
+pub const REJECT_PEGIN_DATA: &str = "reject_pegin_data";
+pub const PEGOUT_REQUEST: &str = "pegout_request";
+pub const PEGOUT_ACCEPTED: &str = "pegout_accepted";
+pub const ADVANCE_FUNDS_REQUEST: &str = "advance_funds_request";
+pub const FUNDS_ADVANCED: &str = "funds_advanced";
+pub const FUNDS_ADVANCE_SPV: &str = "funds_advance_spv";
+pub const UNION_SPV_NOTIFICATION: &str = "union_spv_notification";
+pub const FULL_PENALIZATION_DATA: &str = "full_penalization_data";
+pub const UNION_SETTINGS: &str = "union_settings";
+
 // Transaction names
 pub const REQUEST_PEGIN_TX: &str = "REQUEST_PEGIN_TX";
 pub const REJECT_PEGIN_TX: &str = "REJECT_PEGIN_TX";
@@ -115,7 +130,7 @@ pub struct Committee {
 
 impl Committee {
     pub fn name() -> String {
-        "committee".to_string()
+        COMMITTEE.to_string()
     }
 }
 
@@ -128,7 +143,7 @@ pub struct DisputeCoreData {
 
 impl DisputeCoreData {
     pub fn name() -> String {
-        "dispute_core_data".to_string()
+        DISPUTE_CORE_DATA.to_string()
     }
 }
 
@@ -141,7 +156,7 @@ pub struct InitData {
 
 impl InitData {
     pub fn name() -> String {
-        "init_data".to_string()
+        INIT_DATA.to_string()
     }
 }
 
@@ -160,7 +175,7 @@ pub struct PegInRequest {
 
 impl PegInRequest {
     pub fn name() -> String {
-        "pegin_request".to_string()
+        PEGIN_REQUEST.to_string()
     }
 }
 
@@ -173,7 +188,7 @@ pub struct RejectPeginData {
 
 impl RejectPeginData {
     pub fn name() -> String {
-        "reject_pegin_data".to_string()
+        REJECT_PEGIN_DATA.to_string()
     }
 }
 
@@ -201,7 +216,7 @@ pub struct PegOutRequest {
 
 impl PegOutRequest {
     pub fn name() -> String {
-        "pegout_request".to_string()
+        PEGOUT_REQUEST.to_string()
     }
 }
 
@@ -216,7 +231,7 @@ pub struct PegOutAccepted {
 
 impl PegOutAccepted {
     pub fn name() -> String {
-        "pegout_accepted".to_string()
+        PEGOUT_ACCEPTED.to_string()
     }
 }
 
@@ -232,7 +247,7 @@ pub struct AdvanceFundsRequest {
 
 impl AdvanceFundsRequest {
     pub fn name() -> String {
-        "advance_funds_request".to_string()
+        ADVANCE_FUNDS_REQUEST.to_string()
     }
 }
 
@@ -246,7 +261,7 @@ pub struct FundsAdvanced {
 
 impl FundsAdvanced {
     pub fn name() -> String {
-        "funds_advanced".to_string()
+        FUNDS_ADVANCED.to_string()
     }
 }
 
@@ -261,7 +276,7 @@ pub struct FundsAdvanceSPV {
 
 impl FundsAdvanceSPV {
     pub fn name() -> String {
-        "funds_advance_spv".to_string()
+        FUNDS_ADVANCE_SPV.to_string()
     }
 }
 
@@ -300,7 +315,7 @@ pub struct UnionSPVNotification {
 
 impl UnionSPVNotification {
     pub fn name() -> String {
-        "union_spv_notification".to_string()
+        UNION_SPV_NOTIFICATION.to_string()
     }
 }
 
@@ -311,7 +326,7 @@ pub struct FullPenalizationData {
 
 impl FullPenalizationData {
     pub fn name() -> String {
-        "full_penalization_data".to_string()
+        FULL_PENALIZATION_DATA.to_string()
     }
 }
 
@@ -334,7 +349,7 @@ pub struct UnionSettings {
 
 impl UnionSettings {
     pub fn name() -> String {
-        "union_settings".to_string()
+        UNION_SETTINGS.to_string()
     }
 }
 
