@@ -1,3 +1,4 @@
+use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
@@ -128,14 +129,16 @@ impl BitVMX {
         let rsa_public_key = key_manager
             .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
 
-        let comms = QueueChannel::new_with_paths(
+        let comms_allow_list = comms_allow_list::build(&store, &config.comms.allow_list)?;
+
+        let comms = QueueChannel::new(
             "comms",
             config.comms.address,
-            &config.comms.priv_key,
+            &settings::decrypt_or_read_file(&config.comms.priv_key)?,
             store.clone(),
             Some(config.comms.storage_path.clone()),
-            &config.comms.allow_list,
-            &config.broker.routing_table,
+            comms_allow_list,
+            RoutingTable::from_file(&config.broker.routing_table)?,
             config.broker.settings.clone(),
         )?;
 
