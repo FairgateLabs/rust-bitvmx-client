@@ -22,7 +22,8 @@ comms:
   address: 127.0.0.1:61182
   priv_key: config/keys/op_1.key
   storage_path: /tmp/development/comms.db
-  
+  allow_list: config/comms_allow_list.yaml
+
 coordinator_throttle:
   init_interval: 10
   busy_interval: 50
@@ -31,15 +32,15 @@ coordinator_throttle:
 bitvmx_throttle:
   busy_interval: 20
   idle_interval: 200
-  
+
 broker:
   settings: config/broker_settings.yaml
-  allow_list: config/allow_list.yaml
+  allow_list: config/broker_allow_list.yaml
   routing_table: config/routing_table.yaml
   port: 22222
   ip: 127.0.0.1
   priv_key: config/keys/services.key
-  storage: 
+  storage:
     path: /tmp/development/broker.db
 
 components:
@@ -58,7 +59,7 @@ components:
   garbler:
     pubkey_hash: cca0b69255be0d66bc92fdc219425c51fffc15d90f4cc75574e77a284646bcf2
     id: 0
-    
+
 testing:
   l2:
     priv_key: config/keys/l2.key
@@ -72,7 +73,7 @@ testing:
   garbler:
     priv_key: config/keys/garbler.key
     id: 0
-    
+
 client:
   retry: 1
   retry_delay: 1000

@@ -21,7 +21,7 @@ pub fn main() -> Result<()> {
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
     let allow_list = AllowList::new();
-    allow_list.lock().unwrap().allow_all();
+    allow_list.lock().unwrap().set_allow_all(true);
     let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
     let identifier = Identifier::new(
         "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
