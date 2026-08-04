@@ -1,3 +1,4 @@
+use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
@@ -128,14 +129,16 @@ impl BitVMX {
         let rsa_public_key = key_manager
             .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
 
-        let comms = QueueChannel::new_with_paths(
+        let comms_allow_list = comms_allow_list::build(&store, &config.comms.allow_list)?;
+
+        let comms = QueueChannel::new(
             "comms",
             config.comms.address,
-            &config.comms.priv_key,
+            &settings::decrypt_or_read_file(&config.comms.priv_key)?,
             store.clone(),
             Some(config.comms.storage_path.clone()),
-            &config.broker.allow_list, //TODO: should be different from broker
-            &config.broker.routing_table,
+            comms_allow_list,
+            RoutingTable::from_file(&config.broker.routing_table)?,
             config.broker.settings.clone(),
         )?;
 
@@ -993,6 +996,22 @@ impl BitVMX {
     }
 
     /// send replies via the broker channel
+    //TODO: the change itself cannot fail, but a poisoned allow list lock makes
+    //this return Err before replying, so the caller waiting on `id` gets
+    //nothing back at all. Same for the ListAllowList arm. Should we reply with
+    //an error instead?
+    fn mutate_allow_list<F>(&self, id: Uuid, from: Identifier, change: F) -> Result<(), BitVMXError>
+    where
+        F: FnOnce(&mut AllowList),
+    {
+        let allow_list = self.program_context.comms.get_allow_list();
+        let persisted = comms_allow_list::mutate(&self.store, &allow_list, change)?;
+        self.reply(
+            from,
+            OutgoingBitVMXApiMessages::AllowListUpdated(id, persisted),
+        )
+    }
+
     fn reply(&self, to: Identifier, message: OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
         debug!("> {:?}", message);
         self.program_context
@@ -1673,6 +1692,28 @@ impl BitVMX {
                     }
                 };
                 self.reply(from, message)?;
+            }
+            IncomingBitVMXApiMessages::ListAllowList(id) => {
+                let allow_list = self.program_context.comms.get_allow_list();
+                let (entries, allow_all) = comms_allow_list::snapshot(&allow_list)?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::AllowListEntries(id, entries, allow_all),
+                )?;
+            }
+            IncomingBitVMXApiMessages::AddToAllowList(id, pubk_hash, addr) => {
+                info!("Allowing comms peer {} from {:?}", pubk_hash, addr);
+                self.mutate_allow_list(id, from, |allow_list| {
+                    allow_list.add_entry(pubk_hash, addr)
+                })?;
+            }
+            IncomingBitVMXApiMessages::RemoveFromAllowList(id, pubk_hash) => {
+                info!("Removing comms peer {}", pubk_hash);
+                self.mutate_allow_list(id, from, |allow_list| allow_list.remove(&pubk_hash))?;
+            }
+            IncomingBitVMXApiMessages::SetAllowAll(id, allow_all) => {
+                info!("Setting comms allow_all to {}", allow_all);
+                self.mutate_allow_list(id, from, |allow_list| allow_list.set_allow_all(allow_all))?;
             }
             IncomingBitVMXApiMessages::Shutdown() => {
                 info!("Shutdown message received. Initiating shutdown...");
