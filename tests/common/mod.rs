@@ -141,6 +141,23 @@ pub fn init_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
 ) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
+    init_bitvmx_with_storage(role, emulator_dispatcher, true)
+}
+
+/// Bring up a second instance on the storage an earlier one left behind, for
+/// tests that need to observe what survives a restart.
+pub fn restart_bitvmx(
+    role: &str,
+    emulator_dispatcher: bool,
+) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
+    init_bitvmx_with_storage(role, emulator_dispatcher, false)
+}
+
+pub fn init_bitvmx_with_storage(
+    role: &str,
+    emulator_dispatcher: bool,
+    clear_storage: bool,
+) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
     let broker_config = BrokerConfig::new(
@@ -170,11 +187,13 @@ pub fn init_bitvmx(
         None
     };
 
-    clear_db(&config.storage.path);
-    clear_db(&config.key_storage.path);
-    clear_db(&config.broker.storage.path);
-    clear_db(&config.comms.storage_path);
-    Wallet::clear_db(&config.wallet)?;
+    if clear_storage {
+        clear_db(&config.storage.path);
+        clear_db(&config.key_storage.path);
+        clear_db(&config.broker.storage.path);
+        clear_db(&config.comms.storage_path);
+        Wallet::clear_db(&config.wallet)?;
+    }
 
     info!("config: {:?}", config.storage.path);
 

@@ -194,25 +194,27 @@ pub const READ_CHALLENGES: [(&str, &'static [(&str, usize)]); 4] = [
     ("equivocation_resign2", &EQUIVOCATION_RESIGN_CHALLENGE2),
 ];
 
-pub fn get_verifier_keys() -> Vec<(String, usize)> {
-    let mut keys = Vec::new();
+pub fn get_verifier_keys() -> Result<Vec<(String, usize)>, BitVMXError> {
+    let mut keys = HashMap::new();
+
     for (name, size) in CHALLENGES
         .iter()
+        .chain(READ_CHALLENGES.iter())
         .flat_map(|(_, challenge)| challenge.iter())
+        .filter(|(name, _)| name.starts_with("verifier"))
     {
-        if name.starts_with("verifier") {
-            keys.push((name.to_string(), *size));
+        if let Some(previous_size) = keys.insert(name.to_string(), *size) {
+            if previous_size != *size {
+                return Err(BitVMXError::DisputeResolutionProtocolSetup(format!(
+                    "Verifier key {name} has conflicting sizes: {previous_size} and {size}"
+                )));
+            }
         }
     }
-    for (name, size) in READ_CHALLENGES
-        .iter()
-        .flat_map(|(_, challenge)| challenge.iter())
-    {
-        if name.starts_with("verifier") {
-            keys.push((name.to_string(), *size));
-        }
-    }
-    keys
+
+    let mut keys = keys.into_iter().collect::<Vec<_>>();
+    keys.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(keys)
 }
 
 pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(

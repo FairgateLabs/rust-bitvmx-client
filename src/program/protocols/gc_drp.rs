@@ -35,7 +35,7 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::{
-            CommsAddress, ParticipantKeys,
+            CommsAddress, ParticipantKeyDeclaration, ParticipantKeys,
             ParticipantRole::{self, Prover, Verifier},
             PublicKeyType,
         },
@@ -199,7 +199,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let aggregated_1 = program_context
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)?;
@@ -219,7 +219,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             (SPEEDUP_KEY.to_string(), speedup.into()),
         ];
 
-        Ok(ParticipantKeys::new(keys, vec![AGGREGATED_KEY.to_string()]))
+        ParticipantKeyDeclaration::new(keys, vec![AGGREGATED_KEY.to_string()])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

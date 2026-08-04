@@ -7,17 +7,16 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    config::ClientConfig,
     errors::{BitVMXError, ProgramError},
     ping_helper::JobDispatcherType,
     program::{
-        participant::get_comms_address_by_pubkey_hash,
+        participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
         setup::{SetupEngine, SetupEngineState, StepState},
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
-    types::{OutgoingBitVMXApiMessages, ProgramContext},
+    types::{MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext},
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
@@ -26,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use super::participant::CommsAddress;
@@ -38,69 +37,65 @@ pub struct Program {
     pub participants: Vec<CommsAddress>,
     pub leader: usize,
     pub protocol: ProtocolType,
+    /// Stored separately so program states can be queried without loading whole programs.
     #[serde(skip)]
     state: ProgramState,
-    /// Serializable state of the SetupEngine (saved separately since SetupEngine contains trait objects)
+    /// Serializable snapshot embedded in the program since SetupEngine contains trait objects.
     setup_engine_state: Option<SetupEngineState>,
     /// All participant keys collected during setup (populated by build_protocol)
     #[serde(skip)]
     pub setup_engine: Option<SetupEngine>,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
-    config: ClientConfig,
 }
 
 impl Program {
-    /// Returns the storage key for this program
-    fn storage_key(&self) -> String {
-        format!("program/{}", self.program_id)
+    /// Returns the storage key for a program.
+    fn key_program(program_id: &Uuid) -> String {
+        format!("program/{program_id}")
     }
 
-    /// Attempts to send SetupCompleted message to the L2 channel.
-    /// Returns true if the message was sent (meaning state changed and should be saved).
+    /// Returns the storage key for a program's separately serialized state.
+    fn key_program_state(program_id: &Uuid) -> String {
+        format!("program/{program_id}/state")
+    }
+
+    /// Sends SetupCompleted to the L2 channel.
     /// Some protocols (e.g., AggregatedKeyProtocol) suppress this message.
     fn send_setup_completed<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
-    ) -> bool {
+    ) -> Result<(), BitVMXError> {
         if !self.protocol.send_setup_completed() {
-            return false;
+            return Ok(());
         }
 
-        match OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string() {
-            Ok(msg) => {
-                if let Err(e) = program_context
-                    .broker_channel
-                    .send(&program_context.components_config.l2, msg)
-                {
-                    warn!("Program: Error sending SetupCompleted message: {:?}", e);
-                    false
-                } else {
-                    info!(
-                        "Program: Sent SetupCompleted for program {}",
-                        self.program_id
-                    );
-                    true
-                }
-            }
-            Err(e) => {
-                warn!("Program: Error serializing SetupCompleted message: {:?}", e);
-                false
-            }
-        }
+        let msg = OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?;
+        program_context
+            .broker_channel
+            .send(&program_context.components_config.l2, msg)?;
+
+        info!(
+            "Program: Sent SetupCompleted for program {}",
+            self.program_id
+        );
+        Ok(())
     }
 
-    /// Creates a SetupEngine for the protocol using its setup_steps() method
-    fn try_create_setup_engine(protocol: &ProtocolType) -> Option<SetupEngine> {
+    /// Creates a SetupEngine for the protocol using its setup_steps() method.
+    fn try_create_setup_engine(
+        protocol: &ProtocolType,
+        total_participants: usize,
+    ) -> Result<Option<SetupEngine>, BitVMXError> {
         if let Some(step_names) = protocol.setup_steps() {
             debug!(
                 "Protocol supports SetupEngine with {} steps",
                 step_names.len()
             );
-            Some(SetupEngine::new(step_names))
+            Ok(Some(SetupEngine::new(step_names, total_participants)?))
         } else {
             debug!("Protocol does not use SetupEngine");
-            None
+            Ok(None)
         }
     }
 
@@ -112,12 +107,14 @@ impl Program {
         leader: usize,
         context: &mut ProgramContext<BC>,
         storage: Rc<Storage>,
-        config: &ClientConfig,
     ) -> Result<(), BitVMXError> {
         info!(
             "Program: Setting up program {} with type {}",
             program_id, program_type
         );
+
+        // Participant public-key hashes define protocol indices and must be unique.
+        validate_participants(&peers)?;
 
         // Validate leader index
         if leader >= peers.len() {
@@ -150,7 +147,7 @@ impl Program {
         protocol.set_storage(storage.clone());
 
         // Try to create SetupEngine if protocol supports it
-        let setup_engine = Self::try_create_setup_engine(&protocol);
+        let setup_engine = Self::try_create_setup_engine(&protocol, peers.len())?;
 
         let mut program = Program {
             program_id,
@@ -162,10 +159,9 @@ impl Program {
             setup_engine_state: None, // Will be set when saving
             setup_engine,
             storage: Some(storage.clone()),
-            config: config.clone(),
         };
 
-        // Save initial program (includes state)
+        // Save the initial program and its separately serialized state.
         program.save()?;
 
         info!("Program: Setup complete for program {}", program_id);
@@ -173,26 +169,26 @@ impl Program {
     }
 
     /// Loads a Program from storage
-    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, ProgramError> {
-        let key = format!("program/{}", program_id);
+    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, BitVMXError> {
         let mut program: Program = storage
-            .get(&key, None)?
-            .ok_or(ProgramError::ProgramNotFound(*program_id))?;
-
-        debug!(
-            "Program::load() - Loaded program {} with state: {:?}",
-            program_id, program.state
-        );
+            .get(&Self::key_program(program_id), None)?
+            .ok_or(BitVMXError::ProgramNotFound(*program_id))?;
 
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage.clone());
 
         // Recreate SetupEngine if protocol supports it
-        program.setup_engine = Self::try_create_setup_engine(&program.protocol);
+        program.setup_engine =
+            Self::try_create_setup_engine(&program.protocol, program.participants.len())?;
 
         program.state = storage
-            .get(&format!("program/{}/state", program_id), None)?
+            .get(&Self::key_program_state(program_id), None)?
             .unwrap_or_default();
+
+        debug!(
+            "Program::load() - Loaded program {} with state: {:?}",
+            program_id, program.state
+        );
 
         // Restore SetupEngine state if it was saved
         if let (Some(engine), Some(saved_state)) =
@@ -202,12 +198,7 @@ impl Program {
                 "Program::load() - Restoring SetupEngine state for program {}",
                 program_id
             );
-            engine.restore_state(saved_state.clone()).map_err(|e| {
-                ProgramError::InvalidProgramStoragePath(format!(
-                    "Failed to restore engine state: {}",
-                    e
-                ))
-            })?;
+            engine.restore_state(saved_state.clone())?;
         }
 
         Ok(program)
@@ -216,10 +207,11 @@ impl Program {
     /// Saves the program to storage
     ///
     /// This method:
-    /// 1. Extracts the SetupEngine state (which cannot be serialized) into `setup_engine_state`
-    /// 2. Saves the entire program struct (including state as a field) in a single storage key
+    /// 1. Snapshots the non-serializable SetupEngine into `setup_engine_state`.
+    /// 2. Saves the program without its runtime-only fields or state.
+    /// 3. Saves the state separately so it can be queried without loading the whole program.
     ///
-    /// Note: Fields marked with `#[serde(skip)]` (setup_engine, storage) are excluded from serialization
+    /// Fields marked with `#[serde(skip)]` are excluded from program serialization.
     pub fn save(&mut self) -> Result<(), ProgramError> {
         let storage = self
             .storage
@@ -236,10 +228,13 @@ impl Program {
             self.program_id, self.state
         );
 
-        let state_key = format!("program/{}/state", self.program_id);
-        storage.set(&state_key, &self.state, None)?;
+        storage.set(
+            &Self::key_program_state(&self.program_id),
+            &self.state,
+            None,
+        )?;
 
-        storage.set(&self.storage_key(), self, None)?;
+        storage.set(&Self::key_program(&self.program_id), self, None)?;
 
         Ok(())
     }
@@ -365,7 +360,7 @@ impl Program {
                 .monitor(vout_to_monitor)?;
         }
 
-        self.send_setup_completed(program_context);
+        self.send_setup_completed(program_context)?;
         Ok(())
     }
 
@@ -377,6 +372,19 @@ impl Program {
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
+        // Setup dispatcher results may be delivered more than once or arrive after
+        // setup has completed. They are no longer actionable once the program is
+        // ready and must not turn an otherwise harmless replay into a fatal tick
+        // error. ProgramStep results remain valid after setup.
+        if matches!(&context, Context::SetupStep(_, _, _, _))
+            && matches!(self.state, ProgramState::Ready)
+        {
+            debug!(
+                "Program::receive_dispatcher_result() - Ignoring setup result for ready program"
+            );
+            return Ok(());
+        }
+
         match dispatcher {
             JobDispatcherType::Garbler => {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
@@ -436,11 +444,6 @@ impl Program {
             }
         };
 
-        // Only handle setup data if we're in setup state
-        if matches!(self.state, ProgramState::Ready) {
-            debug!("Program::receive_dispatcher_result() - Not in SettingUp state, ignoring");
-            return Ok(());
-        }
         Ok(())
     }
 
@@ -454,16 +457,16 @@ impl Program {
         msg_type: CommsMessageType,
         from: &PubKeyHash,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         // Only handle setup data if we're in setup state
         if matches!(self.state, ProgramState::Ready) {
             debug!("Program::receive_setup_data() - Not in SettingUp state, ignoring");
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         // Track state changes and completion status for save/log after borrow ends
-        let (message_processed, engine_state) = if let Some(engine) = &mut self.setup_engine {
-            let message_processed = engine.receive_setup_data(
+        let (disposition, engine_state) = if let Some(engine) = &mut self.setup_engine {
+            let disposition = engine.receive_setup_data(
                 data,
                 msg_type,
                 from,
@@ -474,13 +477,13 @@ impl Program {
                 &self.protocol,
                 program_context,
             )?;
-            (message_processed, engine.state().current_step_state.clone())
+            (disposition, engine.state().current_step_state.clone())
         } else {
-            (false, StepState::Completed) // Default to complete if no engine (should not happen since receive_setup_data should only be called in setup)
+            (MessageDisposition::RetryLater, StepState::Completed) // Preserve the previous Ok(false) behavior.
         };
 
-        // Always save when state changes to avoid data loss on crash
-        if message_processed {
+        // Preserve the previous behavior: save messages reported as processed.
+        if disposition == MessageDisposition::Processed {
             if engine_state == StepState::WaitingForParticipants {
                 self.state = ProgramState::WaitingData;
             } else {
@@ -493,7 +496,7 @@ impl Program {
             );
         }
 
-        Ok(message_processed)
+        Ok(disposition)
     }
 
     /// Returns the protocol ID
@@ -518,7 +521,7 @@ impl Program {
         msg_type: &CommsMessageType,
         data: Value,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         debug!(
             "Program::process_comms_message() - Received {:?}  from {}",
             msg_type, comms_address
@@ -545,7 +548,7 @@ impl Program {
             }
         }
 
-        Ok(true)
+        Ok(MessageDisposition::Processed)
     }
 
     /// Gets a transaction by name from the protocol
@@ -620,7 +623,466 @@ impl Program {
 }
 
 pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
-    let key = format!("program/{}/state", uuid);
-    let state: ProgramState = storage.get(&key, None)?.unwrap_or_default();
+    let state: ProgramState = storage
+        .get(&Program::key_program_state(uuid), None)?
+        .unwrap_or_default();
     Ok(state.is_active())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        program::variables::VariableTypes,
+        test_utils::{TestProgramContextEnv, TestStorageDir},
+        types::PROGRAM_TYPE_AGGREGATED_KEY,
+    };
+    use bitcoin::{absolute::LockTime, transaction::Version};
+
+    fn test_program(storage: Rc<Storage>, program_id: Uuid) -> Program {
+        let participants = vec![CommsAddress::new(
+            "127.0.0.1:10000".parse().unwrap(),
+            "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f".to_string(),
+        )];
+        let protocol =
+            new_protocol_type(program_id, PROGRAM_TYPE_AGGREGATED_KEY, 0, storage.clone()).unwrap();
+        let setup_engine = Program::try_create_setup_engine(&protocol, participants.len()).unwrap();
+
+        Program {
+            program_id,
+            my_idx: 0,
+            participants,
+            leader: 0,
+            protocol,
+            state: ProgramState::SettingUp,
+            setup_engine_state: None,
+            setup_engine,
+            storage: Some(storage),
+        }
+    }
+
+    #[test]
+    fn test_save_serializes_program_and_state_separately() {
+        let dir = TestStorageDir::new("program-save");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+        program.state = ProgramState::WaitingData;
+
+        program.save().unwrap();
+
+        let serialized_program: Program = storage
+            .get(&Program::key_program(&program_id), None)
+            .unwrap()
+            .unwrap();
+        let serialized_state: ProgramState = storage
+            .get(&Program::key_program_state(&program_id), None)
+            .unwrap()
+            .unwrap();
+
+        // A directly deserialized Program has the default state because state is
+        // deliberately excluded from the whole-program value.
+        assert_eq!(serialized_program.state, ProgramState::SettingUp);
+        assert_eq!(serialized_state, ProgramState::WaitingData);
+        assert_eq!(serialized_program.program_id, program_id);
+        assert!(serialized_program.setup_engine_state.is_some());
+    }
+
+    #[test]
+    fn test_load_restores_program_state_and_runtime_fields() {
+        let dir = TestStorageDir::new("program-load");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+        program.state = ProgramState::Ready;
+        program.save().unwrap();
+
+        let loaded = Program::load(storage, &program_id).unwrap();
+
+        assert_eq!(loaded.program_id, program_id);
+        assert_eq!(loaded.state, ProgramState::Ready);
+        assert!(loaded.storage.is_some());
+        assert!(loaded.protocol.context().storage.is_some());
+        assert_eq!(
+            loaded.setup_engine.as_ref().unwrap().state(),
+            loaded.setup_engine_state.as_ref().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_is_active_program_reads_separately_saved_state() {
+        let dir = TestStorageDir::new("program-active-state");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+
+        program.save().unwrap();
+        assert!(is_active_program(&storage, &program_id).unwrap());
+
+        program.state = ProgramState::WaitingData;
+        program.save().unwrap();
+        assert!(!is_active_program(&storage, &program_id).unwrap());
+
+        program.state = ProgramState::Ready;
+        program.save().unwrap();
+        assert!(!is_active_program(&storage, &program_id).unwrap());
+    }
+
+    #[test]
+    fn test_missing_program_and_storage_are_reported_explicitly() {
+        let dir = TestStorageDir::new("program-missing");
+        let missing_id = Uuid::new_v4();
+        assert!(matches!(
+            Program::load(dir.storage(), &missing_id),
+            Err(BitVMXError::ProgramNotFound(id)) if id == missing_id
+        ));
+
+        let storage = dir.storage();
+        let mut program = test_program(storage, Uuid::new_v4());
+        program.storage = None;
+        assert!(matches!(
+            program.save(),
+            Err(ProgramError::StorageUnavailable)
+        ));
+    }
+
+    #[test]
+    fn test_new_validates_participants_leader_and_local_membership() {
+        let mut env = TestProgramContextEnv::new("program-new-validation").unwrap();
+        let dir = TestStorageDir::new("program-new-validation-storage");
+        let self_address = env.self_address().unwrap();
+
+        let empty_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(empty_result, Err(BitVMXError::InvalidMessage(_))));
+
+        let bad_leader_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address.clone()],
+            1,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            bad_leader_result,
+            Err(BitVMXError::InvalidMessageFormat)
+        ));
+
+        let stranger = CommsAddress::try_new(
+            "127.0.0.1:29999".parse().unwrap(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        )
+        .unwrap();
+        let missing_local_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![stranger],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            missing_local_result,
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("Peer not found")
+        ));
+    }
+
+    #[test]
+    fn test_new_persists_a_loadable_program_for_the_local_participant() {
+        let mut env = TestProgramContextEnv::new("program-new-success").unwrap();
+        let dir = TestStorageDir::new("program-new-success-storage");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let self_address = env.self_address().unwrap();
+
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address.clone()],
+            0,
+            &mut env.context,
+            storage.clone(),
+        )
+        .unwrap();
+
+        let loaded = Program::load(storage, &program_id).unwrap();
+        assert_eq!(loaded.program_id, program_id);
+        assert_eq!(loaded.protocol_id(), program_id);
+        assert_eq!(loaded.my_idx, 0);
+        assert_eq!(loaded.leader, 0);
+        assert_eq!(loaded.participants, vec![self_address]);
+        assert_eq!(loaded.state, ProgramState::SettingUp);
+        assert!(loaded.setup_engine.is_some());
+    }
+
+    #[test]
+    fn test_tick_completes_single_participant_setup_and_persists_progress() {
+        let mut env = TestProgramContextEnv::new("program-tick-lifecycle").unwrap();
+        let dir = TestStorageDir::new("program-tick-lifecycle-storage");
+        let storage = dir.storage();
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(storage.clone(), program_id);
+        env.context
+            .globals
+            .set_var(
+                &program_id,
+                "optional_keys",
+                VariableTypes::String("null".to_string()),
+            )
+            .unwrap();
+
+        program.tick(&mut env.context).unwrap();
+        assert_eq!(program.state, ProgramState::SettingUp);
+        assert_eq!(
+            program
+                .setup_engine
+                .as_ref()
+                .unwrap()
+                .state()
+                .current_step_state,
+            StepState::AllParticipantsCompleted
+        );
+        let after_generation = Program::load(storage.clone(), &program_id).unwrap();
+        assert_eq!(after_generation.state, ProgramState::SettingUp);
+        assert_eq!(
+            after_generation
+                .setup_engine
+                .as_ref()
+                .unwrap()
+                .state()
+                .current_step_state,
+            StepState::AllParticipantsCompleted
+        );
+
+        program.tick(&mut env.context).unwrap();
+        assert_eq!(program.state, ProgramState::Ready);
+        assert!(program.setup_engine.as_ref().unwrap().is_complete());
+        assert!(env
+            .context
+            .globals
+            .get_var_or_err(&program_id, "final_aggregated_key")
+            .unwrap()
+            .pubkey()
+            .is_ok());
+        assert!(env.coordinator_mock().monitored().is_empty());
+
+        let completed = Program::load(storage, &program_id).unwrap();
+        assert_eq!(completed.state, ProgramState::Ready);
+        assert!(completed.setup_engine.as_ref().unwrap().is_complete());
+
+        program.tick(&mut env.context).unwrap();
+        assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_tick_rejects_setting_up_without_an_engine() {
+        let mut env = TestProgramContextEnv::new("program-tick-no-engine").unwrap();
+        let dir = TestStorageDir::new("program-tick-no-engine-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        program.setup_engine = None;
+
+        let error = program.tick(&mut env.context).unwrap_err();
+        assert!(matches!(
+            error,
+            BitVMXError::InvalidMessage(message)
+                if message.contains("Protocol must return setup steps")
+        ));
+        assert_eq!(program.state, ProgramState::SettingUp);
+    }
+
+    #[test]
+    fn test_control_messages_are_processed_without_mutating_setup() {
+        let mut env = TestProgramContextEnv::new("program-control-messages").unwrap();
+        let dir = TestStorageDir::new("program-control-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        let sender = program.participants[0].pubkey_hash.clone();
+        let initial_engine_state = program.setup_engine.as_ref().unwrap().state().clone();
+
+        for message_type in [
+            CommsMessageType::VerificationKey,
+            CommsMessageType::VerificationKeyRequest,
+            CommsMessageType::Broadcasted,
+        ] {
+            let disposition = program
+                .process_comms_message(
+                    &sender,
+                    &message_type,
+                    serde_json::json!({"ignored": true}),
+                    &mut env.context,
+                )
+                .unwrap();
+            assert_eq!(disposition, MessageDisposition::Processed);
+        }
+        assert_eq!(
+            program.setup_engine.as_ref().unwrap().state(),
+            &initial_engine_state
+        );
+        assert_eq!(program.state, ProgramState::SettingUp);
+    }
+
+    #[test]
+    fn test_ready_program_defers_setup_data_and_ignores_replayed_setup_job() {
+        let mut env = TestProgramContextEnv::new("program-ready-replays").unwrap();
+        let dir = TestStorageDir::new("program-ready-replays-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        program.state = ProgramState::Ready;
+        let sender = program.participants[0].pubkey_hash.clone();
+
+        let disposition = program
+            .process_comms_message(
+                &sender,
+                &CommsMessageType::Keys,
+                serde_json::json!({}),
+                &mut env.context,
+            )
+            .unwrap();
+        assert_eq!(disposition, MessageDisposition::RetryLater);
+
+        let context = Context::SetupStep(
+            program.program_id,
+            "keys".to_string(),
+            "".to_string(),
+            CommsMessageType::Keys,
+        );
+        program
+            .receive_dispatcher_result(
+                serde_json::json!({"stale": true}),
+                context,
+                JobDispatcherType::Garbler,
+                &mut env.context,
+            )
+            .unwrap();
+        assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_invalid_dispatcher_routes_are_rejected() {
+        let mut env = TestProgramContextEnv::new("program-dispatcher-routes").unwrap();
+        let dir = TestStorageDir::new("program-dispatcher-routes-storage");
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(dir.storage(), program_id);
+
+        let error = program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program_id),
+                JobDispatcherType::Garbler,
+                &mut env.context,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BitVMXError::InvalidMessage(message)
+                if message.contains("Invalid context for Garbler result")
+        ));
+
+        assert!(program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program_id),
+                JobDispatcherType::Emulator,
+                &mut env.context,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_transaction_api_reports_unsupported_aggregated_key_operations() {
+        let mut env = TestProgramContextEnv::new("program-transaction-api").unwrap();
+        let dir = TestStorageDir::new("program-transaction-api-storage");
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(dir.storage(), program_id);
+        let tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+        let txid = tx.compute_txid();
+
+        assert!(matches!(
+            program.get_transaction_by_name("missing", &env.context),
+            Err(BitVMXError::InvalidTransactionName(message)) if message.contains("missing")
+        ));
+        assert!(matches!(
+            program.get_tx_by_id(txid),
+            Err(BitVMXError::InvalidMessage(message))
+                if message.contains("Transaction not found")
+        ));
+        assert!(program
+            .dispatch_transaction_name("missing", &mut env.context)
+            .is_err());
+        assert!(env.coordinator_mock().dispatched().is_empty());
+
+        let status: TransactionStatus = serde_json::from_value(serde_json::json!({
+            "tx": null,
+            "block_info": null,
+            "confirmations": 0,
+            "status": "NotFound"
+        }))
+        .unwrap();
+        program
+            .notify_news(
+                txid,
+                Some(0),
+                status,
+                Context::ProgramId(program_id).to_string().unwrap(),
+                &env.context,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_program_queries_and_unknown_dispatcher_errors_are_precise() {
+        let mut env = TestProgramContextEnv::new("program-query-errors").unwrap();
+        let dir = TestStorageDir::new("program-query-errors-storage");
+        let program_id = Uuid::new_v4();
+        let mut program = test_program(dir.storage(), program_id);
+        let participant = program.participants[0].clone();
+
+        assert_eq!(program.protocol_id(), program_id);
+        assert_eq!(
+            program
+                .get_address_from_pubkey_hash(&participant.pubkey_hash)
+                .unwrap(),
+            participant
+        );
+        assert!(program
+            .get_address_from_pubkey_hash(
+                &"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
+            )
+            .is_err());
+
+        let error = program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program_id),
+                JobDispatcherType::ZKP,
+                &mut env.context,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BitVMXError::InvalidMessage(message) if message.contains("Unknown dispatcher type: ZKP")
+        ));
+    }
+
+    #[test]
+    fn test_aggregated_key_monitoring_registers_nothing_and_suppresses_completion() {
+        let mut env = TestProgramContextEnv::new("program-monitoring").unwrap();
+        let dir = TestStorageDir::new("program-monitoring-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+
+        program.start_monitoring(&mut env.context).unwrap();
+
+        assert!(env.coordinator_mock().monitored().is_empty());
+        assert!(!program.protocol.send_setup_completed());
+    }
 }

@@ -3,7 +3,9 @@ use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
-        participant::{get_index_by_pubkey_hash, CommsAddress, ParticipantKeys},
+        participant::{
+            get_index_by_pubkey_hash, CommsAddress, ParticipantKeyDeclaration, ParticipantKeys,
+        },
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
         variables::VariableTypes,
@@ -33,6 +35,7 @@ impl KeysStep {
     }
 
     fn collect_participant_keys<BC: BitcoinCoordinatorApi>(
+        &self,
         protocol_id: &uuid::Uuid,
         participants: &[CommsAddress],
         context: &ProgramContext<BC>,
@@ -41,15 +44,10 @@ impl KeysStep {
             .iter()
             .enumerate()
             .map(|(idx, _)| {
-                let keys_json = context
-                    .globals
-                    .get_var(protocol_id, &format!("participant_{}_keys", idx))?
-                    .ok_or_else(|| {
-                        BitVMXError::InvalidMessage(format!("Missing keys for participant {}", idx))
-                    })?
-                    .string()?;
+                let keys_json = self.get_participant_data(&context.globals, protocol_id, idx)?;
 
-                Ok(serde_json::from_str(&keys_json)?)
+                let declaration: ParticipantKeyDeclaration = serde_json::from_str(&keys_json)?;
+                Ok(declaration.into())
             })
             .collect()
     }
@@ -59,6 +57,15 @@ impl KeysStep {
         all_keys: &[ParticipantKeys],
         context: &mut ProgramContext<BC>,
     ) -> Result<std::collections::HashMap<String, bitcoin::PublicKey>, BitVMXError> {
+        for (idx, participant_keys) in all_keys.iter().enumerate() {
+            if participant_keys.aggregated != my_keys.aggregated {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Participant {} has an inconsistent aggregated key set",
+                    idx
+                )));
+            }
+        }
+
         let mut computed_aggregated = std::collections::HashMap::new();
 
         for agg_name in &my_keys.aggregated {
@@ -149,25 +156,26 @@ impl SetupStep for KeysStep {
 
         debug!("KeysStep: Generating keys for protocol {}", protocol_id);
 
-        // Call the protocol to generate its specific keys
-        let keys = protocol.generate_keys(context)?;
+        // Protocols generate only the material that participants declare to
+        // one another. Derived key material is added locally after exchange.
+        let declaration = protocol.generate_keys(context)?;
 
         // Validate that keys were generated
-        if keys.mapping.is_empty() && keys.aggregated.is_empty() {
+        if declaration.mapping.is_empty() && declaration.aggregated.is_empty() {
             info!("KeysStep: Protocol did not generate any keys, using empty defaults");
         }
 
         debug!(
             "KeysStep: Generated {} individual keys and {} aggregated keys",
-            keys.mapping.len(),
-            keys.aggregated.len()
+            declaration.mapping.len(),
+            declaration.aggregated.len()
         );
 
-        // Save to globals with the convention "my_keys"
+        // Save the declaration as local key state with no derived keys yet.
+        let keys = ParticipantKeys::from(declaration.clone());
         Self::store_my_keys(&protocol_id, &keys, context)?;
 
-        // Serialize to send to other participants
-        let serialized = serde_json::to_value(&keys)?;
+        let serialized = serde_json::to_value(&declaration)?;
         debug!("KeysStep: Serialized");
 
         Ok(Some((serialized, CommsMessageType::Keys)))
@@ -196,9 +204,10 @@ impl SetupStep for KeysStep {
             from_participant.pubkey_hash
         );
 
-        // Deserialize the received keys
-        let keys: ParticipantKeys = serde_json::from_value(data).map_err(|e| {
-            BitVMXError::InvalidMessage(format!("Failed to deserialize keys: {}", e))
+        // Deserialize only the wire-safe declaration. In particular, reject
+        // peer-supplied locally derived fields such as computed_aggregated.
+        let keys: ParticipantKeyDeclaration = serde_json::from_value(data).map_err(|e| {
+            BitVMXError::InvalidMessage(format!("Failed to deserialize key declaration: {}", e))
         })?;
 
         debug!(
@@ -211,10 +220,11 @@ impl SetupStep for KeysStep {
         let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_keys"
-        context.globals.set_var(
+        self.store_participant_data(
+            &context.globals,
             &protocol_id,
-            &format!("participant_{}_keys", idx),
-            VariableTypes::String(serde_json::to_string(&keys)?),
+            idx,
+            &serde_json::to_string(&keys)?,
         )?;
 
         debug!(
@@ -235,11 +245,7 @@ impl SetupStep for KeysStep {
 
         // Verify that all participants have sent their keys
         for (idx, participant) in participants.iter().enumerate() {
-            if context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_keys", idx))?
-                .is_none()
-            {
+            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
                 debug!(
                     "KeysStep: Still waiting for keys from participant {} (index {})",
                     participant.pubkey_hash, idx
@@ -265,7 +271,7 @@ impl SetupStep for KeysStep {
 
         debug!("KeysStep: Step complete, aggregating all participant keys");
 
-        let all_keys = Self::collect_participant_keys(&protocol_id, participants, context)?;
+        let all_keys = self.collect_participant_keys(&protocol_id, participants, context)?;
         let mut my_keys =
             super::load_my_keys(&protocol_id, context, "my_keys not found in globals")?;
         let mut computed_aggregated = Self::compute_aggregated_keys(&my_keys, &all_keys, context)?;
@@ -298,6 +304,7 @@ mod tests {
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::{PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION};
+    use std::collections::HashSet;
 
     fn protocol(name: &str, id: Uuid, storage: Rc<Storage>) -> ProtocolType {
         new_protocol_type(id, name, 0, storage).unwrap()
@@ -353,10 +360,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(msg_type, CommsMessageType::Keys);
-        let generated: ParticipantKeys = serde_json::from_value(data.clone()).unwrap();
+        let generated: ParticipantKeyDeclaration = serde_json::from_value(data.clone()).unwrap();
         assert_eq!(generated.mapping.len(), 1);
-        assert_eq!(generated.aggregated, vec![id.to_string()]);
-        assert_eq!(stored_keys(&id, "my_keys", &env.context), generated);
+        assert_eq!(generated.aggregated, HashSet::from([id.to_string()]));
+        assert_eq!(
+            stored_keys(&id, "my_keys", &env.context),
+            generated.clone().into()
+        );
 
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
@@ -381,7 +391,12 @@ mod tests {
 
         let completed = stored_keys(&id, "my_keys", &env.context);
         let aggregate = completed.computed_aggregated[&id.to_string()];
-        assert_eq!(aggregate, *generated.get_public(&id.to_string()).unwrap());
+        assert_eq!(
+            aggregate,
+            *ParticipantKeys::from(generated)
+                .get_public(&id.to_string())
+                .unwrap()
+        );
         assert_eq!(
             env.context
                 .globals
@@ -409,15 +424,15 @@ mod tests {
             .unwrap();
         assert_eq!(empty_type, CommsMessageType::Keys);
         assert_eq!(
-            serde_json::from_value::<ParticipantKeys>(empty_data).unwrap(),
-            ParticipantKeys::new(vec![], vec![])
+            serde_json::from_value::<ParticipantKeyDeclaration>(empty_data).unwrap(),
+            ParticipantKeyDeclaration::empty()
         );
 
         let id = Uuid::new_v4();
         let protocol = protocol(PROGRAM_TYPE_AGGREGATED_KEY, id, storage);
         let participant = env.self_address().unwrap();
         let participants = vec![participant.clone()];
-        let valid = serde_json::to_value(ParticipantKeys::new(vec![], vec![])).unwrap();
+        let valid = serde_json::to_value(ParticipantKeyDeclaration::empty()).unwrap();
 
         assert!(!step
             .verify_received(
@@ -430,16 +445,31 @@ mod tests {
                 false,
             )
             .unwrap());
-        assert!(env
-            .context
-            .globals
-            .get_var(&id, "participant_0_keys")
-            .unwrap()
-            .is_none());
+        assert!(!step
+            .has_participant_data(&env.context.globals, &id, 0)
+            .unwrap());
 
         let err = step
             .verify_received(
                 serde_json::json!({"not": "participant keys"}),
+                CommsMessageType::Keys,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(err, BitVMXError::InvalidMessage(_)));
+
+        let injected_derived_key = serde_json::json!({
+            "mapping": {},
+            "aggregated": [],
+            "computed_aggregated": {}
+        });
+        let err = step
+            .verify_received(
+                injected_derived_key,
                 CommsMessageType::Keys,
                 &participant,
                 &protocol,
@@ -463,6 +493,73 @@ mod tests {
                 false,
             )
             .is_err());
+    }
+
+    #[test]
+    fn aggregation_rejects_malformed_key_sets() {
+        let mut env = TestProgramContextEnv::new("keys-step-malformed-sets").unwrap();
+        let name = "aggregate".to_string();
+        let key = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let valid =
+            ParticipantKeys::new(vec![(name.clone(), key.into())], vec![name.clone()]).unwrap();
+
+        let inconsistent = ParticipantKeys::empty().unwrap();
+        assert!(matches!(
+            KeysStep::compute_aggregated_keys(&valid, &[inconsistent], &mut env.context),
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("inconsistent")
+        ));
+
+        let missing_own_key = ParticipantKeys::new(vec![], vec![name.clone()]).unwrap();
+        assert!(matches!(
+            KeysStep::compute_aggregated_keys(
+                &missing_own_key,
+                &[missing_own_key.clone()],
+                &mut env.context,
+            ),
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("My key")
+        ));
+
+        let participant_missing_mapping = ParticipantKeys::new(vec![], vec![name]).unwrap();
+        assert!(matches!(
+            KeysStep::compute_aggregated_keys(
+                &valid,
+                &[participant_missing_mapping],
+                &mut env.context,
+            ),
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("missing key")
+        ));
+    }
+
+    #[test]
+    fn aggregation_uses_musig_for_multiple_participants() {
+        let mut env = TestProgramContextEnv::new("keys-step-multisig").unwrap();
+        let name = "aggregate".to_string();
+        let first = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let second = env
+            .context
+            .key_manager
+            .next_keypair(BitcoinKeyType::P2tr)
+            .unwrap();
+        let my_keys =
+            ParticipantKeys::new(vec![(name.clone(), first.into())], vec![name.clone()]).unwrap();
+        let other_keys =
+            ParticipantKeys::new(vec![(name.clone(), second.into())], vec![name.clone()]).unwrap();
+
+        let computed = KeysStep::compute_aggregated_keys(
+            &my_keys,
+            &[my_keys.clone(), other_keys],
+            &mut env.context,
+        )
+        .unwrap();
+        assert!(computed.contains_key(&name));
     }
 
     #[test]
@@ -496,9 +593,11 @@ mod tests {
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)
             .unwrap();
-        let my_keys = ParticipantKeys::new(vec![(name.clone(), my_key.into())], vec![name.clone()]);
+        let my_keys =
+            ParticipantKeys::new(vec![(name.clone(), my_key.into())], vec![name.clone()]).unwrap();
         let participant_keys =
-            ParticipantKeys::new(vec![(name.clone(), other_key.into())], vec![name.clone()]);
+            ParticipantKeys::new(vec![(name.clone(), other_key.into())], vec![name.clone()])
+                .unwrap();
         env.context
             .globals
             .set_var(
@@ -507,14 +606,13 @@ mod tests {
                 VariableTypes::String(serde_json::to_string(&my_keys).unwrap()),
             )
             .unwrap();
-        env.context
-            .globals
-            .set_var(
-                &id,
-                "participant_0_keys",
-                VariableTypes::String(serde_json::to_string(&participant_keys).unwrap()),
-            )
-            .unwrap();
+        step.store_participant_data(
+            &env.context.globals,
+            &id,
+            0,
+            &serde_json::to_string(&ParticipantKeyDeclaration::from(&participant_keys)).unwrap(),
+        )
+        .unwrap();
 
         let err = step
             .on_step_complete(&protocol, &participants, &mut env.context)

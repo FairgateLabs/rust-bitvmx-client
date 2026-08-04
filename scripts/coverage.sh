@@ -46,7 +46,7 @@ TESTS=()  # accumulates multiple --test specs
 # Regex passed to --ignore-filename-regex (LLVM regex: matching files are excluded).
 # Excludes: test/example files, workspace dependencies (all workspace members except
 # rust-bitvmx-client itself), and crates.io registry deps.
-DEFAULT_EXCLUDE="tests/|examples/|build\.rs|src/main\.rs|BitVMX-CPU/|rust-bitcoin-coordinator/|rust-bitcoin-indexer/|rust-bitcoind/|rust-bitvmx-bitcoin-rpc/|rust-bitvmx-broker/|rust-bitvmx-job-dispatcher/|rust-bitvmx-key-manager/|rust-bitvmx-protocol-builder/|rust-bitvmx-settings/|rust-bitvmx-storage-backend/|rust-bitvmx-transaction-monitor/|rust-bitvmx-wallet/|rust-bitvmx-gc/|\.cargo/registry/"
+DEFAULT_EXCLUDE="cardinal/|tests/|examples/|build\.rs|src/main\.rs|BitVMX-CPU/|rust-bitcoin-coordinator/|rust-bitcoin-indexer/|rust-bitcoind/|rust-bitvmx-bitcoin-rpc/|rust-bitvmx-broker/|rust-bitvmx-job-dispatcher/|rust-bitvmx-key-manager/|rust-bitvmx-protocol-builder/|rust-bitvmx-settings/|rust-bitvmx-storage-backend/|rust-bitvmx-transaction-monitor/|rust-bitvmx-wallet/|rust-bitvmx-gc/|\.cargo/registry/"
 
 # ── Arg parsing ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do

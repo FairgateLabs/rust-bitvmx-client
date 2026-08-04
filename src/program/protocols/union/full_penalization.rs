@@ -91,13 +91,6 @@ impl ProtocolHandler for FullPenalizationProtocol {
         ])
     }
 
-    fn generate_keys<BC: BitcoinCoordinatorApi>(
-        &self,
-        _program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
-        Ok(ParticipantKeys::new(vec![], vec![]))
-    }
-
     fn build<BC: BitcoinCoordinatorApi>(
         &self,
         _keys: Vec<ParticipantKeys>,

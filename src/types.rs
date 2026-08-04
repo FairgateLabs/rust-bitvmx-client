@@ -1,4 +1,4 @@
-use std::{rc::Rc, str::FromStr};
+use std::{net::IpAddr, rc::Rc, str::FromStr};
 
 use crate::{config::ComponentsConfig, spv_proof::BtcTxSPVProof};
 use bitcoin::{
@@ -6,10 +6,9 @@ use bitcoin::{
 };
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
-    LocalChannel, RemoteChannel,
-    identification::identifier::Identifier,
-    BrokerNode,
+    identification::identifier::{Identifier, PubkHash},
     storage::db::DbStorage,
+    BrokerNode, LocalChannel, RemoteChannel,
 };
 use bitvmx_wallet::wallet::Destination;
 use key_manager::key_manager::KeyManager;
@@ -29,6 +28,15 @@ use crate::{
 };
 pub use bitcoin_coordinator::OutputPatternFilter;
 pub const RSK_PEGIN_TAG: &[u8] = b"RSK_PEGIN";
+
+/// Outcome of handling an incoming message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageDisposition {
+    /// The message was processed and should not be retried.
+    Processed,
+    /// The message could not be processed yet and should be queued for retry.
+    RetryLater,
+}
 
 // The coordinator is statically dispatched: production code uses the default
 // `BitcoinCoordinator`, unit tests can instantiate with a mock implementing
@@ -121,6 +129,10 @@ pub enum IncomingBitVMXApiMessages {
     GetFundingBalance(Uuid),
     SendFunds(Uuid, Destination, Option<u64>),
     GetProtocolVisualization(Uuid),
+    ListAllowList(Uuid),
+    AddToAllowList(Uuid, PubkHash, Option<IpAddr>), // An absent address matches any source IP.
+    RemoveFromAllowList(Uuid, PubkHash),
+    SetAllowAll(Uuid, bool), // Blanket accept-everyone. Independent of the entries above.
     Shutdown(),
 }
 impl IncomingBitVMXApiMessages {
@@ -175,6 +187,11 @@ pub enum OutgoingBitVMXApiMessages {
     ProtocolVisualization(Uuid, String),
     SetInput(Vec<u8>),
     NewBlock(BlockHash, u32),
+    // Comms allow list: entries, then the blanket allow_all flag.
+    AllowListEntries(Uuid, Vec<(PubkHash, Option<IpAddr>)>, bool),
+    // A mutation was applied. `false` means it could not be persisted and will
+    // not survive a restart.
+    AllowListUpdated(Uuid, bool),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -339,6 +356,8 @@ impl OutgoingBitVMXApiMessages {
             }
             OutgoingBitVMXApiMessages::SetInput(_) => "SetInput".to_string(),
             OutgoingBitVMXApiMessages::NewBlock(_, _) => "NewBlock".to_string(),
+            OutgoingBitVMXApiMessages::AllowListEntries(_, _, _) => "AllowListEntries".to_string(),
+            OutgoingBitVMXApiMessages::AllowListUpdated(_, _) => "AllowListUpdated".to_string(),
         }
     }
 }

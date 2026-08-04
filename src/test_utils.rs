@@ -189,7 +189,7 @@ impl TestCommsEnv {
             &format!("config/keys/op_{}.key", index + 2),
             self.storage.clone(),
             Some(format!("{}/comms-{}.db", self._dir.path(), name)),
-            &self.config.broker.allow_list,
+            &self.config.comms.allow_list,
             &self.config.broker.routing_table,
             self.config.broker.settings.clone(),
         )?)
@@ -205,7 +205,7 @@ impl TestCommsEnv {
             &self.config.comms.priv_key,
             self.storage.clone(),
             Some(self.config.comms.storage_path.clone()),
-            &self.config.broker.allow_list,
+            &self.config.comms.allow_list,
             &self.config.broker.routing_table,
             self.config.broker.settings.clone(),
         )?)

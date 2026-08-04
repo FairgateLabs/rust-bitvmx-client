@@ -43,7 +43,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
+        participant::{ParticipantKeyDeclaration, ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             claim::ClaimGate,
             dispute::{
@@ -290,7 +290,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
         let nary_def = program_def.nary_def();
         init_trace_vars(nary_def.total_rounds())?;
@@ -382,7 +382,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     .into(),
             ));
 
-            let ver_keys = get_verifier_keys()
+            let ver_keys = get_verifier_keys()?
                 .iter()
                 .map(|(name, size)| {
                     let key = program_context
@@ -416,16 +416,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 let key = program_context
                     .key_manager
                     .next_winternitz(1, WinternitzType::HASH160)?;
-                let key2 = program_context
-                    .key_manager
-                    .next_winternitz(1, WinternitzType::HASH160)?;
                 keys.push((format!("verifier_selection_bits_{}", i), key.into()));
-                keys.push((format!("verifier_selection_bits2_{}", i), key2.into()));
+                if i > 1 {
+                    // verifier_selection_bits2_1 is generated as part of READ_VALUE_NARY_SEARCH_CHALLENGE
+                    let key2 = program_context
+                        .key_manager
+                        .next_winternitz(1, WinternitzType::HASH160)?;
+                    keys.push((format!("verifier_selection_bits2_{}", i), key2.into()));
+                }
                 // for the second n-ary search
             }
         }
 
-        Ok(ParticipantKeys::new(keys, vec!["aggregated_1".to_string()]))
+        ParticipantKeyDeclaration::new(keys, vec!["aggregated_1".to_string()])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(

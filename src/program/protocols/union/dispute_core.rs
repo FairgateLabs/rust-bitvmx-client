@@ -3,7 +3,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::{ParticipantKeys, ParticipantRole, PublicKeyType},
+        participant::{ParticipantKeyDeclaration, ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
             claim::{ClaimGate, CLAIM_GATE_START, CLAIM_GATE_STOP, CLAIM_GATE_SUCCESS},
             dispute::{self, program_input_prev_prefix, program_input_prev_protocol},
@@ -296,7 +296,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let committee = self.committee(context)?;
         let packet_size = committee.packet_size;
         let data = self.dispute_core_data(context)?;
@@ -399,7 +399,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             }
         }
 
-        Ok(ParticipantKeys::new(keys, vec![]))
+        ParticipantKeyDeclaration::new(keys, vec![])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

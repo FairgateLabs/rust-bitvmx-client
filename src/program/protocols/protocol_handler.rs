@@ -26,7 +26,7 @@ use storage_backend::storage::Storage;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use super::super::participant::ParticipantKeys;
+use super::super::participant::{ParticipantKeyDeclaration, ParticipantKeys};
 use crate::bitvmx::Context;
 use crate::errors::BitVMXError;
 use crate::program::participant::ParticipantRole;
@@ -117,8 +117,10 @@ pub trait ProtocolHandler {
 
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
-        program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError>;
+        _program_context: &mut ProgramContext<BC>,
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
+        Ok(ParticipantKeyDeclaration::empty())
+    }
 
     fn set_storage(&mut self, storage: Rc<Storage>) {
         self.context_mut().storage = Some(storage);

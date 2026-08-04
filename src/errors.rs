@@ -106,6 +106,19 @@ pub enum BitVMXError {
     #[error("Missing verification key for sender {peer}. Known keys: {known_count}")]
     MissingVerificationKey { peer: String, known_count: usize },
 
+    #[error("Participant key '{name}' not found (expected {expected_type})")]
+    ParticipantKeyNotFound {
+        name: String,
+        expected_type: &'static str,
+    },
+
+    #[error("Participant key '{name}' has type {actual_type}, expected {expected_type}")]
+    ParticipantKeyTypeMismatch {
+        name: String,
+        expected_type: &'static str,
+        actual_type: &'static str,
+    },
+
     #[error("Failed to extract verification key from VerificationKey message: {reason}")]
     VerificationKeyExtractionError { reason: String },
 

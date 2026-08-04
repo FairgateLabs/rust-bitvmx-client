@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeyDeclaration, ParticipantKeys},
         protocols::{
             cardinal::lock_config::LockProtocolConfiguration,
             protocol_handler::{ProtocolContext, ProtocolHandler},
@@ -71,7 +71,7 @@ impl ProtocolHandler for LockProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let speedup = program_context
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)?;
@@ -84,7 +84,7 @@ impl ProtocolHandler for LockProtocol {
 
         let keys = vec![("speedup".to_string(), speedup.into())];
 
-        Ok(ParticipantKeys::new(keys, vec![]))
+        ParticipantKeyDeclaration::new(keys, vec![])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(

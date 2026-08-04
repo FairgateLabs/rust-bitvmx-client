@@ -5,7 +5,7 @@ use crate::{
     bitvmx::Context,
     errors::BitVMXError,
     program::{
-        participant::{ParticipantKeys, PublicKeyType},
+        participant::{ParticipantKeyDeclaration, ParticipantKeys, PublicKeyType},
         protocols::{
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
@@ -52,17 +52,10 @@ impl ProtocolHandler for RejectPegInProtocol {
         &mut self.ctx
     }
 
-    fn get_pregenerated_aggregated_keys<BC: BitcoinCoordinatorApi>(
-        &self,
-        _context: &ProgramContext<BC>,
-    ) -> Result<Vec<(String, PublicKey)>, BitVMXError> {
-        Ok([].to_vec())
-    }
-
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let keys = &mut vec![];
         let speedup_key = context.key_manager.next_keypair(BitcoinKeyType::P2tr)?;
 
@@ -76,7 +69,7 @@ impl ProtocolHandler for RejectPegInProtocol {
             SPEEDUP_KEY,
             VariableTypes::PubKey(speedup_key),
         )?;
-        Ok(ParticipantKeys::new(keys.to_vec(), vec![]))
+        ParticipantKeyDeclaration::new(keys.to_vec(), vec![])
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

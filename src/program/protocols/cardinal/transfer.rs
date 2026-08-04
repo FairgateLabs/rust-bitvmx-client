@@ -22,7 +22,7 @@ use tracing::info;
 use crate::{
     errors::BitVMXError,
     program::{
-        participant::ParticipantKeys,
+        participant::{ParticipantKeyDeclaration, ParticipantKeys},
         protocols::{
             cardinal::{transfer_config::TransferConfig, OPERATORS_AGGREGATED_PUB},
             protocol_handler::{ProtocolContext, ProtocolHandler},
@@ -91,7 +91,7 @@ impl ProtocolHandler for TransferProtocol {
     fn generate_keys<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<ParticipantKeys, BitVMXError> {
+    ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let speedup = program_context
             .key_manager
             .next_keypair(BitcoinKeyType::P2tr)?;
@@ -103,7 +103,7 @@ impl ProtocolHandler for TransferProtocol {
         )?;
 
         let keys = vec![("speedup".to_string(), speedup.into())];
-        Ok(ParticipantKeys::new(keys, vec![]))
+        ParticipantKeyDeclaration::new(keys, vec![])
     }
 
     fn get_transaction_by_name<BC: BitcoinCoordinatorApi>(

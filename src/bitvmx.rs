@@ -1,3 +1,4 @@
+use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
 use crate::ping_helper::{JobDispatcherType, PingHelper};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
@@ -18,8 +19,8 @@ use crate::{
     },
     signature_verifier::SignatureVerifier,
     types::{
-        IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+        IncomingBitVMXApiMessages, MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext,
+        ProgramStatus, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -30,22 +31,18 @@ use bitcoin_coordinator::{
     types::{AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
-use bitvmx_broker::{BrokerNode, ReceivedMessage};
-use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::routing::RoutingTable;
+use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
+use bitvmx_broker::{BrokerNode, ReceivedMessage};
 use bitvmx_dispatcher_utils::PingMessage;
 use bitvmx_settings::settings;
 use key_manager::create_key_manager_from_config;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
-use bitvmx_broker::{
-    storage::db::DbStorage,
-    LocalChannel,
-    rpc::BrokerConfig, BrokerServer,
-};
+use bitvmx_broker::{rpc::BrokerConfig, storage::db::DbStorage, BrokerServer, LocalChannel};
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
@@ -128,14 +125,16 @@ impl BitVMX {
         let rsa_public_key = key_manager
             .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
 
-        let comms = BrokerNode::new_with_paths(
+        let comms_allow_list = comms_allow_list::build(&store, &config.comms.allow_list)?;
+
+        let comms = BrokerNode::new(
             "comms",
             config.comms.address,
-            &config.comms.priv_key,
+            &settings::decrypt_or_read_file(&config.comms.priv_key)?,
             store.clone(),
             Some(config.comms.storage_path.clone()),
-            &config.broker.allow_list, //TODO: should be different from broker
-            &config.broker.routing_table,
+            comms_allow_list,
+            RoutingTable::from_file(&config.broker.routing_table)?,
             config.broker.settings.clone(),
         )?;
 
@@ -288,9 +287,8 @@ impl BitVMX {
         }
     }
 
-    /// Processes a message for a Program.
-    /// Returns Ok(true) if message was processed, Ok(false) if it needs to be buffered,
-    /// or Err if there was an error.
+    /// Processes a message for a Program and reports whether it was processed
+    /// or should be retried later.
     fn process_program_message(
         &mut self,
         program_id: &Uuid,
@@ -301,7 +299,7 @@ impl BitVMX {
         timestamp: i64,
         signature: Vec<u8>,
         version: String,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         debug!(
             "BitVMX::process_program_message() - Processing {:?} for program {} from {}",
             msg_type, program_id, peer_address.pubkey_hash
@@ -319,7 +317,7 @@ impl BitVMX {
                 "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
                 program_id
             );
-            return Ok(false);
+            return Ok(MessageDisposition::RetryLater);
         }
 
         // If this operator is the leader and the message type should be broadcast, store the original message
@@ -343,7 +341,7 @@ impl BitVMX {
                         "There is a message already stored for program {}",
                         program_id
                     );
-                    return Ok(false);
+                    return Ok(MessageDisposition::RetryLater);
                 }
             }
         }
@@ -413,7 +411,7 @@ impl BitVMX {
                 return Ok(());
             }
         }
-        let message_consumed = if let Ok(mut program) = self.load_program(&program_id) {
+        let disposition = if let Ok(mut program) = self.load_program(&program_id) {
             let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
             if is_verification_msg {
@@ -424,10 +422,10 @@ impl BitVMX {
                     &data,
                     &peer_address,
                 ) {
-                    Ok(_) => true,
+                    Ok(_) => MessageDisposition::Processed,
                     Err(e) => {
                         error!("Error handling verification message: {:?}", e);
-                        false
+                        MessageDisposition::RetryLater
                     }
                 }
             } else {
@@ -444,11 +442,11 @@ impl BitVMX {
             }
         } else {
             debug!("Program {} not found", program_id);
-            false
+            MessageDisposition::RetryLater
         };
 
-        if !message_consumed {
-            // Message needs to be buffered (not processed or program not found)
+        if disposition == MessageDisposition::RetryLater {
+            // Preserve the previous false outcome by buffering for retry.
             info!(
                 "Pending message to back: {:?} for program {:?} from: {:?}",
                 msg_type, program_id, msg.identifier.pubkey_hash,
@@ -977,7 +975,6 @@ impl BitVMX {
             leader as usize,
             &mut self.program_context,
             self.store.clone(),
-            &self.config.client,
         )?;
 
         self.add_new_program(&id)?;
@@ -995,6 +992,22 @@ impl BitVMX {
     }
 
     /// send replies via the broker channel
+    //TODO: the change itself cannot fail, but a poisoned allow list lock makes
+    //this return Err before replying, so the caller waiting on `id` gets
+    //nothing back at all. Same for the ListAllowList arm. Should we reply with
+    //an error instead?
+    fn mutate_allow_list<F>(&self, id: Uuid, from: Identifier, change: F) -> Result<(), BitVMXError>
+    where
+        F: FnOnce(&mut AllowList),
+    {
+        let allow_list = self.program_context.comms.get_allow_list();
+        let persisted = comms_allow_list::mutate(&self.store, &allow_list, change)?;
+        self.reply(
+            from,
+            OutgoingBitVMXApiMessages::AllowListUpdated(id, persisted),
+        )
+    }
+
     fn reply(&self, to: Identifier, message: OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
         debug!("> {:?}", message);
         self.program_context
@@ -1095,7 +1108,6 @@ impl BitVMX {
             leader_idx as usize,
             &mut self.program_context,
             self.store.clone(),
-            &self.config.client,
         )?;
 
         // Add the program to the programs list
@@ -1676,6 +1688,28 @@ impl BitVMX {
                     }
                 };
                 self.reply(from, message)?;
+            }
+            IncomingBitVMXApiMessages::ListAllowList(id) => {
+                let allow_list = self.program_context.comms.get_allow_list();
+                let (entries, allow_all) = comms_allow_list::snapshot(&allow_list)?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::AllowListEntries(id, entries, allow_all),
+                )?;
+            }
+            IncomingBitVMXApiMessages::AddToAllowList(id, pubk_hash, addr) => {
+                info!("Allowing comms peer {} from {:?}", pubk_hash, addr);
+                self.mutate_allow_list(id, from, |allow_list| {
+                    allow_list.add_entry(pubk_hash, addr)
+                })?;
+            }
+            IncomingBitVMXApiMessages::RemoveFromAllowList(id, pubk_hash) => {
+                info!("Removing comms peer {}", pubk_hash);
+                self.mutate_allow_list(id, from, |allow_list| allow_list.remove(&pubk_hash))?;
+            }
+            IncomingBitVMXApiMessages::SetAllowAll(id, allow_all) => {
+                info!("Setting comms allow_all to {}", allow_all);
+                self.mutate_allow_list(id, from, |allow_list| allow_list.set_allow_all(allow_all))?;
             }
             IncomingBitVMXApiMessages::Shutdown() => {
                 info!("Shutdown message received. Initiating shutdown...");

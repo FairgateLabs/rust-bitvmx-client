@@ -6,14 +6,13 @@ use crate::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::SetupStep,
-        variables::VariableTypes,
     },
     types::ProgramContext,
 };
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PubNonce};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
 pub type PubNonceMessage = Vec<(
@@ -30,15 +29,60 @@ pub type PubNonceMessage = Vec<(
 /// 3. Serializing and exchanging nonces with other participants
 /// 4. Verifying and storing received nonces from all participants
 ///
-/// The nonces are stored in globals with the following conventions:
-/// - Own nonces: "my_nonces"
-/// - Participant i nonces: "participant_{i}_nonces"
+/// Participant nonces are stored in globals as "participant_{i}_nonces".
 #[derive(Debug, Clone, Default)]
 pub struct NoncesStep;
 
 impl NoncesStep {
     pub fn new() -> Self {
         Self
+    }
+
+    fn validate_received_nonces(
+        nonces: &PubNonceMessage,
+        expected_aggregated_keys: &HashSet<PublicKey>,
+    ) -> Result<(), BitVMXError> {
+        if nonces.is_empty() {
+            return Err(BitVMXError::InvalidMessage(
+                "Received empty nonces from participant".to_string(),
+            ));
+        }
+
+        let mut received_aggregated_keys = HashSet::new();
+
+        for (aggregated, _, message_nonces) in nonces {
+            if !expected_aggregated_keys.contains(aggregated) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received nonces for unexpected aggregated key {}",
+                    aggregated
+                )));
+            }
+            if !received_aggregated_keys.insert(*aggregated) {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received duplicate nonces for aggregated key {}",
+                    aggregated
+                )));
+            }
+            if message_nonces.is_empty() {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received no message nonces for aggregated key {}",
+                    aggregated
+                )));
+            }
+
+            let mut message_ids = HashSet::new();
+            if message_nonces
+                .iter()
+                .any(|(message_id, _)| !message_ids.insert(message_id))
+            {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Received duplicate nonce message IDs for aggregated key {}",
+                    aggregated
+                )));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -105,13 +149,6 @@ impl SetupStep for NoncesStep {
             ));
         }
 
-        // Save to globals
-        context.globals.set_var(
-            &protocol_id,
-            "my_nonces",
-            VariableTypes::String(serde_json::to_string(&public_nonce_msg)?),
-        )?;
-
         // Serialize to send
         let serialized = serde_json::to_value(&public_nonce_msg)?;
         debug!("NoncesStep: Serialized");
@@ -147,12 +184,23 @@ impl SetupStep for NoncesStep {
             BitVMXError::InvalidMessage(format!("Failed to deserialize nonces: {}", e))
         })?;
 
-        // Basic validation
         if nonces.is_empty() {
             return Err(BitVMXError::InvalidMessage(
                 "Received empty nonces from participant".to_string(),
             ));
         }
+
+        let my_keys = super::load_my_keys(
+            &protocol_id,
+            context,
+            "Keys must be exchanged before nonces can be verified",
+        )?;
+        let expected_aggregated_keys = my_keys
+            .computed_aggregated
+            .values()
+            .copied()
+            .collect::<HashSet<_>>();
+        Self::validate_received_nonces(&nonces, &expected_aggregated_keys)?;
 
         debug!("NoncesStep: Received {} nonces", nonces.len());
 
@@ -160,10 +208,11 @@ impl SetupStep for NoncesStep {
         let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_nonces"
-        context.globals.set_var(
+        self.store_participant_data(
+            &context.globals,
             &protocol_id,
-            &format!("participant_{}_nonces", idx),
-            VariableTypes::String(serde_json::to_string(&nonces)?),
+            idx,
+            &serde_json::to_string(&nonces)?,
         )?;
 
         debug!(
@@ -184,11 +233,7 @@ impl SetupStep for NoncesStep {
 
         // Verify that all participants have sent their nonces
         for (idx, participant) in participants.iter().enumerate() {
-            if context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
-                .is_none()
-            {
+            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
                 debug!(
                     "NoncesStep: Still waiting for nonces from participant {} (index {})",
                     participant.pubkey_hash, idx
@@ -226,23 +271,24 @@ impl SetupStep for NoncesStep {
                 continue; // Skip our own nonces
             }
 
-            let nonces_json = context
-                .globals
-                .get_var(&protocol_id, &format!("participant_{}_nonces", idx))?
-                .ok_or_else(|| {
-                    BitVMXError::InvalidMessage(format!("Missing nonces for participant {}", idx))
-                })?
-                .string()?;
+            let nonces_json = self.get_participant_data(&context.globals, &protocol_id, idx)?;
 
             let participant_nonces: PubNonceMessage = serde_json::from_str(&nonces_json)?;
 
             // PubNonceMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PubNonce)>)>
             // where first PublicKey is aggregated key, second is participant's public key
             for (aggregated, participant_pub_key, nonces) in participant_nonces {
-                map_of_maps
+                if map_of_maps
                     .entry(aggregated)
-                    .or_insert_with(HashMap::new)
-                    .insert(participant_pub_key, nonces);
+                    .or_default()
+                    .insert(participant_pub_key, nonces)
+                    .is_some()
+                {
+                    return Err(BitVMXError::InvalidMessage(format!(
+                        "Received duplicate nonces from participant key {}",
+                        participant_pub_key
+                    )));
+                }
             }
         }
 
@@ -270,7 +316,7 @@ impl SetupStep for NoncesStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::participant::ParticipantKeys;
+    use crate::program::{participant::ParticipantKeys, variables::VariableTypes};
     use key_manager::key_type::BitcoinKeyType;
     use std::rc::Rc;
     use storage_backend::storage::Storage;
@@ -289,7 +335,7 @@ mod tests {
         id: Uuid,
         aggregated: PublicKey,
     ) {
-        let mut keys = ParticipantKeys::new(vec![], vec![]);
+        let mut keys = ParticipantKeys::empty().unwrap();
         keys.computed_aggregated
             .insert("test-aggregate".to_string(), aggregated);
         context
@@ -319,7 +365,7 @@ mod tests {
             matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Keys must be exchanged"))
         );
 
-        let empty_keys = ParticipantKeys::new(vec![], vec![]);
+        let empty_keys = ParticipantKeys::empty().unwrap();
         env.context
             .globals
             .set_var(
@@ -347,12 +393,6 @@ mod tests {
         assert!(
             matches!(err, BitVMXError::InvalidMessage(message) if message.contains("Failed to generate nonces"))
         );
-        assert!(env
-            .context
-            .globals
-            .get_var(&id, "my_nonces")
-            .unwrap()
-            .is_none());
     }
 
     #[test]
@@ -413,19 +453,10 @@ mod tests {
             .unwrap();
         assert_eq!(first_type, CommsMessageType::PublicNonces);
         assert_eq!(second_type, CommsMessageType::PublicNonces);
-        assert_eq!(
-            serde_json::from_str::<PubNonceMessage>(
-                &first
-                    .context
-                    .globals
-                    .get_var(&id, "my_nonces")
-                    .unwrap()
-                    .unwrap()
-                    .string()
-                    .unwrap()
-            )
-            .unwrap(),
-            serde_json::from_value::<PubNonceMessage>(first_data.clone()).unwrap()
+        assert!(
+            !serde_json::from_value::<PubNonceMessage>(first_data.clone())
+                .unwrap()
+                .is_empty()
         );
 
         let first_address = first.self_address().unwrap();
