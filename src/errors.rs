@@ -2,7 +2,7 @@ use bitcoin::{consensus::encode::FromHexError, network::ParseNetworkError, Witne
 use bitcoin_coordinator::{errors::BitcoinCoordinatorError, IndexerError};
 use bitcoincore_rpc::bitcoin::{key::ParsePublicKeyError, sighash::SighashTypeParseError};
 use bitvmx_broker::{
-    channel::retry_helper::RetryPolicyError, identification::errors::IdentificationError,
+    retry::RetryPolicyError, identification::errors::IdentificationError,
     rpc::errors::BrokerError,
 };
 use bitvmx_cpu_definitions::challenge::EmulatorResultError;

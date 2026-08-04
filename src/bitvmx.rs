@@ -30,8 +30,8 @@ use bitcoin_coordinator::{
     types::{AckNews, CoordinatorNews},
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
-use bitvmx_broker::channel::queue_channel::{QueueChannel, ReceiveHandlerChannel};
-use bitvmx_broker::channel::retry_helper::RetryPolicy;
+use bitvmx_broker::{BrokerNode, ReceivedMessage};
+use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
@@ -42,9 +42,9 @@ use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
 use bitvmx_broker::{
-    broker_storage::BrokerStorage,
-    channel::channel::LocalChannel,
-    rpc::{sync_server::BrokerSync, BrokerConfig},
+    storage::db::DbStorage,
+    LocalChannel,
+    rpc::BrokerConfig, BrokerServer,
 };
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 
@@ -73,7 +73,7 @@ pub struct BitVMX {
     config: Config,
     program_context: ProgramContext,
     store: Rc<Storage>,
-    broker: BrokerSync,
+    broker: BrokerServer,
     count: u32,
     message_queue: MessageQueue,
     coordinator_throttle: Throttle,
@@ -128,7 +128,7 @@ impl BitVMX {
         let rsa_public_key = key_manager
             .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
 
-        let comms = QueueChannel::new_with_paths(
+        let comms = BrokerNode::new_with_paths(
             "comms",
             config.comms.address,
             &config.comms.priv_key,
@@ -161,7 +161,7 @@ impl BitVMX {
         let routing_table = RoutingTable::from_file(&config.broker.routing_table)?;
         let broker_backend = Storage::new(&config.broker.storage)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
-        let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
+        let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
         let cert = Cert::new_with_privk(
             settings::decrypt_or_read_file(&config.broker.priv_key)
                 .map_err(|e| BitVMXError::ConfigurationError(e.into()))?
@@ -173,7 +173,7 @@ impl BitVMX {
             config.broker.get_pubk_hash()?,
             Some(config.broker.settings.clone()),
         );
-        let broker = BrokerSync::new(
+        let broker = BrokerServer::new(
             &broker_config,
             broker_storage.clone(),
             cert,
@@ -204,7 +204,7 @@ impl BitVMX {
 
         let message_queue = MessageQueue::new(
             store.clone(),
-            RetryPolicy::new(&config.broker.settings.queue_channel_config)?,
+            RetryPolicy::new(&config.broker.settings.broker_node_config)?,
         );
 
         let coordinator_throttle = Throttle::new(config.coordinator_throttle.clone());
@@ -487,11 +487,11 @@ impl BitVMX {
         }
         for message in messages {
             match message {
-                ReceiveHandlerChannel::Msg(identifier, msg) => {
+                ReceivedMessage::Msg(identifier, msg) => {
                     let msg: QueuedMessage = QueuedMessage::new(identifier, msg)?;
                     self.process_msg(msg)?;
                 }
-                ReceiveHandlerChannel::Error(e) => {
+                ReceivedMessage::Error(e) => {
                     info!("Error receiving message {}", e);
                 }
             }
@@ -509,7 +509,7 @@ impl BitVMX {
         }
         for deadletter in deadletter_messages {
             match deadletter {
-                (ReceiveHandlerChannel::Msg(identifier, _msg), ctx) => {
+                (ReceivedMessage::Msg(identifier, _msg), ctx) => {
                     let context = Context::from_string(&ctx)?;
                     warn!(
                         "Processing deadletter message for context: {:?} and identifier: {:?}",
@@ -517,7 +517,7 @@ impl BitVMX {
                     );
                     // TODO: Add a function in protocol handler to process deadletter messages
                 }
-                (ReceiveHandlerChannel::Error(e), _) => {
+                (ReceivedMessage::Error(e), _) => {
                     info!("Error receiving deadletter message {}", e);
                 }
             }

@@ -11,9 +11,9 @@ use bitcoin_coordinator::{
     types::{AckNews, News},
     TransactionStatus, TypesToMonitor,
 };
-use bitvmx_broker::broker_storage::BrokerStorage;
-use bitvmx_broker::channel::channel::LocalChannel;
-use bitvmx_broker::channel::queue_channel::{QueueChannel, ReceiveHandlerChannel};
+use bitvmx_broker::storage::db::DbStorage;
+use bitvmx_broker::LocalChannel;
+use bitvmx_broker::{BrokerNode, ReceivedMessage};
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_settings::settings;
 use key_manager::{create_key_manager_from_config, key_manager::KeyManager};
@@ -70,7 +70,7 @@ impl Drop for TestStorageDir {
 
 /// Comms test environment built from `config/development.yaml` with all storage
 /// redirected to a unique temp dir (removed on drop). Provides a `KeyManager`
-/// with the development comms RSA key imported, and can build a `QueueChannel`
+/// with the development comms RSA key imported, and can build a `BrokerNode`
 /// for tests that exercise the comms send path.
 ///
 /// Internal building block of [`TestProgramContextEnv`] — write tests against
@@ -94,7 +94,7 @@ impl TestCommsEnv {
         config.key_storage.path = format!("{}/keys.db", dir.path());
         config.comms.storage_path = format!("{}/comms.db", dir.path());
         config.broker.storage.path = format!("{}/broker.db", dir.path());
-        // QueueChannel binds a local server on the comms address; give each
+        // BrokerNode binds a local server on the comms address; give each
         // env its own port so parallel tests don't collide, and keep the port
         // real (not OS-assigned) so messages can be delivered back to it.
         static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(23100);
@@ -123,11 +123,11 @@ impl TestCommsEnv {
     /// Tick the channel until a message is delivered and received, or panic
     /// after a few seconds. Delivery goes through the channel's local server,
     /// so this works for self-addressed messages without an external broker.
-    fn receive_one(channel: &mut QueueChannel) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+    fn receive_one(channel: &mut BrokerNode) -> Result<(Identifier, Vec<u8>), BitVMXError> {
         for _ in 0..100 {
             channel.tick()?;
             let mut received = channel.check_receive()?;
-            if let Some(ReceiveHandlerChannel::Msg(identifier, data)) = received.pop() {
+            if let Some(ReceivedMessage::Msg(identifier, data)) = received.pop() {
                 return Ok((identifier, data));
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -139,14 +139,14 @@ impl TestCommsEnv {
     /// few seconds. Use for cross-channel delivery: the sender's tick pushes
     /// the queued message to the receiver's local server.
     fn receive_via(
-        sender: &mut QueueChannel,
-        receiver: &mut QueueChannel,
+        sender: &mut BrokerNode,
+        receiver: &mut BrokerNode,
     ) -> Result<(Identifier, Vec<u8>), BitVMXError> {
         for _ in 0..100 {
             sender.tick()?;
             receiver.tick()?;
             let mut received = receiver.check_receive()?;
-            if let Some(ReceiveHandlerChannel::Msg(identifier, data)) = received.pop() {
+            if let Some(ReceivedMessage::Msg(identifier, data)) = received.pop() {
                 return Ok((identifier, data));
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -157,7 +157,7 @@ impl TestCommsEnv {
     /// Tick both channels long enough for any queued message to be delivered
     /// and assert none arrives on either side. Use to verify a code path
     /// deliberately sent nothing.
-    fn assert_no_delivery(a: &mut QueueChannel, b: &mut QueueChannel) {
+    fn assert_no_delivery(a: &mut BrokerNode, b: &mut BrokerNode) {
         for _ in 0..10 {
             a.tick().unwrap();
             b.tick().unwrap();
@@ -174,16 +174,16 @@ impl TestCommsEnv {
     }
 
     /// Build an extra comms identity listening on its own port, for tests that
-    /// need a real remote peer distinct from [`Self::queue_channel`] (which
+    /// need a real remote peer distinct from [`Self::broker_node`] (which
     /// uses the op_1 key). Peer `index` uses the development `op_{index + 2}`
     /// key, so each index is a distinct identity (0..=8 available). Its comms
     /// storage lives in the same temp dir.
-    fn peer_channel(&self, index: usize) -> Result<QueueChannel, BitVMXError> {
+    fn peer_channel(&self, index: usize) -> Result<BrokerNode, BitVMXError> {
         static NEXT_PEER_PORT: AtomicU16 = AtomicU16::new(24100);
         let mut address = self.config.comms.address;
         address.set_port(NEXT_PEER_PORT.fetch_add(1, Ordering::Relaxed));
         let name = format!("peer-{}", index);
-        Ok(QueueChannel::new_with_paths(
+        Ok(BrokerNode::new_with_paths(
             &name,
             address,
             &format!("config/keys/op_{}.key", index + 2),
@@ -195,11 +195,11 @@ impl TestCommsEnv {
         )?)
     }
 
-    /// Build a QueueChannel using the development broker settings. The channel
+    /// Build a BrokerNode using the development broker settings. The channel
     /// runs its own local server, so messages sent to its own address are
     /// delivered back to it on tick without an external broker.
-    fn queue_channel(&self) -> Result<QueueChannel, BitVMXError> {
-        Ok(QueueChannel::new_with_paths(
+    fn broker_node(&self) -> Result<BrokerNode, BitVMXError> {
+        Ok(BrokerNode::new_with_paths(
             "comms",
             self.config.comms.address,
             &self.config.comms.priv_key,
@@ -420,7 +420,7 @@ pub struct TestProgramContextEnv {
     pub context: ProgramContext<BitcoinCoordinatorMock>,
     /// Remote peer identities; peer `i` uses the development `op_{i + 2}` key
     /// on its own port, so each index is a distinct identity (0..=8 available).
-    pub peers: Vec<QueueChannel>,
+    pub peers: Vec<BrokerNode>,
 }
 
 impl TestProgramContextEnv {
@@ -434,9 +434,9 @@ impl TestProgramContextEnv {
     pub fn new_with_peers(prefix: &str, peer_count: usize) -> Result<Self, BitVMXError> {
         let env = TestCommsEnv::new(prefix)?;
 
-        let comms = env.queue_channel()?;
+        let comms = env.broker_node()?;
         let broker_backend = Arc::new(Mutex::new(Storage::new(&env.config.broker.storage)?));
-        let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
+        let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
         let broker_channel =
             LocalChannel::new(env.config.components.bitvmx.clone(), broker_storage);
 

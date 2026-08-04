@@ -29,9 +29,9 @@
 #![cfg(test)]
 
 use anyhow::Result;
-use bitvmx_broker::channel::retry_helper::RetryPolicy;
+use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
-use bitvmx_broker::rpc::config::QueueChannelConfig;
+use bitvmx_broker::rpc::config::BrokerNodeConfig;
 use bitvmx_client::comms_helper::{prepare_message, serialize_msg, CommsMessageType};
 use bitvmx_client::config::Config;
 use bitvmx_client::helper::compute_pubkey_hash;
@@ -147,7 +147,7 @@ fn process_broadcasted_buffers_originals_when_verification_key_unknown() -> Resu
     // share storage, so changes inside `process_msg` are visible here.
     let view_queue = MessageQueue::new(
         recipient.get_store(),
-        RetryPolicy::new(&QueueChannelConfig::default())?,
+        RetryPolicy::new(&BrokerNodeConfig::default())?,
     );
     let view_globals = Globals::new(recipient.get_store());
     assert!(
@@ -233,7 +233,7 @@ fn process_broadcasted_queues_originals_when_keys_known() -> Result<()> {
 
     let view_queue = MessageQueue::new(
         recipient.get_store(),
-        RetryPolicy::new(&QueueChannelConfig::default())?,
+        RetryPolicy::new(&BrokerNodeConfig::default())?,
     );
 
     recipient.process_msg(queued)?;

@@ -1,6 +1,6 @@
 use crate::errors::BitVMXError;
 use bitvmx_broker::{
-    channel::retry_helper::{now_ms, RetryPolicy, RetryState},
+    retry::{now_ms, RetryPolicy, RetryState},
     identification::identifier::Identifier,
 };
 use serde::{Deserialize, Serialize};
@@ -205,14 +205,14 @@ impl MessageQueue {
 mod tests {
     use super::*;
     use crate::test_utils::TestStorageDir;
-    use bitvmx_broker::rpc::config::QueueChannelConfig;
+    use bitvmx_broker::rpc::config::BrokerNodeConfig;
 
     fn test_storage_dir() -> TestStorageDir {
         TestStorageDir::new("bitvmx-message-queue-test")
     }
 
     fn test_retry_policy() -> RetryPolicy {
-        RetryPolicy::new(&QueueChannelConfig {
+        RetryPolicy::new(&BrokerNodeConfig {
             max_msgs_per_tick_utilization: 1.0,
             max_send_attempts: 3,
             retry_min_delay_msecs: 1_000,

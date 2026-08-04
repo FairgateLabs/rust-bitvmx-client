@@ -1,6 +1,6 @@
 use crate::bitvmx::Context;
 use crate::{errors::BitVMXError, program::participant::CommsAddress};
-use bitvmx_broker::channel::queue_channel::QueueChannel;
+use bitvmx_broker::BrokerNode;
 use chrono::Utc;
 use key_manager::key_manager::KeyManager;
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ pub fn prepare_message(
 }
 
 pub fn request<T: Serialize>(
-    comms: &QueueChannel,
+    comms: &BrokerNode,
     key_manager: &Rc<KeyManager>,
     rsa_public_key: &str,
     program_id: &Uuid,
@@ -128,7 +128,7 @@ pub fn request<T: Serialize>(
 }
 
 pub fn response<T: Serialize>(
-    comms: &QueueChannel,
+    comms: &BrokerNode,
     key_manager: &Rc<KeyManager>,
     rsa_public_key: &str,
     program_id: &Uuid,
@@ -247,7 +247,7 @@ pub struct VerificationKeyAnnouncement {
 pub struct VerificationKeyRequestPayload;
 
 pub fn send_verification_key_to_peer(
-    comms: &QueueChannel,
+    comms: &BrokerNode,
     key_manager: &Rc<KeyManager>,
     rsa_public_key: &str,
     program_id: &Uuid,

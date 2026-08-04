@@ -2,7 +2,7 @@
 use anyhow::Result;
 use bitcoin::PublicKey;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
-use bitvmx_broker::channel::channel::DualChannel;
+use bitvmx_broker::RemoteChannel;
 use bitvmx_client::program::protocols::dispute::config::{ConfigResult, ForceFailConfiguration};
 use bitvmx_client::program::protocols::dispute::{COMMITMENT, POST_COMMITMENT, PRE_COMMITMENT};
 use bitvmx_client::program::protocols::protocol_handler::timeout_tx;
@@ -204,7 +204,7 @@ pub fn prepare_dispute(
 pub fn execute_dispute(
     id_channel_pairs: Vec<ParticipantChannel>,
     mut instances: &mut Vec<BitVMX>,
-    emulator_channels: Vec<DualChannel>,
+    emulator_channels: Vec<RemoteChannel>,
     bitcoin_client: &BitcoinClient,
     wallet: &InternalWallet,
     program_id: Uuid,
@@ -458,7 +458,7 @@ pub fn process_dispatcher_non_blocking(
 fn wait_msg_channel(
     name: &str,
     instances: &mut Vec<&mut BitVMX>,
-    channels: Vec<DualChannel>,
+    channels: Vec<RemoteChannel>,
 ) -> Result<()> {
     for channel in channels.iter() {
         let msg = wait_message_from_channel(channel, instances, false)?;

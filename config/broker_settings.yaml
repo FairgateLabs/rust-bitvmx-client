@@ -3,7 +3,7 @@ rate_limiter_config:
   rate_limit_refill_rate: 100.0 # Tokens per second
   tokens_per_message: 2 # 1 for ping + 1 for message
 
-queue_channel_config:
+broker_node_config:
   max_msgs_per_tick_utilization: 0.5 # 50% of capacity
   max_send_attempts: 30 # Max attempts to send a message before moving to dead letter queue
   retry_min_delay_msecs: 200 # Minimum delay before retrying a message send
