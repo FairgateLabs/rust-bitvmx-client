@@ -1,3 +1,6 @@
+//! Shared with `rust-bitvmx-client-types` — this file is copied verbatim on release.
+//! Node-only code does not belong here; put it in the sibling `mod.rs`.
+
 use bitcoin::{PublicKey, Txid};
 use key_manager::musig2::{secp::MaybeScalar, PubNonce};
 use protocol_builder::types::OutputType;
