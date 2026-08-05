@@ -13,7 +13,7 @@ use crate::{
     types::ProgramContext,
 };
 use bitvmx_broker::{
-    channel::queue_channel::QueueChannel,
+    BrokerNode,
     identification::identifier::{Identifier, PubkHash},
 };
 use key_manager::key_manager::KeyManager;
@@ -89,7 +89,7 @@ impl OperatorVerificationStore {
 
     pub fn request_missing_verification_keys(
         globals: &Globals,
-        comms: &QueueChannel,
+        comms: &BrokerNode,
         key_manager: &Rc<KeyManager>,
         rsa_public_key: &str,
         program_id: &Uuid,
@@ -136,7 +136,7 @@ impl OperatorVerificationStore {
     }
 
     pub fn respond_with_verification_key(
-        comms: &QueueChannel,
+        comms: &BrokerNode,
         key_manager: &Rc<KeyManager>,
         rsa_public_key: &str,
         program_id: &Uuid,
@@ -297,7 +297,7 @@ impl SignatureVerifier {
     }
 
     pub fn verify_and_get_key(
-        comms: &QueueChannel,
+        comms: &BrokerNode,
         globals: &Globals,
         rsa_public_key: &str,
         sender_pubkey_hash: &PubkHash,

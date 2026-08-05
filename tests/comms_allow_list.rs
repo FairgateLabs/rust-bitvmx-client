@@ -12,7 +12,7 @@ const KEPT: &str = "bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899
 /// Drive one allow list request through a real client and return the reply.
 fn request(
     bitvmx: &mut bitvmx_client::bitvmx::BitVMX,
-    channel: &bitvmx_broker::channel::channel::DualChannel,
+    channel: &bitvmx_broker::RemoteChannel,
     msg: IncomingBitVMXApiMessages,
 ) -> Result<OutgoingBitVMXApiMessages> {
     channel.send(&bitvmx.get_components_config().bitvmx, msg.to_string()?)?;
@@ -22,7 +22,7 @@ fn request(
 
 fn list(
     bitvmx: &mut bitvmx_client::bitvmx::BitVMX,
-    channel: &bitvmx_broker::channel::channel::DualChannel,
+    channel: &bitvmx_broker::RemoteChannel,
 ) -> Result<(Vec<(String, Option<IpAddr>)>, bool)> {
     match request(
         bitvmx,

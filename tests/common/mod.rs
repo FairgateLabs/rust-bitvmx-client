@@ -12,9 +12,9 @@ use bitcoind::{
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
-    channel::channel::DualChannel,
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{tls_helper::Cert, BrokerConfig},
+    RemoteChannel,
 };
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -140,7 +140,7 @@ pub fn ensure_docker_available() -> Result<()> {
 pub fn init_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
-) -> Result<(BitVMX, CommsAddress, DualChannel, Option<DualChannel>)> {
+) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
     init_bitvmx_with_storage(role, emulator_dispatcher, true)
 }
 
@@ -149,7 +149,7 @@ pub fn init_bitvmx(
 pub fn restart_bitvmx(
     role: &str,
     emulator_dispatcher: bool,
-) -> Result<(BitVMX, CommsAddress, DualChannel, Option<DualChannel>)> {
+) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
     init_bitvmx_with_storage(role, emulator_dispatcher, false)
 }
 
@@ -157,7 +157,7 @@ pub fn init_bitvmx_with_storage(
     role: &str,
     emulator_dispatcher: bool,
     clear_storage: bool,
-) -> Result<(BitVMX, CommsAddress, DualChannel, Option<DualChannel>)> {
+) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
     let broker_config = BrokerConfig::new(
@@ -166,7 +166,7 @@ pub fn init_bitvmx_with_storage(
         config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
-    let bridge_client = DualChannel::new(
+    let bridge_client = RemoteChannel::new(
         &broker_config,
         Cert::new_with_privk(
             settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
@@ -175,7 +175,7 @@ pub fn init_bitvmx_with_storage(
         allow_list.clone(),
     )?;
     let dispatcher_channel = if emulator_dispatcher {
-        Some(DualChannel::new(
+        Some(RemoteChannel::new(
             &broker_config,
             Cert::new_with_privk(
                 settings::decrypt_or_read_file(&config.testing.emulator.priv_key)?.as_str(),
@@ -216,7 +216,7 @@ pub fn tick(instance: &mut BitVMX) -> Result<()> {
 }
 
 pub fn wait_message_from_channel(
-    channel: &DualChannel,
+    channel: &RemoteChannel,
     instances: &mut Vec<&mut BitVMX>,
     fake_tick: bool,
 ) -> Result<(String, Identifier)> {
@@ -489,7 +489,7 @@ pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result
 }
 
 pub fn get_all(
-    channels: &Vec<DualChannel>,
+    channels: &Vec<RemoteChannel>,
     instances: &mut Vec<BitVMX>,
     fake_tick: bool,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
@@ -504,7 +504,7 @@ pub fn get_all(
 
 pub fn mine_and_wait(
     _bitcoin_client: &BitcoinClient,
-    channels: &Vec<DualChannel>,
+    channels: &Vec<RemoteChannel>,
     instances: &mut Vec<BitVMX>,
     wallet: &InternalWallet,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>> {
@@ -513,7 +513,7 @@ pub fn mine_and_wait(
 
 pub fn mine_and_wait_with_dispatcher(
     _bitcoin_client: &BitcoinClient,
-    channels: &Vec<DualChannel>,
+    channels: &Vec<RemoteChannel>,
     instances: &mut Vec<BitVMX>,
     wallet: &InternalWallet,
     dispatchers: &mut Vec<DispatcherHandler<EmulatorJobType>>,
@@ -531,7 +531,7 @@ pub fn mine_and_wait_with_dispatcher(
 
 pub fn mine_and_wait_blocks(
     _bitcoin_client: &BitcoinClient,
-    channels: &Vec<DualChannel>,
+    channels: &Vec<RemoteChannel>,
     instances: &mut Vec<BitVMX>,
     wallet: &InternalWallet,
     blocks: u32,
@@ -577,7 +577,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
         config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
-    let bridge_client = DualChannel::new(
+    let bridge_client = RemoteChannel::new(
         &broker_config,
         Cert::new_with_privk(
             settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
@@ -688,7 +688,7 @@ fn print_advance_options(n: usize) {
 fn advance_key(
     c: char,
     instances: &mut Vec<BitVMX>,
-    channels: &Vec<DualChannel>,
+    channels: &Vec<RemoteChannel>,
     wallet: Option<&Wallet>,
 ) -> Result<bool> {
     match c {
@@ -766,7 +766,7 @@ fn advance_key(
 
 pub fn interactive_advance(
     instances: &mut Vec<BitVMX>,
-    channels: &Vec<DualChannel>,
+    channels: &Vec<RemoteChannel>,
     wallet: Option<&Wallet>,
 ) -> Result<()> {
     use console::{Key, Term};
@@ -792,7 +792,7 @@ pub fn scripted_advance(
     sequence: &str,
     interval_ms: u64,
     instances: &mut Vec<BitVMX>,
-    channels: &Vec<DualChannel>,
+    channels: &Vec<RemoteChannel>,
     wallet: Option<&Wallet>,
 ) -> Result<()> {
     info!(
@@ -859,7 +859,7 @@ pub fn generate_sequence_from_log(log_path: &str) -> Result<String> {
 pub fn set_speedup_funding(
     amount: u64,
     pub_key: &PublicKey,
-    channel: &DualChannel,
+    channel: &RemoteChannel,
     wallet: &mut InternalWallet,
     bitvmx_id: &Identifier,
 ) -> Result<()> {

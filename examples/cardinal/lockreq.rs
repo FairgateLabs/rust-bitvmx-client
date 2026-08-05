@@ -2,12 +2,12 @@ use anyhow::{Ok, Result};
 use bitcoin::{absolute, secp256k1};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
-    channel::channel::DualChannel,
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         tls_helper::{init_tls, Cert},
         BrokerConfig,
     },
+    RemoteChannel,
 };
 use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
 use bitvmx_settings::settings;
@@ -37,7 +37,7 @@ pub fn main() -> Result<()> {
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().set_allow_all(true);
-    let channel = DualChannel::new(&broker_config, cert, Some(2), allow_list)?;
+    let channel = RemoteChannel::new(&broker_config, cert, Some(2), allow_list)?;
     let identifier = Identifier::new(
         "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
         0,

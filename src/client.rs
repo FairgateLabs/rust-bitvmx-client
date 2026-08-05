@@ -11,7 +11,7 @@ use crate::{
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{
-    channel::channel::DualChannel,
+    RemoteChannel,
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{self, tls_helper::Cert},
 };
@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct BitVMXClient {
-    channel: DualChannel,
+    channel: RemoteChannel,
     components_config: ComponentsConfig,
 }
 
@@ -43,7 +43,7 @@ impl BitVMXClient {
             broker_config.get_pubk_hash()?,
             Some(broker_config.settings.clone()),
         );
-        let channel = DualChannel::new(
+        let channel = RemoteChannel::new(
             &config,
             Cert::new_with_privk(settings::decrypt_or_read_file(&l2_config.priv_key)?.as_str())?,
             Some(l2_config.id),

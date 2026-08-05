@@ -1,6 +1,6 @@
-use bitvmx_broker::channel::retry_helper::RetryPolicy;
+use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_broker::rpc::config::QueueChannelConfig;
+use bitvmx_broker::rpc::config::BrokerNodeConfig;
 use bitvmx_client::message_queue::MessageQueue;
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
@@ -31,7 +31,7 @@ impl QueueFixture {
             password: None,
         };
         let storage = Rc::new(Storage::new(&config).unwrap());
-        let retry_policy = RetryPolicy::new(&QueueChannelConfig::default()).unwrap();
+        let retry_policy = RetryPolicy::new(&BrokerNodeConfig::default()).unwrap();
         let queue = MessageQueue::new(storage.clone(), retry_policy);
 
         Self {

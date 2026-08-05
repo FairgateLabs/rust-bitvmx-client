@@ -5,14 +5,13 @@ use bitcoin::{
     Amount, Network, PublicKey as BitcoinPubKey, Txid,
 };
 use bitvmx_broker::{
-    broker_storage::BrokerStorage,
-    channel::channel::{DualChannel, LocalChannel},
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
-        sync_server::BrokerSync,
         tls_helper::{init_tls, Cert},
         BrokerConfig,
     },
+    storage::db::DbStorage,
+    BrokerServer, LocalChannel, RemoteChannel,
 };
 use bitvmx_client::{
     config::Config,
@@ -38,7 +37,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub fn wait_message_from_channel(channel: &DualChannel) -> Result<(String, Identifier)> {
+pub fn wait_message_from_channel(channel: &RemoteChannel) -> Result<(String, Identifier)> {
     //loop to timeout
     let mut i = 0;
     loop {
@@ -85,7 +84,7 @@ pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result
     Ok(())
 }
 
-pub fn get_all(channels: &Vec<DualChannel>) -> Result<Vec<(String, Identifier)>> {
+pub fn get_all(channels: &Vec<RemoteChannel>) -> Result<Vec<(String, Identifier)>> {
     let mut ret = vec![];
     for channel in channels {
         let msg = wait_message_from_channel(&channel)?;
@@ -103,7 +102,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
         config.broker.get_pubk_hash()?,
         Some(config.broker.settings),
     );
-    let bridge_client = DualChannel::new(
+    let bridge_client = RemoteChannel::new(
         &broker_config,
         Cert::new_with_privk(
             settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
@@ -124,9 +123,9 @@ pub fn main() -> Result<()> {
     init_tls();
     let broker_backend = Storage::new(&config)?;
     let broker_backend = Arc::new(Mutex::new(broker_backend));
-    let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
+    let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
     let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
-    let mut broker = BrokerSync::new_simple(&server_config, broker_storage.clone(), cert)?;
+    let mut broker = BrokerServer::new_simple(&server_config, broker_storage.clone(), cert)?;
 
     let broker_channel = LocalChannel::new_simple(
         "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
@@ -144,7 +143,7 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-pub fn lockservice(channel: LocalChannel<BrokerStorage>, identifier: Identifier) -> Result<()> {
+pub fn lockservice(channel: LocalChannel<DbStorage>, identifier: Identifier) -> Result<()> {
     init_tls();
     let mut wallet = prepare_bitcoin_running()?;
 

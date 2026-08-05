@@ -1,10 +1,10 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitvmx_broker::{
-    broker_memstorage::MemStorage,
-    channel::channel::DualChannel,
+    storage::memory::MemStorage,
+    RemoteChannel,
     identification::{allow_list::AllowList, routing::RoutingTable},
-    rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
+    rpc::{tls_helper::Cert, BrokerConfig}, BrokerServer,
 };
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
@@ -193,7 +193,7 @@ pub fn test_gnova_e2e() -> Result<()> {
     client_result
 }
 
-fn init_broker_server() -> Result<BrokerSync> {
+fn init_broker_server() -> Result<BrokerServer> {
     let configs = get_configs(bitcoin::Network::Regtest)?;
     let config = &configs[0]; // Use the first config for the dispatcher
 
@@ -210,7 +210,7 @@ fn init_broker_server() -> Result<BrokerSync> {
     );
 
     let storage = Arc::new(Mutex::new(MemStorage::new()));
-    let server = BrokerSync::new(&broker_config, storage, broker_cert, allow_list, routing)?;
+    let server = BrokerServer::new(&broker_config, storage, broker_cert, allow_list, routing)?;
     Ok(server)
 }
 
@@ -225,7 +225,7 @@ fn run_garbled_dispatcher(stop_rx: Receiver<()>) -> Result<()> {
         config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
-    let channel = DualChannel::new(
+    let channel = RemoteChannel::new(
         &broker_config,
         Cert::from_key_file(&config.testing.garbler.priv_key)?,
         Some(config.testing.garbler.id), // Use different ID to avoid conflicts
@@ -260,7 +260,7 @@ fn run_garbled_client_test() -> Result<()> {
         config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
-    let channel = DualChannel::new(
+    let channel = RemoteChannel::new(
         &broker_config,
         Cert::from_key_file(&config.testing.l2.priv_key)?,
         Some(config.testing.l2.id), // Use different ID to avoid conflicts
@@ -364,7 +364,7 @@ fn run_garbled_client_test() -> Result<()> {
 }
 
 fn wait_for_dispatcher_result(
-    channel: &DualChannel,
+    channel: &RemoteChannel,
     expected_type: &str,
     timeout_secs: u64,
 ) -> Result<(serde_json::Value, String)> {

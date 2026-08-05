@@ -5,7 +5,7 @@ use anyhow::Result;
 use bitcoin::{Amount, Network, Transaction};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
-    channel::channel::DualChannel,
+    RemoteChannel,
     identification::allow_list::AllowList,
     rpc::{tls_helper::Cert, BrokerConfig},
 };
@@ -446,7 +446,7 @@ impl TestHelper {
                 config.broker.get_pubk_hash()?,
                 Some(config.broker.settings.clone()),
             );
-            let channel = DualChannel::new(
+            let channel = RemoteChannel::new(
                 &broker_config,
                 Cert::new_with_privk(
                     settings::decrypt_or_read_file(&config.testing.l2.priv_key)?.as_str(),
@@ -696,7 +696,7 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             config.broker.get_pubk_hash()?,
             Some(config.broker.settings.clone()),
         );
-        let channel = DualChannel::new(
+        let channel = RemoteChannel::new(
             &broker_config,
             Cert::new_with_privk(
                 settings::decrypt_or_read_file(&config.testing.emulator.priv_key)?.as_str(),
@@ -746,7 +746,7 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             config.broker.get_pubk_hash()?,
             Some(config.broker.settings.clone()),
         );
-        let channel = DualChannel::new(
+        let channel = RemoteChannel::new(
             &broker_config,
             Cert::new_with_privk(
                 settings::decrypt_or_read_file(&config.testing.prover.priv_key)?.as_str(),
@@ -798,7 +798,7 @@ fn run_garbled(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<
             config.broker.get_pubk_hash()?,
             Some(config.broker.settings.clone()),
         );
-        let channel = DualChannel::new(
+        let channel = RemoteChannel::new(
             &broker_config,
             Cert::from_key_file(&config.testing.garbler.priv_key)?,
             Some(config.testing.garbler.id), // Use different ID to avoid conflicts

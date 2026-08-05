@@ -6,12 +6,9 @@ use bitcoin::{
 };
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
-    broker_storage::BrokerStorage,
-    channel::{
-        channel::{DualChannel, LocalChannel},
-        queue_channel::QueueChannel,
-    },
     identification::identifier::{Identifier, PubkHash},
+    storage::db::DbStorage,
+    BrokerNode, LocalChannel, RemoteChannel,
 };
 use bitvmx_wallet::wallet::Destination;
 use key_manager::key_manager::KeyManager;
@@ -47,9 +44,9 @@ pub enum MessageDisposition {
 pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub key_manager: Rc<KeyManager>,
     pub rsa_public_key: String, //TODO: this should not be here
-    pub comms: QueueChannel,
+    pub comms: BrokerNode,
     pub bitcoin_coordinator: BC,
-    pub broker_channel: LocalChannel<BrokerStorage>,
+    pub broker_channel: LocalChannel<DbStorage>,
     pub globals: Globals,
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
@@ -58,11 +55,11 @@ pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
 
 impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
     pub fn new(
-        comms: QueueChannel,
+        comms: BrokerNode,
         key_manager: Rc<KeyManager>,
         rsa_public_key: String,
         bitcoin_coordinator: BC,
-        broker_channel: LocalChannel<BrokerStorage>,
+        broker_channel: LocalChannel<DbStorage>,
         globals: Globals,
         witness: WitnessVars,
         components_config: ComponentsConfig,
@@ -386,7 +383,7 @@ impl RequestId {
 #[derive(Clone, Debug)]
 pub struct ParticipantChannel {
     pub id: Identifier,
-    pub channel: DualChannel,
+    pub channel: RemoteChannel,
 }
 
 pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";

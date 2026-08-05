@@ -1,6 +1,6 @@
-use bitvmx_broker::channel::retry_helper::RetryPolicy;
+use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_broker::rpc::config::QueueChannelConfig;
+use bitvmx_broker::rpc::config::BrokerNodeConfig;
 use bitvmx_client::message_queue::{MessageQueue, QueuedMessage};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -21,7 +21,7 @@ fn test_message_queue_persistence() {
     let storage = Rc::new(Storage::new(&config).unwrap());
     let queue = MessageQueue::new(
         storage.clone(),
-        RetryPolicy::new(&QueueChannelConfig::default()).unwrap(),
+        RetryPolicy::new(&BrokerNodeConfig::default()).unwrap(),
     );
 
     // Push messages
@@ -44,7 +44,7 @@ fn test_message_queue_persistence() {
     let storage = Rc::new(Storage::new(&config).unwrap());
     let queue = MessageQueue::new(
         storage.clone(),
-        RetryPolicy::new(&QueueChannelConfig::default()).unwrap(),
+        RetryPolicy::new(&BrokerNodeConfig::default()).unwrap(),
     );
 
     // Verify persistence
@@ -73,7 +73,7 @@ fn test_queue_no_starvation() {
     let storage = Rc::new(Storage::new(&config).unwrap());
 
     // Create a retry policy with a small delay and limited attempts
-    let retry_policy = RetryPolicy::new(&QueueChannelConfig {
+    let retry_policy = RetryPolicy::new(&BrokerNodeConfig {
         max_msgs_per_tick_utilization: 0.5,
         max_send_attempts: 3,
         retry_min_delay_msecs: 10,

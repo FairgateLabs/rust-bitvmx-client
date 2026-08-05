@@ -467,8 +467,8 @@ mod tests {
     use crate::comms_helper::{deserialize_msg, prepare_message};
     use crate::signature_verifier::OperatorVerificationStore;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use bitvmx_broker::channel::retry_helper::RetryPolicy;
-    use bitvmx_broker::rpc::config::QueueChannelConfig;
+    use bitvmx_broker::retry::RetryPolicy;
+    use bitvmx_broker::rpc::config::BrokerNodeConfig;
     use serde_json::json;
 
     const MAX_MSG_LEN_KB: usize = 200000;
@@ -476,7 +476,7 @@ mod tests {
     fn test_message_queue(store: Rc<Storage>) -> MessageQueue {
         MessageQueue::new(
             store,
-            RetryPolicy::new(&QueueChannelConfig::default()).unwrap(),
+            RetryPolicy::new(&BrokerNodeConfig::default()).unwrap(),
         )
     }
 
