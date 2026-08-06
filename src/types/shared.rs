@@ -93,6 +93,8 @@ pub enum OutgoingBitVMXApiMessages {
     SpeedUpProgramNoFunds(),
     // Setup Completed,
     SetupCompleted(ProgramId),
+    // Setup could not be completed. Terminal: no further messages arrive for this program.
+    SetupFailed(ProgramId, String, Option<PubkHash>, String), // id, step, sender being handled, reason
     // Add response types for the new messages if needed
     AggregatedPubkey(Uuid, PublicKey),
     AggregatedPubkeyNotReady(Uuid),
@@ -257,6 +259,7 @@ impl OutgoingBitVMXApiMessages {
                 "SpeedUpProgramNoFunds".to_string()
             }
             OutgoingBitVMXApiMessages::SetupCompleted(_) => "SetupCompleted".to_string(),
+            OutgoingBitVMXApiMessages::SetupFailed(_, _, _, _) => "SetupFailed".to_string(),
             OutgoingBitVMXApiMessages::AggregatedPubkey(_, _) => "AggregatedPubkey".to_string(),
             OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(_) => {
                 "AggregatedPubkeyNotReady".to_string()

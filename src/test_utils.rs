@@ -26,7 +26,7 @@ use crate::leader_broadcast::LeaderBroadcastHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::variables::{Globals, WitnessVars};
-use crate::types::ProgramContext;
+use crate::types::{OutgoingBitVMXApiMessages, ProgramContext};
 
 /// Temporary storage directory for unit tests. Creates a unique path under the
 /// system temp dir and removes it on drop.
@@ -419,7 +419,8 @@ pub struct TestProgramContextEnv {
     env: TestCommsEnv,
     /// Owns the storage the context's broker channel reads and writes, so it has
     /// to outlive the channel.
-    _broker: BrokerServer,
+    /// Also lets tests open a channel as L2 to read what the client sent there.
+    broker: BrokerServer,
     pub context: ProgramContext<BitcoinCoordinatorMock>,
     /// Remote peer identities; peer `i` uses the development `op_{i + 2}` key
     /// on its own port, so each index is a distinct identity (0..=8 available).
@@ -463,10 +464,22 @@ impl TestProgramContextEnv {
 
         Ok(Self {
             env,
-            _broker: broker,
+            broker,
             context,
             peers,
         })
+    }
+
+    /// Messages the client has sent to the configured L2 component, oldest first.
+    /// Reads without acking, so repeated calls return the full history.
+    pub fn l2_messages(&self) -> Result<Vec<OutgoingBitVMXApiMessages>, BitVMXError> {
+        let l2 = self
+            .broker
+            .create_local_channel(self.env.config.components.l2.clone());
+        l2.get_all()?
+            .into_iter()
+            .map(|message| OutgoingBitVMXApiMessages::from_string(&message.msg))
+            .collect()
     }
 
     /// Comms address of peer `index` (its real address and pubkey hash).
