@@ -11,8 +11,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::common::{
-    check_gnova_built,
-    config_trace,
+    check_gnova_built, config_trace,
     helper::{Mode, TestHelper},
 };
 

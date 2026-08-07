@@ -1,5 +1,5 @@
-use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::identification::identifier::Identifier;
+use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::rpc::config::BrokerNodeConfig;
 use bitvmx_client::message_queue::{MessageQueue, QueuedMessage};
 use std::rc::Rc;

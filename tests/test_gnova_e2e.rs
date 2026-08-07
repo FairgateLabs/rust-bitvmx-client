@@ -1,9 +1,9 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitvmx_broker::{
-    RemoteChannel,
     identification::{allow_list::AllowList, routing::RoutingTable},
-    rpc::{tls_helper::Cert, BrokerConfig}, BrokerServer,
+    rpc::{tls_helper::Cert, BrokerConfig},
+    BrokerServer, RemoteChannel,
 };
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;

@@ -3,9 +3,7 @@
 use anyhow::Result;
 
 use crate::common::{
-    check_bitvmx_cpu_built,
-    clear_db,
-    config_trace,
+    check_bitvmx_cpu_built, clear_db, config_trace,
     helper::{Mode, TestHelper},
 };
 

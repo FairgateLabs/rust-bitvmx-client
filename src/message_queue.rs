@@ -1,7 +1,7 @@
 use crate::errors::BitVMXError;
 use bitvmx_broker::{
-    retry::{now_ms, RetryPolicy, RetryState},
     identification::identifier::Identifier,
+    retry::{now_ms, RetryPolicy, RetryState},
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;

@@ -11,9 +11,9 @@ use crate::{
 use anyhow::Result;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitvmx_broker::{
-    RemoteChannel,
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{self, tls_helper::Cert},
+    RemoteChannel,
 };
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Destination;

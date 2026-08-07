@@ -1,11 +1,11 @@
 use anyhow::{Ok, Result};
 use bitvmx_broker::{
-    RemoteChannel,
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         tls_helper::{init_tls, Cert},
         BrokerConfig,
     },
+    RemoteChannel,
 };
 
 use bitcoin::Txid;

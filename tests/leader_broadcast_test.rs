@@ -29,8 +29,8 @@
 #![cfg(test)]
 
 use anyhow::Result;
-use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
+use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::rpc::config::BrokerNodeConfig;
 use bitvmx_client::comms_helper::{prepare_message, serialize_msg, CommsMessageType};
 use bitvmx_client::config::Config;

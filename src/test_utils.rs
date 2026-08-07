@@ -10,9 +10,9 @@ use bitcoin_coordinator::{
     types::{AckNews, News},
     TransactionStatus, TypesToMonitor,
 };
+use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_broker::rpc::BrokerConfig;
 use bitvmx_broker::{BrokerNode, BrokerServer, ReceivedMessage};
-use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_settings::settings;
 use key_manager::{create_key_manager_from_config, key_manager::KeyManager};
 use protocol_builder::types::{output::SpeedupData, Utxo};
@@ -441,11 +441,8 @@ impl TestProgramContextEnv {
         // The local channel can only come from a server, so that both share one storage handle.
         let (broker_config, _, broker_cert) =
             BrokerConfig::new_only_address(env.config.broker.port, None)?;
-        let broker = BrokerServer::new_simple(
-            &broker_config,
-            &env.config.broker.storage.path,
-            broker_cert,
-        )?;
+        let broker =
+            BrokerServer::new_simple(&broker_config, &env.config.broker.storage.path, broker_cert)?;
         let broker_channel = broker.create_local_channel(env.config.components.bitvmx.clone());
 
         let context = ProgramContext::new(

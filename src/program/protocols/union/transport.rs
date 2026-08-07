@@ -15,8 +15,8 @@ use super::types::{
     FundsAdvanceSPV, FundsAdvanced, InitData, PegInRequest, PegOutAccepted, PegOutRequest,
     PenalizedMember, RejectPeginData, UnionSPVNotification, UnionSettings, ADVANCE_FUNDS_REQUEST,
     COMMITTEE, DISPUTE_CORE_DATA, FULL_PENALIZATION_DATA, FUNDS_ADVANCED, FUNDS_ADVANCE_SPV,
-    INIT_DATA, PEGIN_REQUEST, PEGOUT_ACCEPTED, PEGOUT_REQUEST, REJECT_PEGIN_DATA,
-    UNION_SETTINGS, UNION_SPV_NOTIFICATION,
+    INIT_DATA, PEGIN_REQUEST, PEGOUT_ACCEPTED, PEGOUT_REQUEST, REJECT_PEGIN_DATA, UNION_SETTINGS,
+    UNION_SPV_NOTIFICATION,
 };
 
 /// Transport for union messages carried over `IncomingBitVMXApiMessages::SetVar`/`GetVar`.

@@ -13,8 +13,8 @@ use crate::{
     types::ProgramContext,
 };
 use bitvmx_broker::{
-    BrokerNode,
     identification::identifier::{Identifier, PubkHash},
+    BrokerNode,
 };
 use key_manager::key_manager::KeyManager;
 use serde_json::Value;

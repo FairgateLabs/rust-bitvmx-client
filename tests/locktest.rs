@@ -30,10 +30,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    common::{
-        helper::InternalWallet,
-        set_speedup_funding,
-    },
+    common::{helper::InternalWallet, set_speedup_funding},
     fixtures::create_lockreq_ready,
 };
 
@@ -69,8 +66,7 @@ pub fn prepare_bitcoin_running() -> Result<(BitcoinClient, InternalWallet)> {
     let mut wallet =
         Wallet::from_config(wallet_config.bitcoin.clone(), wallet_config.wallet.clone())?;
     wallet.sync_wallet()?;
-    let internal_wallet =
-        InternalWallet::new(bitcoin_client2, wallet, true);
+    let internal_wallet = InternalWallet::new(bitcoin_client2, wallet, true);
     Ok((bitcoin_client, internal_wallet))
 }
 
