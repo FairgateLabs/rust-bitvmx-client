@@ -1,3 +1,6 @@
+//! Shared with `rust-bitvmx-client-types` — this file is copied verbatim on release.
+//! Node-only code does not belong here; put it in the sibling `mod.rs`.
+
 use crate::errors::BitVMXError;
 use bitcoin::PublicKey;
 use bitvmx_broker::identification::identifier::PubkHash;
