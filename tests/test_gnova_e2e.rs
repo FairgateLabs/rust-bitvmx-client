@@ -1,7 +1,6 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitvmx_broker::{
-    storage::memory::MemStorage,
     RemoteChannel,
     identification::{allow_list::AllowList, routing::RoutingTable},
     rpc::{tls_helper::Cert, BrokerConfig}, BrokerServer,
@@ -22,7 +21,6 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use storage_backend::storage_config::StorageConfig;
@@ -209,8 +207,13 @@ fn init_broker_server() -> Result<BrokerServer> {
         Some(config.broker.settings.clone()),
     );
 
-    let storage = Arc::new(Mutex::new(MemStorage::new()));
-    let server = BrokerServer::new(&broker_config, storage, broker_cert, allow_list, routing)?;
+    let server = BrokerServer::new(
+        &broker_config,
+        &config.broker.storage.path,
+        broker_cert,
+        allow_list,
+        routing,
+    )?;
     Ok(server)
 }
 

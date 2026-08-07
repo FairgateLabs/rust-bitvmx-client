@@ -7,7 +7,6 @@ use bitcoin::{
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TransactionStatus};
 use bitvmx_broker::{
     identification::identifier::{Identifier, PubkHash},
-    storage::db::DbStorage,
     BrokerNode, LocalChannel, RemoteChannel,
 };
 use bitvmx_wallet::wallet::Destination;
@@ -46,7 +45,7 @@ pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub rsa_public_key: String, //TODO: this should not be here
     pub comms: BrokerNode,
     pub bitcoin_coordinator: BC,
-    pub broker_channel: LocalChannel<DbStorage>,
+    pub broker_channel: LocalChannel,
     pub globals: Globals,
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
@@ -59,7 +58,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
         key_manager: Rc<KeyManager>,
         rsa_public_key: String,
         bitcoin_coordinator: BC,
-        broker_channel: LocalChannel<DbStorage>,
+        broker_channel: LocalChannel,
         globals: Globals,
         witness: WitnessVars,
         components_config: ComponentsConfig,

@@ -42,7 +42,7 @@ use key_manager::create_key_manager_from_config;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
-use bitvmx_broker::{rpc::BrokerConfig, storage::db::DbStorage, BrokerServer, LocalChannel};
+use bitvmx_broker::{rpc::BrokerConfig, BrokerServer};
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
@@ -53,7 +53,6 @@ use std::time::Instant;
 use std::{
     net::SocketAddr,
     rc::Rc,
-    sync::{Arc, Mutex},
     thread::sleep,
     time::Duration,
 };
@@ -132,7 +131,7 @@ impl BitVMX {
             config.comms.address,
             &settings::decrypt_or_read_file(&config.comms.priv_key)?,
             store.clone(),
-            Some(config.comms.storage_path.clone()),
+            &config.comms.storage_path,
             comms_allow_list,
             RoutingTable::from_file(&config.broker.routing_table)?,
             config.broker.settings.clone(),
@@ -158,9 +157,6 @@ impl BitVMX {
         //Also the broker could be run independently if needed
         let allow_list = AllowList::from_file(&config.broker.allow_list)?;
         let routing_table = RoutingTable::from_file(&config.broker.routing_table)?;
-        let broker_backend = Storage::new(&config.broker.storage)?;
-        let broker_backend = Arc::new(Mutex::new(broker_backend));
-        let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
         let cert = Cert::new_with_privk(
             settings::decrypt_or_read_file(&config.broker.priv_key)
                 .map_err(|e| BitVMXError::ConfigurationError(e.into()))?
@@ -174,14 +170,14 @@ impl BitVMX {
         );
         let broker = BrokerServer::new(
             &broker_config,
-            broker_storage.clone(),
+            &config.broker.storage.path,
             cert,
             allow_list,
             routing_table,
         )?;
 
-        let broker_channel =
-            LocalChannel::new(config.components.bitvmx.clone(), broker_storage.clone());
+        // The channel has to come from the server so that both share the same storage handle.
+        let broker_channel = broker.create_local_channel(config.components.bitvmx.clone());
 
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 

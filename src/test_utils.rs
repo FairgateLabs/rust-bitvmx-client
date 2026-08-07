@@ -2,7 +2,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Mutex};
 use std::{env, fs};
 
 use bitcoin::{Transaction, Txid};
@@ -11,9 +10,8 @@ use bitcoin_coordinator::{
     types::{AckNews, News},
     TransactionStatus, TypesToMonitor,
 };
-use bitvmx_broker::storage::db::DbStorage;
-use bitvmx_broker::LocalChannel;
-use bitvmx_broker::{BrokerNode, ReceivedMessage};
+use bitvmx_broker::rpc::BrokerConfig;
+use bitvmx_broker::{BrokerNode, BrokerServer, ReceivedMessage};
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_settings::settings;
 use key_manager::{create_key_manager_from_config, key_manager::KeyManager};
@@ -102,6 +100,8 @@ impl TestCommsEnv {
             .comms
             .address
             .set_port(NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed));
+        // The broker server binds its own port too, so take it from the same counter.
+        config.broker.port = NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed);
 
         let storage = Rc::new(Storage::new(&config.storage)?);
         let key_manager = Rc::new(create_key_manager_from_config(
@@ -188,7 +188,7 @@ impl TestCommsEnv {
             address,
             &format!("config/keys/op_{}.key", index + 2),
             self.storage.clone(),
-            Some(format!("{}/comms-{}.db", self._dir.path(), name)),
+            &format!("{}/comms-{}.db", self._dir.path(), name),
             &self.config.comms.allow_list,
             &self.config.broker.routing_table,
             self.config.broker.settings.clone(),
@@ -204,7 +204,7 @@ impl TestCommsEnv {
             self.config.comms.address,
             &self.config.comms.priv_key,
             self.storage.clone(),
-            Some(self.config.comms.storage_path.clone()),
+            &self.config.comms.storage_path,
             &self.config.comms.allow_list,
             &self.config.broker.routing_table,
             self.config.broker.settings.clone(),
@@ -417,6 +417,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
 /// with the bitcoin coordinator mocked so no bitcoind is needed.
 pub struct TestProgramContextEnv {
     env: TestCommsEnv,
+    /// Owns the storage the context's broker channel reads and writes, so it has
+    /// to outlive the channel.
+    _broker: BrokerServer,
     pub context: ProgramContext<BitcoinCoordinatorMock>,
     /// Remote peer identities; peer `i` uses the development `op_{i + 2}` key
     /// on its own port, so each index is a distinct identity (0..=8 available).
@@ -435,10 +438,15 @@ impl TestProgramContextEnv {
         let env = TestCommsEnv::new(prefix)?;
 
         let comms = env.broker_node()?;
-        let broker_backend = Arc::new(Mutex::new(Storage::new(&env.config.broker.storage)?));
-        let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
-        let broker_channel =
-            LocalChannel::new(env.config.components.bitvmx.clone(), broker_storage);
+        // The local channel can only come from a server, so that both share one storage handle.
+        let (broker_config, _, broker_cert) =
+            BrokerConfig::new_only_address(env.config.broker.port, None)?;
+        let broker = BrokerServer::new_simple(
+            &broker_config,
+            &env.config.broker.storage.path,
+            broker_cert,
+        )?;
+        let broker_channel = broker.create_local_channel(env.config.components.bitvmx.clone());
 
         let context = ProgramContext::new(
             comms,
@@ -458,6 +466,7 @@ impl TestProgramContextEnv {
 
         Ok(Self {
             env,
+            _broker: broker,
             context,
             peers,
         })
