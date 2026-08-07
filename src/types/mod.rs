@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::config::ComponentsConfig;
 use bitcoin_coordinator::coordinator::BitcoinCoordinator;
 use bitvmx_broker::{
-    BrokerNode, LocalChannel, RemoteChannel, identification::identifier::Identifier, storage::db::DbStorage,
+    identification::identifier::Identifier, BrokerNode, LocalChannel, RemoteChannel,
 };
 use key_manager::key_manager::KeyManager;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,6 @@ use crate::{
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::variables::{Globals, WitnessVars},
 };
-
 
 /// Outcome of handling an incoming message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +35,7 @@ pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub rsa_public_key: String, //TODO: this should not be here
     pub comms: BrokerNode,
     pub bitcoin_coordinator: BC,
-    pub broker_channel: LocalChannel<DbStorage>,
+    pub broker_channel: LocalChannel,
     pub globals: Globals,
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
@@ -49,7 +48,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
         key_manager: Rc<KeyManager>,
         rsa_public_key: String,
         bitcoin_coordinator: BC,
-        broker_channel: LocalChannel<DbStorage>,
+        broker_channel: LocalChannel,
         globals: Globals,
         witness: WitnessVars,
         components_config: ComponentsConfig,

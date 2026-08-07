@@ -37,9 +37,7 @@ bitcoin-coordinator = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitco
 rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", tag = "v0.8.0" }
 bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.8.0" }
 bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.8.0" }
-bitvmx-broker = { git = "https://github.com/FairgateLabs/rust-bitvmx-broker.git", features = [
-    "storagebackend",
-], tag = "v0.8.0" }
+bitvmx-broker = { git = "https://github.com/FairgateLabs/rust-bitvmx-broker.git", tag = "v0.8.0" }
 emulator = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.0" }
 bitcoin-script-riscv = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.0" }
 bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.0" }

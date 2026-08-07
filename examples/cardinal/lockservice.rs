@@ -10,7 +10,6 @@ use bitvmx_broker::{
         tls_helper::{init_tls, Cert},
         BrokerConfig,
     },
-    storage::db::DbStorage,
     BrokerServer, LocalChannel, RemoteChannel,
 };
 use bitvmx_client::{
@@ -28,14 +27,10 @@ use bitvmx_client::{
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
 use protocol_builder::types::Utxo;
-use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tracing::info;
 use uuid::Uuid;
 
-use std::{
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+use std::str::FromStr;
 
 pub fn wait_message_from_channel(channel: &RemoteChannel) -> Result<(String, Identifier)> {
     //loop to timeout
@@ -119,18 +114,15 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
 
 pub fn main() -> Result<()> {
     // This will act as rpc with to allow the wallets to talk with the L2
-    let config = StorageConfig::new("/tmp/lockservice_broker".to_string(), None);
     init_tls();
-    let broker_backend = Storage::new(&config)?;
-    let broker_backend = Arc::new(Mutex::new(broker_backend));
-    let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
     let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
-    let mut broker = BrokerServer::new_simple(&server_config, broker_storage.clone(), cert)?;
+    let mut broker = BrokerServer::new_simple(&server_config, "/tmp/lockservice_broker", cert)?;
 
-    let broker_channel = LocalChannel::new_simple(
+    // The channel has to come from the server so that both share the same storage handle.
+    let broker_channel = broker.create_local_channel(Identifier::new(
         "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-        broker_storage.clone(),
-    );
+        0,
+    ));
 
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
@@ -143,7 +135,7 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-pub fn lockservice(channel: LocalChannel<DbStorage>, identifier: Identifier) -> Result<()> {
+pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> {
     init_tls();
     let mut wallet = prepare_bitcoin_running()?;
 
