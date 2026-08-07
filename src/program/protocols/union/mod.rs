@@ -9,5 +9,6 @@ pub mod macros;
 pub mod pairwise_penalization;
 pub mod reject_pegin;
 pub mod scripts;
+pub mod transport;
 pub mod types;
 pub mod user_take;

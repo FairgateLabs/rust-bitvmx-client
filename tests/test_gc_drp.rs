@@ -24,8 +24,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::common::{
-    check_gnova_built,
-    config_trace,
+    check_gnova_built, config_trace,
     helper::{Mode, TestHelper},
     init_utxo_new,
 };
@@ -302,25 +301,6 @@ pub fn test_correct_input() -> Result<()> {
     )
 }
 
-const SHA512_IV: [u64; 8] = [
-    0x6A09E667F3BCC908,
-    0xBB67AE8584CAA73B,
-    0x3C6EF372FE94F82B,
-    0xA54FF53A5F1D36F1,
-    0x510E527FADE682D1,
-    0x9B05688C2B3E6C1F,
-    0x1F83D9ABFB41BD6B,
-    0x5BE0CD19137E2179,
-];
-
-fn sha512_iv_bits_le() -> Vec<bool> {
-    SHA512_IV
-        .iter()
-        .rev()
-        .flat_map(|&w| u64_to_bits_le(w))
-        .collect()
-}
-
 fn u64_to_bits_le(x: u64) -> Vec<bool> {
     (0..64)
         .map(|i| if ((x >> i) & 1) == 1 { true } else { false })
@@ -383,12 +363,11 @@ pub fn test_sha512_correct_input() -> Result<()> {
         .rev()
         .flat_map(u8_to_bits_le)
         .collect::<Vec<_>>();
-    let iv_bits = sha512_iv_bits_le();
 
     let block = sha512_single_block(preimage);
 
     let circuit_input = sha512_block_bits(&block);
-    let public_circuit_input = vec![iv_bits, expected_bits, circuit_input[..512].to_vec()]
+    let public_circuit_input = vec![expected_bits, circuit_input[..512].to_vec()]
         .concat()
         .into_iter()
         .collect::<Vec<_>>();
@@ -402,7 +381,8 @@ pub fn test_sha512_correct_input() -> Result<()> {
         None,
         None,
         "../rust-bitvmx-gc/test-circuits/full-sha512.json".to_string(),
-        None,
+        Some("../rust-bitvmx-gc/test-proof".to_string()),
+        // None,
     )
 }
 
@@ -421,11 +401,10 @@ fn test_sha512_wrong_input() -> Result<()> {
         .rev()
         .flat_map(u8_to_bits_le)
         .collect::<Vec<_>>();
-    let iv_bits = sha512_iv_bits_le();
 
     let block = sha512_single_block(wrong_preimage);
     let circuit_input = sha512_block_bits(&block);
-    let public_circuit_input = vec![iv_bits, expected_bits, circuit_input[..512].to_vec()]
+    let public_circuit_input = vec![expected_bits, circuit_input[..512].to_vec()]
         .concat()
         .into_iter()
         .collect::<Vec<_>>();
@@ -436,9 +415,10 @@ fn test_sha512_wrong_input() -> Result<()> {
         public_circuit_input,
         circuit_input[512..].to_vec(),
         winner_role,
-        Some(true),
-        Some(Network::Testnet4),
+        Some(false),
+        Some(Network::Regtest),
         "../rust-bitvmx-gc/test-circuits/full-sha512.json".to_string(),
         Some("../rust-bitvmx-gc/test-proof".to_string()),
+        // None,
     )
 }

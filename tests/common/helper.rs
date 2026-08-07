@@ -5,9 +5,9 @@ use anyhow::Result;
 use bitcoin::{Amount, Network, Transaction};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
-    RemoteChannel,
     identification::allow_list::AllowList,
     rpc::{tls_helper::Cert, BrokerConfig},
+    RemoteChannel,
 };
 use bitvmx_client::{
     bitvmx::BitVMX,
@@ -422,14 +422,14 @@ impl TestHelper {
             let (mine_stop_tx, mine_stop_rx) = channel::<()>();
             let (mine_ready_tx, mine_ready_rx) = channel::<()>();
             let mine_handle = thread::spawn(move || {
+                let interval = if env::var("GITHUB_ACTIONS").is_ok() {
+                    automine_interval * 5
+                } else {
+                    automine_interval
+                };
+
                 // if 500 blocks mined, stop
-                run_auto_mine(
-                    network,
-                    mine_stop_rx,
-                    mine_ready_tx,
-                    automine_interval,
-                    Some(500),
-                )
+                run_auto_mine(network, mine_stop_rx, mine_ready_tx, interval, Some(500))
             });
             (Some(mine_handle), Some(mine_stop_tx), Some(mine_ready_rx))
         } else {
