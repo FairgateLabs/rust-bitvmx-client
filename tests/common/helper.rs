@@ -658,9 +658,9 @@ fn run_bitvmx(network: Network, clear_state: bool, rx: Receiver<()>, tx: Sender<
             let _span = info_span!("", id = i).entered();
             if ready {
                 let ret = bitvmx.tick();
-                if ret.is_err() {
-                    error!("Error in BitVMX tick: {:?}", ret);
-                    return Ok(());
+                if let Err(e) = ret {
+                    error!("Error in BitVMX tick: {:?}", e);
+                    return Err(e.into());
                 }
             } else {
                 ready = bitvmx.process_bitcoin_updates_with_throttle()?;
