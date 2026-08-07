@@ -50,12 +50,7 @@ use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Instant;
-use std::{
-    net::SocketAddr,
-    rc::Rc,
-    thread::sleep,
-    time::Duration,
-};
+use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -565,10 +560,14 @@ impl BitVMX {
         self.process_wallet_updates()?;
 
         if !self.program_context.bitcoin_coordinator.is_ready()? {
-            return Ok(false);
+            return Ok(true);
         }
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
+
+        if news.monitor_news.is_empty() && news.coordinator_news.is_empty() {
+            return Ok(false);
+        }
 
         for monitor_news in news.monitor_news {
             let ack_news: AckNews;
@@ -812,7 +811,7 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
-        //info!("Ticking BitVMX: {}", self.count);
+        debug!("Ticking BitVMX: {}", self.count);
 
         self.store.begin_global_transaction()?;
 
