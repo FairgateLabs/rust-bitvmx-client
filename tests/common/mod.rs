@@ -414,8 +414,8 @@ fn config_trace_aux() {
         "bitvmx_broker=off",
     ];
 
-    let filter = EnvFilter::builder()
-        .parse(default_modules.join(","))
+    let filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new(default_modules.join(",")))
         .expect("Invalid filter");
 
     tracing_subscriber::fmt()
