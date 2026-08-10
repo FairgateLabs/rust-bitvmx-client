@@ -90,10 +90,13 @@ impl Program {
         reason: &str,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
-        if self.state == ProgramState::Failed {
+        if !matches!(
+            self.state,
+            ProgramState::SettingUp | ProgramState::WaitingData
+        ) {
             debug!(
-                "Program::fail_setup() - Program {} already failed, not reporting again",
-                self.program_id
+                "Program::fail_setup() - Program {} is {:?}, not reporting a setup failure",
+                self.program_id, self.state
             );
             return Ok(());
         }
@@ -1049,6 +1052,22 @@ mod tests {
             }
             other => panic!("expected SetupFailed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_ready_program_is_never_reported_as_a_setup_failure() {
+        let mut env = TestProgramContextEnv::new("program-ready-not-failed").unwrap();
+        let dir = TestStorageDir::new("program-ready-not-failed-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        program.state = ProgramState::Ready;
+
+        // Reached from bitvmx.rs when a late message for a finished setup exhausts its retries.
+        program
+            .fail_setup(None, "message dropped after max retries", &mut env.context)
+            .unwrap();
+
+        assert_eq!(program.state, ProgramState::Ready);
+        assert!(env.l2_messages().unwrap().is_empty());
     }
 
     #[test]

@@ -158,7 +158,19 @@ pub fn init_bitvmx_with_storage(
     emulator_dispatcher: bool,
     clear_storage: bool,
 ) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
-    let config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    init_bitvmx_with_config(role, emulator_dispatcher, clear_storage, |_| {})
+}
+
+/// Same as `init_bitvmx_with_storage`, but lets a test change the loaded config before the
+/// instance is built.
+pub fn init_bitvmx_with_config(
+    role: &str,
+    emulator_dispatcher: bool,
+    clear_storage: bool,
+    tune: impl FnOnce(&mut Config),
+) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
+    let mut config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    tune(&mut config);
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
     let broker_config = BrokerConfig::new(
         config.broker.port,

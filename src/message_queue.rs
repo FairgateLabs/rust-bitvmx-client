@@ -26,6 +26,16 @@ impl QueuedMessage {
     }
 }
 
+/// Result of returning a message to the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOutcome {
+    /// Queued for another attempt.
+    Queued,
+    /// Retry budget exhausted. The message was discarded and will not arrive again:
+    /// the sender already delivered it successfully and does not resend.
+    Dropped,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct StoredMessage {
     identifier: Identifier,
@@ -115,7 +125,7 @@ impl MessageQueue {
         Ok(())
     }
 
-    pub fn push_back(&self, mut queued_msg: QueuedMessage) -> Result<(), BitVMXError> {
+    pub fn push_back(&self, mut queued_msg: QueuedMessage) -> Result<PushOutcome, BitVMXError> {
         queued_msg
             .retry_state
             .record_attempt(&self.retry_policy, now_ms()?);
@@ -126,10 +136,11 @@ impl MessageQueue {
                 queued_msg.retry_state.get_attempts(),
                 queued_msg.identifier
             );
-            return Ok(());
+            return Ok(PushOutcome::Dropped);
         }
 
-        self.push(queued_msg)
+        self.push(queued_msg)?;
+        Ok(PushOutcome::Queued)
     }
 
     pub fn push_new(&self, identifier: Identifier, msg: Vec<u8>) -> Result<(), BitVMXError> {
@@ -320,7 +331,7 @@ mod tests {
         let queue = MessageQueue::new(storage, retry_policy.clone());
 
         let msg = QueuedMessage::new(test_identifier("retry"), vec![9, 9, 9]).unwrap();
-        queue.push_back(msg).unwrap();
+        assert_eq!(queue.push_back(msg).unwrap(), PushOutcome::Queued);
 
         let queued_ids = queue.get_queue_ids().unwrap();
         assert_eq!(queued_ids.len(), 1);
@@ -336,7 +347,7 @@ mod tests {
                 .record_attempt(&retry_policy, now_ms().unwrap());
         }
 
-        queue.push_back(exhausted).unwrap();
+        assert_eq!(queue.push_back(exhausted).unwrap(), PushOutcome::Dropped);
 
         assert_eq!(queue.get_queue_ids().unwrap().len(), 1);
         assert!(!queue.is_empty().unwrap());

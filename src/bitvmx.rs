@@ -12,7 +12,7 @@ use crate::{
     config::Config,
     errors::BitVMXError,
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
-    message_queue::{MessageQueue, QueuedMessage},
+    message_queue::{MessageQueue, PushOutcome, QueuedMessage},
     program::{
         participant::CommsAddress,
         variables::{Globals, WitnessVars},
@@ -34,7 +34,10 @@ use bitcoin_coordinator::{
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::retry::RetryPolicy;
-use bitvmx_broker::{identification::identifier::Identifier, rpc::tls_helper::Cert};
+use bitvmx_broker::{
+    identification::identifier::{Identifier, PubkHash},
+    rpc::tls_helper::Cert,
+};
 use bitvmx_broker::{BrokerNode, ReceivedMessage};
 use bitvmx_dispatcher_utils::PingMessage;
 use bitvmx_settings::settings;
@@ -247,6 +250,30 @@ impl BitVMX {
         Ok(program)
     }
 
+    /// Reports a setup failure for a message the node knows it has lost. Unlike the errors
+    /// `Program` catches itself, nothing here raised an error: the message simply never
+    /// arrived or never left, so setup would otherwise wait for it forever.
+    fn fail_program_setup(
+        &mut self,
+        program_id: &Uuid,
+        peer: Option<PubkHash>,
+        reason: &str,
+    ) -> Result<(), BitVMXError> {
+        match self.load_program(program_id) {
+            Ok(mut program) => program.fail_setup(peer, reason, &mut self.program_context),
+            // No local program means no setup to fail, and nobody waiting on one. Any other
+            // load failure is raised: swallowing it would drop the report and stall silently.
+            Err(BitVMXError::ProgramNotFound(_)) => {
+                debug!(
+                    "BitVMX::fail_program_setup() - Program {} not found, nothing to fail",
+                    program_id
+                );
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Step 1: Verifies the message signature.
     /// Returns Ok(true) if verification succeeded, Ok(false) if the message needs to be buffered
     /// (e.g., missing verification key), or Err if there was an error.
@@ -398,7 +425,14 @@ impl BitVMX {
                     "Buffering message due to missing verification key: {:?} {:?}",
                     program_id, msg_type
                 );
-                self.message_queue.push_back(msg)?;
+                let peer = msg.identifier.pubkey_hash.clone();
+                if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
+                    self.fail_program_setup(
+                        &program_id,
+                        Some(peer),
+                        "verification key never arrived; message dropped after max retries",
+                    )?;
+                }
                 return Ok(());
             }
         }
@@ -442,7 +476,14 @@ impl BitVMX {
                 "Pending message to back: {:?} for program {:?} from: {:?}",
                 msg_type, program_id, msg.identifier.pubkey_hash,
             );
-            self.message_queue.push_back(msg)?;
+            let peer = msg.identifier.pubkey_hash.clone();
+            if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
+                self.fail_program_setup(
+                    &program_id,
+                    Some(peer),
+                    &format!("{msg_type:?} message dropped after max retries"),
+                )?;
+            }
         }
         Ok(())
     }
@@ -504,7 +545,15 @@ impl BitVMX {
                         "Processing deadletter message for context: {:?} and identifier: {:?}",
                         context, identifier
                     );
-                    // TODO: Add a function in protocol handler to process deadletter messages
+                    // Setup traffic is sent with Context::ProgramId; other contexts have no
+                    // program to fail.
+                    if let Context::ProgramId(program_id) = context {
+                        self.fail_program_setup(
+                            &program_id,
+                            Some(identifier.pubkey_hash.clone()),
+                            "could not deliver setup message after max attempts",
+                        )?;
+                    }
                 }
                 (ReceivedMessage::Error(e), _) => {
                     info!("Error receiving deadletter message {}", e);
