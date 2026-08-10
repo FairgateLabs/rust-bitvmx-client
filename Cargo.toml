@@ -53,8 +53,7 @@ bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitv
 bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.0" }
 bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.0" }
 redact = { version = "0.1", features = ["serde", "zeroize"] }
-# adding time to fix incomatibility between deps in broker->rcgen 
-time = "=0.3.46"
+time = "0.3.55"
 
 
 [dev-dependencies]
