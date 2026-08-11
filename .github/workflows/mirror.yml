@@ -19,21 +19,25 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
+      - name: Configure Git with Token Authentication
+        run: |
+          git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
+        env:
+          REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+
       - name: Check out client at tag
         uses: actions/checkout@v4
         with:
           path: client
           ref: ${{ github.ref_name }}
+          persist-credentials: false
 
       - name: Check out mirror
         uses: actions/checkout@v4
         with:
           repository: FairgateLabs/rust-bitvmx-client-types
           path: mirror
-          # Needs write on the mirror: checkout persists this credential, and the
-          # branch+tag push at the end of the job reuses it. GITHUB_TOKEN cannot
-          # stand in -- it is scoped to this repo alone.
-          token: ${{ secrets.REPO_ACCESS_TOKEN }}
+          persist-credentials: false
 
       - name: Regenerate mirror from client
         run: |
