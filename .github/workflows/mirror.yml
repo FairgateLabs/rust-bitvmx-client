@@ -23,7 +23,7 @@ jobs:
         run: |
           git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
-          REPO_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+          REPO_TOKEN: ${{ secrets.BITVMX_CLIENT_TYPES_WRITE }}
 
       - name: Check out client at tag
         uses: actions/checkout@v4
