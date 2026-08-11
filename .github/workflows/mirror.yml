@@ -10,6 +10,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ github.ref_name }}
 
 permissions:
   contents: read
@@ -29,18 +30,21 @@ jobs:
         with:
           repository: FairgateLabs/rust-bitvmx-client-types
           path: mirror
-          token: ${{ secrets.MIRROR_PUSH_TOKEN }}
+          # Needs write on the mirror: checkout persists this credential, and the
+          # branch+tag push at the end of the job reuses it. GITHUB_TOKEN cannot
+          # stand in -- it is scoped to this repo alone.
+          token: ${{ secrets.REPO_ACCESS_TOKEN }}
 
       - name: Regenerate mirror from client
         run: |
           python3 client/scripts/mirror.py \
             --client-dir client \
             --out mirror \
-            --tag ${{ github.ref_name }}
+            --tag "$TAG"
 
       - name: Stamp mirror Cargo.toml version from tag
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           awk -v ver="$version" '
             /^\[/ { in_pkg = ($0 == "[package]") }
             in_pkg && /^version = / { $0 = "version = \"" ver "\"" }
@@ -61,12 +65,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || git commit -m "Regenerate mirror at ${{ github.ref_name }}"
+          git diff --cached --quiet || git commit -m "Regenerate mirror at $TAG"
 
       - name: Tag and push mirror
         working-directory: mirror
         run: |
-          git tag "$GITHUB_REF_NAME"
+          git tag "$TAG"
+          # The release lands on its own branch, never on main: main is ruleset
+          # protected and moves only by PR. The tag is what consumers pin, and a
+          # tag resolves regardless of which branch carries the commit, so the
+          # crate is usable the moment this push lands -- merging is bookkeeping.
+          #
           # Atomic: a rejected tag (e.g. re-tagging an existing release) must not
-          # leave main advanced without it — that half-publishes the release.
-          git push --atomic origin HEAD:main "refs/tags/$GITHUB_REF_NAME"
+          # leave the branch pushed without it — that half-publishes the release.
+          git push --atomic origin "HEAD:refs/heads/release/$TAG" "refs/tags/$TAG"
