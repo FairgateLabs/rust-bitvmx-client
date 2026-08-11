@@ -20,7 +20,7 @@ use crate::{
     signature_verifier::SignatureVerifier,
     types::{
         IncomingBitVMXApiMessages, MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext,
-        ProgramStatus, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+        ProgramStatus, SetupFailureReason, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -257,7 +257,7 @@ impl BitVMX {
         &mut self,
         program_id: &Uuid,
         peer: Option<PubkHash>,
-        reason: &str,
+        reason: SetupFailureReason,
     ) -> Result<(), BitVMXError> {
         match self.load_program(program_id) {
             Ok(mut program) => program.fail_setup(peer, reason, &mut self.program_context),
@@ -430,7 +430,7 @@ impl BitVMX {
                     self.fail_program_setup(
                         &program_id,
                         Some(peer),
-                        "verification key never arrived; message dropped after max retries",
+                        SetupFailureReason::VerificationKeyMissing,
                     )?;
                 }
                 return Ok(());
@@ -478,11 +478,7 @@ impl BitVMX {
             );
             let peer = msg.identifier.pubkey_hash.clone();
             if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
-                self.fail_program_setup(
-                    &program_id,
-                    Some(peer),
-                    &format!("{msg_type:?} message dropped after max retries"),
-                )?;
+                self.fail_program_setup(&program_id, Some(peer), SetupFailureReason::MessageLost)?;
             }
         }
         Ok(())
@@ -551,7 +547,7 @@ impl BitVMX {
                         self.fail_program_setup(
                             &program_id,
                             Some(identifier.pubkey_hash.clone()),
-                            "could not deliver setup message after max attempts",
+                            SetupFailureReason::Undeliverable,
                         )?;
                     }
                 }

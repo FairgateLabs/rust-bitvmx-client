@@ -8,7 +8,9 @@ use bitvmx_client::comms_allow_list;
 use bitvmx_client::comms_helper::{deserialize_msg, serialize_msg, CommsMessageType};
 use bitvmx_client::config::Config;
 use bitvmx_client::program::participant::CommsAddress;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use bitvmx_client::types::{
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, SetupFailureReason,
+};
 use bitvmx_settings::settings;
 use serde_json::{json, Value};
 use std::rc::Rc;
@@ -161,7 +163,7 @@ fn assert_setup_failed(
     message: OutgoingBitVMXApiMessages,
     expected_id: Uuid,
     expected_peer: &str,
-    expected_reason: &str,
+    expected_reason: SetupFailureReason,
     phase: &str,
 ) {
     match message {
@@ -206,9 +208,8 @@ fn dropped_setup_messages_are_reported_to_l2() -> Result<()> {
     let mut peer = RawPeer::new("op_2")?;
     let peer_hash = peer.address.pubkey_hash.clone();
 
-    // Phase 1 — bitvmx.rs:435. Setup data from a peer whose verification key we do not
-    // have is buffered until the key shows up. This peer never answers the request for
-    // it, so the message is dropped instead.
+    // The missing-key drop in `process_msg`. Setup data is buffered until the
+    // sender's key arrives; this peer never answers the request, so it is dropped instead.
     info!("Phase 1: setup data that can never be verified");
     let program_id = start_program(&mut bitvmx, &mut peer, &channel, 0)?;
     peer.send(
@@ -223,14 +224,13 @@ fn dropped_setup_messages_are_reported_to_l2() -> Result<()> {
         message,
         program_id,
         &peer_hash,
-        "verification key never arrived; message dropped after max retries",
+        SetupFailureReason::VerificationKeyMissing,
         "phase 1",
     );
 
-    // Phase 2 — bitvmx.rs:486. An announcement the client cannot accept (here the key does
-    // not parse; a key whose fingerprint disagrees with the sender is rejected the same way)
-    // puts the message back on the queue. Retrying cannot help: the peer has already sent
-    // what it is going to send.
+    // The exhausted-RetryLater drop in `process_msg`. An announcement the client
+    // cannot accept goes back on the queue, and retrying cannot help. `MessageLost` names no
+    // message type, but RawPeer sends one frame per program, so the drop can only be this one.
     info!("Phase 2: a verification key the client cannot accept");
     let program_id = start_program(&mut bitvmx, &mut peer, &channel, 0)?;
     peer.send(
@@ -245,7 +245,7 @@ fn dropped_setup_messages_are_reported_to_l2() -> Result<()> {
         message,
         program_id,
         &peer_hash,
-        "VerificationKey message dropped after max retries",
+        SetupFailureReason::MessageLost,
         "phase 2",
     );
 

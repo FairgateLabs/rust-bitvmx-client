@@ -1,7 +1,9 @@
 use anyhow::Result;
 
 use bitvmx_client::program::participant::CommsAddress;
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use bitvmx_client::types::{
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, SetupFailureReason,
+};
 use uuid::Uuid;
 
 mod common;
@@ -51,15 +53,18 @@ fn undeliverable_setup_message_is_reported_to_l2() -> Result<()> {
         common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
 
     match OutgoingBitVMXApiMessages::from_string(&msg)? {
-        // The reason is free text, so it is reported rather than asserted on. Nothing inbound
-        // arrives in this test, so the unreachable peer is what identifies the path taken.
         OutgoingBitVMXApiMessages::SetupFailed(id, step, peer, reason) => {
             assert_eq!(id, program_id);
             assert!(!step.is_empty(), "the failing step should be named");
             assert_eq!(
                 peer.as_deref(),
                 Some(ABSENT_PEER),
-                "the peer that could not be reached should be named, got reason {reason:?}",
+                "the peer that could not be reached should be named",
+            );
+            assert_eq!(
+                reason,
+                SetupFailureReason::Undeliverable,
+                "an unreachable peer should be reported as undeliverable",
             );
         }
         other => panic!("expected SetupFailed, got {other:?}"),

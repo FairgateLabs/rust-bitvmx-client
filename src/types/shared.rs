@@ -78,6 +78,17 @@ impl IncomingBitVMXApiMessages {
 
 type ProgramId = Uuid;
 
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum SetupFailureReason {
+    StepError(String),
+    /// The sender's key was still missing on the final attempt.
+    VerificationKeyMissing,
+    /// A message from the sender ran out of retries.
+    MessageLost,
+    /// A message addressed to this peer could not be delivered.
+    Undeliverable,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum OutgoingBitVMXApiMessages {
     Pong(Uuid),
@@ -94,7 +105,7 @@ pub enum OutgoingBitVMXApiMessages {
     // Setup Completed,
     SetupCompleted(ProgramId),
     // Setup could not be completed. Terminal: no further messages arrive for this program.
-    SetupFailed(ProgramId, String, Option<PubkHash>, String), // id, step, sender being handled, reason
+    SetupFailed(ProgramId, String, Option<PubkHash>, SetupFailureReason), // id, step, peer involved, reason
     // Add response types for the new messages if needed
     AggregatedPubkey(Uuid, PublicKey),
     AggregatedPubkeyNotReady(Uuid),

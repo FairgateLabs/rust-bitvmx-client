@@ -16,7 +16,7 @@ use crate::{
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
-    types::{MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext},
+    types::{MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext, SetupFailureReason},
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
@@ -87,7 +87,7 @@ impl Program {
     pub(crate) fn fail_setup<BC: BitcoinCoordinatorApi>(
         &mut self,
         peer: Option<PubKeyHash>,
-        reason: &str,
+        reason: SetupFailureReason,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         if !matches!(
@@ -111,7 +111,7 @@ impl Program {
             self.program_id,
             step.clone(),
             peer.clone(),
-            reason.to_string(),
+            reason.clone(),
         )
         .to_string()?;
         program_context
@@ -122,7 +122,7 @@ impl Program {
         self.save()?;
 
         info!(
-            "Program: Sent SetupFailed for program {} at step '{}' (peer: {:?}): {}",
+            "Program: Sent SetupFailed for program {} at step '{}' (peer: {:?}): {:?}",
             self.program_id, step, peer, reason
         );
         Ok(())
@@ -295,7 +295,11 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(None, &e.to_string(), program_context)?;
+                self.fail_setup(
+                    None,
+                    SetupFailureReason::StepError(e.to_string()),
+                    program_context,
+                )?;
                 Ok(())
             }
             other => other,
@@ -442,7 +446,11 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(None, &e.to_string(), program_context)?;
+                self.fail_setup(
+                    None,
+                    SetupFailureReason::StepError(e.to_string()),
+                    program_context,
+                )?;
                 Ok(())
             }
             other => other,
@@ -617,7 +625,11 @@ impl Program {
     ) -> Result<MessageDisposition, BitVMXError> {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(Some(comms_address.clone()), &e.to_string(), program_context)?;
+                self.fail_setup(
+                    Some(comms_address.clone()),
+                    SetupFailureReason::StepError(e.to_string()),
+                    program_context,
+                )?;
                 Ok(MessageDisposition::Processed)
             }
             other => other,
@@ -1008,7 +1020,8 @@ mod tests {
             OutgoingBitVMXApiMessages::SetupFailed(id, _, peer, reason) => {
                 assert_eq!(*id, program_id);
                 assert!(peer.is_none());
-                assert!(reason.contains("Protocol must return setup steps"));
+                assert!(matches!(reason, SetupFailureReason::StepError(text)
+                    if text.contains("Protocol must return setup steps")));
             }
             other => panic!("expected SetupFailed, got {other:?}"),
         }
@@ -1048,7 +1061,8 @@ mod tests {
                 assert_eq!(*id, program_id);
                 assert_eq!(step, "keys");
                 assert_eq!(peer.as_ref(), Some(&sender));
-                assert!(reason.contains("Failed to deserialize key declaration"));
+                assert!(matches!(reason, SetupFailureReason::StepError(text)
+                    if text.contains("Failed to deserialize key declaration")));
             }
             other => panic!("expected SetupFailed, got {other:?}"),
         }
@@ -1063,7 +1077,7 @@ mod tests {
 
         // Reached from bitvmx.rs when a late message for a finished setup exhausts its retries.
         program
-            .fail_setup(None, "message dropped after max retries", &mut env.context)
+            .fail_setup(None, SetupFailureReason::MessageLost, &mut env.context)
             .unwrap();
 
         assert_eq!(program.state, ProgramState::Ready);
@@ -1195,7 +1209,8 @@ mod tests {
             OutgoingBitVMXApiMessages::SetupFailed(id, _, peer, reason) => {
                 assert_eq!(*id, program_id);
                 assert!(peer.is_none());
-                assert!(reason.contains("Invalid context for Garbler result"));
+                assert!(matches!(reason, SetupFailureReason::StepError(text)
+                    if text.contains("Invalid context for Garbler result")));
             }
             other => panic!("expected SetupFailed, got {other:?}"),
         }
@@ -1298,7 +1313,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert!(matches!(
             &messages[0],
-            OutgoingBitVMXApiMessages::SetupFailed(_, _, _, reason)
+            OutgoingBitVMXApiMessages::SetupFailed(_, _, _, SetupFailureReason::StepError(reason))
                 if reason.contains("Unknown dispatcher type: ZKP")
         ));
     }
