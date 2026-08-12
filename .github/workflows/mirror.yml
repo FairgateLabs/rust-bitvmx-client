@@ -10,6 +10,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ github.ref_name }}
 
 permissions:
   contents: read
@@ -18,29 +19,36 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
+      - name: Configure Git with Token Authentication
+        run: |
+          git config --global url."https://x-access-token:${REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
+        env:
+          REPO_TOKEN: ${{ secrets.BITVMX_CLIENT_TYPES_WRITE }}
+
       - name: Check out client at tag
         uses: actions/checkout@v4
         with:
           path: client
           ref: ${{ github.ref_name }}
+          persist-credentials: false
 
       - name: Check out mirror
         uses: actions/checkout@v4
         with:
           repository: FairgateLabs/rust-bitvmx-client-types
           path: mirror
-          token: ${{ secrets.MIRROR_PUSH_TOKEN }}
+          persist-credentials: false
 
       - name: Regenerate mirror from client
         run: |
           python3 client/scripts/mirror.py \
             --client-dir client \
             --out mirror \
-            --tag ${{ github.ref_name }}
+            --tag "$TAG"
 
       - name: Stamp mirror Cargo.toml version from tag
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           awk -v ver="$version" '
             /^\[/ { in_pkg = ($0 == "[package]") }
             in_pkg && /^version = / { $0 = "version = \"" ver "\"" }
@@ -61,12 +69,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || git commit -m "Regenerate mirror at ${{ github.ref_name }}"
+          git diff --cached --quiet || git commit -m "Regenerate mirror at $TAG"
 
       - name: Tag and push mirror
         working-directory: mirror
         run: |
-          git tag "$GITHUB_REF_NAME"
+          git tag "$TAG"
+          # The release lands on its own branch, never on main: main is ruleset
+          # protected and moves only by PR. The tag is what consumers pin, and a
+          # tag resolves regardless of which branch carries the commit, so the
+          # crate is usable the moment this push lands -- merging is bookkeeping.
+          #
           # Atomic: a rejected tag (e.g. re-tagging an existing release) must not
-          # leave main advanced without it — that half-publishes the release.
-          git push --atomic origin HEAD:main "refs/tags/$GITHUB_REF_NAME"
+          # leave the branch pushed without it — that half-publishes the release.
+          git push --atomic origin "HEAD:refs/heads/release/$TAG" "refs/tags/$TAG"
