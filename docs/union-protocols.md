@@ -119,7 +119,97 @@ For this reason, those protocols must be set up before the corresponding runtime
 
 ## AcceptPegin
 
-_To be documented._
+The Rust implementation is named `AcceptPegInProtocol`.
+
+### Purpose
+
+`AcceptPegInProtocol` represents the committee's acceptance of one peg-in request and reserves that peg-in for one Union slot. There is one protocol instance per `(committee, slot)`, shared by all committee members.
+
+Besides accepting the external peg-in request, the protocol connects the accepted funds to the alternative ways in which an operator can later receive them after advancing funds: the normal operator-take path and the operator-won-after-dispute path. The conditions that enable those paths come from each operator's `DisputeCoreProtocol`; dispute core later decides when to dispatch them.
+
+The protocol ID is derived as:
+
+```text
+get_accept_pegin_pid(committee_id, slot_index)
+```
+
+### Setup
+
+`examples/union` sets up this protocol when a peg-in request is accepted. On every committee member it:
+
+1. Derives the same protocol ID from the committee ID and slot index.
+2. Builds `operator_indexes` from committee members whose role is `Prover`.
+3. Stores a `PegInRequest` under the protocol ID.
+4. Calls `BitVMXClient::setup` for all committee addresses.
+5. Waits for setup to complete before the accept transaction is dispatched.
+
+The committee's dispute-core instances must already be set up. For every operator, this protocol imports the take and won enablers for the selected slot. The slot must therefore be within the dispute core's configured `packet_size`.
+
+The participant list must use the same ordering as `Committee.members`. That ordering determines `my_idx`, operator indices, signing leaves, and ownership of per-member speedup keys.
+
+### Variables required before setup
+
+| Scope | Name | Type | Supplied by | Meaning |
+| --- | --- | --- | --- | --- |
+| `GLOBAL_SETTINGS_UUID` | `union_settings` | JSON-encoded `UnionSettings` | Union application/configuration | Provides the stream settings selected by the committee's denomination, including the request-peg-in, operator-take, and operator-won timelocks. |
+| `committee_id` | `committee` | JSON-encoded `Committee` | Dispute-core/committee setup | Supplies the ordered members, roles, dispute keys, stream denomination, and required peg-in confirmations. |
+| accept-pegin ID | `pegin_request` | JSON-encoded `PegInRequest` | Peg-in acceptance orchestration | Describes the external peg-in and the Union slot accepting it. |
+| Each operator's dispute-core ID | `OPERATOR_TAKE_ENABLER_<slot>` | `Utxo` | `DisputeCoreProtocol` | Connects the slot's normal reimbursement path to that operator's take action. |
+| Each operator's dispute-core ID | `OPERATOR_WON_ENABLER_<slot>` | `Utxo` | `DisputeCoreProtocol` | Connects the slot's successful dispute/reveal path to that operator's won action. |
+
+`PegInRequest` contains:
+
+| Field | Requirement |
+| --- | --- |
+| `committee_id` | ID of the committee accepting the peg-in. |
+| `slot_index` | Slot reserved for this peg-in. It must match the protocol ID and an available dispute-core slot. |
+| `txid` | Transaction ID of the external request-peg-in transaction. |
+| `amount` | Value committed by that request and used to size the accepted funds. |
+| `take_aggregated_key` | Committee take key, already aggregated before this setup. It is registered as a pregenerated aggregate key. |
+| `operator_indexes` | Indices of the committee members allowed to act as operators. The example derives these from members with role `Prover`. |
+| `rootstock_address` | Rootstock destination encoded as exactly 20 bytes of hexadecimal data. |
+| `reimbursement_pubkey` | User key used by the request timeout/refund path and the accept speedup output. |
+| `accept_pegin_sighash` | Sighash supplied by the external orchestration. This field is stored in the current implementation but is not read while building or running the protocol; setup computes and reports its own accept-peg-in sighash. |
+
+The values passed directly to `BitVMXClient::setup` are:
+
+| Value | Requirement |
+| --- | --- |
+| Protocol type | `PROGRAM_TYPE_ACCEPT_PEGIN` |
+| Participants | All committee communication addresses, in committee order |
+| Setup leader index | `0`, selecting the first participant as setup leader |
+
+### Variables received while running
+
+| Scope | Name | Producer | Use in accept pegin |
+| --- | --- | --- | --- |
+| Winning operator's dispute-core ID | `REVEAL_IN_PROGRESS` | `DisputeCoreProtocol` | When an operator-won action is observed, accept pegin clears this marker if it belongs to this slot. This completes dispute core's reveal lifecycle without clearing a marker for another slot. |
+
+The operator-take and operator-won dispatch requests themselves are runtime calls from `DisputeCoreProtocol`, not globals. Dispute core loads these transactions from this protocol instance and asks the Bitcoin coordinator to dispatch them under the accept-pegin protocol ID.
+
+### Variables and notifications produced for other components
+
+| Scope/destination | Name | Consumer | Meaning |
+| --- | --- | --- | --- |
+| `committee_id` | `ACCEPT_PEGIN_TX_<slot>` | `UserTakeProtocol` and `AdvanceFundsProtocol` | Slot-scoped accepted-peg-in UTXO used as their upstream protocol reference. |
+| `committee_id` | `CANCEL_TAKE0_TX_<slot>` | `UserTakeProtocol` | Slot-scoped cancellation enabler associated with the accepted peg-in. |
+| `committee_id` | `LAST_OPERATOR_TAKE_UTXO` | `AdvanceFundsProtocol` | Reimbursement output saved when the local operator's take or won action is observed. This value is committee-scoped and unindexed, so a later operator reimbursement replaces the previous value. |
+| L2 broker destination | `pegin_accepted` | Union L2/contract integration | Sent by each participant after setup. It contains the accept transaction ID and sighash, that participant's nonce and partial signature, and—for operators—their take and won sighashes. |
+| L2 broker destination | `union_spv_notification` | Union L2/contract integration | Sent when an operator-take or operator-won action is observed; identifies the committee, slot, action type, transaction ID, and SPV proof when available. |
+
+The protocol also generates and stores `SPEEDUP_KEY` under its own ID. This is internal setup data, not an externally supplied variable.
+
+### Automatic dispatch hooks
+
+| Hook | Automatic behavior |
+| --- | --- |
+| Setup completed | Sends `pegin_accepted` to the configured L2 component. It does **not** automatically dispatch the accept transaction. |
+| Operator-take observed | If this participant is the operator named by the action, saves the resulting reimbursement UTXO as `LAST_OPERATOR_TAKE_UTXO`. Every participant sends an operator-take SPV notification to L2. |
+| Operator-won observed | Clears the matching `REVEAL_IN_PROGRESS` marker in that operator's dispute core. If this participant is the winning operator, saves the resulting reimbursement UTXO as `LAST_OPERATOR_TAKE_UTXO`. Every participant sends an operator-won SPV notification to L2. |
+
+The initial `ACCEPT_PEGIN_TX` dispatch is an external orchestration action. In `examples/union`, a committee member requests the transaction by name and dispatches it after all participants report setup completion. `CANCEL_TAKE0_TX_<operator>` is likewise exposed for explicit dispatch and has no automatic hook in this protocol.
+
+`OPERATOR_TAKE_TX_<operator>` and `OPERATOR_WON_TX_<operator>` are dispatched automatically by `DisputeCoreProtocol` when reimbursement or dispute events make the corresponding path eligible.
 
 ## UserTake
 
