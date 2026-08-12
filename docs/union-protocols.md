@@ -304,7 +304,107 @@ The `USER_TAKE_TX` dispatch is an external orchestration action. In `examples/un
 
 ## AdvanceFunds
 
-_To be documented._
+The Rust implementation is named `AdvanceFundsProtocol`.
+
+### Purpose
+
+`AdvanceFundsProtocol` lets the operator selected for a peg-out pay the user before that operator can claim the funds reserved in the corresponding accepted peg-in slot. It is a single-participant protocol: only the selected operator sets it up, signs it, and runs its hooks.
+
+The protocol uses the operator's advance-funds liquidity and, when available, the reimbursement output from a previous slot. After advancing the funds, it automatically starts the selected operator's reimbursement path in `DisputeCoreProtocol`. It also passes the peg-out ID to dispute core so watchtowers can compare the later reimbursement commitment with the independently registered contract event.
+
+There is one deterministic protocol ID per `(committee, slot)`:
+
+```text
+get_advance_funds_pid(committee_id, slot_index)
+```
+
+### Setup
+
+`examples/union` calls the setup helper for every committee member, but the helper compares `operator_pubkey` with each member's `my_take_pubkey`. Non-selected members return without creating a protocol. The selected operator:
+
+1. Derives the protocol ID from the committee ID and slot index.
+2. Stores an `AdvanceFundsRequest` under that protocol ID.
+3. Calls `BitVMXClient::setup` with only its own communication address.
+4. Runs only the setup key step; there is no multiparty nonce or signature exchange.
+5. Automatically dispatches the advance-funds transaction when setup completes.
+
+The corresponding `AcceptPegInProtocol` and the selected operator's `DisputeCoreProtocol` must already be set up. Advance funds reads the accepted slot value while building and loads dispute-core transactions after the advance is confirmed.
+
+### Variables required before setup
+
+| Scope | Name | Type | Supplied by | Meaning |
+| --- | --- | --- | --- | --- |
+| `committee_id` | `committee` | JSON-encoded `Committee` | Dispute-core/committee setup | Supplies member take/dispute keys and the confirmation threshold used by this protocol. |
+| advance-funds ID | `advance_funds_request` | JSON-encoded `AdvanceFundsRequest` | Advance-funds orchestration | Identifies the selected operator, user, committee, slot, peg-out ID, and fee. |
+| `committee_id` | `ACCEPT_PEGIN_TX_<slot>` | `Utxo` | `AcceptPegInProtocol` | Supplies the accepted slot value used to determine how much the operator advances to the user. |
+| `committee_id` | `ADVANCE_FUNDS_INPUT` | `Utxo` | Operator wallet/funding orchestration | Operator-owned liquidity used to fund the advance. The example initializes it from the dedicated advance-funds output created by `Member::init_funds`. |
+
+`AdvanceFundsRequest` contains:
+
+| Field | Requirement |
+| --- | --- |
+| `committee_id` | ID of the committee processing the peg-out. |
+| `slot_index` | Accepted peg-in slot being advanced. It must match the protocol ID and `ACCEPT_PEGIN_TX_<slot>`. |
+| `user_pubkey` | Compressed Bitcoin public key that receives the advanced funds. |
+| `my_take_pubkey` | Take key of the selected operator. It identifies both the committee member and that member's dispute-core instance. |
+| `pegout_id` | Peg-out identifier committed by the advance and copied into the selected operator's dispute core. |
+| `fee` | Fee charged for advancing the funds and included in the operator's change calculation. |
+
+The values passed directly to `BitVMXClient::setup` are:
+
+| Value | Requirement |
+| --- | --- |
+| Protocol type | `PROGRAM_TYPE_ADVANCE_FUNDS` |
+| Participants | A one-element list containing only the selected operator's communication address |
+| Setup leader index | `0`, the selected operator itself |
+
+### Optional variables received while running
+
+| Scope | Name | Producer | Use in advance funds |
+| --- | --- | --- | --- |
+| `committee_id` | `LAST_OPERATOR_TAKE_UTXO` | `AcceptPegInProtocol` | If present in the selected operator's storage, it is added as a second input. This rolls a previous reimbursement back into the operator's advance-funds liquidity. |
+| `committee_id` | `OP_INITIAL_DEPOSIT_FLAG` | An earlier `AdvanceFundsProtocol` runtime hook | Indicates whether advance funds has already dispatched an operator initial deposit for this committee. Missing is treated as `false`. |
+
+`LAST_OPERATOR_TAKE_UTXO` and `OP_INITIAL_DEPOSIT_FLAG` are committee-scoped rather than slot-scoped. In the current implementation, the former holds only the latest locally observed operator reimbursement, while the latter is one boolean for the entire committee.
+
+### Variables produced for other protocols and future advances
+
+| Scope | Name | Consumer | Meaning |
+| --- | --- | --- | --- |
+| Selected operator's dispute-core ID | `PEGOUT_ID_<slot>` | `DisputeCoreProtocol` | Peg-out ID that the operator commits in the reimbursement kickoff. Dispute core later compares its revealed value with `ADVANCED_FUNDS_<slot>`. |
+| `committee_id` | `OP_INITIAL_DEPOSIT_FLAG` | Later `AdvanceFundsProtocol` instances | Set to `true` after this protocol dispatches the operator initial-deposit transaction. |
+| `committee_id` | `ADVANCE_FUNDS_INPUT` | Later `AdvanceFundsProtocol` instances | Replaced with the advance transaction's operator-change output when that output exists, allowing liquidity to roll into a later advance. |
+
+The rollover update assumes the operator change is output index `2`. If the transaction has fewer than three outputs because no change output was created, the existing `ADVANCE_FUNDS_INPUT` value is left unchanged.
+
+### Contract registration versus protocol-local data
+
+The protocol does **not** write `ADVANCED_FUNDS_<slot>`. That variable represents `AdvanceFundsRegistered`, an independent event from the contract integration containing the registered operator, peg-out ID, and transaction ID. `examples/union` simulates the event by writing it to every member's committee scope.
+
+Both handoffs are required for reimbursement validation:
+
+- `AdvanceFundsProtocol` writes `PEGOUT_ID_<slot>` into the selected operator's dispute core.
+- Contract/event orchestration writes `ADVANCED_FUNDS_<slot>` under the committee ID.
+
+When reimbursement starts, each watchtower decodes the committed peg-out ID and checks it against the registered event and selected operator. A missing or inconsistent registration makes the reimbursement challengeable.
+
+### Notifications produced for L2
+
+| When | Name | Meaning |
+| --- | --- | --- |
+| Immediately after setup dispatches the transaction | `funds_advanced` | Contains the advance transaction ID, committee ID, slot, and peg-out ID. This confirms dispatch, not Bitcoin confirmation. |
+| When the transaction is reported by the Bitcoin coordinator | `funds_advance_spv` | Contains the same identifiers and an SPV proof when it can be retrieved. |
+
+Both notifications are sent only by the selected operator because it is the sole participant in this protocol.
+
+### Automatic dispatch hooks
+
+| Hook | Automatic behavior |
+| --- | --- |
+| Setup completed | Signs and immediately dispatches `ADVANCE_FUNDS_TX`, then sends `funds_advanced` to L2 with its txid. No external dispatch call is required. |
+| Advance-funds transaction observed | Sends `funds_advance_spv` to L2. If `OP_INITIAL_DEPOSIT_FLAG` is false, loads the selected operator's `DisputeCoreProtocol`, dispatches its initial deposit, and sets the flag. It then dispatches `REIMBURSEMENT_KICKOFF_TX_<slot>` from the same dispute-core instance and rolls the operator change into `ADVANCE_FUNDS_INPUT` when present. |
+
+For the first reimbursement, the kickoff is scheduled one block after the observed advance-funds block so the newly dispatched initial deposit can precede it. If the initial-deposit flag was already set, the reimbursement kickoff is dispatched without that additional scheduled block.
 
 ## FullPenalization
 
