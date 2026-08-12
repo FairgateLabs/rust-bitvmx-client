@@ -60,6 +60,17 @@ RUST_BACKTRACE=1 cargo test --release -- --ignored test_full
 - Shared test helpers live in `tests/common/` (`helper.rs`, `dispute.rs`).
 - Key ignored tests: `test_all` (integration.rs), `test_full`, `test_drp`
   (fulltest.rs — dispute resolution), `test_lock` (locktest.rs).
+- `setup_failed.rs` covers the unreachable-peer path (comms dead letter ->
+  `SetupFailed` on L2); `setup_dropped.rs` covers the two queue-drop paths, using
+  a `RawPeer` that holds op_2's identity but speaks the comms protocol directly.
+  Both lower `max_send_attempts` via `init_bitvmx_with_config` so retries exhaust in
+  seconds; each runs in ~3s.
+- Every test calling `prepare_bitcoin()` creates the same `bitcoin-regtest`
+  container, so two in one binary run in parallel fail with `container name
+  "/bitcoin-regtest" is already in use`. Filter to one test, or pass
+  `--test-threads 1` (e.g. `cargo test --release --test aggregated_key --
+  --ignored --test-threads 1`). A red test here is usually this, not a
+  regression.
 - Don't run ignored/integration tests unless asked — they take tens of
   minutes and need Docker.
 

@@ -196,7 +196,7 @@ impl SetupEngine {
     }
 
     /// Returns the name of the current step.
-    fn current_step_name(&self) -> &str {
+    pub fn current_step_name(&self) -> &str {
         self.current_step().step_name()
     }
 
