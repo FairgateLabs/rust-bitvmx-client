@@ -213,7 +213,94 @@ The initial `ACCEPT_PEGIN_TX` dispatch is an external orchestration action. In `
 
 ## UserTake
 
-_To be documented._
+The Rust implementation is named `UserTakeProtocol`.
+
+### Purpose
+
+`UserTakeProtocol` prepares the committee-authorized peg-out transaction that transfers the value reserved in an accepted peg-in slot to the user. There is one protocol instance per `(committee, slot)`, shared by all committee members.
+
+Its main integrity check is agreement on the transaction sighash. The peg-out orchestration supplies the sighash it expects, every member independently builds the same protocol, and setup fails if the locally computed user-take sighash differs. After successful setup, each member sends its nonce and partial signature to the configured L2 component.
+
+The protocol ID is derived as:
+
+```text
+get_user_take_pid(committee_id, slot_index)
+```
+
+### Setup
+
+`examples/union` sets up this protocol when a peg-out is requested. On every committee member it:
+
+1. Derives the same protocol ID from the committee ID and slot index.
+2. Stores a `PegOutRequest` under that protocol ID.
+3. Calls `BitVMXClient::setup` for all committee addresses.
+4. Waits for setup to complete before explicitly dispatching the user-take transaction.
+
+The corresponding `AcceptPegInProtocol` must already be set up for the slot. User take imports both the accepted-funds UTXO and its cancellation enabler from committee-scoped storage.
+
+The participant list must use the same ordering as `Committee.members`. Although this protocol generates no protocol-specific participant keys, that ordering remains part of the shared multiparty setup and signing context.
+
+### Variables required before setup
+
+| Scope | Name | Type | Supplied by | Meaning |
+| --- | --- | --- | --- | --- |
+| `committee_id` | `committee` | JSON-encoded `Committee` | Dispute-core/committee setup | Supplies the required peg-out confirmation count and the participant context. |
+| user-take ID | `pegout_request` | JSON-encoded `PegOutRequest` | Peg-out orchestration | Identifies the committee and slot, user, expected sighash, peg-out ID, amount, and aggregate take key. |
+| `committee_id` | `ACCEPT_PEGIN_TX_<slot>` | `Utxo` | `AcceptPegInProtocol` | The accepted funds reserved for this slot. It also determines the value transferred by user take. |
+| `committee_id` | `CANCEL_TAKE0_TX_<slot>` | `Utxo` | `AcceptPegInProtocol` | The slot's cancellation enabler, which is also consumed by the user-take path. |
+
+`PegOutRequest` contains:
+
+| Field | Requirement |
+| --- | --- |
+| `committee_id` | ID of the committee processing the peg-out. |
+| `slot_index` | Accepted peg-in slot assigned to the peg-out. It must match the protocol ID and the two slot-scoped UTXOs above. |
+| `user_pubkey` | Compressed Bitcoin public key that receives the peg-out and controls its speedup output. |
+| `pegout_sighash` | Expected sighash of the user-take transaction. Setup recomputes it and rejects the protocol if it does not match. |
+| `take_aggregated_key` | Committee take key, already aggregated before setup. It is registered as a pregenerated aggregate key and authorizes the user-take path. |
+| `amount` | Peg-out amount supplied by orchestration. The current implementation stores this field but does not use it when building or validating the transaction; the output value is derived from `ACCEPT_PEGIN_TX_<slot>`. |
+| `pegout_id` | Peg-out identifier supplied by orchestration. The current `UserTakeProtocol` stores it but does not otherwise read or validate it. |
+
+The example computes `pegout_sighash` from the expected user-take transaction before setup, representing the value that should come from the contract integration.
+
+The values passed directly to `BitVMXClient::setup` are:
+
+| Value | Requirement |
+| --- | --- |
+| Protocol type | `PROGRAM_TYPE_USER_TAKE` |
+| Participants | All committee communication addresses, in committee order |
+| Setup leader index | `0`, selecting the first participant as setup leader |
+
+### Validation and failure reporting
+
+After building the protocol, each participant recomputes the sighash for the user-take action and compares it with `PegOutRequest.pegout_sighash`.
+
+If they differ, setup:
+
+- sends a `ProtocolError` with `InvalidSighash` to the configured L2 component;
+- includes both the expected and locally computed hashes; and
+- fails without reporting the peg-out as accepted.
+
+This check is the protocol's principal link between the peg-out authorized externally and the transaction graph independently constructed by each committee member.
+
+### Variables and notifications produced for other components
+
+`UserTakeProtocol` does not write a global variable consumed by another Union protocol.
+
+After successful setup, each participant sends the following notification:
+
+| Destination | Name | Consumer | Meaning |
+| --- | --- | --- | --- |
+| L2 broker destination | `pegout_accepted` | Union L2/contract integration | Contains the committee ID, user-take transaction ID and sighash, and that participant's public nonce and partial signature. |
+
+### Automatic dispatch hooks
+
+| Hook | Automatic behavior |
+| --- | --- |
+| Setup completed | Sends `pegout_accepted` to the configured L2 component. It does **not** dispatch the user-take transaction. |
+| User-take observed | Logs the transaction and confirmation count. It does not update shared variables, emit an SPV notification, or dispatch a follow-up transaction. |
+
+The `USER_TAKE_TX` dispatch is an external orchestration action. In `examples/union`, a committee member requests the transaction by name and dispatches it after every participant reports setup completion. The user may then separately accelerate it using the transaction's speedup output.
 
 ## AdvanceFunds
 
