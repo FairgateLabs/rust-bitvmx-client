@@ -82,7 +82,7 @@ During setup, dispute core stores references to its generated covenant outputs. 
 | Operator dispute-core ID | `OP_DISABLER_DIRECTORY_UTXO` | `FullPenalizationProtocol` |
 | Watchtower dispute-core ID | `WT_DISABLER_DIRECTORY_UTXO` | `FullPenalizationProtocol` |
 | Watchtower dispute-core ID | `WT_INIT_CHALLENGE_UTXOS` | `FullPenalizationProtocol` |
-| Watchtower dispute-core ID | `CLAIM_INIT_UTXOS` | `FullPenalizationProtocol` |
+| Watchtower dispute-core ID | `WT_INIT_CHALLENGE_UTXOS` | `FullPenalizationProtocol` |
 | Watchtower dispute-core ID | `WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO_<wt>_<op>` | `FullPenalizationProtocol` |
 | Watchtower dispute-core ID | `OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO_<wt>_<op>` | `FullPenalizationProtocol` |
 | DRP ID | `program_input_prev_protocol(4)` | DRP input 4: points back to the dispute-core instance carrying the cosigned pegout ID |
@@ -92,7 +92,7 @@ During setup, dispute core stores references to its generated covenant outputs. 
 
 Dispute core also stores the corresponding Winternitz public keys and later-captured witnesses in its own scope so DRP can resolve inputs 4 and 5 through the `program_input_prev_*` references.
 
-Some values such as generated slot/pegout keys, `MY_IDX`, speedup keys, claim-init collections, and `REVEAL_IN_PROGRESS` are internal setup or state-machine data. They are not external configuration. `OP_COSIGN_UTXOS` is currently stored as an internal setup artifact and has no cross-protocol reader.
+Some values such as generated slot/pegout keys, `MY_IDX`, speedup keys, and `REVEAL_IN_PROGRESS` are internal setup or state-machine data. They are not external configuration. `OP_COSIGN_UTXOS` is currently stored as an internal setup artifact and has no cross-protocol reader.
 
 ### Automatic dispatch hooks
 
@@ -408,7 +408,111 @@ For the first reimbursement, the kickoff is scheduled one block after the observ
 
 ## FullPenalization
 
-_To be documented._
+The Rust implementation is named `FullPenalizationProtocol`.
+
+### Purpose
+
+`FullPenalizationProtocol` is the committee-wide enforcement layer for members that lose a claim. It links a successful claim against an operator or watchtower to a directory of disablers covering that member's remaining covenant paths.
+
+The protocol does not decide whether a member should be penalized. `DisputeCoreProtocol` interprets reimbursement, challenge, DRP, and claim-gate events and selects the appropriate full-penalization action. Once a disabler directory is confirmed, `FullPenalizationProtocol` records the penalized member at committee scope and automatically fans out the remaining disablers.
+
+There is one full-penalization instance per committee:
+
+```text
+get_full_penalization_pid(committee_id)
+```
+
+### Setup
+
+`examples/union` sets up the same full-penalization instance on every committee member after all dispute-core and DRP instances have completed setup. On each member it:
+
+1. Derives the protocol ID from the committee ID.
+2. Stores `FullPenalizationData` under that protocol ID.
+3. Calls `BitVMXClient::setup` with all committee addresses.
+4. Waits for setup completion before proceeding.
+
+This ordering is required because full penalization does not recreate the upstream covenants. It imports transaction references, UTXOs, scripts, and claim-success outputs saved by every `DisputeCoreProtocol` instance.
+
+The participant list must use the same ordering as `Committee.members`. Operator, watchtower, and challenger indices embedded in penalization names all refer to this ordering.
+
+### Variables required before setup
+
+| Scope | Name | Type | Supplied by | Meaning |
+| --- | --- | --- | --- | --- |
+| `GLOBAL_SETTINGS_UUID` | `union_settings` | JSON-encoded `UnionSettings` | Union application/configuration | Supplies the stream settings used for penalization paths, including the short timelock. |
+| `committee_id` | `committee` | JSON-encoded `Committee` | Dispute-core/committee setup | Supplies the ordered members and roles, packet size, aggregated keys, stream denomination, and confirmation threshold. |
+| full-penalization ID | `full_penalization_data` | JSON-encoded `FullPenalizationData` | Full-penalization setup | Identifies the committee whose members and dispute cores are covered. |
+
+The committee's aggregated take and dispute keys are registered as pregenerated aggregate keys. This protocol does not aggregate them again.
+
+For every operator, setup reads these values from that operator's dispute-core ID:
+
+| Name | Type | Use |
+| --- | --- | --- |
+| `OP_INITIAL_DEPOSIT_TXID` | `String` containing a txid | Identifies the operator's initial-deposit transaction. |
+| `OP_INITIAL_DEPOSIT_AMOUNT` | `Amount` | Reconstructs the per-slot initial-deposit references. |
+| `OP_INITIAL_DEPOSIT_OUT_SCRIPT_<slot>` | JSON-encoded script collection | Reconstructs each slot's initial-deposit output. |
+| `OPERATOR_TAKE_ENABLER_<slot>` | `Utxo` | Connects penalization to the slot's reimbursement path. |
+| `OPERATOR_WON_ENABLER_<slot>` | `Utxo` | Connects penalization to the slot's reveal/operator-won path. |
+| `OP_DISABLER_DIRECTORY_UTXO` | `Utxo` | Funds the operator-disabler directory. |
+
+For every member acting as a watchtower against an operator, setup reads these values from that member's dispute-core ID:
+
+| Name | Type | Use |
+| --- | --- | --- |
+| `WT_DISABLER_DIRECTORY_UTXO` | `Utxo` | Funds the watchtower-disabler directory. |
+| `WT_INIT_CHALLENGE_UTXOS` | JSON-encoded `Vec<Option<WtInitChallengeUtxos>>` | Supplies the per-operator cosign and stopper references that must be disabled after a watchtower penalty. Entries that do not represent a valid watchtower/operator pair are `None`. |
+| `WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO_<wt>_<op>` | `Utxo` | Authorizes the operator-disabler directory after the watchtower wins its claim. |
+| `OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO_<wt>_<op>` | `Utxo` | Authorizes the watchtower-disabler directory after the operator wins its claim. |
+
+All per-slot collections must match `Committee.packet_size`, and all per-member collections and indices must match the stable committee ordering.
+
+The values passed directly to `BitVMXClient::setup` are:
+
+| Value | Requirement |
+| --- | --- |
+| Protocol type | `PROGRAM_TYPE_FULL_PENALIZATION` |
+| Participants | All committee communication addresses, in committee order |
+| Setup leader index | `0`, selecting the first participant as setup leader |
+
+### Variables received while running
+
+Full penalization has no additional external variable that must be supplied after setup. Runtime actions arrive as transaction requests from `DisputeCoreProtocol` and as Bitcoin notifications for transactions belonging to this protocol.
+
+Dispute core requests full-penalization actions in two situations:
+
+- a claim gate succeeds and the losing member's disabler directory becomes eligible; or
+- a later event encounters a member already recorded as penalized and must disable another still-live covenant path.
+
+### Variables produced for other protocols
+
+When a disabler directory is observed, full penalization stores one `PenalizedMember` under the committee ID:
+
+| Name | Written after | Value |
+| --- | --- | --- |
+| `OPERATOR_PENALIZED_<op>` | `OP_DISABLER_DIRECTORY_TX_<wt>_<op>` | Operator index, `Prover` role, and the watchtower index that successfully challenged it. |
+| `WATCHTOWER_PENALIZED_<wt>` | `WT_DISABLER_DIRECTORY_TX_<wt>_<op>` | Watchtower index, `Verifier` role, and the operator index that successfully challenged it. |
+
+`DisputeCoreProtocol` reads these committee-scoped markers before starting later challenge/cosign paths. If the relevant member is already penalized, dispute core skips the normal path and requests the applicable disabler from this protocol instead.
+
+These markers are not slot-scoped. Penalization applies to the member across the committee's packet of slots, and a later write for the same member replaces the previous stored record.
+
+Full penalization sends no direct L2 notification and does not publish SPV proofs.
+
+### Automatic dispatch hooks
+
+| Hook | Automatic behavior |
+| --- | --- |
+| Setup completed | Logs completion only. It does not dispatch a penalization transaction. |
+| Operator-disabler directory observed | Stores `OPERATOR_PENALIZED_<op>`. Every participant other than the penalized operator attempts to dispatch, for every slot, the operator disabler, the path that prevents a later operator-won action, and the lazy-operator disabler. If a lazy disabler cannot be signed because its one-time witness was already used, that item is skipped without aborting the rest of the batch. |
+| Watchtower-disabler directory observed | Stores `WATCHTOWER_PENALIZED_<wt>`. Every participant other than the penalized watchtower attempts to dispatch the watchtower disabler for each operator path covered by that watchtower. |
+| Other full-penalization transaction observed | Logs the notification only; no additional shared state or fan-out is triggered. |
+
+The first directory transaction is dispatched by `DisputeCoreProtocol` after the corresponding claim gate succeeds. Individual disablers may also be requested by dispute core when it detects an already-penalized member during reimbursement, reveal, or cosign processing.
+
+### Current implementation note
+
+`DisputeCoreProtocol` can request `STOP_OP_WON_TX_<wt>_<op>_<slot>` directly when it encounters an operator already penalized during reveal processing. `FullPenalizationProtocol` builds this action and uses it in its automatic directory fan-out, but its current `get_transaction_by_name` dispatcher does not include the `STOP_OP_WON_TX` prefix. Consequently, that direct cross-protocol request currently returns `InvalidTransactionName`; the directory-triggered fan-out remains available because it calls the internal builder directly.
 
 ## RejectPegin
 
