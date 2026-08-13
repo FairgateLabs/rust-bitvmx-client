@@ -516,7 +516,75 @@ The first directory transaction is dispatched by `DisputeCoreProtocol` after the
 
 ## RejectPegin
 
-_To be documented._
+The Rust implementation is named `RejectPegInProtocol`.
+
+### Purpose
+
+`RejectPegInProtocol` lets one committee member reject an external peg-in request before it is accepted into a Union slot. It uses that member's individual authorization path from the request transaction, so it is a single-participant protocol rather than a committee-wide signing protocol.
+
+The protocol is short lived: the selected member sets it up for one request-peg-in transaction, and setup completion immediately dispatches the rejection.
+
+There is currently no deterministic reject-peg-in ID helper. The example creates a fresh random UUID for each rejection:
+
+```text
+Uuid::new_v4()
+```
+
+The chosen ID only needs to be used consistently for the stored `RejectPeginData` and the subsequent setup call on the selected member.
+
+### Setup
+
+Unlike accept pegin, reject pegin is set up only on the member performing the rejection. `examples/union`:
+
+1. Selects a committee member and its `member_index`.
+2. Generates a fresh protocol ID.
+3. Stores `RejectPeginData` under that protocol ID.
+4. Calls `BitVMXClient::setup` with only the selected member's communication address.
+5. Waits for setup completion; the protocol itself dispatches the rejection during that hook.
+
+The committee and request-peg-in transaction must already exist, but no `AcceptPegInProtocol`, dispute core, or other per-slot protocol is required for the rejection graph.
+
+### Variables required before setup
+
+| Scope | Name | Type | Supplied by | Meaning |
+| --- | --- | --- | --- | --- |
+| `committee_id` | `committee` | JSON-encoded `Committee` | Dispute-core/committee setup | Supplies the ordered members, their dispute keys, the aggregate take key, and the rejection confirmation threshold. |
+| reject-pegin ID | `reject_pegin_data` | JSON-encoded `RejectPeginData` | Rejection orchestration | Identifies the request transaction, committee, and member authorization path used to reject it. |
+
+`RejectPeginData` contains:
+
+| Field | Requirement |
+| --- | --- |
+| `txid` | Transaction ID of the external request-peg-in transaction being rejected. |
+| `committee_id` | ID of the committee that can accept or reject the request. |
+| `member_index` | Index of the rejecting member in `Committee.members`. It selects that member's authorization path in the request transaction and must correspond to the sole setup participant. |
+
+The values passed directly to `BitVMXClient::setup` are:
+
+| Value | Requirement |
+| --- | --- |
+| Protocol type | `PROGRAM_TYPE_REJECT_PEGIN` |
+| Participants | A one-element list containing only the rejecting member's communication address |
+| Setup leader index | `0`, the rejecting member itself |
+
+The protocol generates a `SPEEDUP_KEY` during setup and stores it under its own ID. This is internal setup state, not an externally supplied variable.
+
+`Committee.reject_pegin_confirmations` becomes the confirmation threshold passed to the Bitcoin coordinator for the rejection. In `examples/union`, committee setup currently hardcodes this value to `1` and notes that it should come from the contracts.
+
+### Variables and notifications produced for other components
+
+`RejectPegInProtocol` does not write variables for another Union protocol. It also sends no L2 acceptance/rejection message and no SPV notification.
+
+Its only stored output is the internally generated `SPEEDUP_KEY`, used to describe the speedup output returned with the rejection transaction.
+
+### Automatic dispatch hooks
+
+| Hook | Automatic behavior |
+| --- | --- |
+| Setup completed | Signs and immediately dispatches `REJECT_PEGIN_TX` through the Bitcoin coordinator, including its speedup data. No external dispatch call is required. |
+| Rejection transaction observed | Logs the transaction ID and confirmation count. It does not update shared variables, send an L2 notification, or dispatch a follow-up transaction. |
+
+The rejection competes with acceptance for an output of the external request-peg-in transaction. Orchestration must therefore start reject pegin before that request has already been consumed by the accept path.
 
 ## DRP
 
