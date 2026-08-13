@@ -40,7 +40,7 @@ The participant list and communication-address list must use the same stable ord
 | --- | --- | --- | --- | --- |
 | `GLOBAL_SETTINGS_UUID` | `union_settings` | JSON-encoded `UnionSettings` | Union application/configuration | Per-denomination timelocks. There must be a `StreamSettings` entry for the committee's `stream_denomination`. |
 | `committee_id` | `committee` | JSON-encoded `Committee` | Union setup | Ordered members and roles, aggregated take/dispute keys, packet size, stream denomination, and pegin/pegout confirmation settings. |
-| `committee_id` | `PAIRWISE_DISPUTE_KEY_<min>_<max>` | `PubKey` | Pairwise key setup | Aggregated dispute key for each operator/watchtower pair. Watchtower/watchtower pairs are not required. |
+| `committee_id` | `PAIRWISE_DISPUTE_KEY_<min>_<max>` | `PubKey` | Pairwise key setup | Aggregated dispute key for each operator/watchtower pair. `<min>` is the lower member index and `<max>` the higher one, so both pair directions use the same name. Watchtower/watchtower pairs are not required. |
 | dispute-core ID | `dispute_core_data` | JSON-encoded `DisputeCoreData` | Union setup | The committee ID, monitored member index, and that member's protocol-funding UTXO. |
 
 `DisputeCoreData.funding_utxo` must include the transaction ID, output index, amount, and output description needed to spend it. The example obtains these UTXOs from `Committee::init_funds` and keys the map by each member's take public key.
@@ -588,4 +588,165 @@ The rejection competes with acceptance for an output of the external request-peg
 
 ## DRP
 
-_To be documented._
+In the Union example this is called a **dispute channel**. It is implemented by the generic `DisputeResolutionProtocol` using the Union verifier definition.
+
+### Purpose
+
+A dispute channel resolves one computation dispute between one operator and one watchtower. The operator is the DRP prover and argues that its proof and the peg-out data revealed through dispute core are valid. The watchtower is the DRP verifier and can challenge that computation. The DRP narrows the disagreement, resolves the execution dispute, and exposes a prover-wins or verifier-wins result.
+
+The DRP does not itself apply the Union-wide penalty. Its outcome is reported back to the watchtower's `DisputeCoreProtocol`. Dispute core then runs the Union claim gate and, if that claim succeeds, routes enforcement through `FullPenalizationProtocol`.
+
+An instance is directional and pairwise. Its deterministic ID identifies the operator first and watchtower second:
+
+```text
+get_dispute_channel_pid(committee_id, operator_index, watchtower_index)
+```
+
+There is one instance for every valid operator/watchtower pair. Operator/operator pairs are also valid in the current role model: each operator can act as a watchtower for the other direction. Watchtower/watchtower pairs are skipped.
+
+### Roles and participants
+
+Every Union dispute channel has exactly two setup participants in this order:
+
+| Participant position | Union role | DRP role |
+| --- | --- | --- |
+| `0` | Operator identified by `operator_index` | `Prover` |
+| `1` | Member identified by `watchtower_index` | `Verifier` |
+
+This order is semantic, not cosmetic. The generic DRP assigns the prover role to `my_idx == 0` and the verifier role to the other participant. Both endpoints must therefore use the same `[operator, watchtower]` address ordering.
+
+### Setup
+
+`examples/union` sets up dispute channels after every `DisputeCoreProtocol` instance has completed. Each committee member iterates over its valid partners and sets up the direction or directions in which it participates.
+
+For each pair, setup:
+
+1. Derives the directional DRP ID.
+2. Loads the operator-cosign and claim-stopper references created in the watchtower's dispute-core instance.
+3. Loads the pairwise aggregated dispute key established during committee key setup.
+4. Stores the Union verifier's constant inputs and its `DisputeConfiguration`.
+5. Calls `BitVMXClient::setup` with `[operator_address, watchtower_address]`.
+
+The watchtower dispute-core ID used by the channel is:
+
+```text
+get_dispute_core_pid(committee_id, watchtower.take_key)
+```
+
+That dispute-core instance owns the operator-cosign path that starts the DRP and receives the DRP outcome notifications.
+
+### Variables required before setup
+
+| Scope | Name | Type | Supplied by | Meaning |
+| --- | --- | --- | --- | --- |
+| `committee_id` | `committee` | JSON-encoded `Committee` | Dispute-core/committee setup | Supplies the stable member ordering, roles, and take keys used to derive channel and dispute-core IDs. |
+| `committee_id` | `PAIRWISE_DISPUTE_KEY_<min>_<max>` | Aggregated public key | Pairwise key setup | Two-party aggregate key used as the DRP's pregenerated operator key. `<min>` is the lower member index and `<max>` the higher one, so both directional DRPs for a pair reuse this key. The example also keeps it in memory and passes it into `DisputeConfiguration`. |
+| Watchtower dispute-core ID | `WT_INIT_CHALLENGE_UTXOS` | JSON-encoded `Vec<Option<WtInitChallengeUtxos>>` | `DisputeCoreProtocol` | Supplies the watchtower and operator claim stoppers for this pair. |
+| Watchtower dispute-core ID | `OP_COSIGN_UTXOS` | JSON-encoded `Vec<Option<PartialUtxo>>` | `DisputeCoreProtocol` | Supplies the operator-cosign UTXO from which this DRP starts. |
+| DRP ID | `dispute_configuration` | JSON-encoded `DisputeConfiguration` | Dispute-channel setup | Defines the pairwise key, upstream connection, outcome actions, timelock, verifier definition, notification target, test controls, and optional automatic input dispatch. |
+
+The relevant `DisputeConfiguration` values used by the Union example are:
+
+| Field | Union configuration |
+| --- | --- |
+| `protocol_connection` | This pair's operator-cosign UTXO from the watchtower dispute core. |
+| Prover/verifier actions | The corresponding claim-stopper UTXOs, allowing a DRP win to activate the correct Union-side result path. |
+| `operators_aggregated_pub` | Pairwise aggregated dispute key for the two participants. |
+| `program_definition` | `verifiers/union-verifier.yaml`. The file must be accessible to both the clients and job-dispatcher/emulator environment. |
+| `timelock_blocks` | `DRP_TIMELOCK_BLOCKS * 4` in the example. The source notes that this requires tuning for the target network's block frequency. |
+| `notify_protocol` | The watchtower's `DisputeCoreProtocol` ID and protocol type. |
+| `auto_dispatch_input` | Input `2`, so the prover automatically publishes its proof input after the DRP start is observed. |
+| `fail_force_config` | A force/failure configuration used by the example. The source marks this as test-only and says production should use `None`. |
+
+The values passed directly to `BitVMXClient::setup` are:
+
+| Value | Requirement |
+| --- | --- |
+| Protocol type | `PROGRAM_TYPE_DRP` |
+| Participants | Exactly `[operator_address, watchtower_address]` |
+| Setup leader index | `0`, selecting the operator/prover as setup leader |
+
+The generic DRP does not override its Bitcoin confirmation threshold, so it uses the protocol-handler default of one confirmation. Its runtime execution also requires the configured emulator/job-dispatcher components; the Union example README instructs users to run the emulator dispatchers separately for DRP flows.
+
+### Union verifier inputs
+
+The Union verifier is defined by `verifiers/union-verifier.yaml`. The example configures its inputs as follows:
+
+| Input | Owner/source | Setup requirement |
+| --- | --- | --- |
+| `0` — journal size | Constant | Four-byte little-endian value. The example sets `76 / 4`, or 19 words. |
+| `1` — verifier ELF ID | Constant | 32-byte verifier image ID. |
+| `2` — Groth16 proof | Prover/operator | Supplied after setup and before the dispute reaches this input. |
+| `3` — operator ID | Constant | 36 bytes in the verifier journal format. |
+| `4` — peg-out ID | Previous protocol | Read from cosigned witnesses stored in the watchtower's dispute-core instance. |
+| `5` — slot ID | Previous protocol | Read from a cosigned witness stored in the same dispute-core instance. |
+| `6` — validity/version fields | Constant | Four bytes representing the boolean result, version, and padding. The example uses `[1, 0, 1, 0]`. |
+
+Inputs `4` and `5` are connected during `DisputeCoreProtocol` setup rather than by `dispute_channel_setup.rs`. For each pair, dispute core writes:
+
+| DRP-scoped variable | Meaning |
+| --- | --- |
+| `program_input_prev_protocol(4)` | ID of the dispute-core instance holding the cosigned peg-out-ID witnesses. |
+| `program_input_prev_prefix(4)` | Prefix used to retrieve the peg-out-ID witness words. |
+| `program_input_prev_protocol(5)` | ID of the dispute-core instance holding the cosigned slot-ID witness. |
+| `program_input_prev_prefix(5)` | Prefix used to retrieve the slot-ID witness. |
+
+Dispute core also stores the corresponding Winternitz public keys under its own ID. During DRP execution, the generic input handler copies the referenced witnesses into the DRP and includes their messages in the verifier input. These handoffs are why dispute core must be set up before the channel.
+
+### Variables received while running
+
+| Scope | Name | Producer | Use in DRP |
+| --- | --- | --- | --- |
+| DRP ID | `program_input_2` | Operator/proof orchestration | Full Groth16 proof input. Only the operator sets it in `examples/union`. |
+| Previous dispute-core ID | Cosigned peg-out and slot witnesses matching the configured prefixes | `DisputeCoreProtocol` runtime challenge handshake | Provides inputs `4` and `5` when the DRP consumes previous-protocol inputs. |
+
+The operator must set program_input_2 before dispute core starts the DRP, because observing START_CH automatically dispatches the proof input. Inputs 4 and 5 require no direct DRP setter: their witnesses are produced by the preceding dispute-core cosign handshake and later imported through the configured program_input_prev_* references.
+
+### Variables and notifications produced for other protocols
+
+The DRP stores extensive internal execution state under its own ID, including split inputs, trace/search state, timeout state, and generated keys. These are implementation details of the generic dispute engine rather than Union integration variables.
+
+Its Union-facing output is an external transaction notification to the configured watchtower dispute core. Notifications are sent when:
+
+- the DRP start is observed;
+- a prover-wins action is observed; or
+- a verifier-wins action is observed.
+
+`DisputeCoreProtocol` uses these notifications as follows:
+
+| DRP notification | Dispute-core reaction |
+| --- | --- |
+| Start observed | Cancels the pending watchtower-no-challenge timeout for this pair. |
+| Prover/operator wins | The operator starts the operator claim gate in the watchtower dispute core. |
+| Verifier/watchtower wins | The watchtower starts the watchtower claim gate. |
+
+The DRP does not write `OPERATOR_PENALIZED_*` or `WATCHTOWER_PENALIZED_*`; those markers are written later by `FullPenalizationProtocol` after the relevant Union claim succeeds.
+
+The generic DRP sends no direct Union L2 notification or SPV message.
+
+### Automatic dispatch hooks
+
+The DRP is an event-driven state machine. At this level, its important automatic behavior is:
+
+| Hook | Automatic behavior |
+| --- | --- |
+| Setup completed | Logs completion only. It does not start a dispute. |
+| Operator cosign observed by dispute core | `DisputeCoreProtocol` loads this DRP and dispatches its start action. This is the external trigger that begins the channel. |
+| DRP start observed | Notifies dispute core and, on the prover, automatically dispatches configured input `2`. |
+| Protocol step observed | Cancels obsolete timeouts, schedules the counterparty timeout, and dispatches the next role-owned computation/challenge step when its required local or emulator result is ready. |
+| Counterparty timeout observed | Starts the eligible party's DRP claim gate automatically. |
+| Claim-gate start observed | Schedules the local claim success after the DRP timelock or attempts to stop the counterparty's claim. |
+| Claim success observed | Dispatches the configured prover-wins or verifier-wins action. |
+| Win action observed | Notifies the watchtower dispute core, which continues with the Union claim and penalization flow. |
+
+Detailed DRP transaction inputs, outputs, n-ary search rounds, execution checks, and timeout graph are intentionally outside the scope of this Union protocol overview.
+
+### Current example limitations
+
+The Union example is suitable as an orchestration guide but its verifier configuration is not production-ready:
+
+- the verifier ELF ID and operator ID are placeholders;
+- the proof used by the example is hardcoded rather than obtained from the real operator job flow;
+- force/failure configuration is enabled even though the source says production should use `None`;
+- the DRP timelock multiplier still requires network-specific tuning; and
+- the verifier definition is referenced through a relative filesystem path that must also work in the dispatcher environment.
