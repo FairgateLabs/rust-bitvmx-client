@@ -4,6 +4,18 @@ This document describes the role, setup requirements, automatic dispatch hooks, 
 
 The examples under `examples/union` are the reference for orchestration. Protocol IDs are deterministic, so every participant must use the same committee ID, member ordering, and slot numbering.
 
+## Table of contents
+
+| Protocol | Contents |
+| --- | --- |
+| [DisputeCoreProtocol](#disputecoreprotocol) | [Purpose](#purpose) · [Setup](#setup) · [Required variables](#variables-required-before-setup) · [Runtime variables](#variables-received-while-running) · [Produced variables](#variables-produced-for-other-protocols) · [Dispatch hooks](#automatic-dispatch-hooks) |
+| [AcceptPegin](#acceptpegin) | [Purpose](#purpose-1) · [Setup](#setup-1) · [Required variables](#variables-required-before-setup-1) · [Runtime variables](#variables-received-while-running-1) · [Produced variables and notifications](#variables-and-notifications-produced-for-other-components) · [Dispatch hooks](#automatic-dispatch-hooks-1) |
+| [UserTake](#usertake) | [Purpose](#purpose-2) · [Setup](#setup-2) · [Required variables](#variables-required-before-setup-2) · [Validation and failure reporting](#validation-and-failure-reporting) · [Produced variables and notifications](#variables-and-notifications-produced-for-other-components-1) · [Dispatch hooks](#automatic-dispatch-hooks-2) |
+| [AdvanceFunds](#advancefunds) | [Purpose](#purpose-3) · [Setup](#setup-3) · [Required variables](#variables-required-before-setup-3) · [Optional variables](#optional-variables-received-while-running) · [Produced variables](#variables-produced-for-other-protocols-and-future-advances) · [Contract registration](#contract-registration-versus-protocol-local-data) · [L2 notifications](#notifications-produced-for-l2) · [Dispatch hooks](#automatic-dispatch-hooks-3) |
+| [FullPenalization](#fullpenalization) | [Purpose](#purpose-4) · [Setup](#setup-4) · [Required variables](#variables-required-before-setup-4) · [Runtime variables](#variables-received-while-running-2) · [Produced variables](#variables-produced-for-other-protocols-1) · [Dispatch hooks](#automatic-dispatch-hooks-4) · [Implementation note](#current-implementation-note) |
+| [RejectPegin](#rejectpegin) | [Purpose](#purpose-5) · [Setup](#setup-5) · [Required variables](#variables-required-before-setup-5) · [Produced variables and notifications](#variables-and-notifications-produced-for-other-components-2) · [Dispatch hooks](#automatic-dispatch-hooks-5) |
+| [DRP / dispute channel](#drp) | [Purpose](#purpose-6) · [Roles](#roles-and-participants) · [Setup](#setup-6) · [Required variables](#variables-required-before-setup-6) · [Verifier inputs](#union-verifier-inputs) · [Runtime variables](#variables-received-while-running-3) · [Produced notifications](#variables-and-notifications-produced-for-other-protocols) · [Dispatch hooks](#automatic-dispatch-hooks-6) · [Example limitations](#current-example-limitations) |
+
 ## DisputeCoreProtocol
 
 ### Purpose
