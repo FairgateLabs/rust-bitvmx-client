@@ -11,6 +11,9 @@ pub enum ProgramState {
 
     /// Ready state after setup is completed and the transactions are being monitored
     Ready,
+
+    /// Setup failed unrecoverably. Terminal: L2 has been told and the program is no longer driven.
+    Failed,
 }
 
 impl Default for ProgramState {

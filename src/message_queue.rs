@@ -26,6 +26,16 @@ impl QueuedMessage {
     }
 }
 
+/// Result of returning a message to the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOutcome {
+    /// Queued for another attempt.
+    Queued,
+    /// Retry budget exhausted. The message was discarded and will not arrive again:
+    /// the sender already delivered it successfully and does not resend.
+    Dropped,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct StoredMessage {
     identifier: Identifier,
@@ -115,7 +125,7 @@ impl MessageQueue {
         Ok(())
     }
 
-    pub fn push_back(&self, mut queued_msg: QueuedMessage) -> Result<(), BitVMXError> {
+    pub fn push_back(&self, mut queued_msg: QueuedMessage) -> Result<PushOutcome, BitVMXError> {
         queued_msg
             .retry_state
             .record_attempt(&self.retry_policy, now_ms()?);
@@ -126,10 +136,11 @@ impl MessageQueue {
                 queued_msg.retry_state.get_attempts(),
                 queued_msg.identifier
             );
-            return Ok(());
+            return Ok(PushOutcome::Dropped);
         }
 
-        self.push(queued_msg)
+        self.push(queued_msg)?;
+        Ok(PushOutcome::Queued)
     }
 
     pub fn push_new(&self, identifier: Identifier, msg: String) -> Result<(), BitVMXError> {
@@ -287,7 +298,8 @@ mod tests {
         let delayed_id = test_identifier("delayed");
         let ready_id = test_identifier("ready");
 
-        let mut delayed_msg = QueuedMessage::new(delayed_id.clone(), "delayed".to_string()).unwrap();
+        let mut delayed_msg =
+            QueuedMessage::new(delayed_id.clone(), "delayed".to_string()).unwrap();
         delayed_msg
             .retry_state
             .record_attempt(&retry_policy, now_ms().unwrap());
@@ -337,7 +349,7 @@ mod tests {
                 .record_attempt(&retry_policy, now_ms().unwrap());
         }
 
-        queue.push_back(exhausted).unwrap();
+        assert_eq!(queue.push_back(exhausted).unwrap(), PushOutcome::Dropped);
 
         assert_eq!(queue.get_queue_ids().unwrap().len(), 1);
         assert!(!queue.is_empty().unwrap());
