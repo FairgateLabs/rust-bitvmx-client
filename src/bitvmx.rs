@@ -32,12 +32,8 @@ use bitcoin_coordinator::{
     AckMonitorNews, MonitorNews, TypesToMonitor,
 };
 use bitvmx_broker::identification::allow_list::AllowList;
-use bitvmx_broker::identification::routing::RoutingTable;
+use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use bitvmx_broker::retry::RetryPolicy;
-use bitvmx_broker::{
-    identification::identifier::{Identifier, PubkHash},
-    rpc::tls_helper::Cert,
-};
 use bitvmx_broker::{BrokerNode, ReceivedMessage};
 use bitvmx_dispatcher_utils::PingMessage;
 use bitvmx_settings::settings;
@@ -45,7 +41,6 @@ use key_manager::create_key_manager_from_config;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
-use bitvmx_broker::{rpc::BrokerConfig, BrokerServer};
 use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
@@ -67,7 +62,6 @@ pub struct BitVMX {
     config: Config,
     program_context: ProgramContext,
     store: Rc<Storage>,
-    broker: BrokerServer,
     count: u32,
     message_queue: MessageQueue,
     coordinator_throttle: Throttle,
@@ -79,7 +73,7 @@ pub struct BitVMX {
 
 impl Drop for BitVMX {
     fn drop(&mut self) {
-        self.broker.close();
+        self.program_context.broker_channel.close();
         sleep(Duration::from_millis(100));
     }
 }
@@ -124,14 +118,13 @@ impl BitVMX {
 
         let comms_allow_list = comms_allow_list::build(&store, &config.comms.allow_list)?;
 
-        let comms = BrokerNode::new(
+        let comms = BrokerNode::new_peers(
             "comms",
             config.comms.address,
             &settings::decrypt_or_read_file(&config.comms.priv_key)?,
             store.clone(),
             &config.comms.storage_path,
             comms_allow_list,
-            RoutingTable::from_file(&config.broker.routing_table)?,
             config.broker.settings.clone(),
         )?;
 
@@ -151,31 +144,18 @@ impl BitVMX {
             config.coordinator_settings.clone(),
         )?;
 
-        //TODO: This could be moved to a simplified helper inside brokerstorage new
         //Also the broker could be run independently if needed
-        let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-        let routing_table = RoutingTable::from_file(&config.broker.routing_table)?;
-        let cert = Cert::new_with_privk(
-            settings::decrypt_or_read_file(&config.broker.priv_key)
-                .map_err(|e| BitVMXError::ConfigurationError(e.into()))?
-                .as_str(),
-        )?;
-        let broker_config = BrokerConfig::new(
-            config.broker.port,
-            Some(config.broker.ip),
-            config.broker.get_pubk_hash()?,
-            Some(config.broker.settings.clone()),
-        );
-        let broker = BrokerServer::new(
-            &broker_config,
+        let broker_channel = BrokerNode::new_services_with_paths(
+            "services",
+            SocketAddr::new(config.broker.ip, config.broker.port),
+            &config.broker.priv_key,
+            store.clone(),
             &config.broker.storage.path,
-            cert,
-            allow_list,
-            routing_table,
+            &config.broker.allow_list,
+            &config.broker.routing_table,
+            config.components.bitvmx.clone(),
+            config.broker.settings.clone(),
         )?;
-
-        // The channel has to come from the server so that both share the same storage handle.
-        let broker_channel = broker.create_local_channel(config.components.bitvmx.clone());
 
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 
@@ -207,7 +187,6 @@ impl BitVMX {
             config,
             program_context,
             store: store.clone(),
-            broker,
             count: 0,
             message_queue,
             coordinator_throttle,
@@ -223,7 +202,7 @@ impl BitVMX {
         self.shutdown = true;
 
         // Begin shutdown on subcomponents
-        self.broker.close();
+        self.program_context.broker_channel.close();
         self.program_context.comms.close();
         info!("Shutdown completed");
         Ok(())
@@ -499,7 +478,7 @@ impl BitVMX {
         //Send enqueued messages
         self.program_context.comms.tick()?;
 
-        let messages = match self.program_context.comms.check_receive() {
+        let messages = match self.program_context.comms.check_receive(None) {
             Ok(messages) => messages,
             Err(e) => {
                 error!("Error receiving messages: {:?}", e);
@@ -523,7 +502,7 @@ impl BitVMX {
             }
         }
 
-        let deadletter_messages = match self.program_context.comms.check_deadletter() {
+        let deadletter_messages = match self.program_context.comms.check_deadletter(None) {
             Ok(messages) => messages,
             Err(e) => {
                 error!("Error receiving deadletter messages: {:?}", e);
@@ -589,7 +568,7 @@ impl BitVMX {
             }
             Context::RequestId(request_id, from) => {
                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                self.program_context.broker_channel.send(
+                self.program_context.broker_channel.send_service(
                     from,
                     OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
                         .to_string()?,
@@ -645,7 +624,7 @@ impl BitVMX {
                         let data = serde_json::to_string(&legacy)?;
                         self.program_context
                             .broker_channel
-                            .send(&self.config.components.l2, data)?;
+                            .send_service(&self.config.components.l2, data)?;
                     }
                     let outgoing = OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
                         tx_id,
@@ -655,7 +634,7 @@ impl BitVMX {
                     let data = serde_json::to_string(&outgoing)?;
                     self.program_context
                         .broker_channel
-                        .send(&self.config.components.l2, data)?;
+                        .send_service(&self.config.components.l2, data)?;
                     ack_news =
                         AckNews::Monitor(AckMonitorNews::OutputPatternTransaction(tx_id, tag));
                 }
@@ -670,7 +649,7 @@ impl BitVMX {
                         ))?;
                         self.program_context
                             .broker_channel
-                            .send(&self.config.components.l2, data)?;
+                            .send_service(&self.config.components.l2, data)?;
                     }
                 }
             }
@@ -693,7 +672,7 @@ impl BitVMX {
                     let data = OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds().to_string()?;
                     self.program_context
                         .broker_channel
-                        .send(&self.config.components.l2, data)?;
+                        .send_service(&self.config.components.l2, data)?;
                 }
                 CoordinatorNews::DispatchError { txid, context } => {
                     error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
@@ -829,28 +808,41 @@ impl BitVMX {
     }
 
     pub fn process_api_messages(&mut self) -> Result<bool, BitVMXError> {
-        let mut processed = false;
         const MAX_MESSAGES_PER_TICK: usize = 20;
-        for _ in 0..MAX_MESSAGES_PER_TICK {
-            if let Some((msg, from)) = self.program_context.broker_channel.recv()? {
-                match from {
-                    identifier if identifier == self.config.components.garbler => {
-                        self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
-                    }
-                    identifier if identifier == self.config.components.emulator => {
-                        self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
-                    }
-                    identifier if identifier == self.config.components.prover => {
-                        self.handle_prover_message(msg)?;
-                    }
-                    _ => {
-                        self.handle_api_message(msg, from)?;
-                    }
-                };
-                processed = true;
-            } else {
-                break;
-            }
+
+        // Moves whatever the components left on the broker into the in queue
+        self.program_context.broker_channel.tick()?;
+
+        // Takes only a bounded slice of it, the rest waits for the next tick
+        let messages = self
+            .program_context
+            .broker_channel
+            .check_receive(Some(MAX_MESSAGES_PER_TICK))?;
+        let processed = !messages.is_empty();
+
+        for message in messages {
+            let (from, msg) = match message {
+                ReceivedMessage::Msg(identifier, msg) => (identifier, msg),
+                ReceivedMessage::Error(e) => {
+                    info!("Error receiving api message {}", e);
+                    continue;
+                }
+            };
+
+            match from {
+                identifier if identifier == self.config.components.garbler => {
+                    self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
+                }
+                identifier if identifier == self.config.components.emulator => {
+                    self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
+                }
+                identifier if identifier == self.config.components.prover => {
+                    self.handle_prover_message(msg)?;
+                }
+                _ => {
+                    self.handle_api_message(msg, from)?;
+                }
+            };
         }
         Ok(processed)
     }
@@ -1052,7 +1044,7 @@ impl BitVMX {
         debug!("> {:?}", message);
         self.program_context
             .broker_channel
-            .send(&to, serde_json::to_string(&message)?)?;
+            .send_service(&to, serde_json::to_string(&message)?)?;
 
         Ok(())
     }
@@ -1206,7 +1198,7 @@ impl BitVMX {
         info!("Sending dispatcher job message: {}", msg);
         self.program_context
             .broker_channel
-            .send(&self.config.components.prover, msg)?;
+            .send_service(&self.config.components.prover, msg)?;
 
         Ok(())
     }
@@ -1444,7 +1436,7 @@ impl BitVMX {
                     Ok(address) => address,
                     Err(e) => {
                         error!("Error getting funding address uuid: {:?}: {:?}", id, e);
-                        self.program_context.broker_channel.send(
+                        self.program_context.broker_channel.send_service(
                             &from,
                             serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
                                 id,
@@ -1455,7 +1447,7 @@ impl BitVMX {
                     }
                 };
 
-                self.program_context.broker_channel.send(
+                self.program_context.broker_channel.send_service(
                     &from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::FundingAddress(
                         id,
@@ -1467,14 +1459,14 @@ impl BitVMX {
                 debug!("Getting funding balance uuid: {:?}", id);
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
-                    self.program_context.broker_channel.send(
+                    self.program_context.broker_channel.send_service(
                         &from,
                         serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
                     )?;
                     return Ok(());
                 }
                 let balance = self.wallet.balance();
-                self.program_context.broker_channel.send(
+                self.program_context.broker_channel.send_service(
                     &from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::FundingBalance(
                         id,
@@ -1486,7 +1478,7 @@ impl BitVMX {
                 info!("Sending funds to {:?}", destination);
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to send funds uuid: {:?}", id);
-                    self.program_context.broker_channel.send(
+                    self.program_context.broker_channel.send_service(
                         &from,
                         serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
                     )?;
@@ -1497,7 +1489,7 @@ impl BitVMX {
                     Ok(tx) => tx,
                     Err(e) => {
                         error!("Failed sending funds to {:?}. Error: {:?}", destination, e);
-                        self.program_context.broker_channel.send(
+                        self.program_context.broker_channel.send_service(
                             &from.clone(),
                             serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
                                 id,
@@ -1513,7 +1505,7 @@ impl BitVMX {
                 self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1), None)?;
                 self.wallet.update_with_tx(&tx)?;
 
-                self.program_context.broker_channel.send(
+                self.program_context.broker_channel.send_service(
                     &from,
                     serde_json::to_string(&OutgoingBitVMXApiMessages::FundsSent(id, txid))?,
                 )?;

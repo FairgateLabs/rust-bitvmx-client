@@ -438,8 +438,8 @@ impl SignatureVerifier {
         program_id: &Uuid,
         address: &CommsAddress,
         identifier: &Identifier,
-        msg: Vec<u8>,
-        pending_messages: &mut VecDeque<(PubkHash, Vec<u8>)>,
+        msg: String,
+        pending_messages: &mut VecDeque<(PubkHash, String)>,
     ) -> Result<(), BitVMXError> {
         warn!("Missing verification key for: {:?}", program_id);
         OperatorVerificationStore::request_missing_verification_keys(
@@ -1020,7 +1020,7 @@ mod tests {
         let program_id = Uuid::new_v4();
         let peer_address = env.peer_address(0)?;
         let identifier = Identifier::new(peer_address.pubkey_hash.clone(), 0);
-        let msg = vec![1u8, 2, 3];
+        let msg = "pending-payload".to_string();
         let mut pending = VecDeque::new();
 
         SignatureVerifier::handle_missing_verification_key(

@@ -586,7 +586,7 @@ impl AdvanceFundsProtocol {
         // Send the funds advanced data to the broker channel
         context
             .broker_channel
-            .send(&context.components_config.l2, data)?;
+            .send_service(&context.components_config.l2, data)?;
 
         Ok(())
     }
@@ -632,7 +632,7 @@ impl AdvanceFundsProtocol {
 
         context
             .broker_channel
-            .send(&context.components_config.l2, data)?;
+            .send_service(&context.components_config.l2, data)?;
 
         Ok(())
     }

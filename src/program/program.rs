@@ -73,7 +73,7 @@ impl Program {
         let msg = OutgoingBitVMXApiMessages::SetupCompleted(self.program_id).to_string()?;
         program_context
             .broker_channel
-            .send(&program_context.components_config.l2, msg)?;
+            .send_service(&program_context.components_config.l2, msg)?;
 
         info!(
             "Program: Sent SetupCompleted for program {}",
@@ -116,7 +116,7 @@ impl Program {
         .to_string()?;
         program_context
             .broker_channel
-            .send(&program_context.components_config.l2, msg)?;
+            .send_service(&program_context.components_config.l2, msg)?;
 
         self.state = ProgramState::Failed;
         self.save()?;
@@ -732,7 +732,7 @@ impl Program {
         // Send transaction notification to L2 channel
         if vout.is_none() {
             let name = self.protocol.get_transaction_name_by_id(tx_id)?;
-            program_context.broker_channel.send(
+            program_context.broker_channel.send_service(
                 &program_context.components_config.l2,
                 OutgoingBitVMXApiMessages::Transaction(self.program_id, tx_status, Some(name))
                     .to_string()?,

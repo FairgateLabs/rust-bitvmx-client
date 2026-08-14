@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::{env, fs};
@@ -10,9 +11,10 @@ use bitcoin_coordinator::{
     types::{AckNews, News},
     TransactionStatus, TypesToMonitor,
 };
+use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_broker::rpc::BrokerConfig;
-use bitvmx_broker::{BrokerNode, BrokerServer, ReceivedMessage};
+use bitvmx_broker::identification::routing::RoutingTable;
+use bitvmx_broker::{BrokerNode, ReceivedMessage};
 use bitvmx_settings::settings;
 use key_manager::{create_key_manager_from_config, key_manager::KeyManager};
 use protocol_builder::types::{output::SpeedupData, Utxo};
@@ -123,10 +125,10 @@ impl TestCommsEnv {
     /// Tick the channel until a message is delivered and received, or panic
     /// after a few seconds. Delivery goes through the channel's local server,
     /// so this works for self-addressed messages without an external broker.
-    fn receive_one(channel: &mut BrokerNode) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+    fn receive_one(channel: &mut BrokerNode) -> Result<(Identifier, String), BitVMXError> {
         for _ in 0..100 {
             channel.tick()?;
-            let mut received = channel.check_receive()?;
+            let mut received = channel.check_receive(None)?;
             if let Some(ReceivedMessage::Msg(identifier, data)) = received.pop() {
                 return Ok((identifier, data));
             }
@@ -141,11 +143,11 @@ impl TestCommsEnv {
     fn receive_via(
         sender: &mut BrokerNode,
         receiver: &mut BrokerNode,
-    ) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+    ) -> Result<(Identifier, String), BitVMXError> {
         for _ in 0..100 {
             sender.tick()?;
             receiver.tick()?;
-            let mut received = receiver.check_receive()?;
+            let mut received = receiver.check_receive(None)?;
             if let Some(ReceivedMessage::Msg(identifier, data)) = received.pop() {
                 return Ok((identifier, data));
             }
@@ -162,11 +164,11 @@ impl TestCommsEnv {
             a.tick().unwrap();
             b.tick().unwrap();
             assert!(
-                a.check_receive().unwrap().is_empty(),
+                a.check_receive(None).unwrap().is_empty(),
                 "unexpected message delivered to first channel"
             );
             assert!(
-                b.check_receive().unwrap().is_empty(),
+                b.check_receive(None).unwrap().is_empty(),
                 "unexpected message delivered to second channel"
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -183,14 +185,13 @@ impl TestCommsEnv {
         let mut address = self.config.comms.address;
         address.set_port(NEXT_PEER_PORT.fetch_add(1, Ordering::Relaxed));
         let name = format!("peer-{}", index);
-        Ok(BrokerNode::new_with_paths(
+        Ok(BrokerNode::new_peers_with_paths(
             &name,
             address,
             &format!("config/keys/op_{}.key", index + 2),
             self.storage.clone(),
             &format!("{}/comms-{}.db", self._dir.path(), name),
             &self.config.comms.allow_list,
-            &self.config.broker.routing_table,
             self.config.broker.settings.clone(),
         )?)
     }
@@ -199,14 +200,13 @@ impl TestCommsEnv {
     /// runs its own local server, so messages sent to its own address are
     /// delivered back to it on tick without an external broker.
     fn broker_node(&self) -> Result<BrokerNode, BitVMXError> {
-        Ok(BrokerNode::new_with_paths(
+        Ok(BrokerNode::new_peers_with_paths(
             "comms",
             self.config.comms.address,
             &self.config.comms.priv_key,
             self.storage.clone(),
             &self.config.comms.storage_path,
             &self.config.comms.allow_list,
-            &self.config.broker.routing_table,
             self.config.broker.settings.clone(),
         )?)
     }
@@ -417,10 +417,6 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
 /// with the bitcoin coordinator mocked so no bitcoind is needed.
 pub struct TestProgramContextEnv {
     env: TestCommsEnv,
-    /// Owns the storage the context's broker channel reads and writes, so it has
-    /// to outlive the channel.
-    /// Also lets tests open a channel as L2 to read what the client sent there.
-    broker: BrokerServer,
     pub context: ProgramContext<BitcoinCoordinatorMock>,
     /// Remote peer identities; peer `i` uses the development `op_{i + 2}` key
     /// on its own port, so each index is a distinct identity (0..=8 available).
@@ -439,12 +435,24 @@ impl TestProgramContextEnv {
         let env = TestCommsEnv::new(prefix)?;
 
         let comms = env.broker_node()?;
-        // The local channel can only come from a server, so that both share one storage handle.
-        let (broker_config, _, broker_cert) =
-            BrokerConfig::new_only_address(env.config.broker.port, None)?;
-        let broker =
-            BrokerServer::new_simple(&broker_config, &env.config.broker.storage.path, broker_cert)?;
-        let broker_channel = broker.create_local_channel(env.config.components.bitvmx.clone());
+
+        // Stands in for the services broker bitvmx hosts.
+        let allow_list = AllowList::new();
+        allow_list.lock().unwrap().set_allow_all(true);
+        let routing_table = RoutingTable::new();
+        routing_table.lock().unwrap().allow_all();
+
+        let broker_channel = BrokerNode::new_services(
+            "services",
+            SocketAddr::new(env.config.broker.ip, env.config.broker.port),
+            &settings::decrypt_or_read_file(&env.config.broker.priv_key)?,
+            env.storage.clone(),
+            &env.config.broker.storage.path,
+            allow_list,
+            routing_table,
+            env.config.components.bitvmx.clone(),
+            env.config.broker.settings.clone(),
+        )?;
 
         let context = ProgramContext::new(
             comms,
@@ -464,7 +472,6 @@ impl TestProgramContextEnv {
 
         Ok(Self {
             env,
-            broker,
             context,
             peers,
         })
@@ -474,8 +481,9 @@ impl TestProgramContextEnv {
     /// Reads without acking, so repeated calls return the full history.
     pub fn l2_messages(&self) -> Result<Vec<OutgoingBitVMXApiMessages>, BitVMXError> {
         let l2 = self
-            .broker
-            .create_local_channel(self.env.config.components.l2.clone());
+            .context
+            .broker_channel
+            .create_local_channel(self.env.config.components.l2.clone())?;
         l2.get_all()?
             .into_iter()
             .map(|message| OutgoingBitVMXApiMessages::from_string(&message.msg))
@@ -500,13 +508,13 @@ impl TestProgramContextEnv {
     /// Tick the context channel until a message is delivered and received, or
     /// panic after a few seconds. Works for self-addressed messages (sent to
     /// [`Self::self_address`]) without an external broker.
-    pub fn receive_one(&mut self) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+    pub fn receive_one(&mut self) -> Result<(Identifier, String), BitVMXError> {
         TestCommsEnv::receive_one(&mut self.context.comms)
     }
 
     /// Tick the context channel and peer `index` until the peer receives a
     /// message, or panic after a few seconds.
-    pub fn receive_via_peer(&mut self, index: usize) -> Result<(Identifier, Vec<u8>), BitVMXError> {
+    pub fn receive_via_peer(&mut self, index: usize) -> Result<(Identifier, String), BitVMXError> {
         TestCommsEnv::receive_via(&mut self.context.comms, &mut self.peers[index])
     }
 

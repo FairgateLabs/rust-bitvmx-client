@@ -118,7 +118,7 @@ impl ProtocolHandler for AggregatedKeyProtocol {
             self.ctx.id
         );
 
-        context.broker_channel.send(
+        context.broker_channel.send_service(
             &context.components_config.l2,
             OutgoingBitVMXApiMessages::AggregatedPubkey(self.ctx.id, *aggregated_key)
                 .to_string()?,
@@ -150,6 +150,7 @@ mod tests {
     use crate::program::participant::ParticipantKeys;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+    use bitvmx_broker::ReceivedMessage;
 
     fn public_key(value: &str) -> PublicKey {
         PublicKey::from_str(value).unwrap()
@@ -268,7 +269,13 @@ mod tests {
                 .unwrap(),
             aggregated_key
         );
-        let (message, sender) = env.context.broker_channel.recv().unwrap().unwrap();
+        env.context.broker_channel.tick().unwrap();
+        // Only the oldest one, so anything else stays queued instead of being thrown away.
+        let mut received = env.context.broker_channel.check_receive(Some(1)).unwrap();
+        let (sender, message) = match received.pop().unwrap() {
+            ReceivedMessage::Msg(sender, message) => (sender, message),
+            other => panic!("expected a message, got {:?}", other),
+        };
         assert_eq!(sender, env.context.components_config.bitvmx);
         assert!(matches!(
             OutgoingBitVMXApiMessages::from_string(&message).unwrap(),

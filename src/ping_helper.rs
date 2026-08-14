@@ -94,7 +94,7 @@ impl PingHelper {
         debug!("Sending ZKP dispatcher ping message: {}", msg_to_prover);
         program_context
             .broker_channel
-            .send(&components.prover, msg_to_prover)?;
+            .send_service(&components.prover, msg_to_prover)?;
 
         self.time_since_sent_check
             .insert(JobDispatcherType::ZKP, Instant::now());
@@ -106,7 +106,7 @@ impl PingHelper {
 
         program_context
             .broker_channel
-            .send(&components.emulator, msg_to_emulator)?;
+            .send_service(&components.emulator, msg_to_emulator)?;
 
         self.time_since_sent_check
             .insert(JobDispatcherType::Emulator, Instant::now());

@@ -1019,7 +1019,7 @@ pub trait ProtocolHandler {
             job_id: Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
             job_type: job_type,
         })?;
-        program_context.broker_channel.send(dest, msg)?;
+        program_context.broker_channel.send_service(dest, msg)?;
         Ok(())
     }
 }

@@ -1,6 +1,5 @@
 use anyhow::{bail, Result};
 
-use bitvmx_broker::identification::routing::RoutingTable;
 use bitvmx_broker::RemoteChannel;
 use bitvmx_broker::{BrokerNode, ReceivedMessage};
 use bitvmx_client::bitvmx::{BitVMX, Context};
@@ -43,14 +42,13 @@ impl RawPeer {
         common::clear_db(&config.storage.path);
 
         let store = Rc::new(Storage::new(&config.storage)?);
-        let node = BrokerNode::new(
+        let node = BrokerNode::new_peers(
             "comms",
             config.comms.address,
             &settings::decrypt_or_read_file(&config.comms.priv_key)?,
             store.clone(),
             &config.comms.storage_path,
             comms_allow_list::build(&store, &config.comms.allow_list)?,
-            RoutingTable::from_file(&config.broker.routing_table)?,
             config.broker.settings.clone(),
         )?;
 
@@ -74,7 +72,7 @@ impl RawPeer {
             chrono_now_millis(),
             UNCHECKED_SIGNATURE.to_vec(),
         )?;
-        self.node.send(
+        self.node.send_peer(
             &Context::ProgramId(*program_id).to_string()?,
             &to.pubkey_hash,
             to.address,
@@ -90,7 +88,7 @@ impl RawPeer {
     fn heard_about(&mut self, program_id: &Uuid) -> Result<bool> {
         self.node.tick()?;
         let mut heard = false;
-        for message in self.node.check_receive()? {
+        for message in self.node.check_receive(None)? {
             if let ReceivedMessage::Msg(_, raw) = message {
                 if let Ok((_, msg_type, id, _, _, _)) = deserialize_msg(raw, 200000) {
                     info!("Raw peer received {:?} for program {}", msg_type, id);
@@ -119,7 +117,7 @@ fn drive_until_l2_message(
     while Instant::now() < deadline {
         common::tick(bitvmx)?;
         peer.node.tick()?;
-        let _ = peer.node.check_receive()?;
+        let _ = peer.node.check_receive(None)?;
         if let Some((msg, _)) = channel.recv()? {
             return Ok(OutgoingBitVMXApiMessages::from_string(&msg)?);
         }

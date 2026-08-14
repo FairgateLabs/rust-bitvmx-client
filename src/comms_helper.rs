@@ -118,7 +118,7 @@ pub fn request<T: Serialize>(
         timestamp,
         signature.to_vec(),
     )?;
-    comms.send(
+    comms.send_peer(
         &Context::ProgramId(*program_id).to_string()?,
         &comms_address.pubkey_hash,
         comms_address.address,
@@ -293,7 +293,7 @@ pub fn serialize_msg<T: Serialize>(
     data: T,
     timestamp: i64,
     signature: Vec<u8>,
-) -> Result<Vec<u8>, BitVMXError> {
+) -> Result<String, BitVMXError> {
     // Convert version and message type to bytes
     let version_bytes = Version::to_bytes(version)?;
     let msg_type_bytes = msg_type.to_bytes()?;
@@ -313,13 +313,16 @@ pub fn serialize_msg<T: Serialize>(
     result.extend_from_slice(&msg_type_bytes); // Add message type
     result.extend_from_slice(&json_payload); // Add JSON payload
 
-    Ok(result)
+    serde_json::to_string(&result).map_err(|_| BitVMXError::SerializationError)
 }
 
 pub fn deserialize_msg(
-    data: Vec<u8>,
+    data: String,
     max_expected_msg_len_kb: usize,
 ) -> Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError> {
+    let data: Vec<u8> = serde_json::from_str(&data)
+        .map_err(|e| BitVMXError::InvalidMessage(format!("Invalid message encoding: {:?}", e)))?;
+
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
     let max_expected_msg_len = max_expected_msg_len_kb * 1024; // Convert KB to bytes
     if data.len() < MIN_EXPECTED_MSG_LEN || data.len() > max_expected_msg_len {
@@ -626,7 +629,7 @@ mod tests {
         expected_result.extend_from_slice(&expected_msg_type);
         expected_result.extend_from_slice(&expected_json_payload);
 
-        assert_eq!(result, expected_result);
+        assert_eq!(result, encoded(expected_result));
     }
 
     #[test]
@@ -710,6 +713,10 @@ mod tests {
         assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
     }
 
+    fn encoded(data: Vec<u8>) -> String {
+        serde_json::to_string(&data).unwrap()
+    }
+
     // Build a serialized message with a valid header and an arbitrary JSON payload,
     // to exercise deserialize_msg error paths on malformed payloads.
     fn msg_with_payload(payload: &Value) -> Vec<u8> {
@@ -749,7 +756,7 @@ mod tests {
     #[test]
     fn test_deserialize_msg_too_short() {
         assert_invalid_message(
-            deserialize_msg(vec![0x01, 0x00, 0x00], 200000),
+            deserialize_msg(encoded(vec![0x01, 0x00, 0x00]), 200000),
             "Invalid message length",
         );
     }
@@ -758,7 +765,7 @@ mod tests {
     fn test_deserialize_msg_too_long() {
         // 1 KB limit, 2 KB message
         let data = vec![0u8; 2048];
-        assert_invalid_message(deserialize_msg(data, 1), "Invalid message length");
+        assert_invalid_message(deserialize_msg(encoded(data), 1), "Invalid message length");
     }
 
     #[test]
@@ -767,7 +774,7 @@ mod tests {
         data[0] = 0xFF;
         data[1] = 0xFF;
         assert!(matches!(
-            deserialize_msg(data, 200000),
+            deserialize_msg(encoded(data), 200000),
             Err(BitVMXError::InvalidMsgVersion)
         ));
     }
@@ -778,7 +785,7 @@ mod tests {
         data[2] = 0xFF;
         data[3] = 0xFF;
         assert!(matches!(
-            deserialize_msg(data, 200000),
+            deserialize_msg(encoded(data), 200000),
             Err(BitVMXError::InvalidMessageType)
         ));
     }
@@ -789,7 +796,10 @@ mod tests {
         data.extend_from_slice(&Version::to_bytes("1.0").unwrap());
         data.extend_from_slice(&CommsMessageType::Keys.to_bytes().unwrap());
         data.extend_from_slice(b"not json at all");
-        assert_invalid_message(deserialize_msg(data, 200000), "Invalid JSON payload");
+        assert_invalid_message(
+            deserialize_msg(encoded(data), 200000),
+            "Invalid JSON payload",
+        );
     }
 
     #[test]
@@ -797,7 +807,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("program_id");
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "Missing program ID",
         );
     }
@@ -807,7 +817,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["program_id"] = json!(42);
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "Missing program ID",
         );
     }
@@ -817,7 +827,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["program_id"] = json!("not-a-uuid");
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "Invalid program ID",
         );
     }
@@ -827,7 +837,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("msg");
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "Missing message",
         );
     }
@@ -837,7 +847,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("timestamp");
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "timestamp",
         );
     }
@@ -847,7 +857,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["timestamp"] = json!("yesterday");
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "timestamp",
         );
     }
@@ -857,7 +867,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("signature");
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "signature field",
         );
     }
@@ -867,7 +877,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!("abc");
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "signature field",
         );
     }
@@ -877,7 +887,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!([]);
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "Signature array is empty",
         );
     }
@@ -887,7 +897,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!(vec![0u8; 513]);
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "exceeds maximum allowed length",
         );
     }
@@ -897,14 +907,14 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!([1, "x", 3]);
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "is not a valid u64",
         );
 
         let mut payload = valid_payload();
         payload["signature"] = json!([1, -2, 3]);
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "is not a valid u64",
         );
     }
@@ -914,7 +924,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!([1, 256, 3]);
         assert_invalid_message(
-            deserialize_msg(msg_with_payload(&payload), 200000),
+            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
             "exceeds maximum u8 value",
         );
     }

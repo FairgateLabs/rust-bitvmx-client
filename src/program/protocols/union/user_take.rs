@@ -348,7 +348,7 @@ impl UserTakeProtocol {
         // Send the pegout accepted data to the broker channel
         program_context
             .broker_channel
-            .send(&program_context.components_config.l2, data)?;
+            .send_service(&program_context.components_config.l2, data)?;
 
         Ok(())
     }
