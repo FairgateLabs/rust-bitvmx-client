@@ -2,7 +2,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     config::{ComponentsConfig, PingConfig},
     errors::BitVMXError,
-    types::ProgramContext,
+    types::{JobDispatcherType, ProgramContext},
 };
 use bitvmx_dispatcher_utils::PingMessage;
 use std::{
@@ -10,13 +10,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::{debug, warn};
-
-#[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
-pub enum JobDispatcherType {
-    ZKP,
-    Emulator,
-    Garbler,
-}
 
 pub(crate) struct PingHelper {
     time_since_sent_check: HashMap<JobDispatcherType, Instant>,

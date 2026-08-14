@@ -8,7 +8,6 @@ use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
     errors::{BitVMXError, ProgramError},
-    ping_helper::JobDispatcherType,
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -16,7 +15,10 @@ use crate::{
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
-    types::{MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext, SetupFailureReason},
+    types::{
+        ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType, MessageDisposition,
+        OutgoingBitVMXApiMessages, ProgramContext, SetupFailureReason,
+    },
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
@@ -107,12 +109,15 @@ impl Program {
             .map(|engine| engine.current_step_name().to_string())
             .unwrap_or_default();
 
-        let msg = OutgoingBitVMXApiMessages::SetupFailed(
-            self.program_id,
-            step.clone(),
-            peer.clone(),
-            reason.clone(),
-        )
+        let msg = OutgoingBitVMXApiMessages::Error(ErrorReport::new(
+            ErrorScope::Program(self.program_id),
+            ErrorReportKind::SetupFailed {
+                step: step.clone(),
+                peer: peer.clone(),
+                reason: reason.clone(),
+            },
+            None,
+        ))
         .to_string()?;
         program_context
             .broker_channel
@@ -1017,13 +1022,18 @@ mod tests {
         let messages = env.l2_messages().unwrap();
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            OutgoingBitVMXApiMessages::SetupFailed(id, _, peer, reason) => {
-                assert_eq!(*id, program_id);
-                assert!(peer.is_none());
-                assert!(matches!(reason, SetupFailureReason::StepError(text)
-                    if text.contains("Protocol must return setup steps")));
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Program(program_id));
+                match &report.kind {
+                    ErrorReportKind::SetupFailed { peer, reason, .. } => {
+                        assert!(peer.is_none());
+                        assert!(matches!(reason, SetupFailureReason::StepError(text)
+                            if text.contains("Protocol must return setup steps")));
+                    }
+                    other => panic!("expected SetupFailed, got {other:?}"),
+                }
             }
-            other => panic!("expected SetupFailed, got {other:?}"),
+            other => panic!("expected Error, got {other:?}"),
         }
     }
 
@@ -1057,14 +1067,19 @@ mod tests {
         let messages = env.l2_messages().unwrap();
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            OutgoingBitVMXApiMessages::SetupFailed(id, step, peer, reason) => {
-                assert_eq!(*id, program_id);
-                assert_eq!(step, "keys");
-                assert_eq!(peer.as_ref(), Some(&sender));
-                assert!(matches!(reason, SetupFailureReason::StepError(text)
-                    if text.contains("Failed to deserialize key declaration")));
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Program(program_id));
+                match &report.kind {
+                    ErrorReportKind::SetupFailed { step, peer, reason } => {
+                        assert_eq!(step, "keys");
+                        assert_eq!(peer.as_ref(), Some(&sender));
+                        assert!(matches!(reason, SetupFailureReason::StepError(text)
+                            if text.contains("Failed to deserialize key declaration")));
+                    }
+                    other => panic!("expected SetupFailed, got {other:?}"),
+                }
             }
-            other => panic!("expected SetupFailed, got {other:?}"),
+            other => panic!("expected Error, got {other:?}"),
         }
     }
 
@@ -1206,13 +1221,18 @@ mod tests {
         let messages = env.l2_messages().unwrap();
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            OutgoingBitVMXApiMessages::SetupFailed(id, _, peer, reason) => {
-                assert_eq!(*id, program_id);
-                assert!(peer.is_none());
-                assert!(matches!(reason, SetupFailureReason::StepError(text)
-                    if text.contains("Invalid context for Garbler result")));
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Program(program_id));
+                match &report.kind {
+                    ErrorReportKind::SetupFailed { peer, reason, .. } => {
+                        assert!(peer.is_none());
+                        assert!(matches!(reason, SetupFailureReason::StepError(text)
+                            if text.contains("Invalid context for Garbler result")));
+                    }
+                    other => panic!("expected SetupFailed, got {other:?}"),
+                }
             }
-            other => panic!("expected SetupFailed, got {other:?}"),
+            other => panic!("expected Error, got {other:?}"),
         }
 
         // Same for the emulator route, which this protocol does not support. Uses a second
@@ -1313,8 +1333,13 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert!(matches!(
             &messages[0],
-            OutgoingBitVMXApiMessages::SetupFailed(_, _, _, SetupFailureReason::StepError(reason))
-                if reason.contains("Unknown dispatcher type: ZKP")
+            OutgoingBitVMXApiMessages::Error(ErrorReport {
+                kind: ErrorReportKind::SetupFailed {
+                    reason: SetupFailureReason::StepError(reason),
+                    ..
+                },
+                ..
+            }) if reason.contains("Unknown dispatcher type: ZKP")
         ));
     }
 

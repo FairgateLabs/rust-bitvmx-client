@@ -1,6 +1,6 @@
 use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
-use crate::ping_helper::{JobDispatcherType, PingHelper};
+use crate::ping_helper::PingHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::program::{is_active_program, Program};
 use crate::program::protocols::protocol_handler::ProtocolHandler;
@@ -19,8 +19,9 @@ use crate::{
     },
     signature_verifier::SignatureVerifier,
     types::{
-        IncomingBitVMXApiMessages, MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext,
-        ProgramStatus, SetupFailureReason, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+        ErrorReport, ErrorReportKind, IncomingBitVMXApiMessages, JobDispatcherType,
+        MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
+        SetupFailureReason, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -672,7 +673,14 @@ impl BitVMX {
                         "Insufficient funds for transaction. Available: {}, Required: {}",
                         available, required
                     );
-                    let data = OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds().to_string()?;
+                    // The news carries no txid or context, so the program cannot be identified
+                    let data = OutgoingBitVMXApiMessages::Error(ErrorReport::node(
+                        ErrorReportKind::InsufficientFunds {
+                            available,
+                            required,
+                        },
+                    ))
+                    .to_string()?;
                     self.program_context
                         .broker_channel
                         .send_service(&self.config.components.l2, data)?;
