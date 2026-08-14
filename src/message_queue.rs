@@ -12,12 +12,12 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueuedMessage {
     pub identifier: Identifier,
-    pub data: Vec<u8>,
+    pub data: String,
     pub retry_state: RetryState,
 }
 
 impl QueuedMessage {
-    pub fn new(identifier: Identifier, data: Vec<u8>) -> Result<Self, BitVMXError> {
+    pub fn new(identifier: Identifier, data: String) -> Result<Self, BitVMXError> {
         Ok(Self {
             identifier,
             data,
@@ -29,7 +29,7 @@ impl QueuedMessage {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct StoredMessage {
     identifier: Identifier,
-    data: Vec<u8>,
+    data: String,
 }
 
 const QUEUE_IDS_KEY: &str = "bitvmx/message_queue/ids";
@@ -132,7 +132,7 @@ impl MessageQueue {
         self.push(queued_msg)
     }
 
-    pub fn push_new(&self, identifier: Identifier, msg: Vec<u8>) -> Result<(), BitVMXError> {
+    pub fn push_new(&self, identifier: Identifier, msg: String) -> Result<(), BitVMXError> {
         let queued_msg = QueuedMessage::new(identifier, msg)?;
         self.push(queued_msg)
     }
@@ -233,8 +233,8 @@ mod tests {
 
         let id1 = test_identifier("first");
         let id2 = test_identifier("second");
-        let msg1 = vec![1, 2, 3];
-        let msg2 = vec![4, 5, 6];
+        let msg1 = "msg-1".to_string();
+        let msg2 = "msg-2".to_string();
 
         assert!(queue.is_empty().unwrap());
 
@@ -262,7 +262,7 @@ mod tests {
         let queue = MessageQueue::new(storage.clone(), test_retry_policy());
 
         let identifier = test_identifier("separate-storage");
-        let data = vec![7, 8, 9];
+        let data = "separate-storage-payload".to_string();
         queue.push_new(identifier.clone(), data.clone()).unwrap();
 
         let queue_ids = queue.get_queue_ids().unwrap();
@@ -287,18 +287,18 @@ mod tests {
         let delayed_id = test_identifier("delayed");
         let ready_id = test_identifier("ready");
 
-        let mut delayed_msg = QueuedMessage::new(delayed_id.clone(), vec![1]).unwrap();
+        let mut delayed_msg = QueuedMessage::new(delayed_id.clone(), "delayed".to_string()).unwrap();
         delayed_msg
             .retry_state
             .record_attempt(&retry_policy, now_ms().unwrap());
-        let ready_msg = QueuedMessage::new(ready_id.clone(), vec![2]).unwrap();
+        let ready_msg = QueuedMessage::new(ready_id.clone(), "ready".to_string()).unwrap();
 
         queue.push(delayed_msg).unwrap();
         queue.push(ready_msg).unwrap();
 
         let popped = queue.pop_front().unwrap().unwrap();
         assert_eq!(popped.identifier, ready_id);
-        assert_eq!(popped.data, vec![2]);
+        assert_eq!(popped.data, "ready");
 
         let remaining_ids = queue.get_queue_ids().unwrap();
         assert_eq!(remaining_ids.len(), 1);
@@ -308,7 +308,7 @@ mod tests {
         let remaining_retry_state = queue.get_retry_state(&remaining_id).unwrap().unwrap();
 
         assert_eq!(remaining_msg.identifier, delayed_id);
-        assert_eq!(remaining_msg.data, vec![1]);
+        assert_eq!(remaining_msg.data, "delayed");
         assert!(!remaining_retry_state.is_ready(now_ms().unwrap()));
     }
 
@@ -319,7 +319,7 @@ mod tests {
         let retry_policy = test_retry_policy();
         let queue = MessageQueue::new(storage, retry_policy.clone());
 
-        let msg = QueuedMessage::new(test_identifier("retry"), vec![9, 9, 9]).unwrap();
+        let msg = QueuedMessage::new(test_identifier("retry"), "retry-payload".to_string()).unwrap();
         queue.push_back(msg).unwrap();
 
         let queued_ids = queue.get_queue_ids().unwrap();
@@ -329,7 +329,8 @@ mod tests {
         assert_eq!(retry_state.get_attempts(), 1);
         assert!(queue.pop_front().unwrap().is_none());
 
-        let mut exhausted = QueuedMessage::new(test_identifier("exhausted"), vec![7]).unwrap();
+        let mut exhausted =
+            QueuedMessage::new(test_identifier("exhausted"), "exhausted".to_string()).unwrap();
         for _ in 0..retry_policy.max_attempts - 1 {
             exhausted
                 .retry_state
@@ -354,12 +355,12 @@ mod tests {
 
         let message_without_retry_state = StoredMessage {
             identifier: test_identifier("missing-retry-state"),
-            data: vec![1],
+            data: "missing-retry-state".to_string(),
         };
         let retry_state_without_message = RetryState::new(now_ms().unwrap());
         let valid_msg = StoredMessage {
             identifier: test_identifier("valid"),
-            data: vec![4, 2],
+            data: "valid".to_string(),
         };
         let valid_retry_state = RetryState::new(now_ms().unwrap());
 
@@ -400,8 +401,8 @@ mod tests {
 
         let id1 = test_identifier("persisted-1");
         let id2 = test_identifier("persisted-2");
-        let msg1 = vec![1, 1, 1];
-        let msg2 = vec![2, 2, 2];
+        let msg1 = "persisted-payload-1".to_string();
+        let msg2 = "persisted-payload-2".to_string();
 
         {
             let storage = test_dir.storage();

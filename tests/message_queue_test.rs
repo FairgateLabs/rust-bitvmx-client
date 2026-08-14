@@ -25,8 +25,8 @@ fn test_message_queue_persistence() {
     );
 
     // Push messages
-    let msg1 = vec![1, 2, 3];
-    let msg2 = vec![4, 5, 6];
+    let msg1 = "msg-1".to_string();
+    let msg2 = "msg-2".to_string();
     let id1 = Identifier::new("id1".to_string(), 0);
     let id2 = Identifier::new("id2".to_string(), 0);
     queue.push_new(id1.clone(), msg1.clone()).unwrap();
@@ -86,8 +86,8 @@ fn test_queue_no_starvation() {
     // Create poison message and valid message
     let poison_id = Identifier::new("poison".to_string(), 0);
     let good_id = Identifier::new("good".to_string(), 0);
-    let poison_msg = vec![0xde, 0xad, 0xbe, 0xef];
-    let good_msg = vec![1, 2, 3, 4];
+    let poison_msg = "poison-payload".to_string();
+    let good_msg = "good-payload".to_string();
     let poison = QueuedMessage::new(poison_id.clone(), poison_msg.clone()).unwrap();
     let good = QueuedMessage::new(good_id.clone(), good_msg.clone()).unwrap();
     // Push poison first, then valid message

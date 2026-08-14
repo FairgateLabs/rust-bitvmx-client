@@ -237,6 +237,8 @@ impl BitVMXClient {
     }
 
     pub fn get_message(&self) -> Result<Option<(OutgoingBitVMXApiMessages, Identifier)>> {
+        // TODO: recv() acknowledges the message before returning it, so anything that goes wrong in the caller after this
+        // point may generate information loss. To prevent this, we could use channel.get() + channel.ack() instead.
         if let Ok(Some((msg, from))) = self.channel.recv() {
             let dezerialized = serde_json::from_str(&msg)?;
             Ok(Some((dezerialized, from)))

@@ -127,7 +127,7 @@ impl SetupStep for GarblerStep {
         let msg = serde_json::to_string(&prove_job)?;
         context
             .broker_channel
-            .send(&context.components_config.garbler, msg)?;
+            .send_service(&context.components_config.garbler, msg)?;
 
         Ok(None)
     }
@@ -540,7 +540,7 @@ fn dispatch_proof_verification<BC: BitcoinCoordinatorApi>(
     let msg = serde_json::to_string(&prove_job)?;
     context
         .broker_channel
-        .send(&context.components_config.garbler, msg)?;
+        .send_service(&context.components_config.garbler, msg)?;
 
     Ok(())
 }

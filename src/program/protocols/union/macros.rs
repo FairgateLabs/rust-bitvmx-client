@@ -9,7 +9,7 @@ macro_rules! send_to_l2 {
 
         $program_context
             .broker_channel
-            .send(&$program_context.components_config.l2, data.clone())?;
+            .send_service(&$program_context.components_config.l2, data.clone())?;
 
         data
     }};

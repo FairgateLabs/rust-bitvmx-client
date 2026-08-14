@@ -3048,7 +3048,7 @@ impl DisputeCoreProtocol {
 
         context
             .broker_channel
-            .send(&context.components_config.l2, data)?;
+            .send_service(&context.components_config.l2, data)?;
 
         Ok(())
     }

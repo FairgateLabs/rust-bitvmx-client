@@ -60,9 +60,9 @@ fn identifier(i: usize) -> Identifier {
     Identifier::new(format!("bench-{i}"), 0)
 }
 
-fn message_payload(size: usize) -> Vec<u8> {
-    // Deterministic, non-zero data so serialization/storage handles the requested payload size.
-    (0..size).map(|i| (i % 251) as u8).collect()
+fn message_payload(size: usize) -> String {
+    // Deterministic data so serialization/storage handles the requested payload size.
+    (0..size).map(|i| (b'a' + (i % 26) as u8) as char).collect()
 }
 
 fn bench_push_new(c: &mut Criterion) {
