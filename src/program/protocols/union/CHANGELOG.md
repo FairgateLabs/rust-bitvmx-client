@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `CANCEL_TAKE0_TX` transactions to consume `ACCEPT_PEGIN_TX` output enabler.
 - `request_pegin_timelock` to `StreamSettings`. It defines the time the user block funds while the committee accepts the pegin request.
 - `UnionSPVNotification` message to notify Union Client about SPV proofs related to advance funds and challenge transactions.
+- Send a `CancelUserTake` SPV notification after a `CANCEL_TAKE0_TX` transaction is mined.
 
 ### Changed
 

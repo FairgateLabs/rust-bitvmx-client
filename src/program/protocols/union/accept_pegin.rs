@@ -350,7 +350,9 @@ impl ProtocolHandler for AcceptPegInProtocol {
             self.pegin_request(context)?.slot_index, tx_name, tx_id, tx_status.confirmations
         );
 
-        if tx_name.starts_with(OPERATOR_TAKE_TX) || tx_name.starts_with(OPERATOR_WON_TX) {
+        if tx_name.starts_with(CANCEL_TAKE0_TX) {
+            self.send_spv_notification(context, tx_id, UnionTxType::CancelUserTake)?;
+        } else if tx_name.starts_with(OPERATOR_TAKE_TX) || tx_name.starts_with(OPERATOR_WON_TX) {
             let (operator_index, tx_type) = match tx_name.clone() {
                 name if name.starts_with(OPERATOR_TAKE_TX) => (
                     extract_index(&tx_name.clone(), OPERATOR_TAKE_TX)?,
