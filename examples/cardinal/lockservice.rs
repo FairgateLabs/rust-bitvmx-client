@@ -6,10 +6,7 @@ use bitcoin::{
 };
 use bitvmx_broker::{
     identification::{allow_list::AllowList, identifier::Identifier},
-    rpc::{
-        tls_helper::{init_tls, Cert},
-        BrokerConfig,
-    },
+    rpc::{tls_helper::Cert, BrokerConfig},
     BrokerServer, LocalChannel, RemoteChannel,
 };
 use bitvmx_client::{
@@ -114,7 +111,6 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
 
 pub fn main() -> Result<()> {
     // This will act as rpc with to allow the wallets to talk with the L2
-    init_tls();
     let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
     let mut broker = BrokerServer::new_simple(&server_config, "/tmp/lockservice_broker", cert)?;
 
@@ -136,7 +132,6 @@ pub fn main() -> Result<()> {
 }
 
 pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> {
-    init_tls();
     let mut wallet = prepare_bitcoin_running()?;
 
     //TODO: A channel that talks directly with the broker without going through localhost loopback could be implemented

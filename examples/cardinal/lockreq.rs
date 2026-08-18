@@ -3,10 +3,7 @@ use bitcoin::{absolute, secp256k1};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     identification::{allow_list::AllowList, identifier::Identifier},
-    rpc::{
-        tls_helper::{init_tls, Cert},
-        BrokerConfig,
-    },
+    rpc::{tls_helper::Cert, BrokerConfig},
     RemoteChannel,
 };
 use bitvmx_client::program::protocols::cardinal::lock::lock_protocol_dust_cost;
@@ -28,7 +25,7 @@ use tracing::info;
 
 pub fn main() -> Result<()> {
     let bitcoin_client = get_bitcoin_client()?;
-    init_tls();
+
     let preimage = "top_secret".to_string();
     let hash = sha256(preimage.as_bytes().to_vec());
 

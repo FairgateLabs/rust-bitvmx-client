@@ -1,10 +1,7 @@
 use anyhow::{Ok, Result};
 use bitvmx_broker::{
     identification::{allow_list::AllowList, identifier::Identifier},
-    rpc::{
-        tls_helper::{init_tls, Cert},
-        BrokerConfig,
-    },
+    rpc::{tls_helper::Cert, BrokerConfig},
     RemoteChannel,
 };
 
@@ -15,7 +12,6 @@ use tracing::info;
 use crate::common::get_bitcoin_client;
 
 pub fn main() -> Result<()> {
-    init_tls();
     let _bitcoin_client = get_bitcoin_client()?;
     let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
     let cert =
