@@ -111,7 +111,9 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
 
 pub fn main() -> Result<()> {
     // This will act as rpc with to allow the wallets to talk with the L2
-    let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
+    let cert =
+        Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/services.key")?.as_str())?;
+    let server_config = BrokerConfig::new(54321, None, cert.get_pubk_hash()?, None);
     let mut broker = BrokerServer::new_simple(&server_config, "/tmp/lockservice_broker", cert)?;
 
     // The channel has to come from the server so that both share the same storage handle.

@@ -13,7 +13,11 @@ use crate::common::get_bitcoin_client;
 
 pub fn main() -> Result<()> {
     let _bitcoin_client = get_bitcoin_client()?;
-    let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
+    // The lockservice broker runs on the services key, so that is the identity expected at 54321.
+    let broker_pubk_hash =
+        Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/services.key")?.as_str())?
+            .get_pubk_hash()?;
+    let broker_config = BrokerConfig::new(54321, None, broker_pubk_hash, None);
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
     let allow_list = AllowList::new();
