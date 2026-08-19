@@ -433,6 +433,7 @@ fn config_trace_aux() {
     tracing_subscriber::fmt()
         //.without_time()
         //.with_ansi(false)
+        .with_ansi_sanitization(false)
         .with_target(true)
         .with_env_filter(filter)
         .init();
