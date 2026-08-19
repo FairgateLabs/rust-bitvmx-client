@@ -31,15 +31,15 @@ use crate::{
                     add_speedups, collect_input_signatures, create_transaction_reference,
                     double_indexed_name, extract_double_index, get_dispute_core_pid,
                     get_initial_deposit_output_type, get_op_disabler_directory_output_value,
-                    get_stream_setting, indexed_name, load_union_settings, save_penalized_member,
-                    triple_indexed_name, InputSigningInfo, WinternitzData,
+                    indexed_name, save_penalized_member, triple_indexed_name, InputSigningInfo,
+                    WinternitzData,
                 },
                 dispute_core::{
                     CHALLENGE_KEY, OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
                     WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF, WT_START_ENABLER_TX_DISABLER_LEAF,
                 },
                 types::{
-                    Committee, FullPenalizationData, PenalizedMember, StreamSettings,
+                    Committee, FullPenalizationData, PacketSettings, PenalizedMember,
                     WtInitChallengeUtxos, DISPUTE_AGGREGATED_KEY, DUST_VALUE,
                     OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
                     OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
@@ -104,7 +104,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         let data: FullPenalizationData = self.full_penalization_data(context)?;
         let committee = self.committee(context, data.committee_id)?;
-        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
+        self.set_requested_confirmations(context, committee.settings.pegin_confirmations)?;
 
         let mut protocol = self.load_or_create_protocol();
 
@@ -289,7 +289,7 @@ impl FullPenalizationProtocol {
         take_enablers: &Vec<PartialUtxo>,
         initial_deposit_utxos: &Vec<PartialUtxo>,
         operator_won_enablers: &Vec<PartialUtxo>,
-        settings: &StreamSettings,
+        settings: &PacketSettings,
     ) -> Result<(), BitVMXError> {
         let packet_size = committee.packet_size;
         let op_disabler_directory_name =
@@ -768,10 +768,7 @@ impl FullPenalizationProtocol {
         context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let member_count = committee.members.len();
-        let settings = get_stream_setting(
-            &load_union_settings(context)?,
-            committee.stream_denomination,
-        )?;
+        let settings = &committee.settings;
 
         for operator_index in 0..member_count {
             if committee.members[operator_index].role != ParticipantRole::Prover {
@@ -834,7 +831,7 @@ impl FullPenalizationProtocol {
                     &take_enablers,
                     &initial_deposit_utxos,
                     &operator_won_enablers,
-                    &settings,
+                    settings,
                 )?;
             }
         }

@@ -80,7 +80,7 @@ impl ProtocolHandler for RejectPegInProtocol {
     ) -> Result<(), BitVMXError> {
         let data: RejectPeginData = self.reject_pegin(context)?;
         let committee = self.committee(context, data.committee_id)?;
-        self.set_requested_confirmations(context, committee.reject_pegin_confirmations)?;
+        self.set_requested_confirmations(context, committee.settings.reject_pegin_confirmations)?;
 
         let pegin_request_txid = data.txid;
         let take_aggregated_key = committee.take_aggregated_key;

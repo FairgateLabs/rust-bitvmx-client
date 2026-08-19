@@ -13,10 +13,9 @@ use crate::{
 use super::types::{
     AdvanceFundsRegistered, AdvanceFundsRequest, Committee, DisputeCoreData, FullPenalizationData,
     FundsAdvanceSPV, FundsAdvanced, InitData, PegInRequest, PegOutAccepted, PegOutRequest,
-    PenalizedMember, RejectPeginData, UnionSPVNotification, UnionSettings, ADVANCE_FUNDS_REQUEST,
-    COMMITTEE, DISPUTE_CORE_DATA, FULL_PENALIZATION_DATA, FUNDS_ADVANCED, FUNDS_ADVANCE_SPV,
-    INIT_DATA, PEGIN_REQUEST, PEGOUT_ACCEPTED, PEGOUT_REQUEST, REJECT_PEGIN_DATA, UNION_SETTINGS,
-    UNION_SPV_NOTIFICATION,
+    PenalizedMember, RejectPeginData, UnionSPVNotification, ADVANCE_FUNDS_REQUEST, COMMITTEE,
+    DISPUTE_CORE_DATA, FULL_PENALIZATION_DATA, FUNDS_ADVANCED, FUNDS_ADVANCE_SPV, INIT_DATA,
+    PEGIN_REQUEST, PEGOUT_ACCEPTED, PEGOUT_REQUEST, REJECT_PEGIN_DATA, UNION_SPV_NOTIFICATION,
 };
 
 /// Transport for union messages carried over `IncomingBitVMXApiMessages::SetVar`/`GetVar`.
@@ -90,10 +89,6 @@ impl UnionMessage for UnionSPVNotification {
 
 impl UnionMessage for FullPenalizationData {
     const KEY: &'static str = FULL_PENALIZATION_DATA;
-}
-
-impl UnionMessage for UnionSettings {
-    const KEY: &'static str = UNION_SETTINGS;
 }
 
 impl AdvanceFundsRegistered {

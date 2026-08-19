@@ -691,7 +691,7 @@ pub fn cli_op_no_cosign() -> Result<()> {
     committee.members[op_index].bitvmx.shutdown();
 
     // Amount of blocks enough to allow WT to dispatch OP_NO_COSIGN_TX and following TXs
-    let blocks_to_wait = committee.stream_settings.op_no_cosign_timelock + PEGIN_CONFIRMATIONS + 30;
+    let blocks_to_wait = committee.settings.op_no_cosign_timelock + PEGIN_CONFIRMATIONS + 30;
     info!("Mining {} blocks...", blocks_to_wait);
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait as u32)?;
 
@@ -731,8 +731,7 @@ pub fn cli_wt_no_challenge() -> Result<()> {
         committee.members[wt_index].bitvmx.shutdown();
     }
     // Amount of blocks enough to allow OP to dispatch WT_NO_CHALLENGE_TX and following TXs
-    let blocks_to_wait =
-        committee.stream_settings.wt_no_challenge_timelock + PEGIN_CONFIRMATIONS + 30;
+    let blocks_to_wait = committee.settings.wt_no_challenge_timelock + PEGIN_CONFIRMATIONS + 30;
     info!("Mining {} blocks...", blocks_to_wait);
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait as u32)?;
 
@@ -767,7 +766,7 @@ pub fn cli_input_not_revealed() -> Result<()> {
     committee.members[op_index].bitvmx.shutdown();
 
     // Wait some blocks to be able to dispatch and mine INPUT_NOT_REVEALED_TX
-    let blocks_to_wait = committee.stream_settings.input_not_revealed_timelock as u32 + 10;
+    let blocks_to_wait = committee.settings.input_not_revealed_timelock as u32 + 10;
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     Ok(())
@@ -1010,7 +1009,7 @@ pub fn request_pegin(committee: &Committee, user: &mut User) -> Result<(Txid, u6
     let amount: u64 = STREAM_DENOMINATION;
     let committee_public_key = committee.public_key()?;
     let dispute_keys = committee.get_dispute_keys();
-    let request_pegin_timelock = committee.stream_settings.request_pegin_timelock;
+    let request_pegin_timelock = committee.settings.request_pegin_timelock;
 
     let (request_pegin_txid, request_pegin_tx) = user.request_pegin(
         &committee_public_key,
@@ -1157,7 +1156,7 @@ pub fn advance_funds(
     if should_wait {
         wait_for_blocks(
             &committee.bitcoin_client,
-            get_blocks_to_wait() + committee.stream_settings.long_timelock as u32 + 10,
+            get_blocks_to_wait() + committee.settings.long_timelock as u32 + 10,
         )?;
 
         // Wait for the FundsAdvanced message
@@ -1286,7 +1285,7 @@ fn challenge(
     )?;
 
     if should_wait {
-        let additional_blocks = committee.stream_settings.long_timelock + 1300;
+        let additional_blocks = committee.settings.long_timelock + 1300;
 
         info!(
             "Starting mining {} blocks in loop to ensure challenges and DRP txs are dispatched...",

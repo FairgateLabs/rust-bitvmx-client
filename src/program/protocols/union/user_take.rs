@@ -72,6 +72,7 @@ impl ProtocolHandler for UserTakeProtocol {
         self.set_requested_confirmations(
             context,
             self.committee(context, &pegout_request.committee_id)?
+                .settings
                 .pegout_confirmations,
         )?;
 

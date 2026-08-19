@@ -8,7 +8,7 @@ use bitvmx_client::{
         participant::CommsAddress,
         protocols::union::{
             common::get_dispute_core_pid,
-            types::{Committee, DisputeCoreData, MemberData},
+            types::{Committee, DisputeCoreData, MemberData, PacketSettings},
         },
         variables::{PartialUtxo, VariableTypes},
     },
@@ -17,10 +17,7 @@ use bitvmx_client::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::participants::{
-    committee::PACKET_SIZE,
-    common::{PEGIN_CONFIRMATIONS, PEGOUT_CONFIRMATIONS},
-};
+use crate::participants::committee::PACKET_SIZE;
 
 pub struct DisputeCoreSetup {}
 
@@ -36,6 +33,7 @@ impl DisputeCoreSetup {
         members_protocol_funding: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
         stream_denomination: u64,
+        settings: PacketSettings,
     ) -> Result<()> {
         let committee = Committee {
             members: members.clone(),
@@ -43,9 +41,7 @@ impl DisputeCoreSetup {
             dispute_aggregated_key,
             packet_size: PACKET_SIZE,
             stream_denomination,
-            pegin_confirmations: PEGIN_CONFIRMATIONS as u32, // This value should be requested from contracts
-            pegout_confirmations: PEGOUT_CONFIRMATIONS as u32, // This value should be requested from contracts
-            reject_pegin_confirmations: 1, // This value should be requested from contracts
+            settings,
         };
 
         bitvmx.set_var(

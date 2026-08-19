@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bitcoin::{
     absolute::{self},
     hashes::Hash,
@@ -13,14 +11,13 @@ use bitvmx_client::{
     program::{
         protocols::{
             dispute::program_input,
-            union::types::{StreamSettings, UnionSettings, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE},
+            union::types::{P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE},
         },
         variables::{PartialUtxo, VariableTypes},
     },
 };
 use uuid::Uuid;
 pub const PEGIN_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
-pub const PEGOUT_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
 
 /// Format a Bitcoin transaction in Solidity syntax for cross-system verification
 pub fn format_transaction_solidity(tx: &Transaction) -> String {
@@ -366,56 +363,6 @@ pub fn calculate_taproot_key_path_sighash(
     )?;
 
     Ok(sighash.to_raw_hash().as_byte_array().clone())
-}
-
-pub fn get_default_union_settings() -> UnionSettings {
-    let mut settings = UnionSettings {
-        settings: HashMap::new(),
-    };
-
-    settings.settings.insert(
-        30000,
-        StreamSettings {
-            short_timelock: PEGIN_CONFIRMATIONS,
-            long_timelock: PEGIN_CONFIRMATIONS + 6,
-            op_won_timelock: 250,
-            claim_gate_timelock: 6,
-            input_not_revealed_timelock: 14,
-            op_no_cosign_timelock: 12,
-            wt_no_challenge_timelock: 12,
-            request_pegin_timelock: 12,
-        },
-    );
-
-    settings.settings.insert(
-        100000,
-        StreamSettings {
-            short_timelock: PEGIN_CONFIRMATIONS,
-            long_timelock: PEGIN_CONFIRMATIONS + 6,
-            op_won_timelock: 250,
-            claim_gate_timelock: 6,
-            input_not_revealed_timelock: 14,
-            op_no_cosign_timelock: 12,
-            wt_no_challenge_timelock: 12,
-            request_pegin_timelock: 12,
-        },
-    );
-
-    settings.settings.insert(
-        1000000,
-        StreamSettings {
-            short_timelock: PEGIN_CONFIRMATIONS,
-            long_timelock: PEGIN_CONFIRMATIONS + 6,
-            op_won_timelock: 250,
-            claim_gate_timelock: 6,
-            input_not_revealed_timelock: 14,
-            op_no_cosign_timelock: 12,
-            wt_no_challenge_timelock: 12,
-            request_pegin_timelock: 12,
-        },
-    );
-
-    settings
 }
 
 pub fn set_program_input(

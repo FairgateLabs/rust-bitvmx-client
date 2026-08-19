@@ -10,11 +10,10 @@ use crate::{
             union::{
                 common::{
                     collect_input_signatures, create_transaction_reference, extract_index,
-                    get_dispute_core_pid, get_operator_output_type, get_stream_setting,
-                    indexed_name, load_union_settings, InputSigningInfo,
+                    get_dispute_core_pid, get_operator_output_type, indexed_name, InputSigningInfo,
                 },
                 types::{
-                    Committee, PegInAccepted, PegInRequest, StreamSettings, UnionSPVNotification,
+                    Committee, PacketSettings, PegInAccepted, PegInRequest, UnionSPVNotification,
                     UnionTxType, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, DUST_VALUE,
                     LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX,
                     OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE, REIMBURSEMENT_KICKOFF_TX,
@@ -111,7 +110,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let pegin_request_txid = pegin_request.txid;
         let committee = self.committee(context, pegin_request.committee_id)?;
 
-        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
+        self.set_requested_confirmations(context, committee.settings.pegin_confirmations)?;
 
         // Enabler outputs get compensated from input to output so they are removed from the user output calculation
         let user_output_amount =
@@ -119,7 +118,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
 
         let take_aggregated_key = &pegin_request.take_aggregated_key;
         let mut protocol = self.load_or_create_protocol();
-        let settings = self.load_stream_setting(context)?;
+        let settings = committee.settings;
 
         let leaves = self.request_pegin_leaves(
             pegin_request.amount,
@@ -225,11 +224,8 @@ impl ProtocolHandler for AcceptPegInProtocol {
         )?;
 
         let committee = self.committee(context, pegin_request.committee_id)?;
+        let settings = committee.settings;
         let members = committee.members;
-        let settings = get_stream_setting(
-            &load_union_settings(context)?,
-            committee.stream_denomination,
-        )?;
 
         // Loop over operators and create take 1 and take 2 transactions
         for operator_index in pegin_request.operator_indexes {
@@ -565,7 +561,7 @@ impl AcceptPegInProtocol {
         pegin_txid: Txid,
         kickoff_tx_name: &str,
         take_enabler: PartialUtxo,
-        settings: &StreamSettings,
+        settings: &PacketSettings,
     ) -> Result<(), BitVMXError> {
         let operator_take_tx_name = &indexed_name(OPERATOR_TAKE_TX, operator_index);
 
@@ -616,7 +612,7 @@ impl AcceptPegInProtocol {
         pegin_txid: Txid,
         reveal_tx_name: &str,
         won_enabler: PartialUtxo,
-        settings: &StreamSettings,
+        settings: &PacketSettings,
     ) -> Result<(), BitVMXError> {
         // Operator won transaction
         let operator_won_tx_name = &indexed_name(OPERATOR_WON_TX, operator_index);
@@ -837,7 +833,7 @@ impl AcceptPegInProtocol {
         amount: u64,
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
-        settings: &StreamSettings,
+        settings: &PacketSettings,
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let mut address_bytes = [0u8; 20];
         address_bytes.copy_from_slice(
@@ -970,18 +966,6 @@ impl AcceptPegInProtocol {
             Some(var) => Ok(Some(var.number()?)),
             None => Ok(None),
         }
-    }
-
-    fn load_stream_setting<BC: BitcoinCoordinatorApi>(
-        &self,
-        context: &ProgramContext<BC>,
-    ) -> Result<StreamSettings, BitVMXError> {
-        let request = self.pegin_request(context)?;
-        get_stream_setting(
-            &load_union_settings(context)?,
-            self.committee(context, request.committee_id)?
-                .stream_denomination,
-        )
     }
 
     fn get_sign_mode(&self, index: usize) -> SignMode {
