@@ -443,7 +443,6 @@ impl TestHelper {
             let broker_config = BrokerConfig::new(
                 config.broker.port,
                 None,
-                config.broker.get_pubk_hash()?,
                 Some(config.broker.settings.clone()),
             );
             let channel = RemoteChannel::new(
@@ -453,6 +452,7 @@ impl TestHelper {
                 )?,
                 Some(config.testing.l2.id),
                 allow_list.clone(),
+                config.broker.get_pubk_hash()?,
             )?;
             let id = config.components.bitvmx.clone();
             id_channel_pairs.push(ParticipantChannel { channel, id });
@@ -693,7 +693,6 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
         let broker_config = BrokerConfig::new(
             config.broker.port,
             None,
-            config.broker.get_pubk_hash()?,
             Some(config.broker.settings.clone()),
         );
         let channel = RemoteChannel::new(
@@ -703,6 +702,7 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             )?,
             Some(config.testing.emulator.id),
             allow_list.clone(),
+            config.broker.get_pubk_hash()?,
         )?;
 
         //TODO: this is temporal until there are separated storages
@@ -743,7 +743,6 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
         let broker_config = BrokerConfig::new(
             config.broker.port,
             None,
-            config.broker.get_pubk_hash()?,
             Some(config.broker.settings.clone()),
         );
         let channel = RemoteChannel::new(
@@ -753,6 +752,7 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             )?,
             Some(config.testing.prover.id),
             allow_list.clone(),
+            config.broker.get_pubk_hash()?,
         )?;
 
         //TODO: this is temporal until there are separated storages
@@ -795,7 +795,6 @@ fn run_garbled(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<
         let broker_config = BrokerConfig::new(
             config.broker.port,
             None,
-            config.broker.get_pubk_hash()?,
             Some(config.broker.settings.clone()),
         );
         let channel = RemoteChannel::new(
@@ -803,6 +802,7 @@ fn run_garbled(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<
             Cert::from_key_file(&config.testing.garbler.priv_key)?,
             Some(config.testing.garbler.id), // Use different ID to avoid conflicts
             allow_list.clone(),
+            config.broker.get_pubk_hash()?,
         )?;
 
         //TODO: this is temporal until there are separated storages

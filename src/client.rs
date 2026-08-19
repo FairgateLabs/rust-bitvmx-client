@@ -40,7 +40,6 @@ impl BitVMXClient {
         let config = rpc::BrokerConfig::new(
             broker_config.port,
             None,
-            broker_config.get_pubk_hash()?,
             Some(broker_config.settings.clone()),
         );
         let channel = RemoteChannel::new(
@@ -48,6 +47,7 @@ impl BitVMXClient {
             Cert::new_with_privk(settings::decrypt_or_read_file(&l2_config.priv_key)?.as_str())?,
             Some(l2_config.id),
             allow_list,
+            broker_config.get_pubk_hash()?,
         )?;
 
         Ok(Self {
