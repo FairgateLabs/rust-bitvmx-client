@@ -23,6 +23,10 @@ if [[ "$NIGHTLY" == "true" ]]; then
         REGTEST_TESTS=(
             "test_full:35m"
             "test_drp:35m"
+            "undeliverable_setup_message_is_reported_to_l2:5m"
+            "dropped_setup_messages_are_reported_to_l2:5m"
+            "answered_pings_are_not_reported:5m"
+            "unanswered_pings_are_reported_once:5m"
         )
         
         restart_bitcoind() {
