@@ -395,6 +395,9 @@ pub enum ConfigError {
     #[error("Invalid configuation path {0}")]
     InvalidConfigPath(String),
 
+    #[error("Invalid job dispatcher ping config: {0}")]
+    InvalidPingConfig(String),
+
     #[error("Invalid configuration from file")]
     SettingsError(#[from] bitvmx_settings::errors::ConfigError),
 

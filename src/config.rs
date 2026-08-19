@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use storage_backend::storage_config::StorageConfig;
 use tracing::info;
 
-use crate::{errors::ConfigError, throttle::ThrottleConfig};
+use crate::{errors::ConfigError, throttle::ThrottleConfig, types::JobDispatcherType};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProtocolBuilderConfig {
@@ -91,6 +91,8 @@ pub struct PingConfig {
     pub enabled: bool,
     pub interval_secs: u64,
     pub timeout_secs: u64,
+    #[serde(default)]
+    pub services: Vec<JobDispatcherType>, // dispatchers to ping: Emulator, Garbler, ZKP
 }
 
 #[derive(Debug, Deserialize, Clone)]

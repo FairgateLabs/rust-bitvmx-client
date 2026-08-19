@@ -3,6 +3,7 @@ pub mod client;
 pub mod comms_allow_list;
 pub mod comms_helper;
 pub mod config;
+pub mod error_severity;
 pub mod errors;
 pub mod helper;
 pub mod leader_broadcast;

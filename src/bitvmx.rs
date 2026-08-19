@@ -175,7 +175,7 @@ impl BitVMX {
             leader_broadcast_helper,
         );
 
-        let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone());
+        let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone())?;
 
         let message_queue = MessageQueue::new(
             store.clone(),
@@ -714,8 +714,12 @@ impl BitVMX {
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper
-                .received_message(JobDispatcherType::ZKP, &message);
+            self.ping_helper.received_message(
+                JobDispatcherType::ZKP,
+                &message,
+                &self.program_context,
+                &self.config.components,
+            );
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
@@ -789,7 +793,12 @@ impl BitVMX {
         msg: &String,
     ) -> Result<(), BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper.received_message(dispatcher, &message);
+            self.ping_helper.received_message(
+                dispatcher,
+                &message,
+                &self.program_context,
+                &self.config.components,
+            );
         } else {
             let result_message = ResultMessage::from_str(&msg)?;
             let parsed: serde_json::Value = result_message.result_as_value()?;
