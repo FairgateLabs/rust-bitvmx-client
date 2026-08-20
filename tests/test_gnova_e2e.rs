@@ -203,7 +203,6 @@ fn init_broker_server() -> Result<BrokerServer> {
     let broker_config = BrokerConfig::new(
         config.broker.port,
         None,
-        config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
 
@@ -225,7 +224,6 @@ fn run_garbled_dispatcher(stop_rx: Receiver<()>) -> Result<()> {
     let broker_config = BrokerConfig::new(
         config.broker.port,
         None,
-        config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
     let channel = RemoteChannel::new(
@@ -233,6 +231,7 @@ fn run_garbled_dispatcher(stop_rx: Receiver<()>) -> Result<()> {
         Cert::from_key_file(&config.testing.garbler.priv_key)?,
         Some(config.testing.garbler.id), // Use different ID to avoid conflicts
         allow_list.clone(),
+        config.broker.get_pubk_hash()?,
     )?;
 
     //TODO: this is temporal until there are separated storages
@@ -260,7 +259,6 @@ fn run_garbled_client_test() -> Result<()> {
     let broker_config = BrokerConfig::new(
         config.broker.port,
         None,
-        config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
     let channel = RemoteChannel::new(
@@ -268,6 +266,7 @@ fn run_garbled_client_test() -> Result<()> {
         Cert::from_key_file(&config.testing.l2.priv_key)?,
         Some(config.testing.l2.id), // Use different ID to avoid conflicts
         allow_list.clone(),
+        config.broker.get_pubk_hash()?,
     )?;
 
     let output_dir = "/tmp/gnova_e2e_test";

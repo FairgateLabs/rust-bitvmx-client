@@ -88,12 +88,8 @@ pub fn get_all(channels: &Vec<RemoteChannel>) -> Result<Vec<(String, Identifier)
 pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let config = Config::new(Some(format!("config/{}.yaml", role)))?;
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
-    let broker_config = BrokerConfig::new(
-        config.broker.port,
-        None,
-        config.broker.get_pubk_hash()?,
-        Some(config.broker.settings),
-    );
+    let broker_pubk_hash = config.broker.get_pubk_hash()?;
+    let broker_config = BrokerConfig::new(config.broker.port, None, Some(config.broker.settings));
     let bridge_client = RemoteChannel::new(
         &broker_config,
         Cert::new_with_privk(
@@ -101,6 +97,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
         )?,
         Some(config.testing.l2.id),
         allow_list.clone(),
+        broker_pubk_hash,
     )?;
     let particiant_channel = ParticipantChannel {
         id: config.components.bitvmx,
@@ -111,7 +108,9 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
 
 pub fn main() -> Result<()> {
     // This will act as rpc with to allow the wallets to talk with the L2
-    let (server_config, _server_identifier, cert) = BrokerConfig::new_only_address(54321, None)?;
+    let cert =
+        Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/services.key")?.as_str())?;
+    let server_config = BrokerConfig::new(54321, None, None);
     let mut broker = BrokerServer::new_simple(&server_config, "/tmp/lockservice_broker", cert)?;
 
     // The channel has to come from the server so that both share the same storage handle.
