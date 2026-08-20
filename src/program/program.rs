@@ -7,6 +7,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
+    error_severity::{classify, Severity},
     errors::{BitVMXError, ProgramError},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
@@ -292,21 +293,25 @@ impl Program {
 
     /// Main tick function - drives the program forward.
     ///
-    /// A setup-phase error is reported as `SetupFailed` and swallowed rather than returned:
-    /// `main.rs` treats a `tick` error as fatal. Errors past `Ready` propagate unchanged.
+    /// A setup-phase error is reported as `SetupFailed` and swallowed rather than returned,
+    /// unless it is fatal or a bitcoin outage. Errors past `Ready` propagate unchanged.
     pub fn tick<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(
-                    None,
-                    SetupFailureReason::StepError(e.to_string()),
-                    program_context,
-                )?;
-                Ok(())
-            }
+            Err(e) if self.state != ProgramState::Ready => match classify(&e) {
+                Severity::Fatal => Err(e),
+                Severity::BitcoinNodeUnreachable => Ok(()),
+                Severity::Other => {
+                    self.fail_setup(
+                        None,
+                        SetupFailureReason::StepError(e.to_string()),
+                        program_context,
+                    )?;
+                    Ok(())
+                }
+            },
             other => other,
         }
     }
@@ -450,14 +455,18 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(
-                    None,
-                    SetupFailureReason::StepError(e.to_string()),
-                    program_context,
-                )?;
-                Ok(())
-            }
+            Err(e) if self.state != ProgramState::Ready => match classify(&e) {
+                Severity::Fatal => Err(e),
+                Severity::BitcoinNodeUnreachable => Ok(()),
+                Severity::Other => {
+                    self.fail_setup(
+                        None,
+                        SetupFailureReason::StepError(e.to_string()),
+                        program_context,
+                    )?;
+                    Ok(())
+                }
+            },
             other => other,
         }
     }
@@ -629,14 +638,18 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(
-                    Some(comms_address.clone()),
-                    SetupFailureReason::StepError(e.to_string()),
-                    program_context,
-                )?;
-                Ok(MessageDisposition::Processed)
-            }
+            Err(e) if self.state != ProgramState::Ready => match classify(&e) {
+                Severity::Fatal => Err(e),
+                Severity::BitcoinNodeUnreachable => Ok(MessageDisposition::RetryLater),
+                Severity::Other => {
+                    self.fail_setup(
+                        Some(comms_address.clone()),
+                        SetupFailureReason::StepError(e.to_string()),
+                        program_context,
+                    )?;
+                    Ok(MessageDisposition::Processed)
+                }
+            },
             other => other,
         }
     }

@@ -1,5 +1,6 @@
 use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
+use crate::error_severity::{classify, send_error_report, Severity};
 use crate::ping_helper::PingHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::program::{is_active_program, Program};
@@ -19,7 +20,7 @@ use crate::{
     },
     signature_verifier::SignatureVerifier,
     types::{
-        ErrorReport, ErrorReportKind, IncomingBitVMXApiMessages, JobDispatcherType,
+        ErrorReport, ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, JobDispatcherType,
         MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
         SetupFailureReason, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
@@ -70,6 +71,7 @@ pub struct BitVMX {
     bitvmx_throttle: Throttle,
     wallet: Wallet,
     ping_helper: PingHelper,
+    fatal_reported: bool,
     shutdown: bool,
 }
 
@@ -195,6 +197,7 @@ impl BitVMX {
             bitvmx_throttle,
             wallet,
             ping_helper,
+            fatal_reported: false,
             shutdown: false,
         })
     }
@@ -864,6 +867,36 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
+        let result = self.tick_inner();
+
+        if let Err(e) = &result {
+            if classify(e) == Severity::Fatal {
+                self.report_fatal(e);
+            }
+        }
+
+        result
+    }
+
+    fn report_fatal(&mut self, error: &BitVMXError) {
+        if self.fatal_reported {
+            return;
+        }
+        self.fatal_reported = true;
+
+        error!("Fatal error, stopping the node: {:?}", error);
+        send_error_report(
+            &self.program_context.broker_channel,
+            &self.config.components.l2,
+            ErrorReport::new(
+                ErrorScope::Node,
+                ErrorReportKind::Fatal,
+                Some(error.to_string()),
+            ),
+        );
+    }
+
+    fn tick_inner(&mut self) -> Result<bool, BitVMXError> {
         debug!("Ticking BitVMX: {}", self.count);
 
         self.store.begin_global_transaction()?;

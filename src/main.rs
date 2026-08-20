@@ -12,7 +12,11 @@ use clap::{Arg, Command};
 use tracing::{info, info_span};
 use tracing_subscriber::EnvFilter;
 
-use bitvmx_client::{bitvmx::BitVMX, config::Config};
+use bitvmx_client::{
+    bitvmx::BitVMX,
+    config::Config,
+    error_severity::{classify, Severity},
+};
 
 struct OperatorInstance {
     name: String,
@@ -122,7 +126,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     }));
 
     // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic
-    let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
         'main: loop {
             // Check if Ctrl+C was pressed to gracefully shutdown
             if rx.try_recv().is_ok() {
@@ -148,9 +152,16 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                                 tracing::error!("  Caused by: {err}");
                                 source = std::error::Error::source(err);
                             }
-                            // escalate fatal errors to shutdown signal
-                            info!("Fatal error detected, initiating shutdown");
-                            return; // break out to shutdown
+                            // Only fatal errors exit non-zero: a bad dispatcher message
+                            // must not become a supervisor crash loop.
+                            if classify(&e) == Severity::Fatal {
+                                info!("Fatal error detected, initiating shutdown");
+                                return Err(e.into());
+                            }
+                            //TODO: keep ticking instead of stopping, once tick_inner rolls
+                            //back its global transaction on the error path
+                            info!("Error detected, initiating shutdown");
+                            return Ok(());
                         }
                     }
                 } else {
@@ -170,18 +181,26 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                         }
                         Err(e) => {
                             tracing::error!("Error syncing bitcoin updates: {e:?}");
-                            info!("Fatal error during sync, initiating shutdown");
-                            return; // break out to shutdown
+                            if classify(&e) == Severity::Fatal {
+                                info!("Fatal error during sync, initiating shutdown");
+                                return Err(e.into());
+                            }
+                            //TODO: keep syncing instead of stopping, see the TODO above
+                            info!("Error during sync, initiating shutdown");
+                            return Ok(());
                         }
                     }
                 }
             }
             thread::sleep(Duration::from_millis(10));
         }
+        Ok(())
     }));
 
-    if loop_result.is_err() {
-        info!("Panic captured in main loop, initiating shutdown");
+    // A caught panic still exits zero, as before. Only the inner error propagates.
+    match loop_result {
+        Err(_) => info!("Panic captured in main loop, initiating shutdown"),
+        Ok(result) => result?,
     }
 
     Ok(())
