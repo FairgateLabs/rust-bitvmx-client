@@ -710,7 +710,9 @@ impl GCDisputeResolutionProtocol {
         )?;
 
         lamport_check.add_stack_item(StackItem::new_schnorr_sig(true));
-        lamport_check.add_stack_item(StackItem::new_lamport_sig(key));
+        for _ in 0..key.message_bit_length().unwrap() {
+            lamport_check.add_stack_item(StackItem::new_lamport_sig());
+        }
 
         Ok(lamport_check)
     }
