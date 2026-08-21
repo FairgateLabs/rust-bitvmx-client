@@ -272,10 +272,7 @@ mod tests {
         env.context.broker_channel.tick().unwrap();
         // Only the oldest one, so anything else stays queued instead of being thrown away.
         let mut received = env.context.broker_channel.check_receive(Some(1)).unwrap();
-        let (sender, message) = match received.pop().unwrap() {
-            ReceivedMessage::Msg(sender, message) => (sender, message),
-            other => panic!("expected a message, got {:?}", other),
-        };
+        let ReceivedMessage::Msg(sender, message) = received.pop().unwrap();
         assert_eq!(sender, env.context.components_config.bitvmx);
         assert!(matches!(
             OutgoingBitVMXApiMessages::from_string(&message).unwrap(),
