@@ -72,6 +72,7 @@ pub struct BitVMX {
     wallet: Wallet,
     ping_helper: PingHelper,
     fatal_reported: bool,
+    rpc_unavailable: bool,
     shutdown: bool,
 }
 
@@ -198,6 +199,7 @@ impl BitVMX {
             wallet,
             ping_helper,
             fatal_reported: false,
+            rpc_unavailable: false,
             shutdown: false,
         })
     }
@@ -975,19 +977,70 @@ impl BitVMX {
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
         if let Err(e) = self.wallet.tick() {
+            let e = BitVMXError::from(e);
             error!("Error updating wallet: {:?}", e);
+            if classify(&e) == Severity::Fatal {
+                return Err(e);
+            }
         }
         Ok(())
+    }
+
+    fn report_rpc_unavailable(&mut self, error: &BitVMXError) {
+        if self.rpc_unavailable {
+            return;
+        }
+        self.rpc_unavailable = true;
+
+        error!("Bitcoin node is unreachable: {:?}", error);
+        send_error_report(
+            &self.program_context.broker_channel,
+            &self.config.components.l2,
+            ErrorReport::new(
+                ErrorScope::Node,
+                ErrorReportKind::BitcoinRpcUnavailable,
+                Some(error.to_string()),
+            ),
+        );
+    }
+
+    fn report_if_rpc_recovered(&mut self) {
+        if !self.rpc_unavailable {
+            return;
+        }
+        self.rpc_unavailable = false;
+
+        info!("Bitcoin node is reachable again");
+        send_error_report(
+            &self.program_context.broker_channel,
+            &self.config.components.l2,
+            ErrorReport::node(ErrorReportKind::BitcoinRpcRecovered),
+        );
     }
 
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<bool, BitVMXError> {
         if self.coordinator_throttle.should_call() {
             let result = self.process_bitcoin_updates();
             if let Err(e) = result {
-                error!("Critical error processing bitcoin updates: {:?}", e);
-                return Ok(false);
+                //TODO: record(false) here, otherwise an unreachable node is retried every
+                //tick instead of at the configured interval
+                return match classify(&e) {
+                    Severity::BitcoinNodeUnreachable => {
+                        self.report_rpc_unavailable(&e);
+                        Ok(false)
+                    }
+                    Severity::Fatal => {
+                        self.report_fatal(&e);
+                        Err(e)
+                    }
+                    Severity::Other => {
+                        error!("Critical error processing bitcoin updates: {:?}", e);
+                        Ok(false)
+                    }
+                };
             }
             let had_work = result.unwrap_or(false);
+            self.report_if_rpc_recovered();
             self.coordinator_throttle.record(had_work);
             return Ok(had_work);
         }
