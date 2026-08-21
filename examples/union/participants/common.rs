@@ -15,7 +15,7 @@ use bitvmx_client::{
             dispute::program_input,
             union::types::{StreamSettings, UnionSettings, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE},
         },
-        variables::VariableTypes,
+        variables::{PartialUtxo, VariableTypes},
     },
 };
 use uuid::Uuid;
@@ -148,14 +148,17 @@ fn format_bytes32_constant(name: &str, value: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn format_solidity_data_file(
     committee_agg_key: &PublicKey,
+    dispute_agg_key: &PublicKey,
     dispute_keys: &[PublicKey],
     user_pubkey: &PublicKey,
     pegout_id: &[u8; 32],
     op_index: usize,
     operator_count: usize,
     watchtower_count: usize,
+    operator_funding_utxo: &PartialUtxo,
     named_transactions: &[(&str, Transaction)],
     export_txids: &[&str],
 ) -> String {
@@ -188,6 +191,15 @@ pub fn format_solidity_data_file(
     ));
     s.push_str("\n");
 
+    // Committee dispute aggregated key: its P2TR key-spend produces the deposit script the
+    // operator/watchtower initial deposit outputs are locked to (distinct from the take key-spend).
+    let dispute_key_hex = dispute_agg_key.to_bytes().as_slice().to_lower_hex_string();
+    s.push_str(&format_bytes_constant(
+        "COMMITTEE_DISPUTE_AGGREGATED_KEY",
+        &format!("hex\"{}\"", dispute_key_hex),
+    ));
+    s.push_str("\n");
+
     let user_key_hex = user_pubkey.to_bytes().as_slice().to_lower_hex_string();
     s.push_str(&format_bytes_constant(
         "USER_COMPRESSED_PUBKEY",
@@ -212,6 +224,24 @@ pub fn format_solidity_data_file(
     s.push_str(&format!(
         "    uint8 constant WATCHTOWER_COUNT = {};\n",
         watchtower_count
+    ));
+    s.push_str("\n");
+
+    // Operator funding UTXO: the UTXO the protocol funding transaction spends
+    // (PROTOCOL_FUNDING_VIN_FUNDING_UTXO). Emitted so the contract's funding-UTXO match check can
+    // be satisfied with real data. txid is shown in display (reversed) byte order, matching txIds.
+    let (funding_txid, funding_vout, funding_amount, _) = operator_funding_utxo;
+    s.push_str(&format_bytes32_constant(
+        "OPERATOR_FUNDING_UTXO_TXID",
+        &format!("0x{}", funding_txid),
+    ));
+    s.push_str(&format!(
+        "    uint32 constant OPERATOR_FUNDING_UTXO_VOUT = {};\n",
+        funding_vout
+    ));
+    s.push_str(&format!(
+        "    uint64 constant OPERATOR_FUNDING_UTXO_AMOUNT = {};\n",
+        funding_amount.unwrap_or(0)
     ));
     s.push_str("\n");
 
