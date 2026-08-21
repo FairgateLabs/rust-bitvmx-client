@@ -1,6 +1,6 @@
 use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
-use crate::error_severity::{classify, send_error_report, Severity};
+use crate::error_severity::{classify, resolve_scope, send_error_report, Severity};
 use crate::ping_helper::PingHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::program::{is_active_program, Program};
@@ -678,17 +678,14 @@ impl BitVMX {
                         "Insufficient funds for transaction. Available: {}, Required: {}",
                         available, required
                     );
-                    // The news carries no txid or context, so the program cannot be identified
-                    let data = OutgoingBitVMXApiMessages::Error(ErrorReport::node(
+                    // No txid or context, so the program cannot be identified.
+                    self.report_coordinator_news(
+                        None,
                         ErrorReportKind::InsufficientFunds {
                             available,
                             required,
                         },
-                    ))
-                    .to_string()?;
-                    self.program_context
-                        .broker_channel
-                        .send_service(&self.config.components.l2, data)?;
+                    );
                 }
                 CoordinatorNews::DispatchError { txid, context } => {
                     error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
@@ -701,13 +698,101 @@ impl BitVMX {
                             error!("Error fetching transaction from wallet: {:?}", e);
                         }
                     }
-                }
-                _ => {
-                    warn!(
-                        "Received unhandled coordinator news: {:?}",
-                        coordinator_news
+                    self.report_coordinator_news(
+                        Some(&context),
+                        ErrorReportKind::TransactionDispatchFailed { txid },
                     );
-                } //TODO: Complete handling other news types
+                }
+                CoordinatorNews::SpeedupDispatchError { txid, context } => {
+                    error!("Speedup dispatch error: {:?} {:?}", txid, context);
+                    self.report_coordinator_news(
+                        Some(&context),
+                        ErrorReportKind::SpeedupDispatchFailed { txid },
+                    );
+                }
+                CoordinatorNews::TransactionStuckInMempool { txid, context } => {
+                    warn!("Transaction stuck in mempool: {:?} {:?}", txid, context);
+                    self.report_coordinator_news(
+                        Some(&context),
+                        ErrorReportKind::TransactionStuckInMempool { txid },
+                    );
+                }
+                CoordinatorNews::MaxFeeRateReached {
+                    txid,
+                    effective_fee_rate,
+                    context,
+                } => {
+                    warn!(
+                        "Speedup for {:?} reached the fee rate cap at {} sat/vB. No further boosts",
+                        txid, effective_fee_rate
+                    );
+                    self.report_coordinator_news(
+                        Some(&context),
+                        ErrorReportKind::MaxFeeRateReached {
+                            txid,
+                            effective_fee_rate,
+                        },
+                    );
+                }
+                CoordinatorNews::EstimateFeerateTooHigh {
+                    estimated_fee_rate,
+                    max_fee_rate,
+                } => {
+                    warn!(
+                        "Estimated fee rate {} exceeds the configured maximum {}",
+                        estimated_fee_rate, max_fee_rate
+                    );
+                    self.report_coordinator_news(
+                        None,
+                        ErrorReportKind::FeeRateTooHigh {
+                            estimated: estimated_fee_rate,
+                            max: max_fee_rate,
+                        },
+                    );
+                }
+                CoordinatorNews::FundingNotAvailable => {
+                    error!("No funding UTXO is available");
+                    self.report_coordinator_news(None, ErrorReportKind::FundingNotAvailable);
+                }
+                CoordinatorNews::InvalidFundingUtxo {
+                    amount,
+                    min_required,
+                } => {
+                    error!(
+                        "Funding UTXO of {} is below the {} minimum",
+                        amount, min_required
+                    );
+                    self.report_coordinator_news(
+                        None,
+                        ErrorReportKind::InvalidFundingUtxo {
+                            amount,
+                            min_required,
+                        },
+                    );
+                }
+                // Not reported: our own invariant broke, which is not L2's problem.
+                CoordinatorNews::InvalidStateTransition { txid, from, to } => {
+                    error!(
+                        "Invalid state transition for {:?}: {:?} -> {:?}",
+                        txid, from, to
+                    );
+                }
+                // Not reported: bookkeeping after the tx already finalized or failed.
+                CoordinatorNews::TransactionEvicted { txid, context } => {
+                    debug!(
+                        "Transaction evicted from tracking: {:?} {:?}",
+                        txid, context
+                    );
+                }
+                // Not reported: the caller asked for something invalid.
+                CoordinatorNews::InvalidCancel { txid, reason } => {
+                    warn!("Cancel rejected for {:?}: {}", txid, reason);
+                }
+                // Not reported: the coordinator's own store has no row for this txid, which
+                // is internal bookkeeping and not a statement about the chain.
+                CoordinatorNews::TxNotFound { txid } => {
+                    error!("Coordinator has no record of transaction {:?}", txid);
+                }
             }
 
             self.program_context
@@ -984,6 +1069,17 @@ impl BitVMX {
             }
         }
         Ok(())
+    }
+
+    fn report_coordinator_news(&mut self, context: Option<&str>, kind: ErrorReportKind) {
+        let (scope, dest) = context.map_or((ErrorScope::Node, None), resolve_scope);
+
+        let dest = dest.unwrap_or_else(|| self.config.components.l2.clone());
+        send_error_report(
+            &self.program_context.broker_channel,
+            &dest,
+            ErrorReport::new(scope, kind, None),
+        );
     }
 
     fn report_rpc_unavailable(&mut self, error: &BitVMXError) {
