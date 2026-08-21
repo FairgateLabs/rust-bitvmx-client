@@ -58,7 +58,7 @@ time = "0.3.55"
 
 [dev-dependencies]
 futures-util = "0.3"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.8.2" }
 reqwest = "0.12.23"
 
