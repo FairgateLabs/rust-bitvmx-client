@@ -5,9 +5,7 @@ use std::rc::Rc;
 
 use crate::config::ComponentsConfig;
 use bitcoin_coordinator::coordinator::BitcoinCoordinator;
-use bitvmx_broker::{
-    identification::identifier::Identifier, BrokerNode, RemoteChannel,
-};
+use bitvmx_broker::{identification::identifier::Identifier, BrokerNode, RemoteChannel};
 use key_manager::key_manager::KeyManager;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
