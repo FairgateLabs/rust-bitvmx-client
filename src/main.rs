@@ -158,9 +158,10 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                                 info!("Fatal error detected, initiating shutdown");
                                 return Err(e.into());
                             }
-                            //TODO: keep ticking instead of stopping, once tick_inner rolls
-                            //back its global transaction on the error path
+                            //TODO: keep ticking instead of stopping. Blocked on the
+                            //rollback TODO in BitVMX::tick.
                             info!("Error detected, initiating shutdown");
+                            instance.bitvmx.report_stopping(&e);
                             return Ok(());
                         }
                     }
@@ -185,8 +186,11 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                                 info!("Fatal error during sync, initiating shutdown");
                                 return Err(e.into());
                             }
-                            //TODO: keep syncing instead of stopping, see the TODO above
+                            //TODO: keep syncing instead of stopping, see the TODO above.
+                            //Unreachable today: process_bitcoin_updates_with_throttle only
+                            //returns Err on Fatal.
                             info!("Error during sync, initiating shutdown");
+                            instance.bitvmx.report_stopping(&e);
                             return Ok(());
                         }
                     }

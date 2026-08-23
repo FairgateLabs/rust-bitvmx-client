@@ -954,6 +954,9 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
+        //TODO: roll back the global transaction opened by tick_inner when it fails. Until
+        //that happens main.rs has to stop the node on any error, since a leaked transaction
+        //makes every later tick fail on GlobalTransactionAlreadyActiveError.
         let result = self.tick_inner();
 
         if let Err(e) = &result {
@@ -978,6 +981,19 @@ impl BitVMX {
             ErrorReport::new(
                 ErrorScope::Node,
                 ErrorReportKind::Fatal,
+                Some(error.to_string()),
+            ),
+        );
+    }
+
+    /// Reports that the node is stopping on a non-fatal error
+    pub fn report_stopping(&mut self, error: &BitVMXError) {
+        send_error_report(
+            &self.program_context.broker_channel,
+            &self.config.components.l2,
+            ErrorReport::new(
+                ErrorScope::Node,
+                ErrorReportKind::NodeStopping,
                 Some(error.to_string()),
             ),
         );

@@ -210,6 +210,7 @@ pub enum ErrorReportKind {
     JobDispatcherRecovered(JobDispatcherType),
     /// Storage failed; the node is exiting. Best-effort: may not arrive.
     Fatal,
+    NodeStopping,
     BitcoinRpcUnavailable,
     BitcoinRpcRecovered,
     TransactionDispatchFailed {

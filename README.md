@@ -192,6 +192,7 @@ A `Request`-scoped report is delivered to whoever issued that request, not to L2
 | `BitcoinRpcUnavailable` | The bitcoin node is unreachable. The client keeps running and retrying. |
 | `BitcoinRpcRecovered` | The bitcoin node is reachable again. |
 | `Fatal` | Storage failed; the client cannot continue and is exiting. Best-effort: it may not arrive. |
+| `NodeStopping` | The client is stopping on an error it could have survived. Unlike `Fatal` it exits zero, so it is not asking to be restarted. |
 | `TransactionDispatchFailed { txid }` | Dispatch retries exhausted; the transaction will never confirm. |
 | `SpeedupDispatchFailed { txid }` | A CPFP/RBF speedup could not be dispatched. |
 | `TransactionStuckInMempool { txid }` | A transaction has sat in the mempool past its threshold. |
