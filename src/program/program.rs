@@ -640,8 +640,8 @@ impl Program {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if self.state != ProgramState::Ready => match classify(&e) {
                 Severity::Fatal => Err(e),
-                Severity::BitcoinNodeUnreachable => Ok(MessageDisposition::RetryLater),
-                Severity::Other => {
+                // No outage arm here: a retry would replay a partly applied message.
+                _ => {
                     self.fail_setup(
                         Some(comms_address.clone()),
                         SetupFailureReason::StepError(e.to_string()),
