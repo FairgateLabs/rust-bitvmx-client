@@ -187,7 +187,7 @@ A `Request`-scoped report is delivered to whoever issued that request, not to L2
 | Kind | Meaning |
 |---|---|
 | `SetupFailed { step, peer, reason }` | A setup cannot complete. Terminal: no further messages for that program, and its id cannot be reused. |
-| `JobDispatcherUnresponsive(which)` | A job dispatcher stopped answering pings. Jobs sent to it will not complete. |
+| `JobDispatcherUnresponsive(which)` | A job dispatcher stopped answering pings within the timeout. It may be gone, or far enough behind on its inbox to look that way, so treat it as a warning about job progress rather than proof the process died. |
 | `JobDispatcherRecovered(which)` | That dispatcher is answering again. |
 | `BitcoinRpcUnavailable` | The bitcoin node is unreachable. The client keeps running and retrying. |
 | `BitcoinRpcRecovered` | The bitcoin node is reachable again. |

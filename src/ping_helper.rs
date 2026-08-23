@@ -111,8 +111,9 @@ impl PingHelper {
         Ok(())
     }
 
-    // Reports on the first missed pong: a dispatcher busy with a job still answers pings,
-    // so a miss means the process or its channel is gone.
+    // Reports on the first missed pong. A running job does not block the reply, since jobs
+    // are child processes, but the dispatcher reads one message per tick: a miss means it is
+    // gone or far enough behind on its inbox to look that way.
     fn check_if_dispatchers_timed_out<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &ProgramContext<BC>,
