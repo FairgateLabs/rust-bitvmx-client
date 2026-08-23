@@ -1,4 +1,4 @@
-use crate::error_severity::send_error_report;
+use crate::error_severity::{classify, send_error_report, Severity};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     config::{ComponentsConfig, PingConfig},
@@ -157,9 +157,21 @@ impl PingHelper {
                 dispatcher, message
             );
 
-            program_context
+            if let Err(e) = program_context
                 .broker_channel
-                .send_service(Self::identifier(dispatcher, components), message)?;
+                .send_service(Self::identifier(dispatcher, components), message)
+            {
+                // Failing to send a health check must not be worse than the dispatcher
+                // being down. A broken broker database still propagates.
+                let e = BitVMXError::from(e);
+                if classify(&e) == Severity::Fatal {
+                    return Err(e);
+                }
+
+                error!("Could not ping {:?} Job Dispatcher: {:?}", dispatcher, e);
+                // No pending entry, so an unsent ping cannot time out as unresponsive.
+                continue;
+            }
 
             self.time_since_sent_check
                 .insert(dispatcher, Instant::now());
