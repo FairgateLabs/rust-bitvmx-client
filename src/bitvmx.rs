@@ -1087,13 +1087,12 @@ impl BitVMX {
         Ok(())
     }
 
-    fn report_coordinator_news(&mut self, context: Option<&str>, kind: ErrorReportKind) {
+    fn report_coordinator_news(&self, context: Option<&str>, kind: ErrorReportKind) {
         let (scope, dest) = context.map_or((ErrorScope::Node, None), resolve_scope);
 
-        let dest = dest.unwrap_or_else(|| self.config.components.l2.clone());
         send_error_report(
             &self.program_context.broker_channel,
-            &dest,
+            dest.as_ref().unwrap_or(&self.config.components.l2),
             ErrorReport::new(scope, kind, None),
         );
     }
