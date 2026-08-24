@@ -175,7 +175,6 @@ pub fn init_bitvmx_with_config(
     let broker_config = BrokerConfig::new(
         config.broker.port,
         None,
-        config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
     let bridge_client = RemoteChannel::new(
@@ -185,6 +184,7 @@ pub fn init_bitvmx_with_config(
         )?,
         Some(config.testing.l2.id),
         allow_list.clone(),
+        config.broker.get_pubk_hash()?,
     )?;
     let dispatcher_channel = if emulator_dispatcher {
         Some(RemoteChannel::new(
@@ -194,6 +194,7 @@ pub fn init_bitvmx_with_config(
             )?,
             Some(config.testing.emulator.id),
             allow_list,
+            config.broker.get_pubk_hash()?,
         )?)
     } else {
         None
@@ -433,6 +434,7 @@ fn config_trace_aux() {
     tracing_subscriber::fmt()
         //.without_time()
         //.with_ansi(false)
+        .with_ansi_sanitization(false)
         .with_target(true)
         .with_env_filter(filter)
         .init();
@@ -586,7 +588,6 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
     let broker_config = BrokerConfig::new(
         config.broker.port,
         None,
-        config.broker.get_pubk_hash()?,
         Some(config.broker.settings.clone()),
     );
     let bridge_client = RemoteChannel::new(
@@ -596,6 +597,7 @@ pub fn init_broker(role: &str) -> Result<ParticipantChannel> {
         )?,
         Some(config.testing.l2.id),
         allow_list.clone(),
+        config.broker.get_pubk_hash()?,
     )?;
     let particiant_channel = ParticipantChannel {
         id: config.components.bitvmx,

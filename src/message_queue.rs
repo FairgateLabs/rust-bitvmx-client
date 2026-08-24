@@ -331,7 +331,8 @@ mod tests {
         let retry_policy = test_retry_policy();
         let queue = MessageQueue::new(storage, retry_policy.clone());
 
-        let msg = QueuedMessage::new(test_identifier("retry"), "retry-payload".to_string()).unwrap();
+        let msg =
+            QueuedMessage::new(test_identifier("retry"), "retry-payload".to_string()).unwrap();
         queue.push_back(msg).unwrap();
 
         let queued_ids = queue.get_queue_ids().unwrap();

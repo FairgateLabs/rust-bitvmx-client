@@ -37,6 +37,9 @@ fn config_trace() {
         .or_else(|_| EnvFilter::try_new("info,bitvmx_transaction_monitor=off,bitcoin_indexer=off,bitcoin_coordinator=info,tarpc=off,bitvmx_operator_comms=off,bitvmx_broker=off,broker=off,bitvmx_wallet=info,bitvmx_bitcoin_rpc=off"))
         .expect("Invalid filter");
 
+    console::set_colors_enabled(false);
+    console::set_colors_enabled_stderr(false);
+
     tracing_subscriber::fmt()
         //.without_time()
         // .with_line_number(true)

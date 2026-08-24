@@ -13,12 +13,15 @@ use crate::common::get_bitcoin_client;
 
 pub fn main() -> Result<()> {
     let _bitcoin_client = get_bitcoin_client()?;
-    let (broker_config, _identifier, _) = BrokerConfig::new_only_address(54321, None)?;
+    let broker_pubk_hash =
+        Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/services.key")?.as_str())?
+            .get_pubk_hash()?;
+    let broker_config = BrokerConfig::new(54321, None, None);
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
     let allow_list = AllowList::new();
     allow_list.lock().unwrap().set_allow_all(true);
-    let channel = RemoteChannel::new(&broker_config, cert, Some(2), allow_list)?;
+    let channel = RemoteChannel::new(&broker_config, cert, Some(2), allow_list, broker_pubk_hash)?;
     let identifier = Identifier::new(
         "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
         0,
