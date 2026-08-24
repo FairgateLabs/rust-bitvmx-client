@@ -7,7 +7,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    error_severity::{classify, Severity},
+    error_severity::{classify, send_error_report, Severity},
     errors::{BitVMXError, ProgramError},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
@@ -110,22 +110,22 @@ impl Program {
             .map(|engine| engine.current_step_name().to_string())
             .unwrap_or_default();
 
-        let msg = OutgoingBitVMXApiMessages::Error(ErrorReport::new(
-            ErrorScope::Program(self.program_id),
-            ErrorReportKind::SetupFailed {
-                step: step.clone(),
-                peer: peer.clone(),
-                reason: reason.clone(),
-            },
-            None,
-        ))
-        .to_string()?;
-        program_context
-            .broker_channel
-            .send_service(&program_context.components_config.l2, msg)?;
-
         self.state = ProgramState::Failed;
         self.save()?;
+
+        send_error_report(
+            &program_context.broker_channel,
+            &program_context.components_config.l2,
+            ErrorReport::new(
+                ErrorScope::Program(self.program_id),
+                ErrorReportKind::SetupFailed {
+                    step: step.clone(),
+                    peer: peer.clone(),
+                    reason: reason.clone(),
+                },
+                None,
+            ),
+        );
 
         info!(
             "Program: Sent SetupFailed for program {} at step '{}' (peer: {:?}): {:?}",
