@@ -37,8 +37,9 @@ use bitvmx_client::{
                 types::{
                     FundsAdvanced, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_TX, CANCEL_TAKE0_TX,
                     CHALLENGE_TX, INPUT_NOT_REVEALED_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX,
-                    OP_SELF_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
-                    REVEAL_INPUT_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
+                    OP_INITIAL_DEPOSIT_TX, OP_SELF_DISABLER_TX, PROTOCOL_FUNDING_TX,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_INPUT_TX,
+                    WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
                 },
             },
         },
@@ -427,6 +428,46 @@ pub fn cli_solidity_txs() -> Result<()> {
                 &input_not_revealed_name,
             )?,
         ),
+        (
+            PROTOCOL_FUNDING_TX,
+            get_transaction(
+                &committee.members[op_index],
+                dispute_core_pid,
+                PROTOCOL_FUNDING_TX,
+            )?,
+        ),
+        (
+            OP_SELF_DISABLER_TX,
+            get_transaction(
+                &committee.members[op_index],
+                dispute_core_pid,
+                OP_SELF_DISABLER_TX,
+            )?,
+        ),
+        (
+            OP_INITIAL_DEPOSIT_TX,
+            get_transaction(
+                &committee.members[op_index],
+                dispute_core_pid,
+                OP_INITIAL_DEPOSIT_TX,
+            )?,
+        ),
+        (
+            WT_START_ENABLER_TX,
+            get_transaction(
+                &committee.members[op_index],
+                dispute_core_pid,
+                WT_START_ENABLER_TX,
+            )?,
+        ),
+        (
+            WT_SELF_DISABLER_TX,
+            get_transaction(
+                &committee.members[op_index],
+                dispute_core_pid,
+                WT_SELF_DISABLER_TX,
+            )?,
+        ),
     ];
 
     let export_txids = [
@@ -439,16 +480,27 @@ pub fn cli_solidity_txs() -> Result<()> {
         &challenge_name,
         &reveal_name,
         // &input_not_revealed_name,
+        PROTOCOL_FUNDING_TX,
+        OP_SELF_DISABLER_TX,
+        OP_INITIAL_DEPOSIT_TX,
+        WT_START_ENABLER_TX,
+        WT_SELF_DISABLER_TX,
     ];
+
+    let dispute_agg_key = committee.dispute_public_key()?;
+    let operator_funding_utxo = committee
+        .get_operator_funding_utxo(&committee.members[op_index].keyring.take_pubkey.unwrap())?;
 
     let solidity_file = format_solidity_data_file(
         &committee_agg_key,
+        &dispute_agg_key,
         &dispute_keys,
         &user.public_key()?,
         &TESTING_PEGOUT_ID,
         op_index,
         operator_count,
         watchtower_count,
+        &operator_funding_utxo,
         &named_txs,
         &export_txids,
     );

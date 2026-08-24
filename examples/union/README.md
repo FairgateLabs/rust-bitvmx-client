@@ -46,7 +46,7 @@ In the case of `challenge` example you should provide who is the winning party `
 ./examples/union/scripts/run-example.sh challenge op
 ```
 
-Also, in the examples that involve DRP (Dispute Resolution Protocol) you it is needed to run job dispatcher emulators in a separated terminal.
+Also, in the examples that involve DRP (Dispute Resolution Protocol) it is needed to run job dispatcher emulators in a separated terminal.
 There is a script for that as well, inside `/rust-bitvmx-workspace/rust-bitvmx-job-dispatcher/` run:
 
 ```bash
@@ -54,3 +54,13 @@ There is a script for that as well, inside `/rust-bitvmx-workspace/rust-bitvmx-j
 ```
 
 NOTE: This script should be run after all BitVMX clients are running and point to the same port as the clients.
+
+- Port to solidity:
+
+There is a particular script for porting the example Bitcoin transactions brodcasted to a Solidity file, so they can be used in the smart contracts for verification. You need to run:
+
+```bash
+./examples/union/scripts/run-example.sh solidity_txs
+```
+
+It will create a `BitVMXCompatibilityData.sol` file in the logs folder.

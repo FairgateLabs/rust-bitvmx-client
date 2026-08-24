@@ -37,6 +37,7 @@ pub struct Committee {
     pub bitcoin_client: BitcoinWrapper,
     pub union_settings: UnionSettings,
     pub stream_settings: StreamSettings,
+    funding_utxos_per_member: HashMap<PublicKey, PartialUtxo>,
 }
 
 impl Committee {
@@ -99,6 +100,7 @@ impl Committee {
             bitcoin_client,
             union_settings,
             stream_settings,
+            funding_utxos_per_member: HashMap::new(),
         })
     }
 
@@ -139,6 +141,9 @@ impl Committee {
 
     pub fn setup_dispute_protocols(&mut self) -> Result<()> {
         let funding_utxos_per_member = self.init_funds()?;
+        // Keep the operator funding UTXOs so callers (e.g. solidity_txs export) can emit them
+        // as source-of-truth data alongside the dispute aggregated key.
+        self.funding_utxos_per_member = funding_utxos_per_member.clone();
 
         let settings = self.union_settings.clone();
         self.all(|op: &mut Member| op.save_union_settings(&settings))?;
@@ -316,6 +321,27 @@ impl Committee {
             return Err(anyhow::anyhow!("No members in the committee"));
         }
         Ok(self.members[0].keyring.take_aggregated_key.unwrap())
+    }
+
+    /// Committee dispute aggregated key. Its P2TR key-spend is the deposit script the
+    /// operator/watchtower initial deposit outputs are locked to.
+    pub fn dispute_public_key(&self) -> Result<PublicKey> {
+        if self.members.is_empty() {
+            return Err(anyhow::anyhow!("No members in the committee"));
+        }
+        self.members[0]
+            .keyring
+            .dispute_aggregated_key
+            .ok_or_else(|| anyhow::anyhow!("Dispute aggregated key not set up yet"))
+    }
+
+    /// Operator funding UTXO registered during `setup_dispute_protocols`, keyed by take pubkey.
+    /// This is the UTXO the protocol funding transaction spends.
+    pub fn get_operator_funding_utxo(&self, take_pubkey: &PublicKey) -> Result<PartialUtxo> {
+        self.funding_utxos_per_member
+            .get(take_pubkey)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No operator funding UTXO for the given take pubkey"))
     }
 
     fn get_addresses(&self) -> Vec<CommsAddress> {
