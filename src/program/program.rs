@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::participant::CommsAddress;
@@ -302,7 +302,13 @@ impl Program {
         match self.tick_inner(program_context) {
             Err(e) if self.state != ProgramState::Ready => match classify(&e) {
                 Severity::Fatal => Err(e),
-                Severity::BitcoinNodeUnreachable => Ok(()),
+                Severity::BitcoinNodeUnreachable => {
+                    warn!(
+                        "Program {} cannot advance while bitcoin is unreachable: {:?}",
+                        self.program_id, e
+                    );
+                    Ok(())
+                }
                 Severity::Other => {
                     self.fail_setup(
                         None,
@@ -457,7 +463,13 @@ impl Program {
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
             Err(e) if self.state != ProgramState::Ready => match classify(&e) {
                 Severity::Fatal => Err(e),
-                Severity::BitcoinNodeUnreachable => Ok(()),
+                Severity::BitcoinNodeUnreachable => {
+                    warn!(
+                        "Program {} cannot advance while bitcoin is unreachable: {:?}",
+                        self.program_id, e
+                    );
+                    Ok(())
+                }
                 Severity::Other => {
                     self.fail_setup(
                         None,
