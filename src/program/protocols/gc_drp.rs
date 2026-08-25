@@ -17,7 +17,7 @@ use key_manager::{
 use protocol_builder::{
     builder::ProtocolBuilder,
     graph::graph::GraphOptions,
-    scripts::{self, KeyType, ProtocolScript, SignMode},
+    scripts::{self, KeyType, ProtocolScript, SignMode, StackItem},
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -708,6 +708,11 @@ impl GCDisputeResolutionProtocol {
             KeyType::lamport(key)?,
             0,
         )?;
+
+        lamport_check.add_stack_item(StackItem::new_schnorr_sig(true));
+        for _ in 0..key.message_bit_length().unwrap() {
+            lamport_check.add_stack_item(StackItem::new_lamport_sig());
+        }
 
         Ok(lamport_check)
     }
