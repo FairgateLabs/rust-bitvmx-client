@@ -10,7 +10,6 @@ use tracing::{error, warn};
 
 use crate::{
     bitvmx::Context,
-    errors::BitVMXError,
     types::{ErrorReport, ErrorScope, OutgoingBitVMXApiMessages},
 };
 
@@ -21,8 +20,10 @@ pub enum Severity {
     Other,
 }
 
-pub fn classify(error: &BitVMXError) -> Severity {
-    let mut next: Option<&(dyn Error + 'static)> = Some(error);
+/// Walks the error's source chain. Takes `dyn Error`so an error
+/// borrowed from a dependency can be classified without a conversion that would consume it.
+pub fn classify(error: &(dyn Error + 'static)) -> Severity {
+    let mut next = Some(error);
 
     while let Some(error) = next {
         if let Some(error) = error.downcast_ref::<StorageError>() {
@@ -95,6 +96,7 @@ pub(crate) fn send_error_report(channel: &BrokerNode, dest: &Identifier, report:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::BitVMXError;
     use bitcoin_coordinator::errors::BitcoinCoordinatorError;
     use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
     use bitvmx_wallet::wallet::errors::WalletError;

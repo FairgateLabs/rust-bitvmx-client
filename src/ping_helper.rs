@@ -5,13 +5,20 @@ use crate::{
     errors::{BitVMXError, ConfigError},
     types::{ErrorReport, ErrorReportKind, JobDispatcherType, ProgramContext},
 };
-use bitvmx_broker::identification::identifier::Identifier;
+use bitvmx_broker::{identification::identifier::Identifier, BrokerError};
 use bitvmx_dispatcher_utils::PingMessage;
 use std::{
     collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info, warn};
+
+/// Whether a ping that could not be sent should stop the node. The broker calls a failed
+/// storage write non-fatal so a shared bus keeps serving; we take the stricter verdict, since
+/// `tick` leaves its global transaction open on failure and continuing would wedge every tick.
+fn send_failure_is_fatal(error: &BrokerError) -> bool {
+    error.is_fatal() || classify(error) == Severity::Fatal
+}
 
 pub(crate) struct PingHelper {
     time_since_sent_check: HashMap<JobDispatcherType, Instant>,
@@ -163,10 +170,9 @@ impl PingHelper {
                 .send_service(Self::identifier(dispatcher, components), message)
             {
                 // Failing to send a health check must not be worse than the dispatcher
-                // being down. A broken broker database still propagates.
-                let e = BitVMXError::from(e);
-                if classify(&e) == Severity::Fatal {
-                    return Err(e);
+                // being down, so only a fatal condition propagates.
+                if send_failure_is_fatal(&e) {
+                    return Err(e.into());
                 }
 
                 error!("Could not ping {:?} Job Dispatcher: {:?}", dispatcher, e);
@@ -220,7 +226,39 @@ mod tests {
     use super::*;
     use crate::test_utils::TestProgramContextEnv;
     use crate::types::{ErrorScope, OutgoingBitVMXApiMessages};
+    use bitvmx_broker::storage::BrokerStorageError;
     use std::thread::sleep;
+    use storage_backend::error::StorageError;
+
+    #[test]
+    fn a_failed_broker_write_stops_the_node() {
+        let error =
+            BrokerError::BrokerStorageError(BrokerStorageError::Backend(StorageError::WriteError));
+
+        // A tripwire: once the broker discriminates the inner variant, drop the override.
+        assert!(
+            !error.is_fatal(),
+            "the broker is expected to still report this as non-fatal"
+        );
+        assert!(send_failure_is_fatal(&error));
+    }
+
+    // Conditions the broker calls fatal that our own source-chain walk does not reach.
+    #[test]
+    fn a_broker_fatal_condition_stops_the_node() {
+        assert!(send_failure_is_fatal(&BrokerError::MutexError(
+            "storage".to_string()
+        )));
+        assert!(send_failure_is_fatal(&BrokerError::WrongNodeMode(
+            "peers".to_string()
+        )));
+    }
+
+    // One refused message must not take the node down, or a single oversized ping would.
+    #[test]
+    fn an_ordinary_send_failure_is_not_fatal() {
+        assert!(!send_failure_is_fatal(&BrokerError::MessageTooLarge(10, 5)));
+    }
 
     const TIMEOUT_MS: u64 = 50;
     const INTERVAL_MS: u64 = 200;
