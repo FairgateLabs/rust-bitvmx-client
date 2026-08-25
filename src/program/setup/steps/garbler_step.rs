@@ -677,6 +677,7 @@ mod tests {
             "proof_path": "",
             "lamport_proof_path": "",
             "io_inputs_path": "",
+            "commitments_path": "",
             "digest_circ": "",
             "digest_ct": "",
             "digest_io": "",
@@ -687,6 +688,27 @@ mod tests {
             "input_commitment_indices": input_commitment_indices,
         }))
         .unwrap()
+    }
+
+    fn verification_result_json(valid: bool) -> Value {
+        json!({
+            "status": "ok",
+            "type": "verify",
+            "valid": valid,
+            "digest_circ": "",
+            "digest_ct": "",
+            "digest_io": "",
+            "digest_labels": "",
+            "digest_lamport": "",
+            "gc_proof_valid": true,
+            "lamport_proof_valid": true,
+            "proofs_linked": true,
+            "digest_circ_matches": true,
+            "digest_ct_matches": true,
+            "digest_lamport_matches": true,
+            "valid_indices": true,
+            "valid_num_inputs": true,
+        })
     }
 
     fn store_config(
@@ -817,10 +839,10 @@ mod tests {
             None,
         );
         let commitments = vec![commitment(1, 2), commitment(3, 4), commitment(5, 6)];
-        let result = prove_result(2, vec![0, 1, 2]);
-        let io_inputs_path = format!("{}/inputs.bin", files.path());
+        let mut result = prove_result(2, vec![0, 1, 2]);
+        result.io_inputs_path = format!("{}/inputs.bin", files.path());
         let private_bytes = [vec![1; 32], vec![2; 32], vec![3; 32], vec![4; 32]].concat();
-        std::fs::write(&io_inputs_path, private_bytes).unwrap();
+        std::fs::write(&result.io_inputs_path, private_bytes).unwrap();
 
         import_input_private_keys(&result, &config, &env.context).unwrap();
         let [public_input, _, _] =
@@ -920,7 +942,7 @@ mod tests {
 
         assert!(matches!(
             step.receive_dispatcher_result(
-                json!({"valid": false}),
+                verification_result_json(false),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,
@@ -930,7 +952,7 @@ mod tests {
         ));
         assert_eq!(
             step.receive_dispatcher_result(
-                json!({"valid": true}),
+                verification_result_json(true),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,
