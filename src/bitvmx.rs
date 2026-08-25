@@ -496,9 +496,6 @@ impl BitVMX {
                     let msg: QueuedMessage = QueuedMessage::new(identifier, msg)?;
                     self.process_msg(msg)?;
                 }
-                ReceivedMessage::Error(e) => {
-                    info!("Error receiving message {}", e);
-                }
             }
         }
 
@@ -529,9 +526,6 @@ impl BitVMX {
                             SetupFailureReason::Undeliverable,
                         )?;
                     }
-                }
-                (ReceivedMessage::Error(e), _) => {
-                    info!("Error receiving deadletter message {}", e);
                 }
             }
         }
@@ -823,10 +817,6 @@ impl BitVMX {
         for message in messages {
             let (from, msg) = match message {
                 ReceivedMessage::Msg(identifier, msg) => (identifier, msg),
-                ReceivedMessage::Error(e) => {
-                    info!("Error receiving api message {}", e);
-                    continue;
-                }
             };
 
             match from {
