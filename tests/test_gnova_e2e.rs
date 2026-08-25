@@ -9,7 +9,7 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::garbled_messages::{
-    GCJobEvaluationResult, GCJobProveResult, GarbledJobType, ProofBlob,
+    GCCommitmentsFile, GCJobEvaluationResult, GCJobProveResult, GarbledJobType, ProofBlob,
 };
 use bitvmx_settings::settings::decrypt_or_read_file_bytes;
 use key_manager::{
@@ -610,7 +610,13 @@ pub fn test_full_protocol() -> Result<()> {
 
     let sha_output = compute_sha256(output);
 
-    let expected_lamport = prove_result
+    let commitments_path = &prove_result.commitments_path;
+    let encoded_commitments = std::fs::read(commitments_path)?;
+
+    let (commitments, _): (GCCommitmentsFile, usize) =
+        bincode::serde::decode_from_slice(&encoded_commitments, bincode::config::legacy())?;
+
+    let expected_lamport = commitments
         .sha256_commitments
         .last()
         .map(|commitment| hex::decode(&commitment.h1).ok())

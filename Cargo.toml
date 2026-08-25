@@ -54,6 +54,7 @@ bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job
 bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.2" }
 redact = { version = "0.1", features = ["serde", "zeroize"] }
 time = "0.3.55"
+bincode = { version = "2", features = ["serde"] }
 
 
 [dev-dependencies]

@@ -1,7 +1,8 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::garbled_messages::{
-    GCJobProveResult, GCJobVerifyResult, GarbledJobType, ProofBlob, Sha256CommitmentHex,
+    GCCommitmentsFile, GCJobProveResult, GCJobVerifyResult, GarbledJobType, ProofBlob,
+    Sha256CommitmentHex,
 };
 use bitvmx_settings::settings::decrypt_or_read_file_bytes;
 use key_manager::lamport::{
@@ -178,8 +179,26 @@ impl SetupStep for GarblerStep {
 
             info!("[Prover] Imported Garbled Circuit Input Private Key");
 
-            let [public_input_pk, _, _] =
-                import_public_keys(&prove_result, &config, context, protocol_id)?;
+            let commitments_path = &prove_result.commitments_path;
+            let encoded_commitments = std::fs::read(commitments_path)?;
+
+            let (commitments, _): (GCCommitmentsFile, usize) =
+                bincode::serde::decode_from_slice(&encoded_commitments, bincode::config::legacy())
+                    .map_err(|e| {
+                        BitVMXError::InvalidMessage(format!(
+                            "Failed to deserialize commitments data: {} ",
+                            e
+                        ))
+                    })?;
+
+            let [public_input_pk, _, _] = import_public_keys(
+                &commitments.input_commitment_indices,
+                &commitments.sha256_commitments,
+                prove_result.num_inputs,
+                &config,
+                context,
+                &protocol_id,
+            )?;
 
             info!("[Prover] Imported Garbled Circuit Public Keys");
 
@@ -306,8 +325,26 @@ impl SetupStep for GarblerStep {
             BitVMXError::InvalidMessage(format!("Failed to deserialize garbler data: {} ", e))
         })?;
 
-        let [public_input_pk, _, _] =
-            import_public_keys(&proof_blob.prove_result, &config, context, &protocol_id)?;
+        let commitments_path = &proof_blob.prove_result.commitments_path;
+        let encoded_commitments = std::fs::read(commitments_path)?;
+
+        let (commitments, _): (GCCommitmentsFile, usize) =
+            bincode::serde::decode_from_slice(&encoded_commitments, bincode::config::legacy())
+                .map_err(|e| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Failed to deserialize commitments data: {} ",
+                        e
+                    ))
+                })?;
+
+        let [public_input_pk, _, _] = import_public_keys(
+            &commitments.input_commitment_indices,
+            &commitments.sha256_commitments,
+            proof_blob.prove_result.num_inputs,
+            &config,
+            context,
+            &protocol_id,
+        )?;
 
         info!("[Verifier] Imported Garbled Circuit Public Keys");
 
@@ -389,14 +426,13 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
 }
 
 fn import_public_keys<BC: BitcoinCoordinatorApi>(
-    prove_result: &GCJobProveResult,
+    indices: &[usize],
+    unordered_commitments: &[Sha256CommitmentHex],
+    num_inputs: usize,
     config: &GCConfiguration,
     context: &mut ProgramContext<BC>,
     protocol_id: &Uuid,
 ) -> Result<[LamportPublicKey; 3], BitVMXError> {
-    let indices = &prove_result.input_commitment_indices;
-    let unordered_commitments = &prove_result.sha256_commitments;
-    let num_inputs = prove_result.num_inputs;
     let public_input_size = config.circuit_public_input.len();
     let num_outputs = 1usize; // we assume only one output
 
@@ -752,12 +788,8 @@ mod tests {
             vec![true],
             None,
         );
-        let result = import_public_keys(
-            &prove_result(0, vec![0]),
-            &too_many_public_inputs,
-            &mut env.context,
-            &id,
-        );
+        let result =
+            import_public_keys(&[0], &[], 0, &too_many_public_inputs, &mut env.context, &id);
         assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
 
         let no_public_inputs = GCConfiguration::new(
@@ -767,12 +799,7 @@ mod tests {
             Vec::new(),
             None,
         );
-        let result = import_public_keys(
-            &prove_result(0, vec![0]),
-            &no_public_inputs,
-            &mut env.context,
-            &id,
-        );
+        let result = import_public_keys(&[0], &[], 0, &no_public_inputs, &mut env.context, &id);
         assert!(matches!(result, Err(BitVMXError::InvalidMessage(_))));
     }
 
@@ -790,15 +817,16 @@ mod tests {
             None,
         );
         let commitments = vec![commitment(1, 2), commitment(3, 4), commitment(5, 6)];
-        let mut result = prove_result(2, vec![0, 1, 2]);
-        result.sha256_commitments = commitments;
-        result.io_inputs_path = format!("{}/inputs.bin", files.path());
+        let result = prove_result(2, vec![0, 1, 2]);
+        let io_inputs_path = format!("{}/inputs.bin", files.path());
         let private_bytes = [vec![1; 32], vec![2; 32], vec![3; 32], vec![4; 32]].concat();
-        std::fs::write(&result.io_inputs_path, private_bytes).unwrap();
+        std::fs::write(&io_inputs_path, private_bytes).unwrap();
 
         import_input_private_keys(&result, &config, &env.context).unwrap();
         let [public_input, _, _] =
-            import_public_keys(&result, &config, &mut env.context, &id).unwrap();
+            import_public_keys(&[0, 1, 2], &commitments, 2, &config, &mut env.context, &id)
+                .unwrap();
+
         let signature = env
             .context
             .key_manager
