@@ -233,7 +233,7 @@ impl SetupStep for GarblerStep {
                 verify_result.proofs_linked
             );
 
-            if !result["valid"].as_bool().unwrap_or(false) {
+            if !verify_result.valid {
                 return Err(BitVMXError::InvalidMessage(format!(
                     "The provided proof is invalid: {:?}",
                     verify_result
@@ -653,6 +653,27 @@ mod tests {
         .unwrap()
     }
 
+    fn verify_result(valid: bool) -> Value {
+        json!({
+            "status": "ok",
+            "type": "verify",
+            "valid": valid,
+            "digest_circ": "",
+            "digest_ct": "",
+            "digest_io": "",
+            "digest_labels": "",
+            "digest_lamport": "",
+            "gc_proof_valid": valid,
+            "lamport_proof_valid": valid,
+            "proofs_linked": valid,
+            "digest_circ_matches": valid,
+            "digest_ct_matches": valid,
+            "digest_lamport_matches": valid,
+            "valid_indices": valid,
+            "valid_num_inputs": valid,
+        })
+    }
+
     fn store_config(
         context: &ProgramContext<impl BitcoinCoordinatorApi>,
         id: &Uuid,
@@ -892,7 +913,7 @@ mod tests {
 
         assert!(matches!(
             step.receive_dispatcher_result(
-                json!({"valid": false}),
+                verify_result(false),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,
@@ -902,7 +923,7 @@ mod tests {
         ));
         assert_eq!(
             step.receive_dispatcher_result(
-                json!({"valid": true}),
+                verify_result(true),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,
