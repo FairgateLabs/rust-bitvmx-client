@@ -5,9 +5,7 @@ use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid, X
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script::script;
 use bitcoin_script_stack::stack::StackTracker;
-use bitvmx_job_dispatcher_types::garbled_messages::{
-    GCJobEvaluationResult, GCJobProveResult, GarbledJobType,
-};
+use bitvmx_job_dispatcher_types::garbled_messages::{GCJobEvaluationResult, GarbledJobType};
 use console::style;
 use key_manager::{
     errors::LamportError,
@@ -49,7 +47,7 @@ use crate::{
         },
         setup::steps::{
             garbler_step::{
-                GCConfiguration, GC_INPUT_PK, GC_OUTPUT_PK, GC_PUBLIC_DATA,
+                GCConfiguration, GC_COMMITMENTS, GC_INPUT_PK, GC_OUTPUT_PK,
                 GC_PUBLIC_INPUT_SIGNATURE,
             },
             SetupStepName,
@@ -580,19 +578,20 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
 
                         let circuit_input = [public_input, prover_circuit_input].concat();
 
-                        let public_data: GCJobProveResult = serde_json::from_str(
-                            &program_context
-                                .globals
-                                .get_var_or_err(protocol_id, GC_PUBLIC_DATA)?
-                                .string()?,
-                        )?;
+                        let commitments = program_context
+                            .globals
+                            .get_var_or_err(protocol_id, GC_COMMITMENTS)?
+                            .vec_number()?
+                            .iter()
+                            .map(|&n| n as u8)
+                            .collect();
 
                         self.execute_job(
                             program_context,
                             &program_context.components_config.garbler,
                             GarbledJobType::Evaluate(
                                 config.circuit,
-                                public_data,
+                                commitments,
                                 circuit_input,
                                 output_dir,
                             ),

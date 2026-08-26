@@ -28,7 +28,7 @@ use crate::{
 
 pub const GC_INPUT_PK: &str = "GC_INPUT_PK";
 pub const GC_OUTPUT_PK: &str = "GC_OUTPUT_PK";
-pub const GC_PUBLIC_DATA: &str = "GC_PUBLIC_DATA";
+pub const GC_COMMITMENTS: &str = "GC_COMMITMENTS";
 pub const GC_CAN_CONTINUE: &str = "GC_CAN_CONTINUE";
 pub const GC_PUBLIC_INPUT_PK: &str = "GC_PUBLIC_INPUT_PK";
 pub const GC_PUBLIC_INPUT_SIGNATURE: &str = "GC_PUBLIC_INPUT_SIGNATURE";
@@ -221,6 +221,7 @@ impl SetupStep for GarblerStep {
                 prove_result,
                 gc_proof,
                 lamport_proof,
+                commitments: encoded_commitments,
             };
 
             let public_input_signature = context
@@ -325,9 +326,7 @@ impl SetupStep for GarblerStep {
             BitVMXError::InvalidMessage(format!("Failed to deserialize garbler data: {} ", e))
         })?;
 
-        let commitments_path = &proof_blob.prove_result.commitments_path;
-        let encoded_commitments = std::fs::read(commitments_path)?;
-
+        let encoded_commitments = &proof_blob.commitments;
         let (commitments, _): (GCCommitmentsFile, usize) =
             bincode::serde::decode_from_slice(&encoded_commitments, bincode::config::legacy())
                 .map_err(|e| {
@@ -565,8 +564,8 @@ fn dispatch_proof_verification<BC: BitcoinCoordinatorApi>(
 ) -> Result<(), BitVMXError> {
     context.globals.set_var(
         &protocol_id,
-        GC_PUBLIC_DATA,
-        VariableTypes::String(serde_json::to_string(&proof_blob.prove_result)?),
+        GC_COMMITMENTS,
+        VariableTypes::VecNumber(proof_blob.commitments.iter().map(|&n| n as u32).collect()),
     )?;
 
     let output_dir = format!("runs/gc/{}/{}", config.role, protocol_id);

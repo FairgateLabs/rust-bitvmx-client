@@ -101,10 +101,14 @@ pub fn test_gnova_commands() -> Result<()> {
     let gc_proof = std::fs::read(gc_proof_path)?;
     let lamport_proof = std::fs::read(lamport_proof_path)?;
 
+    let commitments_path = &prove_result.commitments_path;
+    let commitments = std::fs::read(commitments_path)?;
+
     let proof_blob = ProofBlob {
         prove_result,
         gc_proof,
         lamport_proof,
+        commitments,
     };
 
     // --- Step 2: Verify (verifies both GC and Lamport proofs) ---
@@ -310,10 +314,14 @@ fn run_garbled_client_test() -> Result<()> {
     let gc_proof = std::fs::read(gc_proof_path)?;
     let lamport_proof = std::fs::read(lamport_proof_path)?;
 
+    let commitments_path = &prove_parsed.commitments_path;
+    let commitments = std::fs::read(commitments_path)?;
+
     let proof_blob = ProofBlob {
         prove_result: prove_parsed,
         gc_proof,
         lamport_proof,
+        commitments,
     };
 
     let verify_job = DispatcherJob {
@@ -470,10 +478,14 @@ pub fn test_full_protocol() -> Result<()> {
     let gc_proof = std::fs::read(gc_proof_path)?;
     let lamport_proof = std::fs::read(lamport_proof_path)?;
 
+    let commitments_path = &prove_result.commitments_path;
+    let commitments = std::fs::read(commitments_path)?;
+
     let proof_blob = ProofBlob {
         prove_result: prove_result.clone(),
         gc_proof,
         lamport_proof,
+        commitments: commitments.clone(),
     };
 
     let verify_job = GarbledJobType::Verify(
@@ -587,7 +599,7 @@ pub fn test_full_protocol() -> Result<()> {
 
     let eval_job = GarbledJobType::Evaluate(
         TEST_CIRCUIT_PATH.to_string(),
-        prove_result.clone(),
+        commitments,
         circuit_input,
         format!("{}/evaluate", output_dir),
     );
