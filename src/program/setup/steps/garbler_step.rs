@@ -252,7 +252,7 @@ impl SetupStep for GarblerStep {
                 verify_result.proofs_linked
             );
 
-            if !result["valid"].as_bool().unwrap_or(false) {
+            if !verify_result.valid {
                 return Err(BitVMXError::InvalidMessage(format!(
                     "The provided proof is invalid: {:?}",
                     verify_result
@@ -690,7 +690,7 @@ mod tests {
         .unwrap()
     }
 
-    fn verification_result_json(valid: bool) -> Value {
+    fn verify_result(valid: bool) -> Value {
         json!({
             "status": "ok",
             "type": "verify",
@@ -700,14 +700,14 @@ mod tests {
             "digest_io": "",
             "digest_labels": "",
             "digest_lamport": "",
-            "gc_proof_valid": true,
-            "lamport_proof_valid": true,
-            "proofs_linked": true,
-            "digest_circ_matches": true,
-            "digest_ct_matches": true,
-            "digest_lamport_matches": true,
-            "valid_indices": true,
-            "valid_num_inputs": true,
+            "gc_proof_valid": valid,
+            "lamport_proof_valid": valid,
+            "proofs_linked": valid,
+            "digest_circ_matches": valid,
+            "digest_ct_matches": valid,
+            "digest_lamport_matches": valid,
+            "valid_indices": valid,
+            "valid_num_inputs": valid,
         })
     }
 
@@ -942,7 +942,7 @@ mod tests {
 
         assert!(matches!(
             step.receive_dispatcher_result(
-                verification_result_json(false),
+                verify_result(false),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,
@@ -952,7 +952,7 @@ mod tests {
         ));
         assert_eq!(
             step.receive_dispatcher_result(
-                verification_result_json(true),
+                verify_result(true),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,
