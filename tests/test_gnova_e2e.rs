@@ -625,8 +625,7 @@ pub fn test_full_protocol() -> Result<()> {
     let commitments_path = &prove_result.commitments_path;
     let encoded_commitments = std::fs::read(commitments_path)?;
 
-    let (commitments, _): (GCCommitmentsFile, usize) =
-        bincode::serde::decode_from_slice(&encoded_commitments, bincode::config::legacy())?;
+    let commitments: GCCommitmentsFile = serde_json::from_slice(&encoded_commitments)?;
 
     let expected_lamport = commitments
         .sha256_commitments
