@@ -96,10 +96,7 @@ class OperatorConfigGenerator:
                 "idle_interval": 200
             },
             "job_dispatcher_ping": {
-                "enabled": True,
-                "interval_secs": 120,
-                "timeout_secs": 30,
-                "services": ["Emulator", "Garbler"]
+                "services": ["Emulator"]
             },
             "client": {
                 "retry": 1,

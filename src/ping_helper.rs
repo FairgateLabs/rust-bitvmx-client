@@ -30,7 +30,6 @@ pub(crate) struct PingHelper {
     time_to_send_check: Instant,
     ping_timeout: Duration,
     time_between_checks: Duration,
-    enabled: bool,
 }
 
 impl PingHelper {
@@ -40,34 +39,27 @@ impl PingHelper {
                 Duration::from_secs(30),
                 Duration::from_secs(120),
                 Vec::new(),
-                false,
             ));
         };
 
-        let ping_timeout = Duration::from_secs(config.timeout_secs);
-        let time_between_checks = Duration::from_secs(config.interval_secs);
+        let timeout_secs = config.timeout_secs.unwrap_or(30);
+        let interval_secs = config.interval_secs.unwrap_or(120);
+
+        let ping_timeout = Duration::from_secs(timeout_secs);
+        let time_between_checks = Duration::from_secs(interval_secs);
 
         // if timeout >= interval no dispatcher is ever reported as down
-        if config.enabled && ping_timeout >= time_between_checks {
+        if !config.services.is_empty() && ping_timeout >= time_between_checks {
             return Err(ConfigError::InvalidPingConfig(format!(
                 "timeout_secs ({}) must be shorter than interval_secs ({})",
-                config.timeout_secs, config.interval_secs
+                timeout_secs, interval_secs
             )));
         }
-
-        // if enabled without naming dispatchers, we assume all supported dispatchers.
-        // No deployment runs a ZKP, so pinging it by default would report it down.
-        let services = if config.enabled && config.services.is_empty() {
-            vec![JobDispatcherType::Emulator, JobDispatcherType::Garbler]
-        } else {
-            config.services
-        };
 
         Ok(Self::build(
             ping_timeout,
             time_between_checks,
-            services,
-            config.enabled,
+            config.services,
         ))
     }
 
@@ -82,7 +74,6 @@ impl PingHelper {
         ping_timeout: Duration,
         time_between_checks: Duration,
         services: Vec<JobDispatcherType>,
-        enabled: bool,
     ) -> Self {
         Self {
             dispatchers: services
@@ -100,7 +91,6 @@ impl PingHelper {
             time_to_send_check: Instant::now(),
             ping_timeout,
             time_between_checks,
-            enabled,
         }
     }
 
@@ -117,7 +107,7 @@ impl PingHelper {
         program_context: &ProgramContext<BC>,
         components: &ComponentsConfig,
     ) -> Result<(), BitVMXError> {
-        if !self.enabled {
+        if self.dispatchers.is_empty() {
             return Ok(());
         }
         self.check_if_dispatchers_timed_out(program_context, components);
@@ -301,9 +291,8 @@ mod tests {
     // Goes through the real constructor, then shortens the timings the config cannot.
     fn enabled_helper(services: Vec<JobDispatcherType>) -> PingHelper {
         let mut helper = PingHelper::new(Some(PingConfig {
-            enabled: true,
-            interval_secs: 120,
-            timeout_secs: 30,
+            interval_secs: Some(120),
+            timeout_secs: Some(30),
             services,
         }))
         .unwrap();
@@ -405,68 +394,70 @@ mod tests {
         Ok(())
     }
 
-    // ZKP is only ever pinged when a config names it.
+    // A dispatcher is pinged only when a config names it, so no list means no pinging.
     #[test]
-    fn empty_service_list_pings_the_dispatchers_we_run() {
+    fn an_empty_service_list_pings_nobody() {
         let helper = PingHelper::new(Some(PingConfig {
-            enabled: true,
-            interval_secs: 120,
-            timeout_secs: 30,
+            interval_secs: Some(120),
+            timeout_secs: Some(30),
             services: vec![],
         }))
         .unwrap();
 
-        assert!(helper.enabled);
-        // Keys, not order: the map decides who gets pinged.
-        assert_eq!(helper.dispatchers.len(), 2);
-        assert!(helper
-            .dispatchers
-            .contains_key(&JobDispatcherType::Emulator));
-        assert!(helper.dispatchers.contains_key(&JobDispatcherType::Garbler));
+        assert!(helper.dispatchers.is_empty());
+    }
+
+    // Omitting the timings is allowed; they fall back to the shipped interval and timeout.
+    #[test]
+    fn absent_timings_fall_back_to_the_defaults() {
+        let helper = PingHelper::new(Some(PingConfig {
+            interval_secs: None,
+            timeout_secs: None,
+            services: vec![JobDispatcherType::Emulator],
+        }))
+        .unwrap();
+
+        assert_eq!(helper.time_between_checks, Duration::from_secs(120));
+        assert_eq!(helper.ping_timeout, Duration::from_secs(30));
     }
 
     #[test]
     fn timeout_not_shorter_than_interval_is_rejected() {
         assert!(PingHelper::new(Some(PingConfig {
-            enabled: true,
-            interval_secs: 30,
-            timeout_secs: 30,
+            interval_secs: Some(30),
+            timeout_secs: Some(30),
             services: vec![JobDispatcherType::Emulator],
         }))
         .is_err());
     }
 
-    // Timings are not checked when the feature is off.
+    // Timings are not checked when nothing is pinged.
     #[test]
-    fn disabled_config_is_not_validated() {
+    fn a_config_naming_no_services_is_not_validated() {
         let helper = PingHelper::new(Some(PingConfig {
-            enabled: false,
-            interval_secs: 30,
-            timeout_secs: 30,
+            interval_secs: Some(30),
+            timeout_secs: Some(30),
             services: vec![],
         }))
         .unwrap();
 
-        assert!(!helper.enabled);
+        assert!(helper.dispatchers.is_empty());
     }
 
     // The block shipped in config/.
     #[test]
     fn shipped_config_is_accepted() {
         let helper = PingHelper::new(Some(PingConfig {
-            enabled: true,
-            interval_secs: 120,
-            timeout_secs: 30,
-            services: vec![JobDispatcherType::Emulator, JobDispatcherType::Garbler],
+            interval_secs: None,
+            timeout_secs: None,
+            services: vec![JobDispatcherType::Emulator],
         }))
         .unwrap();
 
-        assert!(helper.enabled);
-        // Keys, not order: the map decides who gets pinged.
-        assert_eq!(helper.dispatchers.len(), 2);
+        // No deployment runs a garbler or a ZKP, so only the emulator is pinged.
+        assert_eq!(helper.dispatchers.len(), 1);
         assert!(helper
             .dispatchers
             .contains_key(&JobDispatcherType::Emulator));
-        assert!(helper.dispatchers.contains_key(&JobDispatcherType::Garbler));
     }
 }

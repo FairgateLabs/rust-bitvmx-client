@@ -88,9 +88,8 @@ pub struct ComponentsConfig {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct PingConfig {
-    pub enabled: bool,
-    pub interval_secs: u64,
-    pub timeout_secs: u64,
+    pub interval_secs: Option<u64>,
+    pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub services: Vec<JobDispatcherType>, // dispatchers to ping: Emulator, Garbler, ZKP
 }
