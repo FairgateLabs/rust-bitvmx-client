@@ -7,7 +7,7 @@ use bitcoin_coordinator::TransactionStatus;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     graph::graph::GraphOptions,
-    scripts::{op_return_script, ProtocolScript, SignMode},
+    scripts::{ProtocolScript, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -420,12 +420,18 @@ impl FullPenalizationProtocol {
                     let stopper_name =
                         triple_indexed_name(STOPPER_TX, wt_index, op_index, slot_index);
 
+                    let spend_mode = if wt_index == self.ctx.my_idx {
+                        SpendMode::Segwit
+                    } else {
+                        SpendMode::None
+                    };
+
                     protocol.add_connection(
                         "from_input_not_revealed_enabler",
                         &input_not_revealed_name,
                         (enablers[wt_index].1 as usize).into(),
                         &stopper_name,
-                        InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
+                        InputSpec::Auto(SighashType::ecdsa_all(), spend_mode),
                         None,
                         Some(enablers[wt_index].0),
                     )?;
@@ -447,8 +453,9 @@ impl FullPenalizationProtocol {
 
                     protocol.add_transaction_output(
                         &stopper_name,
-                        &OutputType::segwit_unspendable(
-                            op_return_script(vec![])?.get_script().clone(),
+                        &OutputType::segwit_key(
+                            SPEEDUP_VALUE,
+                            &committee.members[wt_index].dispute_key,
                         )?,
                     )?;
                 }
