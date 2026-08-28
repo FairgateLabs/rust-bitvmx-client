@@ -574,6 +574,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
             Ok(self.wt_init_challenge_tx(name, context)?)
         } else if name.starts_with(CLAIM_INIT_TX) {
             Ok(self.claim_init_tx(name, context)?)
+        } else if (name.starts_with(WT_CLAIM_GATE) || name.starts_with(OP_CLAIM_GATE))
+            && name.ends_with(CLAIM_GATE_START)
+        {
+            let action = ClaimGateAction::Start;
+            Ok(self.claim_gate_tx(context, name, &action.inputs(), action.with_speedup())?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }

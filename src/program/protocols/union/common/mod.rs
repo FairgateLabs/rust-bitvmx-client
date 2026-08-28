@@ -110,6 +110,24 @@ pub fn extract_double_index(input: &str) -> Result<(usize, usize), BitVMXError> 
     Ok((index2, index1))
 }
 
+pub fn extract_triple_index(input: &str) -> Result<(usize, usize, usize), BitVMXError> {
+    let mut parts = input.rsplit('_');
+    let index3 = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .ok_or_else(|| BitVMXError::InvalidParameter(format!("Invalid third index in {input}")))?;
+    let index2 = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .ok_or_else(|| BitVMXError::InvalidParameter(format!("Invalid second index in {input}")))?;
+    let index1 = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .ok_or_else(|| BitVMXError::InvalidParameter(format!("Invalid first index in {input}")))?;
+
+    Ok((index1, index2, index3))
+}
+
 pub fn extract_index_from_claim_gate(input: &str) -> Result<(usize, usize), BitVMXError> {
     let prefix = if input.starts_with(WT_CLAIM_GATE) {
         WT_CLAIM_GATE

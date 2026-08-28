@@ -25,14 +25,15 @@ use crate::{
     program::{
         participant::{ParticipantKeys, ParticipantRole},
         protocols::{
+            claim::ClaimGate,
             protocol_handler::{ProtocolContext, ProtocolHandler},
             union::{
                 common::{
                     add_speedups, collect_input_signatures, create_transaction_reference,
-                    double_indexed_name, extract_double_index, get_dispute_core_pid,
-                    get_initial_deposit_output_type, get_op_disabler_directory_output_value,
-                    indexed_name, save_penalized_member, triple_indexed_name, InputSigningInfo,
-                    WinternitzData,
+                    double_indexed_name, extract_double_index, extract_triple_index,
+                    get_dispute_core_pid, get_initial_deposit_output_type,
+                    get_op_disabler_directory_output_value, indexed_name, save_penalized_member,
+                    triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
                 dispute_core::{
                     CHALLENGE_KEY, OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
@@ -48,16 +49,17 @@ use crate::{
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
                     OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE,
-                    STOPPER_TX, STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE_SUCCESS,
-                    WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_COSIGN_DISABLER_TX,
-                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_DIRECTORY_UTXO, WT_DISABLER_TX,
-                    WT_INIT_CHALLENGE_TX, WT_INIT_CHALLENGE_UTXOS, WT_START_ENABLER_TX,
+                    STOPPER_TX, STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE,
+                    WT_CLAIM_GATE_SUCCESS, WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
+                    WT_COSIGN_DISABLER_TX, WT_DISABLER_DIRECTORY_TX, WT_DISABLER_DIRECTORY_UTXO,
+                    WT_DISABLER_TX, WT_INIT_CHALLENGE_TX, WT_INIT_CHALLENGE_UTXOS,
+                    WT_START_ENABLER_TX,
                 },
             },
         },
         variables::PartialUtxo,
     },
-    types::ProgramContext,
+    types::{ProgramContext, PROGRAM_TYPE_DISPUTE_CORE},
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -179,6 +181,8 @@ impl ProtocolHandler for FullPenalizationProtocol {
             self.handle_op_disabler_directory_tx(program_context, &tx_name)?;
         } else if tx_name.starts_with(WT_DISABLER_DIRECTORY_TX) {
             self.handle_wt_disabler_directory_tx(program_context, &tx_name)?;
+        } else if tx_name.starts_with(STOPPER_TX) {
+            self.handle_stopper_tx(program_context, &tx_name)?;
         }
 
         Ok(())
@@ -480,6 +484,44 @@ impl FullPenalizationProtocol {
         );
 
         Ok((tx, None))
+    }
+
+    fn handle_stopper_tx<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        let (wt_index, op_index, _) = extract_triple_index(tx_name)?;
+
+        // Only the watchtower that owns this STOPPER_TX can start its WT claim gate.
+        if self.ctx.my_idx != wt_index {
+            return Ok(());
+        }
+
+        let data = self.full_penalization_data(context)?;
+        let committee = self.committee(context, data.committee_id)?;
+        let dispute_core_pid =
+            get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
+        let claim_gate_name =
+            ClaimGate::tx_start(&double_indexed_name(WT_CLAIM_GATE, wt_index, op_index));
+        let protocol = self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_core_pid)?;
+        let (tx, speedup) = protocol.get_transaction_by_name(&claim_gate_name, context)?;
+        let txid = tx.compute_txid();
+
+        context.bitcoin_coordinator.dispatch(
+            tx,
+            speedup,
+            Context::ProgramId(dispute_core_pid).to_string()?,
+            None,
+            self.requested_confirmations(context),
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Dispatched {} with txid: {}", claim_gate_name, txid
+        );
+
+        Ok(())
     }
 
     fn create_operator_disabler<BC: BitcoinCoordinatorApi>(
