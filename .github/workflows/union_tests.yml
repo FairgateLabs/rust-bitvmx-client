@@ -100,7 +100,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo registry and git index
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -112,7 +112,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Cache Submodules Target Directory
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ env.ROOT }}/rust-bitvmx-client/target
