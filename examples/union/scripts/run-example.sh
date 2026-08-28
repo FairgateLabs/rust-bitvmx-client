@@ -15,7 +15,7 @@ if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
   echo "Usage: $0 <example> [optional <challenge-winner>]"
   echo "Example: $0 challenge op"
   echo "Available examples:"
-  cargo run -q --release --example union
+  cargo run -q --locked --release --example union
   exit 1
 fi
 
@@ -47,7 +47,7 @@ pkill -f bitvmx-client || true
 
 # Setup Bitcoin regtest node
 echo "Setting up Bitcoin regtest node..."
-cargo run --release --example union setup_bitcoin_node
+cargo run --locked --release --example union setup_bitcoin_node
 echo "Bitcoin regtest node setup complete."
 
 # Initialize log file
@@ -67,7 +67,7 @@ echo "Running BitVMX clients on regtest..."
 OP_COUNT=4
 for i in $(seq 1 $OP_COUNT); do
   op_name="op_${i}"
-  RUST_BACKTRACE=full cargo run --release "$op_name" --fresh 2>&1 \
+  RUST_BACKTRACE=full cargo run --locked --release "$op_name" --fresh 2>&1 \
     | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$LOGS_DIR/bitvmx_$op_name.log" &
 done
 
@@ -85,4 +85,4 @@ else
 fi
 
 printf "\nRunning union example: $name...\n\n\n"
-RUST_BACKTRACE=full EXAMPLE_LOG_DIR="$LOGS_DIR" cargo run --release --example union $cmd 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"
+RUST_BACKTRACE=full EXAMPLE_LOG_DIR="$LOGS_DIR" cargo run --locked --release --example union $cmd 2>&1 | sed -u -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})*)?[mGKHF]//g" > "$EXAMPLE_LOG_FILE"
