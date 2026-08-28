@@ -158,8 +158,9 @@ impl PingHelper {
         program_context: &ProgramContext<BC>,
         components: &ComponentsConfig,
     ) -> Result<(), BitVMXError> {
+        let message = serde_json::to_string(&PingMessage::Ping)?;
+
         for dispatcher in self.services.clone() {
-            let message = serde_json::to_string(&PingMessage::Ping)?;
             debug!(
                 "Sending {:?} dispatcher ping message: {}",
                 dispatcher, message
@@ -167,7 +168,7 @@ impl PingHelper {
 
             if let Err(e) = program_context
                 .broker_channel
-                .send_service(Self::identifier(dispatcher, components), message)
+                .send_service(Self::identifier(dispatcher, components), message.clone())
             {
                 // Failing to send a health check must not be worse than the dispatcher
                 // being down, so only a fatal condition propagates.
