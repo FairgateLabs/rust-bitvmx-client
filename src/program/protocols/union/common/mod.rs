@@ -30,8 +30,12 @@ pub fn create_transaction_reference(
     tx_name: &str,
     utxos: &mut Vec<PartialUtxo>,
 ) -> Result<(), BitVMXError> {
+    if utxos.is_empty() {
+        return Err(BitVMXError::InvalidParameter("UTXOs list is empty".into()));
+    }
+
     // Create transaction
-    protocol.add_external_transaction(tx_name)?;
+    protocol.add_external_transaction_with_txid(tx_name, utxos[0].0)?;
 
     // Sort UTXOs by index
     utxos.sort_by_key(|utxo| utxo.1);
