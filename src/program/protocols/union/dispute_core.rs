@@ -90,8 +90,14 @@ const WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF: usize = 1;
 pub const WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF: usize = 2;
 
 const WT_INIT_CHALLENGE_COSIGN_VOUT: u32 = 0;
-const WT_INIT_CHALLENGE_WT_STOPPER_VOUT: u32 = 3;
-const WT_INIT_CHALLENGE_OP_STOPPER_VOUT: u32 = 5;
+
+// CLAIM_INIT_TX output layout. Vouts 0..=4 are produced by the two ClaimGate::new calls in
+// create_claim_init: the WT gate adds the exclusive success output (0), its start output (1) and
+// its stopper (2); the OP gate adds its start output (3) and its stopper (4). The two speedups
+// are appended afterwards. Keep these in sync with ClaimGate::new.
+const CLAIM_INIT_WT_STOPPER_VOUT: u32 = 2;
+const CLAIM_INIT_OP_STOPPER_VOUT: u32 = 4;
+const CLAIM_INIT_WT_SPEEDUP_VOUT: u32 = 5;
 
 const OP_COSIGN_INIT_CHALLENGE_INDEX: usize = 0;
 const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
@@ -431,14 +437,18 @@ impl ProtocolHandler for DisputeCoreProtocol {
             &committee.dispute_aggregated_key.clone(),
         )?;
 
-        let (mut init_challenge_outputs, mut disabler_directory_output, mut op_cosign_outputs) =
-            self.create_wt_start_enabler(
-                &mut protocol,
-                &dispute_core_data,
-                &committee,
-                &keys,
-                settings,
-            )?;
+        let (
+            mut init_challenge_cosign_outputs,
+            mut claim_init_outputs,
+            mut disabler_directory_output,
+            mut op_cosign_outputs,
+        ) = self.create_wt_start_enabler(
+            &mut protocol,
+            &dispute_core_data,
+            &committee,
+            &keys,
+            settings,
+        )?;
 
         let operator_won_script = timelock(
             settings.op_won_timelock,
@@ -510,7 +520,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
             context,
             &committee,
             &dispute_core_data,
-            &mut init_challenge_outputs,
+            &mut init_challenge_cosign_outputs,
+            &mut claim_init_outputs,
             &mut disabler_directory_output,
             &mut op_cosign_outputs,
         )?;
@@ -542,6 +553,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
             Ok(self.sign_aggregated_input(name, context, false)?)
         } else if name.starts_with(WT_INIT_CHALLENGE_TX) {
             Ok(self.wt_init_challenge_tx(name, context)?)
+        } else if name.starts_with(CLAIM_INIT_TX) {
+            Ok(self.claim_init_tx(name, context)?)
         } else {
             Err(BitVMXError::InvalidTransactionName(name.to_string()))
         }
@@ -739,6 +752,15 @@ impl DisputeCoreProtocol {
         return Ok(());
     }
 
+    fn is_challengeable_operator(
+        &self,
+        data: &DisputeCoreData,
+        committee: &Committee,
+        op_index: usize,
+    ) -> bool {
+        committee.members[op_index].role == ParticipantRole::Prover && data.member_index != op_index
+    }
+
     fn create_wt_start_enabler(
         &self,
         protocol: &mut Protocol,
@@ -748,7 +770,8 @@ impl DisputeCoreProtocol {
         settings: &PacketSettings,
     ) -> Result<
         (
-            Vec<Option<WtInitChallengeOutputs>>,
+            Vec<Option<OutputType>>,
+            Vec<Option<ClaimInitOutputs>>,
             OutputType,
             Vec<Option<OutputType>>,
         ),
@@ -756,275 +779,200 @@ impl DisputeCoreProtocol {
     > {
         let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
         let wt_dispute_key = &committee.members[data.member_index].dispute_key;
-        let mut wt_init_challenge_outputs: Vec<Option<WtInitChallengeOutputs>> = vec![];
+        let mut init_challenge_cosign_outputs: Vec<Option<OutputType>> = vec![];
         let mut op_cosign_outputs: Vec<Option<OutputType>> = vec![];
         let challenge_cost = dispute::protocol_cost();
 
-        for (op_index, member) in committee.members.clone().iter().enumerate() {
-            let mut scripts = vec![];
-
-            if member.role == ParticipantRole::Prover && data.member_index != op_index {
-                let op_speedup_key = keys[op_index].get_public(SPEEDUP_KEY)?;
-                let op_dispute_key = &committee.members[op_index].dispute_key;
-
-                let wt_cosign_slot_key = keys[data.member_index]
-                    .get_winternitz(&indexed_name(WT_COSIGN_SLOT_KEY, op_index))?;
-
-                let mut wt_cosign_pegout_id_keys = vec![];
-                let mut op_cosign_pegout_id_keys = vec![];
-                for word in 0..PEGOUT_ID_KEY_WORDS {
-                    let wt_key_name = double_indexed_name(WT_COSIGN_PEGOUT_ID_KEY, op_index, word);
-                    wt_cosign_pegout_id_keys
-                        .push(keys[data.member_index].get_winternitz(&wt_key_name)?);
-
-                    let op_key_name = double_indexed_name(OP_COSIGN_PEGOUT_ID_KEY, op_index, word);
-                    op_cosign_pegout_id_keys.push(keys[op_index].get_winternitz(&op_key_name)?);
-                }
-
-                for slot in 0..committee.packet_size as usize {
-                    let op_slot_id_key =
-                        keys[op_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
-
-                    let op_pegout_id_key =
-                        keys[op_index].get_winternitz(&indexed_name(PEGOUT_ID_KEY, slot))?;
-
-                    // Validate OP signature and WT slot_id Winternitz signature
-                    let mut s = scripts::init_challenge_script(
-                        wt_dispute_key,
-                        self.get_sign_mode(data.member_index),
-                        slot as u32,
-                        op_index,
-                        &op_slot_id_key,
-                        op_pegout_id_key,
-                        &wt_cosign_slot_key,
-                        &wt_cosign_pegout_id_keys,
-                    )?;
-
-                    // Validate slot id in the script. It's used to extract the leaf index when detected a transaction spending the WT_START_ENABLER_TX output, to know which slot is being challenged.
-                    s.set_assert_leaf_id(slot as u32);
-                    scripts.push(s);
-                }
-
-                let init_challenge_name =
-                    double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, op_index);
-                let op_cosign_name = double_indexed_name(OP_COSIGN_TX, data.member_index, op_index);
-                let op_no_cosign_name =
-                    double_indexed_name(OP_NO_COSIGN_TX, data.member_index, op_index);
-                let wt_no_challenge_name =
-                    double_indexed_name(WT_NO_CHALLENGE_TX, data.member_index, op_index);
-                let wt_claim_name = double_indexed_name(WT_CLAIM_GATE, data.member_index, op_index);
-                let op_claim_name = double_indexed_name(OP_CLAIM_GATE, data.member_index, op_index);
-
-                protocol.add_connection(
-                    "init_challenge",
-                    WT_START_ENABLER_TX,
-                    OutputType::taproot(AmountType::Auto, &wt_dispute_key, &scripts)?.into(),
-                    &init_challenge_name,
-                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
-                    None,
-                    None,
-                )?;
-
-                let op_cosign_slot_key = keys[op_index].get_winternitz(OP_COSIGN_SLOT_KEY)?;
-                let cosign_script = scripts::cosign_script(
-                    op_dispute_key,
-                    self.get_sign_mode(op_index),
-                    op_index,
-                    op_cosign_slot_key,
-                    wt_cosign_slot_key,
-                    &op_cosign_pegout_id_keys,
-                    &wt_cosign_pegout_id_keys,
-                )?;
-
-                let verify_dispute_aggregated =
-                    verify_signature(&committee.dispute_aggregated_key, SignMode::Aggregate)?;
-
-                let op_no_cosign_timelock_script = timelock(
-                    settings.op_no_cosign_timelock,
-                    &wt_dispute_key,
-                    self.get_sign_mode(data.member_index),
-                );
-
-                let init_challenge_output = OutputType::taproot(
-                    AmountType::Auto,
-                    op_dispute_key,
-                    &vec![
-                        cosign_script,
-                        op_no_cosign_timelock_script,
-                        verify_dispute_aggregated.clone(),
-                    ],
-                )?;
-
-                protocol.add_connection(
-                    "op_cosign",
-                    &init_challenge_name,
-                    init_challenge_output.clone().into(),
-                    &op_cosign_name,
-                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
-                    None,
-                    None,
-                )?;
-
-                let key_pair_name = get_dispute_pair_key_name(data.member_index, op_index);
-                let key_pair = keys[data.member_index].get_public(&key_pair_name)?;
-
-                // Create WT claim gate
-                let wt_claim_gate = ClaimGate::new(
-                    protocol,
-                    &init_challenge_name,
-                    &wt_claim_name,
-                    (wt_speedup_key, self.get_sign_mode(data.member_index)),
-                    &committee.dispute_aggregated_key,
-                    CLAIM_GATE_FEE,
-                    DUST_VALUE,
-                    vec![op_speedup_key],
-                    Some(vec![key_pair]),
-                    settings.claim_gate_timelock,
-                    1, // Single output to connect to FullPenalization
-                    vec![],
-                    true,
-                    None,
-                )?;
-
-                if wt_claim_gate.stoppers.len() != 1 {
-                    return Err(BitVMXError::InvalidParameter(
-                        "Expected exactly one stopper output in WT claim gate".to_string(),
-                    ));
-                }
-
-                // Create OP claim gate
-                let op_claim_gate = ClaimGate::new(
-                    protocol,
-                    &init_challenge_name,
-                    &op_claim_name,
-                    (op_speedup_key, self.get_sign_mode(op_index)),
-                    &committee.dispute_aggregated_key,
-                    CLAIM_GATE_FEE,
-                    DUST_VALUE,
-                    vec![wt_speedup_key],
-                    Some(vec![&key_pair]),
-                    settings.claim_gate_timelock,
-                    1, // Single output to connect to FullPenalization
-                    vec![],
-                    false,
-                    wt_claim_gate.exclusive_success_vout,
-                )?;
-
-                if op_claim_gate.stoppers.len() != 1 {
-                    return Err(BitVMXError::InvalidParameter(
-                        "Expected exactly one stopper output in OP claim gate".to_string(),
-                    ));
-                }
-
-                wt_init_challenge_outputs.push(Some(WtInitChallengeOutputs {
-                    wt_stopper: wt_claim_gate.stoppers[0].clone(),
-                    op_stopper: op_claim_gate.stoppers[0].clone(),
-                    op_cosign: init_challenge_output.clone(),
-                }));
-
-                // NOTE: DRP consumes leaf 1 hardcoded.
-                let verify_wt_signature =
-                    verify_signature(wt_dispute_key, self.get_sign_mode(data.member_index))?;
-
-                let wt_not_challenge_timelock_script = timelock(
-                    settings.wt_no_challenge_timelock,
-                    &committee.dispute_aggregated_key,
-                    SignMode::Aggregate,
-                );
-
-                let op_cosign_output = OutputType::taproot(
-                    challenge_cost,
-                    wt_dispute_key,
-                    &vec![wt_not_challenge_timelock_script, verify_wt_signature],
-                )?;
-
-                op_cosign_outputs.push(Some(op_cosign_output.clone()));
-
-                protocol.add_connection(
-                    "wt_no_challenge",
-                    &op_cosign_name,
-                    op_cosign_output.into(),
-                    &wt_no_challenge_name,
-                    InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
-                    Some(settings.wt_no_challenge_timelock),
-                    None,
-                )?;
-
-                // OP NO COSIGN TX
-                protocol.add_connection(
-                    "op_no_cosign",
-                    &init_challenge_name,
-                    OutputSpec::Index(0),
-                    &op_no_cosign_name,
-                    InputSpec::Auto(
-                        SighashType::taproot_all(),
-                        SpendMode::Script {
-                            leaf: WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF,
-                        },
-                    ),
-                    Some(settings.op_no_cosign_timelock),
-                    None,
-                )?;
-
-                protocol.add_connection(
-                    "op_no_cosign",
-                    &init_challenge_name,
-                    OutputSpec::Index(wt_claim_gate.vout + 1),
-                    &op_no_cosign_name,
-                    InputSpec::Auto(
-                        SighashType::taproot_all(),
-                        SpendMode::Script {
-                            leaf: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
-                        },
-                    ),
-                    None,
-                    None,
-                )?;
-
-                protocol.add_transaction_output(
-                    &op_no_cosign_name,
-                    &OutputType::segwit_unspendable(
-                        op_return_script(vec![])?.get_script().clone(),
-                    )?,
-                )?;
-
-                // WT NO CHALLENGE TX
-                protocol.add_connection(
-                    "wt_no_challenge",
-                    &init_challenge_name,
-                    OutputSpec::Index(op_claim_gate.vout + 1),
-                    &wt_no_challenge_name,
-                    InputSpec::Auto(
-                        SighashType::taproot_all(),
-                        SpendMode::Script {
-                            leaf: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
-                        },
-                    ),
-                    None,
-                    None,
-                )?;
-
-                // TODO: Should we add an output to recover challenge funds? it's about 38_000 sats.
-                protocol.add_transaction_output(
-                    &wt_no_challenge_name,
-                    &OutputType::segwit_unspendable(
-                        op_return_script(vec![])?.get_script().clone(),
-                    )?,
-                )?;
-
-                protocol.add_transaction_output(
-                    &init_challenge_name,
-                    &OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?,
-                )?;
-            } else {
+        // First output block of WT_START_ENABLER_TX: one output per member, funding
+        // WT_INIT_CHALLENGE_TX for every member that is an operator other than the owner of this
+        // dispute core. Skipped members still get an output so the block always holds exactly one
+        // entry per member.
+        for op_index in 0..committee.members.len() {
+            if !self.is_challengeable_operator(data, committee, op_index) {
                 protocol.add_transaction_output(
                     WT_START_ENABLER_TX,
                     &OutputType::taproot(AmountType::Auto, wt_dispute_key, &vec![])?,
                 )?;
 
-                wt_init_challenge_outputs.push(None);
+                init_challenge_cosign_outputs.push(None);
                 op_cosign_outputs.push(None);
+                continue;
             }
+
+            let op_dispute_key = &committee.members[op_index].dispute_key;
+
+            let wt_cosign_slot_key = keys[data.member_index]
+                .get_winternitz(&indexed_name(WT_COSIGN_SLOT_KEY, op_index))?;
+
+            let mut wt_cosign_pegout_id_keys = vec![];
+            let mut op_cosign_pegout_id_keys = vec![];
+            for word in 0..PEGOUT_ID_KEY_WORDS {
+                let wt_key_name = double_indexed_name(WT_COSIGN_PEGOUT_ID_KEY, op_index, word);
+                wt_cosign_pegout_id_keys
+                    .push(keys[data.member_index].get_winternitz(&wt_key_name)?);
+
+                let op_key_name = double_indexed_name(OP_COSIGN_PEGOUT_ID_KEY, op_index, word);
+                op_cosign_pegout_id_keys.push(keys[op_index].get_winternitz(&op_key_name)?);
+            }
+
+            let mut scripts = vec![];
+            for slot in 0..committee.packet_size as usize {
+                let op_slot_id_key =
+                    keys[op_index].get_winternitz(&indexed_name(SLOT_ID_KEY, slot))?;
+
+                let op_pegout_id_key =
+                    keys[op_index].get_winternitz(&indexed_name(PEGOUT_ID_KEY, slot))?;
+
+                // Validate OP signature and WT slot_id Winternitz signature
+                let mut s = scripts::init_challenge_script(
+                    wt_dispute_key,
+                    self.get_sign_mode(data.member_index),
+                    slot as u32,
+                    op_index,
+                    &op_slot_id_key,
+                    op_pegout_id_key,
+                    &wt_cosign_slot_key,
+                    &wt_cosign_pegout_id_keys,
+                )?;
+
+                // Validate slot id in the script. It's used to extract the leaf index when detected a transaction spending the WT_START_ENABLER_TX output, to know which slot is being challenged.
+                s.set_assert_leaf_id(slot as u32);
+                scripts.push(s);
+            }
+
+            let init_challenge_name =
+                double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, op_index);
+            let op_cosign_name = double_indexed_name(OP_COSIGN_TX, data.member_index, op_index);
+            let op_no_cosign_name =
+                double_indexed_name(OP_NO_COSIGN_TX, data.member_index, op_index);
+            let wt_no_challenge_name =
+                double_indexed_name(WT_NO_CHALLENGE_TX, data.member_index, op_index);
+
+            protocol.add_connection(
+                "init_challenge",
+                WT_START_ENABLER_TX,
+                OutputType::taproot(AmountType::Auto, &wt_dispute_key, &scripts)?.into(),
+                &init_challenge_name,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                None,
+                None,
+            )?;
+
+            let op_cosign_slot_key = keys[op_index].get_winternitz(OP_COSIGN_SLOT_KEY)?;
+            let cosign_script = scripts::cosign_script(
+                op_dispute_key,
+                self.get_sign_mode(op_index),
+                op_index,
+                op_cosign_slot_key,
+                wt_cosign_slot_key,
+                &op_cosign_pegout_id_keys,
+                &wt_cosign_pegout_id_keys,
+            )?;
+
+            let verify_dispute_aggregated =
+                verify_signature(&committee.dispute_aggregated_key, SignMode::Aggregate)?;
+
+            let op_no_cosign_timelock_script = timelock(
+                settings.op_no_cosign_timelock,
+                &wt_dispute_key,
+                self.get_sign_mode(data.member_index),
+            );
+
+            let init_challenge_output = OutputType::taproot(
+                AmountType::Auto,
+                op_dispute_key,
+                &vec![
+                    cosign_script,
+                    op_no_cosign_timelock_script,
+                    verify_dispute_aggregated.clone(),
+                ],
+            )?;
+
+            protocol.add_connection(
+                "op_cosign",
+                &init_challenge_name,
+                init_challenge_output.clone().into(),
+                &op_cosign_name,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                None,
+                None,
+            )?;
+
+            init_challenge_cosign_outputs.push(Some(init_challenge_output));
+
+            // NOTE: DRP consumes leaf 1 hardcoded.
+            let verify_wt_signature =
+                verify_signature(wt_dispute_key, self.get_sign_mode(data.member_index))?;
+
+            let wt_not_challenge_timelock_script = timelock(
+                settings.wt_no_challenge_timelock,
+                &committee.dispute_aggregated_key,
+                SignMode::Aggregate,
+            );
+
+            let op_cosign_output = OutputType::taproot(
+                challenge_cost,
+                wt_dispute_key,
+                &vec![wt_not_challenge_timelock_script, verify_wt_signature],
+            )?;
+
+            op_cosign_outputs.push(Some(op_cosign_output.clone()));
+
+            protocol.add_connection(
+                "wt_no_challenge",
+                &op_cosign_name,
+                op_cosign_output.into(),
+                &wt_no_challenge_name,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::ScriptsOnly),
+                Some(settings.wt_no_challenge_timelock),
+                None,
+            )?;
+
+            // OP NO COSIGN TX. The remaining input, consuming the WT claim gate stopper, is added
+            // by create_claim_init.
+            protocol.add_connection(
+                "op_no_cosign",
+                &init_challenge_name,
+                OutputSpec::Index(0),
+                &op_no_cosign_name,
+                InputSpec::Auto(
+                    SighashType::taproot_all(),
+                    SpendMode::Script {
+                        leaf: WT_INIT_CHALLENGE_TX_TIMELOCK_LEAF,
+                    },
+                ),
+                Some(settings.op_no_cosign_timelock),
+                None,
+            )?;
+
+            protocol.add_transaction_output(
+                &init_challenge_name,
+                &OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup_key)?,
+            )?;
+        }
+
+        // Second output block of WT_START_ENABLER_TX: one output per member funding
+        // CLAIM_INIT_TX, which carries both claim gates. Same skip rule as the first block.
+        let mut claim_init_outputs: Vec<Option<ClaimInitOutputs>> = vec![];
+
+        for op_index in 0..committee.members.len() {
+            if !self.is_challengeable_operator(data, committee, op_index) {
+                protocol.add_transaction_output(
+                    WT_START_ENABLER_TX,
+                    &OutputType::taproot(
+                        AmountType::Auto,
+                        &committee.dispute_aggregated_key,
+                        &vec![],
+                    )?,
+                )?;
+
+                claim_init_outputs.push(None);
+                continue;
+            }
+
+            claim_init_outputs.push(Some(
+                self.create_claim_init(protocol, data, committee, keys, settings, op_index)?,
+            ));
         }
 
         let op_count = committee
@@ -1049,10 +997,162 @@ impl DisputeCoreProtocol {
         )?;
 
         Ok((
-            wt_init_challenge_outputs,
+            init_challenge_cosign_outputs,
+            claim_init_outputs,
             disabler_directory_funds_output,
             op_cosign_outputs,
         ))
+    }
+
+    /// Creates CLAIM_INIT_TX_<wt>_<op>, spending a WT_START_ENABLER_TX output locked to the
+    /// dispute aggregated key. It holds the WT and OP claim gates plus the two stopper outputs
+    /// consumed by OP_NO_COSIGN_TX and WT_NO_CHALLENGE_TX, and ends with a speedup output for the
+    /// watchtower followed by one for the operator.
+    fn create_claim_init(
+        &self,
+        protocol: &mut Protocol,
+        data: &DisputeCoreData,
+        committee: &Committee,
+        keys: &Vec<ParticipantKeys>,
+        settings: &PacketSettings,
+        op_index: usize,
+    ) -> Result<ClaimInitOutputs, BitVMXError> {
+        let wt_speedup_key = keys[data.member_index].get_public(SPEEDUP_KEY)?;
+        let op_speedup_key = keys[op_index].get_public(SPEEDUP_KEY)?;
+
+        let claim_init_name = double_indexed_name(CLAIM_INIT_TX, data.member_index, op_index);
+        let op_no_cosign_name = double_indexed_name(OP_NO_COSIGN_TX, data.member_index, op_index);
+        let wt_no_challenge_name =
+            double_indexed_name(WT_NO_CHALLENGE_TX, data.member_index, op_index);
+        let wt_claim_name = double_indexed_name(WT_CLAIM_GATE, data.member_index, op_index);
+        let op_claim_name = double_indexed_name(OP_CLAIM_GATE, data.member_index, op_index);
+
+        protocol.add_connection(
+            "claim_init",
+            WT_START_ENABLER_TX,
+            OutputType::taproot(AmountType::Auto, &committee.dispute_aggregated_key, &vec![])?
+                .into(),
+            &claim_init_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::All {
+                    key_path_sign: SignMode::Aggregate,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        let key_pair_name = get_dispute_pair_key_name(data.member_index, op_index);
+        let key_pair = keys[data.member_index].get_public(&key_pair_name)?;
+
+        // Create WT claim gate
+        let wt_claim_gate = ClaimGate::new(
+            protocol,
+            &claim_init_name,
+            &wt_claim_name,
+            (wt_speedup_key, self.get_sign_mode(data.member_index)),
+            &committee.dispute_aggregated_key,
+            CLAIM_GATE_FEE,
+            DUST_VALUE,
+            vec![op_speedup_key],
+            Some(vec![key_pair]),
+            settings.claim_gate_timelock,
+            1, // Single output to connect to FullPenalization
+            vec![],
+            true,
+            None,
+        )?;
+
+        if wt_claim_gate.stoppers.len() != 1 {
+            return Err(BitVMXError::InvalidParameter(
+                "Expected exactly one stopper output in WT claim gate".to_string(),
+            ));
+        }
+
+        // Create OP claim gate
+        let op_claim_gate = ClaimGate::new(
+            protocol,
+            &claim_init_name,
+            &op_claim_name,
+            (op_speedup_key, self.get_sign_mode(op_index)),
+            &committee.dispute_aggregated_key,
+            CLAIM_GATE_FEE,
+            DUST_VALUE,
+            vec![wt_speedup_key],
+            Some(vec![key_pair]),
+            settings.claim_gate_timelock,
+            1, // Single output to connect to FullPenalization
+            vec![],
+            false,
+            wt_claim_gate.exclusive_success_vout,
+        )?;
+
+        if op_claim_gate.stoppers.len() != 1 {
+            return Err(BitVMXError::InvalidParameter(
+                "Expected exactly one stopper output in OP claim gate".to_string(),
+            ));
+        }
+
+        // OP NO COSIGN TX. Consumes the WT claim gate stopper so the OP can no longer be stopped
+        // by it. Input 0 comes from WT_INIT_CHALLENGE_TX and is added by create_wt_start_enabler.
+        protocol.add_connection(
+            "op_no_cosign",
+            &claim_init_name,
+            OutputSpec::Index(wt_claim_gate.vout + 1),
+            &op_no_cosign_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script {
+                    leaf: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        protocol.add_transaction_output(
+            &op_no_cosign_name,
+            &OutputType::segwit_unspendable(op_return_script(vec![])?.get_script().clone())?,
+        )?;
+
+        // WT NO CHALLENGE TX
+        protocol.add_connection(
+            "wt_no_challenge",
+            &claim_init_name,
+            OutputSpec::Index(op_claim_gate.vout + 1),
+            &wt_no_challenge_name,
+            InputSpec::Auto(
+                SighashType::taproot_all(),
+                SpendMode::Script {
+                    leaf: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
+                },
+            ),
+            None,
+            None,
+        )?;
+
+        // TODO: Should we add an output to recover challenge funds? it's about 38_000 sats.
+        protocol.add_transaction_output(
+            &wt_no_challenge_name,
+            &OutputType::segwit_unspendable(op_return_script(vec![])?.get_script().clone())?,
+        )?;
+
+        // Speedup outputs. The watchtower one goes first, at CLAIM_INIT_WT_SPEEDUP_VOUT, because
+        // the watchtower is the party that dispatches this transaction.
+        protocol.add_transaction_output(
+            &claim_init_name,
+            &OutputType::segwit_key(SPEEDUP_VALUE, wt_speedup_key)?,
+        )?;
+        protocol.add_transaction_output(
+            &claim_init_name,
+            &OutputType::segwit_key(SPEEDUP_VALUE, op_speedup_key)?,
+        )?;
+
+        Ok(ClaimInitOutputs {
+            wt_stopper: wt_claim_gate.stoppers[0].clone(),
+            op_stopper: op_claim_gate.stoppers[0].clone(),
+        })
     }
 
     fn create_op_initial_deposit(
@@ -1628,6 +1728,36 @@ impl DisputeCoreProtocol {
         let speedup_utxo = Utxo::new(
             tx.compute_txid(),
             tx.output.len() as u32 - 1,
+            SPEEDUP_VALUE,
+            &self.my_speedup_key(context)?,
+        );
+
+        Ok((tx, Some(speedup_utxo.into())))
+    }
+
+    /// Signs CLAIM_INIT_TX. Its single input is a key path spend with the dispute aggregated key.
+    /// The speedup UTXO is the watchtower one, which is not the last output: the operator speedup
+    /// follows it.
+    fn claim_init_tx<BC: BitcoinCoordinatorApi>(
+        &self,
+        name: &str,
+        context: &ProgramContext<BC>,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
+
+        let mut protocol = self.load_protocol()?;
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![InputSigningInfo::KeySpend { input_index: 0 }],
+        )?;
+
+        let tx = protocol.transaction_to_send(&name, &args)?;
+        info!(id = self.ctx.my_idx, "Signed {}", name);
+
+        let speedup_utxo = Utxo::new(
+            tx.compute_txid(),
+            CLAIM_INIT_WT_SPEEDUP_VOUT,
             SPEEDUP_VALUE,
             &self.my_speedup_key(context)?,
         );
@@ -2587,6 +2717,23 @@ impl DisputeCoreProtocol {
 
         // Load wt dispute core and dispatch init challenge tx
         let protocol = self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, wt_dispute_core_id)?;
+
+        // CLAIM_INIT_TX carries both claim gates and the stopper outputs that OP_NO_COSIGN_TX and
+        // WT_NO_CHALLENGE_TX consume, so it has to go out together with the init challenge.
+        let claim_init_name =
+            double_indexed_name(CLAIM_INIT_TX, self.ctx.my_idx, data.member_index);
+
+        let (tx, speedup) = protocol.get_transaction_by_name(&claim_init_name, context)?;
+
+        self.log_and_dispatch(
+            context,
+            &claim_init_name,
+            tx,
+            speedup,
+            None,
+            wt_dispute_core_id,
+        )?;
+
         let init_challenge_name =
             double_indexed_name(WT_INIT_CHALLENGE_TX, self.ctx.my_idx, data.member_index);
 
@@ -3264,7 +3411,8 @@ impl DisputeCoreProtocol {
         context: &ProgramContext<BC>,
         committee: &Committee,
         data: &DisputeCoreData,
-        init_challenge_outputs: &mut Vec<Option<WtInitChallengeOutputs>>,
+        init_challenge_cosign_outputs: &mut Vec<Option<OutputType>>,
+        claim_init_outputs: &mut Vec<Option<ClaimInitOutputs>>,
         disabler_directory_output: &mut OutputType,
         op_cosign_outputs: &mut Vec<Option<OutputType>>,
     ) -> Result<(), BitVMXError> {
@@ -3273,7 +3421,9 @@ impl DisputeCoreProtocol {
         let wt_start_enabler_tx = protocol.transaction_by_name(WT_START_ENABLER_TX)?;
         let wt_start_enabler_txid = wt_start_enabler_tx.compute_txid();
 
-        let disabler_directory_vout = committee.members.len() as usize;
+        // WT_START_ENABLER_TX holds two blocks of one output per member: the WT_INIT_CHALLENGE_TX
+        // funding outputs followed by the CLAIM_INIT_TX funding outputs.
+        let disabler_directory_vout = committee.members.len() * 2;
         let output_value = wt_start_enabler_tx.output[disabler_directory_vout]
             .value
             .to_sat();
@@ -3295,7 +3445,8 @@ impl DisputeCoreProtocol {
         let claim_success_output =
             ClaimGate::output_from_aggregated(&committee.dispute_aggregated_key, DUST_VALUE)?;
 
-        let mut init_challenge_utxos = vec![];
+        let mut init_challenge_utxos: Vec<Option<PartialUtxo>> = vec![];
+        let mut claim_init_utxos: Vec<Option<ClaimInitUtxos>> = vec![];
         let mut op_cosign_utxos = vec![];
 
         for (op_index, member) in committee.members.clone().iter().enumerate() {
@@ -3341,44 +3492,47 @@ impl DisputeCoreProtocol {
                     )),
                 )?;
 
+                let claim_init = double_indexed_name(CLAIM_INIT_TX, data.member_index, op_index);
+                let claim_init_txid = protocol.transaction_by_name(&claim_init)?.compute_txid();
+
+                let stoppers = claim_init_outputs[op_index].clone().unwrap();
+
+                let wt_stopper: PartialUtxo = (
+                    claim_init_txid,
+                    CLAIM_INIT_WT_STOPPER_VOUT,
+                    Some(stoppers.wt_stopper.get_value_or_err()?.to_sat()),
+                    Some(stoppers.wt_stopper),
+                );
+
+                let op_stopper: PartialUtxo = (
+                    claim_init_txid,
+                    CLAIM_INIT_OP_STOPPER_VOUT,
+                    Some(stoppers.op_stopper.get_value_or_err()?.to_sat()),
+                    Some(stoppers.op_stopper),
+                );
+
+                claim_init_utxos.push(Some(ClaimInitUtxos {
+                    wt_stopper,
+                    op_stopper,
+                }));
+
                 let wt_init_challenge =
                     double_indexed_name(WT_INIT_CHALLENGE_TX, data.member_index, op_index);
                 let wt_init_challenge_tx = protocol.transaction_by_name(&wt_init_challenge)?;
                 let wt_init_challenge_txid = wt_init_challenge_tx.compute_txid();
 
-                let mut outputs = init_challenge_outputs[op_index].clone().unwrap();
-
-                let wt_stopper: PartialUtxo = (
-                    wt_init_challenge_txid,
-                    WT_INIT_CHALLENGE_WT_STOPPER_VOUT,
-                    Some(outputs.wt_stopper.get_value_or_err()?.to_sat()),
-                    Some(outputs.wt_stopper),
-                );
-
-                let op_stopper: PartialUtxo = (
-                    wt_init_challenge_txid,
-                    WT_INIT_CHALLENGE_OP_STOPPER_VOUT,
-                    Some(outputs.op_stopper.get_value_or_err()?.to_sat()),
-                    Some(outputs.op_stopper),
-                );
-
+                let mut cosign_output = init_challenge_cosign_outputs[op_index].clone().unwrap();
                 let cosign_output_value =
                     wt_init_challenge_tx.output[WT_INIT_CHALLENGE_COSIGN_VOUT as usize].value;
 
-                outputs.op_cosign.set_value(cosign_output_value);
+                cosign_output.set_value(cosign_output_value);
 
-                let init_challenge_cosign_utxo: PartialUtxo = (
+                init_challenge_utxos.push(Some((
                     wt_init_challenge_txid,
                     WT_INIT_CHALLENGE_COSIGN_VOUT,
                     Some(cosign_output_value.to_sat()),
-                    Some(outputs.op_cosign),
-                );
-
-                init_challenge_utxos.push(Some(WtInitChallengeUtxos {
-                    wt_stopper,
-                    op_stopper,
-                    op_cosign: init_challenge_cosign_utxo,
-                }));
+                    Some(cosign_output),
+                )));
 
                 let op_cosign = double_indexed_name(OP_COSIGN_TX, data.member_index, op_index);
                 let op_cosign_tx = protocol.transaction_by_name(&op_cosign)?;
@@ -3393,6 +3547,7 @@ impl DisputeCoreProtocol {
                 )));
             } else {
                 init_challenge_utxos.push(None);
+                claim_init_utxos.push(None);
                 op_cosign_utxos.push(None);
             }
         }
@@ -3401,6 +3556,12 @@ impl DisputeCoreProtocol {
             &self.ctx.id,
             &WT_INIT_CHALLENGE_UTXOS,
             VariableTypes::String(serde_json::to_string(&init_challenge_utxos)?),
+        )?;
+
+        context.globals.set_var(
+            &self.ctx.id,
+            &CLAIM_INIT_UTXOS,
+            VariableTypes::String(serde_json::to_string(&claim_init_utxos)?),
         )?;
 
         context.globals.set_var(
@@ -3894,5 +4055,98 @@ impl DisputeCoreProtocol {
             .unwrap_or_else(|e| {
                 warn!("Failed to cancel monitoring for txid {}: {:?}", txid, e);
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::secp256k1::{Secp256k1, SecretKey};
+
+    fn test_key(byte: u8) -> PublicKey {
+        let secp = Secp256k1::new();
+        let secret = SecretKey::from_slice(&[byte; 32]).unwrap();
+        PublicKey::new(secret.public_key(&secp))
+    }
+
+    /// Guards the hard coded CLAIM_INIT_TX output layout against the order in which
+    /// ClaimGate::new appends outputs to its `from` transaction. create_claim_init builds this
+    /// exact sequence, and save_wt_utxos then reads the stoppers back by index.
+    #[test]
+    fn claim_init_output_layout() {
+        let claim_init = "CLAIM_INIT";
+        let mut protocol = Protocol::new("claim_init_layout");
+        protocol.add_transaction(claim_init).unwrap();
+
+        let wt_speedup = test_key(1);
+        let op_speedup = test_key(2);
+        let aggregated = test_key(3);
+        let key_pair = test_key(4);
+
+        let wt_claim_gate = ClaimGate::new(
+            &mut protocol,
+            claim_init,
+            "WT_CLAIM",
+            (&wt_speedup, SignMode::Single),
+            &aggregated,
+            CLAIM_GATE_FEE,
+            DUST_VALUE,
+            vec![&op_speedup],
+            Some(vec![&key_pair]),
+            10,
+            1,
+            vec![],
+            true,
+            None,
+        )
+        .unwrap();
+
+        let op_claim_gate = ClaimGate::new(
+            &mut protocol,
+            claim_init,
+            "OP_CLAIM",
+            (&op_speedup, SignMode::Single),
+            &aggregated,
+            CLAIM_GATE_FEE,
+            DUST_VALUE,
+            vec![&wt_speedup],
+            Some(vec![&key_pair]),
+            10,
+            1,
+            vec![],
+            false,
+            wt_claim_gate.exclusive_success_vout,
+        )
+        .unwrap();
+
+        let wt_speedup_output = OutputType::segwit_key(SPEEDUP_VALUE, &wt_speedup).unwrap();
+        protocol
+            .add_transaction_output(claim_init, &wt_speedup_output)
+            .unwrap();
+        protocol
+            .add_transaction_output(
+                claim_init,
+                &OutputType::segwit_key(SPEEDUP_VALUE, &op_speedup).unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            wt_claim_gate.vout as u32 + 1,
+            CLAIM_INIT_WT_STOPPER_VOUT,
+            "WT stopper vout"
+        );
+        assert_eq!(
+            op_claim_gate.vout as u32 + 1,
+            CLAIM_INIT_OP_STOPPER_VOUT,
+            "OP stopper vout"
+        );
+
+        let outputs = &protocol.transaction_by_name(claim_init).unwrap().output;
+        assert_eq!(outputs.len(), 7, "CLAIM_INIT_TX output count");
+        assert_eq!(
+            outputs[CLAIM_INIT_WT_SPEEDUP_VOUT as usize].script_pubkey,
+            *wt_speedup_output.get_script_pubkey(),
+            "WT speedup is not the last output, the OP speedup follows it"
+        );
     }
 }
