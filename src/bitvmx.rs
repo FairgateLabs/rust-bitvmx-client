@@ -562,11 +562,19 @@ impl BitVMX {
             }
             Context::RequestId(request_id, from) => {
                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                self.program_context.broker_channel.send_service(
-                    from,
-                    OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None)
-                        .to_string()?,
-                )?;
+                // Only a UTXO subscription carries a vout.
+                let response = match vout {
+                    Some(vout) => OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
+                        *request_id,
+                        tx_id,
+                        vout,
+                        tx_status,
+                    ),
+                    None => OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None),
+                };
+                self.program_context
+                    .broker_channel
+                    .send_service(from, response.to_string()?)?;
             }
             _ => {}
         }
@@ -1274,6 +1282,30 @@ impl BitVMX {
         Ok(())
     }
 
+    fn subscribe_to_spending_utxo(
+        &mut self,
+        from: Identifier,
+        id: Uuid,
+        txid: Txid,
+        vout: u32,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<(), BitVMXError> {
+        info!(
+            "Subscribing to spending of UTXO: {:?}:{} from: {} id: {}",
+            txid, vout, from, id
+        );
+        self.program_context.bitcoin_coordinator.monitor(
+            TypesToMonitor::SpendingUTXOTransaction(
+                txid,
+                vout,
+                Context::RequestId(id, from).to_string()?,
+                confirmation_threshold,
+            ),
+        )?;
+
+        Ok(())
+    }
+
     fn subscribe_to_output_pattern(
         &mut self,
         filter: bitcoin_coordinator::OutputPatternFilter,
@@ -1544,6 +1576,12 @@ impl BitVMX {
                 txid,
                 confirmation_threshold,
             ) => self.subscribe_to_tx(from, uuid, txid, confirmation_threshold)?,
+            IncomingBitVMXApiMessages::SubscribeToSpendingUTXO(
+                uuid,
+                txid,
+                vout,
+                confirmation_threshold,
+            ) => self.subscribe_to_spending_utxo(from, uuid, txid, vout, confirmation_threshold)?,
             IncomingBitVMXApiMessages::SubscribeToOutputPattern(filter, confirmation_threshold) => {
                 self.subscribe_to_output_pattern(filter, confirmation_threshold)?
             }
