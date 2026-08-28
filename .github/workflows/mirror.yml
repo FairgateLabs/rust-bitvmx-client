@@ -35,14 +35,14 @@ jobs:
           REPO_TOKEN: ${{ secrets.BITVMX_CLIENT_TYPES_WRITE }}
 
       - name: Check out client at tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: client
           ref: ${{ github.event_name == 'push' && github.ref_name || github.sha }}
           persist-credentials: false
 
       - name: Check out mirror
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: FairgateLabs/rust-bitvmx-client-types
           path: mirror

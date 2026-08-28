@@ -91,7 +91,7 @@ jobs:
           find ${ROOT}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name 'rust-bitvmx-client' -exec mv -f {} ${ROOT}/ \;
 
       - name: Checkout current branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 1
