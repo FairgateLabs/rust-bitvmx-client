@@ -60,7 +60,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: cargo test
-        run: cargo test
+        run: |
+          rm -f Cargo.lock
+          cargo test
         working-directory: mirror
 
       - name: Commit mirror
