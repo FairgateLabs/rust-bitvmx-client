@@ -158,8 +158,8 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                                 info!("Fatal error detected, initiating shutdown");
                                 return Err(e.into());
                             }
-                            //TODO: keep ticking instead of stopping. Blocked on the
-                            //rollback TODO in BitVMX::tick.
+                            //TODO: keep ticking instead of stopping, once we know a partially
+                            //applied tick is safe to carry on from.
                             info!("Error detected, initiating shutdown");
                             instance.bitvmx.report_stopping(&e);
                             return Ok(());

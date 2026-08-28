@@ -954,14 +954,17 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<bool, BitVMXError> {
-        //TODO: roll back the global transaction opened by tick_inner when it fails. Until
-        //that happens main.rs has to stop the node on any error, since a leaked transaction
-        //makes every later tick fail on GlobalTransactionAlreadyActiveError.
         let result = self.tick_inner();
 
         if let Err(e) = &result {
             if classify(e) == Severity::Fatal {
                 self.report_fatal(e);
+            } else {
+                // A failed tick has already acked messages and broadcast transactions, so
+                // its writes are kept to stay consistent with them.
+                if let Err(commit) = self.store.commit_global_transaction() {
+                    error!("Could not commit a failed tick: {:?}", commit);
+                }
             }
         }
 
