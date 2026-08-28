@@ -35,6 +35,7 @@ rm -rf "$LOGS_DIR"
 mkdir -p "$LOGS_DIR"
 echo "Setting up example: $name"
 EXAMPLE_LOG_FILE="$LOGS_DIR/example.log"
+export PROTOCOL_BUILDER_EXPORT_DIR="$LOGS_DIR/studio"
 
 # Clean up previous logs and data
 rm -rf /tmp/regtest/
