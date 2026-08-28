@@ -65,6 +65,8 @@ pub struct FullPenalizationProtocol {
     ctx: ProtocolContext,
 }
 
+type ClaimInitUtxosByWatchtower = Vec<Vec<Option<ClaimInitUtxos>>>;
+
 impl ProtocolHandler for FullPenalizationProtocol {
     fn context(&self) -> &ProtocolContext {
         &self.ctx
@@ -109,17 +111,25 @@ impl ProtocolHandler for FullPenalizationProtocol {
         self.set_requested_confirmations(context, committee.settings.pegin_confirmations)?;
 
         let mut protocol = self.load_or_create_protocol();
+        let claim_init_utxos =
+            self.load_claim_init_utxos(context, &committee, data.committee_id)?;
 
         // CLAIM_INIT_TX is external to FullPenalization and is consumed by both the watchtower
         // disablers and STOPPER_TX transactions.
-        self.create_claim_init_references(&mut protocol, &committee, &data, context)?;
+        self.create_claim_init_references(&mut protocol, &committee, &claim_init_utxos)?;
 
         // Create Operator disabler directory and disablers
         self.create_operator_disablers(&mut protocol, &committee, &data, context)?;
 
-        self.create_watchtower_disablers(&mut protocol, &committee, &data, context)?;
+        self.create_watchtower_disablers(
+            &mut protocol,
+            &committee,
+            &data,
+            context,
+            &claim_init_utxos,
+        )?;
 
-        self.create_stopper_txs(&mut protocol, &committee, &data, context)?;
+        self.create_stopper_txs(&mut protocol, &committee, &data, context, &claim_init_utxos)?;
 
         protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -301,6 +311,24 @@ impl FullPenalizationProtocol {
         Ok(utxos)
     }
 
+    fn load_claim_init_utxos<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        committee: &Committee,
+        committee_id: Uuid,
+    ) -> Result<ClaimInitUtxosByWatchtower, BitVMXError> {
+        committee
+            .members
+            .iter()
+            .map(|member| {
+                self.claim_init_utxos(
+                    context,
+                    get_dispute_core_pid(committee_id, &member.take_key),
+                )
+            })
+            .collect()
+    }
+
     fn input_not_revealed_enabler<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
@@ -318,18 +346,13 @@ impl FullPenalizationProtocol {
             .utxo()?)
     }
 
-    fn create_claim_init_references<BC: BitcoinCoordinatorApi>(
+    fn create_claim_init_references(
         &self,
         protocol: &mut protocol_builder::builder::Protocol,
         committee: &Committee,
-        data: &FullPenalizationData,
-        context: &ProgramContext<BC>,
+        claim_init_utxos: &ClaimInitUtxosByWatchtower,
     ) -> Result<(), BitVMXError> {
         for wt_index in 0..committee.members.len() {
-            let wt_dispute_core_pid =
-                get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
-            let claim_init_utxos = self.claim_init_utxos(context, wt_dispute_core_pid)?;
-
             for op_index in 0..committee.members.len() {
                 if wt_index == op_index
                     || committee.members[op_index].role != ParticipantRole::Prover
@@ -337,7 +360,7 @@ impl FullPenalizationProtocol {
                     continue;
                 }
 
-                let stoppers = claim_init_utxos[op_index].clone().unwrap();
+                let stoppers = claim_init_utxos[wt_index][op_index].clone().unwrap();
                 create_transaction_reference(
                     protocol,
                     &double_indexed_name(CLAIM_INIT_TX, wt_index, op_index),
@@ -355,6 +378,7 @@ impl FullPenalizationProtocol {
         committee: &Committee,
         data: &FullPenalizationData,
         context: &ProgramContext<BC>,
+        claim_init_utxos: &ClaimInitUtxosByWatchtower,
     ) -> Result<(), BitVMXError> {
         for op_index in 0..committee.members.len() {
             if committee.members[op_index].role != ParticipantRole::Prover {
@@ -384,11 +408,7 @@ impl FullPenalizationProtocol {
                         continue;
                     }
 
-                    let wt_dispute_core_pid = get_dispute_core_pid(
-                        data.committee_id,
-                        &committee.members[wt_index].take_key,
-                    );
-                    let wt_stopper = self.claim_init_utxos(context, wt_dispute_core_pid)?[op_index]
+                    let wt_stopper = claim_init_utxos[wt_index][op_index]
                         .clone()
                         .unwrap()
                         .wt_stopper;
@@ -1091,6 +1111,7 @@ impl FullPenalizationProtocol {
         committee: &Committee,
         data: &FullPenalizationData,
         context: &ProgramContext<BC>,
+        claim_init_utxos: &ClaimInitUtxosByWatchtower,
     ) -> Result<(), BitVMXError> {
         let member_count = committee.members.len();
 
@@ -1099,7 +1120,6 @@ impl FullPenalizationProtocol {
                 get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
 
             let init_challenge_utxos = self.wt_init_challenge_utxos(context, dispute_core_pid)?;
-            let claim_init_utxos = self.claim_init_utxos(context, dispute_core_pid)?;
             let disabler_directory_utxo =
                 self.wt_disabler_directory_utxo(context, dispute_core_pid)?;
 
@@ -1149,7 +1169,7 @@ impl FullPenalizationProtocol {
                     wt_index,
                     op_index,
                     &init_challenge_utxos,
-                    &claim_init_utxos,
+                    &claim_init_utxos[wt_index],
                     &disabler_directory_utxo,
                 )?;
             }
