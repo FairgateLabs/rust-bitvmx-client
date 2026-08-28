@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
-use bitcoin_coordinator::config::config::BitcoinSettings;
+use bitcoin_coordinator::config::configs::BitcoinSettings;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use bitvmx_broker::{
     identification::identifier::{Identifier, PubkHash},
