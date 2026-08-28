@@ -8,7 +8,7 @@ use crate::{
 use bitvmx_broker::{identification::identifier::Identifier, BrokerError};
 use bitvmx_dispatcher_utils::PingMessage;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info, warn};
@@ -20,13 +20,16 @@ fn send_failure_is_fatal(error: &BrokerError) -> bool {
     error.is_fatal() || classify(error) == Severity::Fatal
 }
 
+struct DispatcherState {
+    pinged_at: Option<Instant>,
+    reported_down: bool,
+}
+
 pub(crate) struct PingHelper {
-    time_since_sent_check: HashMap<JobDispatcherType, Instant>,
-    unresponsive: HashSet<JobDispatcherType>, // reported down; keeps reports to one per change
+    dispatchers: HashMap<JobDispatcherType, DispatcherState>,
     time_to_send_check: Instant,
     ping_timeout: Duration,
     time_between_checks: Duration,
-    services: Vec<JobDispatcherType>,
     enabled: bool,
 }
 
@@ -82,12 +85,21 @@ impl PingHelper {
         enabled: bool,
     ) -> Self {
         Self {
-            time_since_sent_check: HashMap::new(),
-            unresponsive: HashSet::new(),
+            dispatchers: services
+                .into_iter()
+                .map(|s| {
+                    (
+                        s,
+                        DispatcherState {
+                            pinged_at: None,
+                            reported_down: false,
+                        },
+                    )
+                })
+                .collect(),
             time_to_send_check: Instant::now(),
             ping_timeout,
             time_between_checks,
-            services,
             enabled,
         }
     }
@@ -127,19 +139,27 @@ impl PingHelper {
         components: &ComponentsConfig,
     ) {
         let timeout_dispatcher: Vec<_> = self
-            .time_since_sent_check
+            .dispatchers
             .iter()
-            .filter(|(_, time)| time.elapsed() >= self.ping_timeout)
+            .filter(|(_, state)| {
+                state
+                    .pinged_at
+                    .is_some_and(|sent_at| sent_at.elapsed() >= self.ping_timeout)
+            })
             .map(|(dispatcher, _)| *dispatcher)
             .collect();
 
         for dispatcher_name in timeout_dispatcher {
-            // Dropped so the next interval re-arms this dispatcher.
-            self.time_since_sent_check.remove(&dispatcher_name);
+            let Some(dispatcher_state) = self.dispatchers.get_mut(&dispatcher_name) else {
+                continue;
+            };
+            // dropping the pending instant is what re-arms the dispatcher next interval.
+            dispatcher_state.pinged_at = None;
 
-            if !self.unresponsive.insert(dispatcher_name) {
+            if dispatcher_state.reported_down {
                 continue;
             }
+            dispatcher_state.reported_down = true;
 
             error!(
                 "No Pong received from {:?} Job Dispatcher within timeout period",
@@ -160,7 +180,13 @@ impl PingHelper {
     ) -> Result<(), BitVMXError> {
         let message = serde_json::to_string(&PingMessage::Ping)?;
 
-        for dispatcher in self.services.clone() {
+        let services = self
+            .dispatchers
+            .keys()
+            .copied()
+            .collect::<Vec<JobDispatcherType>>();
+
+        for dispatcher in services {
             debug!(
                 "Sending {:?} dispatcher ping message: {}",
                 dispatcher, message
@@ -180,9 +206,10 @@ impl PingHelper {
                 // No pending entry, so an unsent ping cannot time out as unresponsive.
                 continue;
             }
-
-            self.time_since_sent_check
-                .insert(dispatcher, Instant::now());
+            let Some(dispatcher_state) = self.dispatchers.get_mut(&dispatcher) else {
+                continue;
+            };
+            dispatcher_state.pinged_at = Some(Instant::now());
         }
 
         Ok(())
@@ -206,9 +233,14 @@ impl PingHelper {
             ),
         }
 
-        self.time_since_sent_check.remove(&dispatcher_name);
+        let Some(dispatcher_state) = self.dispatchers.get_mut(&dispatcher_name) else {
+            return;
+        };
 
-        if self.unresponsive.remove(&dispatcher_name) {
+        dispatcher_state.pinged_at = None;
+
+        if dispatcher_state.reported_down {
+            dispatcher_state.reported_down = false;
             info!(
                 "{:?} Job Dispatcher is answering pings again",
                 dispatcher_name
@@ -385,10 +417,12 @@ mod tests {
         .unwrap();
 
         assert!(helper.enabled);
-        assert_eq!(
-            helper.services,
-            vec![JobDispatcherType::Emulator, JobDispatcherType::Garbler]
-        );
+        // Keys, not order: the map decides who gets pinged.
+        assert_eq!(helper.dispatchers.len(), 2);
+        assert!(helper
+            .dispatchers
+            .contains_key(&JobDispatcherType::Emulator));
+        assert!(helper.dispatchers.contains_key(&JobDispatcherType::Garbler));
     }
 
     #[test]
@@ -428,9 +462,11 @@ mod tests {
         .unwrap();
 
         assert!(helper.enabled);
-        assert_eq!(
-            helper.services,
-            vec![JobDispatcherType::Emulator, JobDispatcherType::Garbler]
-        );
+        // Keys, not order: the map decides who gets pinged.
+        assert_eq!(helper.dispatchers.len(), 2);
+        assert!(helper
+            .dispatchers
+            .contains_key(&JobDispatcherType::Emulator));
+        assert!(helper.dispatchers.contains_key(&JobDispatcherType::Garbler));
     }
 }
