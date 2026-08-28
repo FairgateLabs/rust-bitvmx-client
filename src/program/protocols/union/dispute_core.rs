@@ -156,6 +156,11 @@ enum DisputeCoreTxType {
         slot_index: usize,
         block_height: Option<u32>,
     },
+    Stopper {
+        wt_index: usize,
+        op_index: usize,
+        slot_index: usize,
+    },
     TwoDisputePenalization {
         slot_index_prev: usize,
         slot_index_curr: usize,
@@ -220,6 +225,11 @@ impl DisputeCoreTxType {
             DisputeCoreTxType::InputNotRevealed { slot_index, .. } => {
                 indexed_name(INPUT_NOT_REVEALED_TX, *slot_index)
             }
+            DisputeCoreTxType::Stopper {
+                wt_index,
+                op_index,
+                slot_index,
+            } => triple_indexed_name(STOPPER_TX, *wt_index, *op_index, *slot_index),
             DisputeCoreTxType::TwoDisputePenalization {
                 slot_index_prev,
                 slot_index_curr,
@@ -607,7 +617,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 self.handle_reveal_input_tx(program_context, &tx_name, &tx_status)?;
             }
         } else if tx_name.starts_with(INPUT_NOT_REVEALED_TX) {
-            self.handle_input_not_revealed_tx(program_context)?;
+            self.handle_input_not_revealed_tx(program_context, &tx_name)?;
         } else if tx_name.starts_with(CLAIM_INIT_TX) {
             self.handle_claim_init_tx(program_context, &tx_name)?;
         } else if tx_name.starts_with(WT_INIT_CHALLENGE_TX) {
@@ -1499,12 +1509,17 @@ impl DisputeCoreProtocol {
             &OutputType::segwit_key(AmountType::Auto, operator_speedup_key)?,
         )?;
 
-        // Add one speedup ouput per committee member to the challenge and input_not_revealed transactions.
         for i in 0..keys.len() {
+            // Challenge outputs are CPFP speedups.
             let speedup_output =
                 OutputType::segwit_key(AmountType::Auto, keys[i].get_public(SPEEDUP_KEY)?)?;
             protocol.add_transaction_output(&challenge, &speedup_output)?;
-            protocol.add_transaction_output(&input_not_revealed, &speedup_output)?;
+
+            // INPUT_NOT_REVEALED outputs are enablers for each member's STOPPER_TX and are therefore locked with member dispute keys.
+            protocol.add_transaction_output(
+                &input_not_revealed,
+                &OutputType::segwit_key(AmountType::Auto, &committee.members[i].dispute_key)?,
+            )?;
         }
 
         // Add a speedup output to the reveal_input transaction.
@@ -2758,10 +2773,11 @@ impl DisputeCoreProtocol {
     fn handle_input_not_revealed_tx<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
+        tx_name: &str,
     ) -> Result<(), BitVMXError> {
         // INPUT_NOT_REVEALED_TX belongs to the challenged operator's dispute core. Every other
-        // committee member acts as a verifier for that operator and dispatches the CLAIM_INIT_TX
-        // for its watchtower/operator pair.
+        // committee member acts as a verifier and dispatches CLAIM_INIT_TX plus the STOPPER_TX
+        // for its watchtower/operator/slot tuple.
         if self.is_my_dispute_core(context)? {
             return Ok(());
         }
@@ -2773,15 +2789,18 @@ impl DisputeCoreProtocol {
         let wt_dispute_core_id =
             get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
 
-        if self.is_claim_init_mined(context, &wt_dispute_core_id, op_index)? {
-            info!(
-                id = self.ctx.my_idx,
-                "CLAIM_INIT_TX is already mined for operator {}, skipping dispatch", op_index
-            );
-            return Ok(());
+        if !self.is_claim_init_mined(context, &wt_dispute_core_id, op_index)? {
+            self.dispatch(context, DisputeCoreTxType::ClaimInit { wt_index, op_index })?;
         }
 
-        self.dispatch(context, DisputeCoreTxType::ClaimInit { wt_index, op_index })
+        self.dispatch(
+            context,
+            DisputeCoreTxType::Stopper {
+                wt_index,
+                op_index,
+                slot_index: extract_index(tx_name, INPUT_NOT_REVEALED_TX)?,
+            },
+        )
     }
 
     fn dispatch_init_challenge<BC: BitcoinCoordinatorApi>(
@@ -2995,7 +3014,7 @@ impl DisputeCoreProtocol {
     fn input_not_revealed_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
-        context: &ProgramContext<BC>,
+        _context: &ProgramContext<BC>,
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} for DisputeCore", name);
 
@@ -3014,15 +3033,7 @@ impl DisputeCoreProtocol {
         let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
-        // Speedup data
-        let speedup_utxo = Utxo::new(
-            tx.compute_txid(),
-            self.ctx.my_idx as u32, //Speedup vout is member index
-            SPEEDUP_VALUE,
-            &self.my_speedup_key(context)?,
-        );
-
-        Ok((tx, Some(speedup_utxo.into())))
+        Ok((tx, None))
     }
 
     fn handle_double_reveal<BC: BitcoinCoordinatorApi>(
@@ -3347,7 +3358,8 @@ impl DisputeCoreProtocol {
                     self.two_dispute_penalization_tx(slot_index_prev, slot_index_curr)?;
                 (tx, speedup)
             }
-            DisputeCoreTxType::PenalizationStopOperatorWon { .. }
+            DisputeCoreTxType::Stopper { .. }
+            | DisputeCoreTxType::PenalizationStopOperatorWon { .. }
             | DisputeCoreTxType::PenalizationOperatorLazyDisabler { .. }
             | DisputeCoreTxType::PenalizationWatchtowerDisabler { .. }
             | DisputeCoreTxType::OperatorDisablerDirectory { .. }
@@ -3470,6 +3482,28 @@ impl DisputeCoreProtocol {
                 &indexed_name(OPERATOR_WON_ENABLER, i),
                 VariableTypes::Utxo(operator_won_utxo.clone()),
             )?;
+
+            let input_not_revealed_name = indexed_name(INPUT_NOT_REVEALED_TX, i);
+            let input_not_revealed_tx = protocol.transaction_by_name(&input_not_revealed_name)?;
+
+            for member_index in 0..committee.members.len() {
+                let output = &input_not_revealed_tx.output[member_index];
+                let output_type = OutputType::segwit_key(
+                    output.value.to_sat(),
+                    &committee.members[member_index].dispute_key,
+                )?;
+
+                context.globals.set_var(
+                    &self.ctx.id,
+                    &double_indexed_name(INPUT_NOT_REVEALED_ENABLER, i, member_index),
+                    VariableTypes::Utxo((
+                        input_not_revealed_tx.compute_txid(),
+                        member_index as u32,
+                        Some(output.value.to_sat()),
+                        Some(output_type),
+                    )),
+                )?;
+            }
         }
 
         // NOTE: Should we save the whole UTXOS as in reimbursement_kickoff_utxos?

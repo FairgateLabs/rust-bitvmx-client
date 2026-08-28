@@ -7,7 +7,7 @@ use bitcoin_coordinator::TransactionStatus;
 use key_manager::winternitz::WinternitzType;
 use protocol_builder::{
     graph::graph::GraphOptions,
-    scripts::{ProtocolScript, SignMode},
+    scripts::{op_return_script, ProtocolScript, SignMode},
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
@@ -38,16 +38,17 @@ use crate::{
                     CHALLENGE_KEY, OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
                     WT_INIT_CHALLENGE_TX_COSIGN_DISABLER_LEAF, WT_START_ENABLER_TX_DISABLER_LEAF,
                 },
+                dispute_core_claim_gate::CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
                 types::{
                     ClaimInitUtxos, Committee, FullPenalizationData, PacketSettings,
                     PenalizedMember, CLAIM_INIT_TX, CLAIM_INIT_UTXOS, DISPUTE_AGGREGATED_KEY,
-                    DUST_VALUE, OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER,
-                    OP_CLAIM_GATE_SUCCESS,
+                    DUST_VALUE, INPUT_NOT_REVEALED_ENABLER, INPUT_NOT_REVEALED_TX,
+                    OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
                     OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
                     OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
                     OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE,
-                    STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE_SUCCESS,
+                    STOPPER_TX, STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE_SUCCESS,
                     WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_COSIGN_DISABLER_TX,
                     WT_DISABLER_DIRECTORY_TX, WT_DISABLER_DIRECTORY_UTXO, WT_DISABLER_TX,
                     WT_INIT_CHALLENGE_TX, WT_INIT_CHALLENGE_UTXOS, WT_START_ENABLER_TX,
@@ -109,10 +110,16 @@ impl ProtocolHandler for FullPenalizationProtocol {
 
         let mut protocol = self.load_or_create_protocol();
 
+        // CLAIM_INIT_TX is external to FullPenalization and is consumed by both the watchtower
+        // disablers and STOPPER_TX transactions.
+        self.create_claim_init_references(&mut protocol, &committee, &data, context)?;
+
         // Create Operator disabler directory and disablers
         self.create_operator_disablers(&mut protocol, &committee, &data, context)?;
 
         self.create_watchtower_disablers(&mut protocol, &committee, &data, context)?;
+
+        self.create_stopper_txs(&mut protocol, &committee, &data, context)?;
 
         protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
@@ -127,6 +134,8 @@ impl ProtocolHandler for FullPenalizationProtocol {
     ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         if name.starts_with(OP_LAZY_DISABLER_TX) {
             Ok(self.op_lazy_disabler_tx(name, context)?)
+        } else if name.starts_with(STOPPER_TX) {
+            Ok(self.stopper_tx(name)?)
         } else if name.starts_with(OP_DISABLER_TX) {
             Ok(self.op_disabler_tx(name, context)?)
         } else if name.starts_with(WT_DISABLER_TX) {
@@ -290,6 +299,167 @@ impl FullPenalizationProtocol {
 
         let utxos: Vec<Option<ClaimInitUtxos>> = serde_json::from_str(&data)?;
         Ok(utxos)
+    }
+
+    fn input_not_revealed_enabler<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        dispute_core_pid: Uuid,
+        slot_index: usize,
+        wt_index: usize,
+    ) -> Result<PartialUtxo, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(
+                &dispute_core_pid,
+                &double_indexed_name(INPUT_NOT_REVEALED_ENABLER, slot_index, wt_index),
+            )?
+            .unwrap()
+            .utxo()?)
+    }
+
+    fn create_claim_init_references<BC: BitcoinCoordinatorApi>(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        committee: &Committee,
+        data: &FullPenalizationData,
+        context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
+        for wt_index in 0..committee.members.len() {
+            let wt_dispute_core_pid =
+                get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
+            let claim_init_utxos = self.claim_init_utxos(context, wt_dispute_core_pid)?;
+
+            for op_index in 0..committee.members.len() {
+                if wt_index == op_index
+                    || committee.members[op_index].role != ParticipantRole::Prover
+                {
+                    continue;
+                }
+
+                let stoppers = claim_init_utxos[op_index].clone().unwrap();
+                create_transaction_reference(
+                    protocol,
+                    &double_indexed_name(CLAIM_INIT_TX, wt_index, op_index),
+                    &mut vec![stoppers.wt_stopper, stoppers.op_stopper],
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn create_stopper_txs<BC: BitcoinCoordinatorApi>(
+        &self,
+        protocol: &mut protocol_builder::builder::Protocol,
+        committee: &Committee,
+        data: &FullPenalizationData,
+        context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
+        for op_index in 0..committee.members.len() {
+            if committee.members[op_index].role != ParticipantRole::Prover {
+                continue;
+            }
+
+            let op_dispute_core_pid =
+                get_dispute_core_pid(data.committee_id, &committee.members[op_index].take_key);
+
+            for slot_index in 0..committee.packet_size as usize {
+                let mut enablers = vec![];
+                for wt_index in 0..committee.members.len() {
+                    enablers.push(self.input_not_revealed_enabler(
+                        context,
+                        op_dispute_core_pid,
+                        slot_index,
+                        wt_index,
+                    )?);
+                }
+
+                let input_not_revealed_name =
+                    double_indexed_name(INPUT_NOT_REVEALED_TX, op_index, slot_index);
+                create_transaction_reference(protocol, &input_not_revealed_name, &mut enablers)?;
+
+                for wt_index in 0..committee.members.len() {
+                    if wt_index == op_index {
+                        continue;
+                    }
+
+                    let wt_dispute_core_pid = get_dispute_core_pid(
+                        data.committee_id,
+                        &committee.members[wt_index].take_key,
+                    );
+                    let wt_stopper = self.claim_init_utxos(context, wt_dispute_core_pid)?[op_index]
+                        .clone()
+                        .unwrap()
+                        .wt_stopper;
+                    let claim_init_name = double_indexed_name(CLAIM_INIT_TX, wt_index, op_index);
+                    let stopper_name =
+                        triple_indexed_name(STOPPER_TX, wt_index, op_index, slot_index);
+
+                    protocol.add_connection(
+                        "from_input_not_revealed_enabler",
+                        &input_not_revealed_name,
+                        (enablers[wt_index].1 as usize).into(),
+                        &stopper_name,
+                        InputSpec::Auto(SighashType::ecdsa_all(), SpendMode::Segwit),
+                        None,
+                        Some(enablers[wt_index].0),
+                    )?;
+
+                    protocol.add_connection(
+                        "from_watchtower_stopper",
+                        &claim_init_name,
+                        (wt_stopper.1 as usize).into(),
+                        &stopper_name,
+                        InputSpec::Auto(
+                            SighashType::taproot_all(),
+                            SpendMode::Script {
+                                leaf: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
+                            },
+                        ),
+                        None,
+                        Some(wt_stopper.0),
+                    )?;
+
+                    protocol.add_transaction_output(
+                        &stopper_name,
+                        &OutputType::segwit_unspendable(
+                            op_return_script(vec![])?.get_script().clone(),
+                        )?,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn stopper_tx(&self, name: &str) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+        info!(id = self.ctx.my_idx, "Loading {} tx", name);
+
+        let mut protocol = self.load_protocol()?;
+        let args = collect_input_signatures(
+            &mut protocol,
+            name,
+            &vec![
+                InputSigningInfo::Edcsa { input_index: 0 },
+                InputSigningInfo::ScriptSpend {
+                    input_index: 1,
+                    script_index: CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
+                    winternitz_data: None,
+                },
+            ],
+        )?;
+
+        let tx = protocol.transaction_to_send(name, &args)?;
+        info!(
+            id = self.ctx.my_idx,
+            "Signed {}, txid: {}",
+            name,
+            tx.compute_txid()
+        );
+
+        Ok((tx, None))
     }
 
     fn create_operator_disabler<BC: BitcoinCoordinatorApi>(
@@ -939,7 +1109,8 @@ impl FullPenalizationProtocol {
                 &mut vec![disabler_directory_utxo.clone()],
             )?;
 
-            // Create the WT INIT CHALLENGE and CLAIM INIT references just once
+            // Create the WT INIT CHALLENGE references just once. CLAIM_INIT references are
+            // created centrally because they are shared with STOPPER_TX.
             for op_index in 0..member_count {
                 if wt_index == op_index
                     || committee.members[op_index].role != ParticipantRole::Prover
@@ -956,13 +1127,6 @@ impl FullPenalizationProtocol {
                     protocol,
                     &double_indexed_name(WT_INIT_CHALLENGE_TX, wt_index, op_index),
                     &mut vec![cosign_utxo],
-                )?;
-
-                let stoppers = claim_init_utxos[op_index].clone().unwrap();
-                create_transaction_reference(
-                    protocol,
-                    &double_indexed_name(CLAIM_INIT_TX, wt_index, op_index),
-                    &mut vec![stoppers.wt_stopper, stoppers.op_stopper],
                 )?;
             }
 
