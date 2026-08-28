@@ -1,7 +1,7 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::garbled_messages::{
-    GCJobProveResult, GarbledJobType, ProofBlob, Sha256CommitmentHex,
+    GCJobProveResult, GCJobVerifyResult, GarbledJobType, ProofBlob, Sha256CommitmentHex,
 };
 use bitvmx_settings::settings::decrypt_or_read_file_bytes;
 use key_manager::lamport::{
@@ -217,14 +217,26 @@ impl SetupStep for GarblerStep {
         }
 
         if sub_step == GC_JOB_VERIFY_STEP {
-            info!(" result[\"status\"]: {}", result["status"]);
-            info!(" result[\"type\"]: {}", result["type"]);
-            info!(" result[\"valid\"]: {}", result["valid"]);
-            info!(" result[\"proofs_linked\"]: {}", result["proofs_linked"]);
+            let verify_result: GCJobVerifyResult =
+                serde_json::from_value(result.clone()).map_err(|e| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Failed to deserialize verification data: {}",
+                        e
+                    ))
+                })?;
 
-            if !result["valid"].as_bool().unwrap_or(false) {
+            info!(" result[\"status\"]: {}", verify_result.status);
+            info!(" result[\"type\"]: {}", verify_result.r#type);
+            info!(" result[\"valid\"]: {}", verify_result.valid);
+            info!(
+                " result[\"proofs_linked\"]: {}",
+                verify_result.proofs_linked
+            );
+
+            if !verify_result.valid {
                 return Err(BitVMXError::InvalidMessage(format!(
-                    "The provided proof is invalid: {result}"
+                    "The provided proof is invalid: {:?}",
+                    verify_result
                 )));
             }
 
@@ -641,6 +653,27 @@ mod tests {
         .unwrap()
     }
 
+    fn verify_result(valid: bool) -> Value {
+        json!({
+            "status": "ok",
+            "type": "verify",
+            "valid": valid,
+            "digest_circ": "",
+            "digest_ct": "",
+            "digest_io": "",
+            "digest_labels": "",
+            "digest_lamport": "",
+            "gc_proof_valid": valid,
+            "lamport_proof_valid": valid,
+            "proofs_linked": valid,
+            "digest_circ_matches": valid,
+            "digest_ct_matches": valid,
+            "digest_lamport_matches": valid,
+            "valid_indices": valid,
+            "valid_num_inputs": valid,
+        })
+    }
+
     fn store_config(
         context: &ProgramContext<impl BitcoinCoordinatorApi>,
         id: &Uuid,
@@ -880,7 +913,7 @@ mod tests {
 
         assert!(matches!(
             step.receive_dispatcher_result(
-                json!({"valid": false}),
+                verify_result(false),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,
@@ -890,7 +923,7 @@ mod tests {
         ));
         assert_eq!(
             step.receive_dispatcher_result(
-                json!({"valid": true}),
+                verify_result(true),
                 CommsMessageType::GarbledCircuit,
                 GC_JOB_VERIFY_STEP,
                 &mut env.context,

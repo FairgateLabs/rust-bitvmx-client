@@ -86,21 +86,13 @@ pub fn init_challenge_script(
         ));
     }
 
-    let mut protocol_script = verify_winternitz_signatures_aux::<String>(
+    verify_winternitz_signatures_aux::<String>(
         wt_dispute_key,
         &keys.to_vec(),
         sign_mode,
         true,
         Some(vec![validate_slot_id, validate_pegout_id]),
-    )?;
-
-    // This block could be inside verify_winternitz_signatures_aux
-    protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
-    for (_, key) in keys {
-        protocol_script.add_stack_item(StackItem::new_winternitz_sig(&key));
-    }
-
-    Ok(protocol_script)
+    )
 }
 
 pub fn cosign_script(
@@ -147,21 +139,13 @@ pub fn cosign_script(
         ));
     }
 
-    let mut protocol_script = verify_winternitz_signatures_aux::<String>(
+    verify_winternitz_signatures_aux::<String>(
         op_dispute_key,
         &keys,
         sign_mode,
         true,
         Some(validate_cosign),
-    )?;
-
-    // This block could be inside verify_winternitz_signatures_aux
-    protocol_script.add_stack_item(StackItem::new_schnorr_sig(true));
-    for (_, key) in keys {
-        protocol_script.add_stack_item(StackItem::new_winternitz_sig(&key));
-    }
-
-    Ok(protocol_script)
+    )
 }
 
 fn get_stack_equality_script(words: u32) -> ScriptBuf {
