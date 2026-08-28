@@ -147,7 +147,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
         if name.starts_with(OP_LAZY_DISABLER_TX) {
             Ok(self.op_lazy_disabler_tx(name, context)?)
         } else if name.starts_with(STOPPER_TX) {
-            Ok(self.stopper_tx(name)?)
+            Ok(self.stopper_tx(name, context)?)
         } else if name.starts_with(OP_DISABLER_TX) {
             Ok(self.op_disabler_tx(name, context)?)
         } else if name.starts_with(WT_DISABLER_TX) {
@@ -465,10 +465,17 @@ impl FullPenalizationProtocol {
         Ok(())
     }
 
-    fn stopper_tx(&self, name: &str) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
+    fn stopper_tx<BC: BitcoinCoordinatorApi>(
+        &self,
+        name: &str,
+        context: &ProgramContext<BC>,
+    ) -> Result<(Transaction, Option<SpeedupData>), BitVMXError> {
         info!(id = self.ctx.my_idx, "Loading {} tx", name);
 
         let mut protocol = self.load_protocol()?;
+        let data = self.full_penalization_data(context)?;
+        let committee = self.committee(context, data.committee_id)?;
+
         let args = collect_input_signatures(
             &mut protocol,
             name,
@@ -483,14 +490,18 @@ impl FullPenalizationProtocol {
         )?;
 
         let tx = protocol.transaction_to_send(name, &args)?;
-        info!(
-            id = self.ctx.my_idx,
-            "Signed {}, txid: {}",
-            name,
-            tx.compute_txid()
+        let txid = tx.compute_txid();
+
+        // Speedup data
+        let speedup_utxo = Utxo::new(
+            txid,
+            0,
+            SPEEDUP_VALUE,
+            &committee.members[self.ctx.my_idx].dispute_key,
         );
 
-        Ok((tx, None))
+        info!(id = self.ctx.my_idx, "Signed {}, txid: {}", name, txid);
+        Ok((tx, Some(speedup_utxo.into())))
     }
 
     fn handle_stopper_tx<BC: BitcoinCoordinatorApi>(
