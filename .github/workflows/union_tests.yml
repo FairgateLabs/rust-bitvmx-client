@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Configure SSH for Git Submodule Access
-        uses: webfactory/ssh-agent@v0.5.4
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
