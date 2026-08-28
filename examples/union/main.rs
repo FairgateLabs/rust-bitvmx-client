@@ -766,7 +766,7 @@ pub fn cli_input_not_revealed() -> Result<()> {
     committee.members[op_index].bitvmx.shutdown();
 
     // Wait some blocks to be able to dispatch and mine INPUT_NOT_REVEALED_TX
-    let blocks_to_wait = committee.settings.input_not_revealed_timelock as u32 + 30;
+    let blocks_to_wait = committee.settings.input_not_revealed_timelock as u32 + 50;
     wait_for_blocks(&committee.bitcoin_client, blocks_to_wait)?;
 
     Ok(())
