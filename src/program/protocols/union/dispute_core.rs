@@ -68,6 +68,7 @@ const SLOT_ID_KEYS: &str = "SLOT_ID_KEYS";
 const PEGOUT_ID_KEYS: &str = "PEGOUT_ID_KEYS";
 const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
 const INIT_CHALLENGE_SLOT: &str = "INIT_CHALLENGE_SLOT";
+const CLAIM_INIT_MINED: &str = "CLAIM_INIT_MINED";
 
 pub const OP_COSIGN_SLOT_KEY: &str = "OP_COSIGN_SLOT_KEY";
 pub const OP_COSIGN_PEGOUT_ID_KEY: &str = "OP_COSIGN_PEGOUT_ID_KEY";
@@ -97,7 +98,8 @@ const WT_INIT_CHALLENGE_COSIGN_VOUT: u32 = 0;
 // are appended afterwards. Keep these in sync with ClaimGate::new.
 const CLAIM_INIT_WT_STOPPER_VOUT: u32 = 2;
 const CLAIM_INIT_OP_STOPPER_VOUT: u32 = 4;
-const CLAIM_INIT_WT_SPEEDUP_VOUT: u32 = 5;
+const CLAIM_INIT_WT_SPEEDUP_OUTPUT_OFFSET_FROM_END: u32 = 2;
+const CLAIM_INIT_OP_SPEEDUP_OUTPUT_OFFSET_FROM_END: u32 = 1;
 
 const OP_COSIGN_INIT_CHALLENGE_INDEX: usize = 0;
 const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
@@ -140,6 +142,10 @@ enum DisputeCoreTxType {
         block_height: Option<u32>,
     },
     OperatorCosign {
+        wt_index: usize,
+        op_index: usize,
+    },
+    ClaimInit {
         wt_index: usize,
         op_index: usize,
     },
@@ -204,6 +210,9 @@ impl DisputeCoreTxType {
             } => double_indexed_name(OP_NO_COSIGN_TX, *wt_index, *op_index),
             DisputeCoreTxType::OperatorCosign { wt_index, op_index } => {
                 double_indexed_name(OP_COSIGN_TX, *wt_index, *op_index)
+            }
+            DisputeCoreTxType::ClaimInit { wt_index, op_index } => {
+                double_indexed_name(CLAIM_INIT_TX, *wt_index, *op_index)
             }
             DisputeCoreTxType::RevealInput { slot_index } => {
                 indexed_name(REVEAL_INPUT_TX, *slot_index)
@@ -597,6 +606,10 @@ impl ProtocolHandler for DisputeCoreProtocol {
             } else {
                 self.handle_reveal_input_tx(program_context, &tx_name, &tx_status)?;
             }
+        } else if tx_name.starts_with(INPUT_NOT_REVEALED_TX) {
+            self.handle_input_not_revealed_tx(program_context)?;
+        } else if tx_name.starts_with(CLAIM_INIT_TX) {
+            self.handle_claim_init_tx(program_context, &tx_name)?;
         } else if tx_name.starts_with(WT_INIT_CHALLENGE_TX) {
             self.handle_wt_init_challenge(program_context, &tx_name, &tx_status)?;
         } else if tx_name.starts_with(OP_COSIGN_TX) {
@@ -1138,8 +1151,8 @@ impl DisputeCoreProtocol {
             &OutputType::segwit_unspendable(op_return_script(vec![])?.get_script().clone())?,
         )?;
 
-        // Speedup outputs. The watchtower one goes first, at CLAIM_INIT_WT_SPEEDUP_VOUT, because
-        // the watchtower is the party that dispatches this transaction.
+        // Speedup outputs are kept last so their vouts can be derived relative to the output
+        // count. The watchtower output precedes the operator output.
         protocol.add_transaction_output(
             &claim_init_name,
             &OutputType::segwit_key(SPEEDUP_VALUE, wt_speedup_key)?,
@@ -1736,8 +1749,8 @@ impl DisputeCoreProtocol {
     }
 
     /// Signs CLAIM_INIT_TX. Its single input is a key path spend with the dispute aggregated key.
-    /// The speedup UTXO is the watchtower one, which is not the last output: the operator speedup
-    /// follows it.
+    /// The speedup UTXO is selected for the local participant: the watchtower output is followed
+    /// by the operator output.
     fn claim_init_tx<BC: BitcoinCoordinatorApi>(
         &self,
         name: &str,
@@ -1755,9 +1768,30 @@ impl DisputeCoreProtocol {
         let tx = protocol.transaction_to_send(&name, &args)?;
         info!(id = self.ctx.my_idx, "Signed {}", name);
 
+        let (wt_index, op_index) = extract_double_index(name)?;
+        let output_count = u32::try_from(tx.output.len())
+            .map_err(|_| BitVMXError::InvalidParameter(format!("Too many outputs in {}", name)))?;
+        if output_count < CLAIM_INIT_WT_SPEEDUP_OUTPUT_OFFSET_FROM_END {
+            return Err(BitVMXError::InvalidParameter(format!(
+                "{} must contain WT and OP speedup outputs",
+                name
+            )));
+        }
+
+        let speedup_vout = if self.ctx.my_idx == wt_index {
+            output_count - CLAIM_INIT_WT_SPEEDUP_OUTPUT_OFFSET_FROM_END
+        } else if self.ctx.my_idx == op_index {
+            output_count - CLAIM_INIT_OP_SPEEDUP_OUTPUT_OFFSET_FROM_END
+        } else {
+            return Err(BitVMXError::InvalidParameter(format!(
+                "Member {} cannot speed up {} for watchtower {} and operator {}",
+                self.ctx.my_idx, name, wt_index, op_index
+            )));
+        };
+
         let speedup_utxo = Utxo::new(
             tx.compute_txid(),
-            CLAIM_INIT_WT_SPEEDUP_VOUT,
+            speedup_vout,
             SPEEDUP_VALUE,
             &self.my_speedup_key(context)?,
         );
@@ -2331,6 +2365,44 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
+    fn claim_init_mined_key(op_index: usize) -> String {
+        indexed_name(CLAIM_INIT_MINED, op_index)
+    }
+
+    fn is_claim_init_mined<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        protocol_id: &Uuid,
+        op_index: usize,
+    ) -> Result<bool, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(protocol_id, &Self::claim_init_mined_key(op_index))?
+            .unwrap_or_else(|| VariableTypes::Bool(false))
+            .bool()?)
+    }
+
+    fn handle_claim_init_tx<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        tx_name: &str,
+    ) -> Result<(), BitVMXError> {
+        let (_, op_index) = extract_double_index(tx_name)?;
+
+        context.globals.set_var(
+            &self.ctx.id,
+            &Self::claim_init_mined_key(op_index),
+            VariableTypes::Bool(true),
+        )?;
+
+        info!(
+            id = self.ctx.my_idx,
+            "Recorded {} as mined for operator {} in protocol {}", tx_name, op_index, self.ctx.id
+        );
+
+        Ok(())
+    }
+
     fn wt_no_challenge_tx(
         &self,
         name: &str,
@@ -2399,6 +2471,21 @@ impl DisputeCoreProtocol {
         }
 
         if op_index == self.ctx.my_idx {
+            if !self.is_claim_init_mined(context, &self.ctx.id, op_index)? {
+                info!(
+                id = self.ctx.my_idx,
+                "CLAIM_INIT_TX is not mined for operator {}, dispatching it with the operator speedup",
+                op_index
+            );
+                self.dispatch(
+                    context,
+                    DisputeCoreTxType::ClaimInit {
+                        wt_index: data.member_index,
+                        op_index,
+                    },
+                )?;
+            }
+
             // OP should save WT cosign data from the witness, and then dispatch OP_COSIGN tx
             self.dispatch_op_cosign(context, tx_name, tx_status, data.member_index, op_index)?;
         }
@@ -2668,6 +2755,35 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
+    fn handle_input_not_revealed_tx<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
+        // INPUT_NOT_REVEALED_TX belongs to the challenged operator's dispute core. Every other
+        // committee member acts as a verifier for that operator and dispatches the CLAIM_INIT_TX
+        // for its watchtower/operator pair.
+        if self.is_my_dispute_core(context)? {
+            return Ok(());
+        }
+
+        let data = self.dispute_core_data(context)?;
+        let wt_index = self.ctx.my_idx;
+        let op_index = data.member_index;
+        let committee = self.committee(context)?;
+        let wt_dispute_core_id =
+            get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
+
+        if self.is_claim_init_mined(context, &wt_dispute_core_id, op_index)? {
+            info!(
+                id = self.ctx.my_idx,
+                "CLAIM_INIT_TX is already mined for operator {}, skipping dispatch", op_index
+            );
+            return Ok(());
+        }
+
+        self.dispatch(context, DisputeCoreTxType::ClaimInit { wt_index, op_index })
+    }
+
     fn dispatch_init_challenge<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
@@ -2716,23 +2832,15 @@ impl DisputeCoreProtocol {
             .set_witness(&wt_dispute_core_id, &key_name, witness)?;
 
         // Load wt dispute core and dispatch init challenge tx
-        let protocol = self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, wt_dispute_core_id)?;
-
-        // CLAIM_INIT_TX carries both claim gates and the stopper outputs that OP_NO_COSIGN_TX and
-        // WT_NO_CHALLENGE_TX consume, so it has to go out together with the init challenge.
-        let claim_init_name =
-            double_indexed_name(CLAIM_INIT_TX, self.ctx.my_idx, data.member_index);
-
-        let (tx, speedup) = protocol.get_transaction_by_name(&claim_init_name, context)?;
-
-        self.log_and_dispatch(
+        self.dispatch(
             context,
-            &claim_init_name,
-            tx,
-            speedup,
-            None,
-            wt_dispute_core_id,
+            DisputeCoreTxType::ClaimInit {
+                wt_index: self.ctx.my_idx,
+                op_index: data.member_index,
+            },
         )?;
+
+        let protocol = self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, wt_dispute_core_id)?;
 
         let init_challenge_name =
             double_indexed_name(WT_INIT_CHALLENGE_TX, self.ctx.my_idx, data.member_index);
@@ -3215,6 +3323,17 @@ impl DisputeCoreProtocol {
             DisputeCoreTxType::WatchtowerNoChallenge { .. } => self.wt_no_challenge_tx(&tx_name)?,
             DisputeCoreTxType::OperatorNoCosign { .. } => self.op_no_cosign_tx(&tx_name)?,
             DisputeCoreTxType::OperatorCosign { .. } => self.op_cosign_tx(&tx_name, context)?,
+            DisputeCoreTxType::ClaimInit { wt_index, .. } => {
+                let dispute_core_data = self.dispute_core_data(context)?;
+                let committee = self.committee(context)?;
+                let pid = get_dispute_core_pid(
+                    dispute_core_data.committee_id,
+                    &committee.members[wt_index].take_key,
+                );
+                let protocol = self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, pid)?;
+                program_id = pid;
+                protocol.get_transaction_by_name(&tx_name, context)?
+            }
             DisputeCoreTxType::RevealInput { .. } => self.reveal_input_tx(&tx_name, context)?,
             DisputeCoreTxType::InputNotRevealed { .. } => {
                 self.input_not_revealed_tx(&tx_name, context)?
@@ -4144,9 +4263,18 @@ mod tests {
         let outputs = &protocol.transaction_by_name(claim_init).unwrap().output;
         assert_eq!(outputs.len(), 7, "CLAIM_INIT_TX output count");
         assert_eq!(
-            outputs[CLAIM_INIT_WT_SPEEDUP_VOUT as usize].script_pubkey,
+            outputs[outputs.len() - CLAIM_INIT_WT_SPEEDUP_OUTPUT_OFFSET_FROM_END as usize]
+                .script_pubkey,
             *wt_speedup_output.get_script_pubkey(),
             "WT speedup is not the last output, the OP speedup follows it"
+        );
+        assert_eq!(
+            outputs[outputs.len() - CLAIM_INIT_OP_SPEEDUP_OUTPUT_OFFSET_FROM_END as usize]
+                .script_pubkey,
+            *OutputType::segwit_key(SPEEDUP_VALUE, &op_speedup)
+                .unwrap()
+                .get_script_pubkey(),
+            "OP speedup follows the WT speedup"
         );
     }
 }
