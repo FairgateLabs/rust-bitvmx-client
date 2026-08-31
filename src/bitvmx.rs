@@ -47,6 +47,7 @@ use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_wallet::wallet::Wallet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::str::FromStr;
 use std::time::Instant;
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
 use storage_backend::storage::{KeyValueStore, Storage};
