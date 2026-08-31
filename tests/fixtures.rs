@@ -72,16 +72,8 @@ pub fn emulated_user_keypair(
 
 // Deterministic secret keys, one per parity, so parity-sensitive tests are reproducible
 // rather than relying on random key generation landing on the desired parity.
-const EVEN_PARITY_USER_SK: [u8; 32] = {
-    let mut bytes = [0u8; 32];
-    bytes[31] = 0x01;
-    bytes
-};
-const ODD_PARITY_USER_SK: [u8; 32] = {
-    let mut bytes = [0u8; 32];
-    bytes[31] = 0x06;
-    bytes
-};
+const EVEN_PARITY_USER_SK: u8 = 1;
+const ODD_PARITY_USER_SK: u8 = 6;
 
 pub fn user_keypair_with_parity(
     secp: &Secp256k1<All>,
@@ -89,13 +81,13 @@ pub fn user_keypair_with_parity(
     network: Network,
     parity: Parity,
 ) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
-    let sk_bytes = match parity {
+    let mut sk_bytes = [0u8; 32];
+    sk_bytes[31] = match parity {
         Parity::Even => EVEN_PARITY_USER_SK,
         Parity::Odd => ODD_PARITY_USER_SK,
     };
     let user_sk = SecretKey::from_slice(&sk_bytes)?;
     let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
-    assert_eq!(user_pk.x_only_public_key().1, parity);
 
     let user_pubkey = BitcoinPubKey {
         compressed: true,
@@ -164,36 +156,16 @@ pub fn sign_p2wpkh_transaction_single_input(
 
 // ======= RSK Pegin Functions =======
 
+// Takes the user keypair rather than generating one, so callers can exercise a specific
+// (e.g. deterministic-parity) key.
 pub fn create_rsk_request_pegin_transaction(
     aggregated_key: PublicKey,
     network: Network,
     bitcoin_client: &BitcoinClient,
-) -> Result<Txid> {
-    let secp = secp256k1::Secp256k1::new();
-    let (user_address, user_pubkey, user_sk) =
-        emulated_user_keypair(&secp, bitcoin_client, network)?;
-    create_rsk_request_pegin_transaction_with_keypair(
-        aggregated_key,
-        network,
-        bitcoin_client,
-        &secp,
-        user_address,
-        user_pubkey,
-        user_sk,
-    )
-}
-
-// Same as create_rsk_request_pegin_transaction but takes the user keypair rather than
-// generating a random one, so callers can exercise a specific (e.g. deterministic-parity) key.
-pub fn create_rsk_request_pegin_transaction_with_keypair(
-    aggregated_key: PublicKey,
-    network: Network,
-    bitcoin_client: &BitcoinClient,
     secp: &Secp256k1<All>,
-    user_address: bitcoin::Address,
-    user_pubkey: BitcoinPubKey,
-    user_sk: SecretKey,
+    user_keypair: (bitcoin::Address, BitcoinPubKey, SecretKey),
 ) -> Result<Txid> {
+    let (user_address, user_pubkey, user_sk) = user_keypair;
     // RSK Pegin constants
     pub const STREAM_VALUE: u64 = 100_000;
     pub const KEY_SPEND_FEE: u64 = 335;
@@ -546,7 +518,9 @@ mod tests {
             (EVEN_PARITY_USER_SK, Parity::Even),
             (ODD_PARITY_USER_SK, Parity::Odd),
         ] {
-            let sk = SecretKey::from_slice(&bytes).unwrap();
+            let mut sk_bytes = [0u8; 32];
+            sk_bytes[31] = bytes;
+            let sk = SecretKey::from_slice(&sk_bytes).unwrap();
             let pk = SecpPublicKey::from_secret_key(&secp, &sk);
             assert_eq!(pk.x_only_public_key().1, expected);
         }

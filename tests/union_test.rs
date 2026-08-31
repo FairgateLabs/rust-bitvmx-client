@@ -17,7 +17,7 @@ use crate::common::{
     prepare_bitcoin_guarded,
 };
 use crate::fixtures::{
-    address_to_bytes, create_rsk_request_pegin_transaction_with_keypair, hardcoded_unspendable,
+    address_to_bytes, create_rsk_request_pegin_transaction, hardcoded_unspendable,
     sign_p2wpkh_transaction_single_input, user_keypair_with_parity,
 };
 
@@ -177,14 +177,12 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
     // The request-pegin transaction (taproot output + 70-byte OP_RETURN) still builds and
     // relays for this parity. The tapscript path x-onlys the reimbursement key on purpose
     // and must stay unaffected by this fix. Note this does not spend the timelock leaf.
-    let request_pegin_txid = create_rsk_request_pegin_transaction_with_keypair(
+    let request_pegin_txid = create_rsk_request_pegin_transaction(
         aggregated_key,
         network,
         &bitcoin_client,
         &secp,
-        user_address,
-        user_pubkey,
-        user_sk,
+        (user_address, user_pubkey, user_sk),
     )?;
     bitcoin_client.mine_blocks(1)?;
     assert!(

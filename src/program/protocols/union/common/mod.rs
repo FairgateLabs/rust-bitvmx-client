@@ -545,7 +545,7 @@ pub fn get_op_disabler_directory_output_value(members_count: usize) -> u64 {
 }
 
 /// Magic prefix identifying a request peg-in OP_RETURN payload.
-pub const REQUEST_PEGIN_OP_RETURN_MAGIC: &[u8; 9] = b"RSK_PEGIN";
+const REQUEST_PEGIN_OP_RETURN_MAGIC: &[u8; 9] = b"RSK_PEGIN";
 
 /// Total length in bytes of a request peg-in OP_RETURN payload:
 /// magic (9) + packet_number (8) + rootstock_address (20) + compressed pubkey (33).
@@ -603,13 +603,8 @@ mod tests {
     const ODD_PUBKEY_HEX: &str =
         "03fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556";
 
-    fn packet_number() -> u64 {
-        42
-    }
-
-    fn rootstock_address() -> [u8; 20] {
-        [7u8; 20]
-    }
+    const PACKET_NUMBER: u64 = 42;
+    const ROOTSTOCK_ADDRESS: [u8; 20] = [7u8; 20];
 
     /// Hardcoded expected payload: magic "RSK_PEGIN", packet number 42 big endian,
     /// rootstock address of twenty 0x07 bytes, then the compressed key.
@@ -627,7 +622,7 @@ mod tests {
     fn even_parity_key_produces_expected_payload() {
         let pubkey = PublicKey::from_str(EVEN_PUBKEY_HEX).unwrap();
         let payload =
-            request_pegin_op_return_data(packet_number(), rootstock_address(), &pubkey).unwrap();
+            request_pegin_op_return_data(PACKET_NUMBER, ROOTSTOCK_ADDRESS, &pubkey).unwrap();
 
         assert_eq!(payload.len(), REQUEST_PEGIN_OP_RETURN_LEN);
         assert_eq!(hex::encode(&payload), expected_payload_hex(EVEN_PUBKEY_HEX));
@@ -642,16 +637,14 @@ mod tests {
         let mut pubkey = PublicKey::from_str(EVEN_PUBKEY_HEX).unwrap();
         pubkey.compressed = false;
 
-        assert!(
-            request_pegin_op_return_data(packet_number(), rootstock_address(), &pubkey).is_err()
-        );
+        assert!(request_pegin_op_return_data(PACKET_NUMBER, ROOTSTOCK_ADDRESS, &pubkey).is_err());
     }
 
     #[test]
     fn odd_parity_key_produces_expected_payload() {
         let pubkey = PublicKey::from_str(ODD_PUBKEY_HEX).unwrap();
         let payload =
-            request_pegin_op_return_data(packet_number(), rootstock_address(), &pubkey).unwrap();
+            request_pegin_op_return_data(PACKET_NUMBER, ROOTSTOCK_ADDRESS, &pubkey).unwrap();
 
         assert_eq!(payload.len(), REQUEST_PEGIN_OP_RETURN_LEN);
         assert_eq!(hex::encode(&payload), expected_payload_hex(ODD_PUBKEY_HEX));
