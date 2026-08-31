@@ -25,28 +25,10 @@ use crate::{
 pub use bitcoin_coordinator::OutputPatternFilter;
 pub const RSK_PEGIN_TAG: &[u8] = b"RSK_PEGIN";
 
-/// Total length in bytes of a request peg-in OP_RETURN payload:
-/// tag (9) + packet_number (8) + rootstock_address (20) + compressed pubkey (33).
 pub const REQUEST_PEGIN_OP_RETURN_LEN: usize = 70;
 
-/// Offset of the compressed reimbursement public key within the payload.
 pub const REQUEST_PEGIN_PUBKEY_OFFSET: usize = 37;
 
-/// Builds the request peg-in OP_RETURN payload, preserving the reimbursement key's parity.
-///
-/// Layout (70 bytes total):
-/// - `[0..9]`   tag `"RSK_PEGIN"`
-/// - `[9..17]`  packet_number, big endian u64
-/// - `[17..37]` rootstock_address
-/// - `[37..70]` reimbursement_pubkey, compressed secp256k1 (parity byte + X coordinate)
-///
-/// Takes a full `PublicKey` rather than an `XOnlyPublicKey` so truncation to x-only is a
-/// compile error: P2WPKH destinations built from this key require the parity bit, since the
-/// even and odd twins of an X coordinate hash to different destinations.
-///
-/// This is length 70, not the legacy 69 (x-only key, no parity byte). Consumers must reject
-/// the legacy 69-byte payload outright: there is no accept-as-even fallback, because the
-/// discarded parity bit cannot be recovered from stored x-only data.
 pub fn request_pegin_op_return_data(
     packet_number: u64,
     rootstock_address: [u8; 20],
@@ -75,18 +57,14 @@ mod request_pegin_op_return_tests {
     use super::*;
     use std::str::FromStr;
 
-    // Even parity (0x02).
     const EVEN_PUBKEY_HEX: &str =
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    // Odd parity (0x03).
     const ODD_PUBKEY_HEX: &str =
         "03fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556";
 
     const PACKET_NUMBER: u64 = 42;
     const ROOTSTOCK_ADDRESS: [u8; 20] = [7u8; 20];
 
-    /// Hardcoded expected payload: magic "RSK_PEGIN", packet number 42 big endian,
-    /// rootstock address of twenty 0x07 bytes, then the compressed key.
     fn expected_payload_hex(pubkey_hex: &str) -> String {
         format!(
             "{}{}{}{}",

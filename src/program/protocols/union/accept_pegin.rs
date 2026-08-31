@@ -216,9 +216,6 @@ impl ProtocolHandler for AcceptPegInProtocol {
         }
 
         // Speed up transaction (User pay for it)
-        // P2WPKH hashes the complete compressed key, so the full parity-bearing
-        // `reimbursement_pubkey` is required here; an x-only key would lock funds to the
-        // wrong destination for an odd-parity user.
         let pb = ProtocolBuilder {};
         pb.add_speedup_output(
             &mut protocol,
@@ -833,9 +830,6 @@ impl AcceptPegInProtocol {
         Ok((tx, Some(speedup_utxo.into())))
     }
 
-    // Builds a tapscript timelock leaf, a Taproot boundary, so converting the reimbursement
-    // key to x-only here (inside `timelock`) is correct: Taproot script paths use x-only
-    // keys, unlike the P2WPKH speedup output in `add_speedup_output`.
     fn request_pegin_leaves(
         &self,
         amount: u64,

@@ -69,16 +69,9 @@ pub fn test_union_fund() -> Result<()> {
     test_union_aux("fund_members")
 }
 
-// Amount used to fund/spend the speedup output under test. Kept well above the dust
-// threshold so the spend transaction's change output is standard.
 const PARITY_SPEND_TEST_VALUE: u64 = 50_000;
 const PARITY_SPEND_TEST_FEE: u64 = 1_000;
 
-// Proves that a P2WPKH output built from a reimbursement key via the same production
-// helper the accept-pegin protocol uses (`ProtocolBuilder::add_speedup_output`) carries
-// the full, parity-preserving script pubkey and can actually be spent by that key's
-// owner, for both an even- and an odd-parity key. Also confirms the request-pegin
-// Taproot leaves (which x-only the reimbursement key on purpose) are unaffected.
 fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
     config_trace();
 
@@ -94,10 +87,6 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
     let (user_address, user_pubkey, user_sk) =
         user_keypair_with_parity(&secp, &bitcoin_client, network, parity)?;
 
-    // Round-trip through the same OP_RETURN encoder the request-pegin transaction uses,
-    // and reconstruct the reimbursement key the way a downstream consumer (contracts,
-    // union client) would from the wire payload. This is what makes the test sensitive
-    // to the encoder: an x-only-truncating encoder yields a different key here.
     let rootstock_address = address_to_bytes("7ac5496aee77c1ba1f0854206a26dda82a81d6d8")?;
     let op_return_payload = request_pegin_op_return_data(0, rootstock_address, &user_pubkey)?;
     let reimbursement_pubkey = PublicKey::from_slice(
@@ -108,8 +97,6 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
         "reimbursement pubkey decoded from the OP_RETURN payload must match the original {parity:?} key"
     );
 
-    // Build the speedup output exactly as accept_pegin.rs's add_speedup_output does,
-    // from the key reconstructed off the wire, not the original in-memory key.
     let mut protocol = Protocol::new("parity_speedup_test");
     let pb = ProtocolBuilder {};
     pb.add_speedup_output(
@@ -121,8 +108,6 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
     let built_tx = protocol.transaction_by_name("speedup_tx")?;
     let speedup_script_pubkey = built_tx.output[0].script_pubkey.clone();
 
-    // Compare the *full* script pubkey, not the X coordinate alone: an x-only comparison
-    // would pass even if the encoder truncated parity away.
     let expected_script_pubkey =
         ScriptBuf::new_p2wpkh(&user_pubkey.wpubkey_hash().expect("key is compressed"));
     assert_eq!(
@@ -130,9 +115,6 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
         "speedup output script_pubkey must equal P2WPKH({parity:?} key)"
     );
 
-    // Fund that exact script on regtest, then spend it with the user's secret key. This
-    // is the assertion that actually proves the fix: signature verification only passes
-    // if the key that funded the output is the same one used to sign the spend.
     let dest_address = Address::from_script(&speedup_script_pubkey, network)?;
     let (funding_tx, vout) =
         bitcoin_client.fund_address(&dest_address, Amount::from_sat(PARITY_SPEND_TEST_VALUE))?;
@@ -163,8 +145,6 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
         PARITY_SPEND_TEST_VALUE,
     )?;
 
-    // send_transaction runs full consensus script verification; it only succeeds if
-    // user_sk actually unlocks speedup_script_pubkey.
     let spend_txid = bitcoin_client.send_transaction(&signed_spend_tx)?;
     bitcoin_client.mine_blocks(1)?;
     assert!(
@@ -175,9 +155,6 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
         "spend of the {parity:?}-parity speedup output was not accepted"
     );
 
-    // The request-pegin transaction (taproot output + 70-byte OP_RETURN) still builds and
-    // relays for this parity. The tapscript path x-onlys the reimbursement key on purpose
-    // and must stay unaffected by this fix. Note this does not spend the timelock leaf.
     let request_pegin_txid = create_rsk_request_pegin_transaction(
         aggregated_key,
         network,

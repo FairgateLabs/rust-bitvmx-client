@@ -70,8 +70,6 @@ pub fn emulated_user_keypair(
     Ok((user_address, user_pubkey, user_sk))
 }
 
-// Deterministic secret keys, one per parity, so parity-sensitive tests are reproducible
-// rather than relying on random key generation landing on the desired parity.
 const EVEN_PARITY_USER_SK: u8 = 1;
 const ODD_PARITY_USER_SK: u8 = 6;
 
@@ -156,8 +154,6 @@ pub fn sign_p2wpkh_transaction_single_input(
 
 // ======= RSK Pegin Functions =======
 
-// Takes the user keypair rather than generating one, so callers can exercise a specific
-// (e.g. deterministic-parity) key.
 pub fn create_rsk_request_pegin_transaction(
     aggregated_key: PublicKey,
     network: Network,
@@ -508,8 +504,6 @@ pub fn create_lockreq_tx_and_sign(
 mod tests {
     use super::*;
 
-    // user_keypair_with_parity needs a BitcoinClient, so its internal parity assert only runs
-    // under the #[ignore]d integration tests. Check the constants directly instead.
     #[test]
     fn parity_constants_have_the_parity_they_claim() {
         let secp = Secp256k1::new();
