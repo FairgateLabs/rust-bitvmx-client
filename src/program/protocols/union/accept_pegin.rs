@@ -2,7 +2,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use crate::{
-    errors::BitVMXError,
+    errors::BitVMXError, 
     program::{
         participant::{ParticipantKeyDeclaration, ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
