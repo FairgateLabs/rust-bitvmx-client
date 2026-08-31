@@ -70,8 +70,8 @@ pub fn emulated_user_keypair(
     Ok((user_address, user_pubkey, user_sk))
 }
 
-const EVEN_PARITY_USER_SK: u8 = 1;
-const ODD_PARITY_USER_SK: u8 = 6;
+const EVEN_PARITY_SK_LAST_BYTE: u8 = 1;
+const ODD_PARITY_SK_LAST_BYTE: u8 = 6;
 
 pub fn user_keypair_with_parity(
     secp: &Secp256k1<All>,
@@ -81,8 +81,8 @@ pub fn user_keypair_with_parity(
 ) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
     let mut sk_bytes = [0u8; 32];
     sk_bytes[31] = match parity {
-        Parity::Even => EVEN_PARITY_USER_SK,
-        Parity::Odd => ODD_PARITY_USER_SK,
+        Parity::Even => EVEN_PARITY_SK_LAST_BYTE,
+        Parity::Odd => ODD_PARITY_SK_LAST_BYTE,
     };
     let user_sk = SecretKey::from_slice(&sk_bytes)?;
     let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
@@ -509,8 +509,8 @@ mod tests {
         let secp = Secp256k1::new();
 
         for (bytes, expected) in [
-            (EVEN_PARITY_USER_SK, Parity::Even),
-            (ODD_PARITY_USER_SK, Parity::Odd),
+            (EVEN_PARITY_SK_LAST_BYTE, Parity::Even),
+            (ODD_PARITY_SK_LAST_BYTE, Parity::Odd),
         ] {
             let mut sk_bytes = [0u8; 32];
             sk_bytes[31] = bytes;
