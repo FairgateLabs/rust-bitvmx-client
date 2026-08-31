@@ -12,7 +12,7 @@ use bitcoin::{
     sighash::SighashCache,
     transaction, Address, Address as BitcoinAddress, Amount, CompressedPublicKey, Network,
     OutPoint, PrivateKey, PublicKey, PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction,
-    TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
+    TxIn, TxOut, Txid, Witness,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::identification::allow_list::AllowList;
@@ -26,7 +26,10 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
-        protocols::union::types::{DUST_VALUE, SPEEDUP_VALUE},
+        protocols::union::{
+            common::request_pegin_op_return_data,
+            types::{DUST_VALUE, SPEEDUP_VALUE},
+        },
         variables::PartialUtxo,
     },
     spv_proof::BtcTxSPVProof,
@@ -207,7 +210,6 @@ impl User {
 
         // RSK Pegin values
         let rootstock_address = self.address_to_bytes(self.rsk_address)?;
-        let reimbursement_xpk = self.public_key.into();
 
         // Create the Request pegin transaction
         // Inputs
@@ -246,11 +248,8 @@ impl User {
         };
 
         // OP_RETURN output
-        let op_return_data = User::request_pegin_op_return_data(
-            packet_number,
-            rootstock_address,
-            reimbursement_xpk,
-        )?;
+        let op_return_data =
+            request_pegin_op_return_data(packet_number, rootstock_address, &self.public_key)?;
         let op_return_output = TxOut {
             value: Amount::from_sat(0), // OP_RETURN outputs should have 0 value
             script_pubkey: op_return_script(op_return_data)?.get_script().clone(),
@@ -432,25 +431,6 @@ impl User {
         );
 
         Ok(signed_transaction)
-    }
-
-    fn request_pegin_op_return_data(
-        packet_number: u64,
-        rootstock_address: [u8; 20],
-        reimbursement_xpk: XOnlyPublicKey,
-    ) -> Result<Vec<u8>> {
-        let mut user_data = [0u8; 69];
-        user_data.copy_from_slice(
-            [
-                b"RSK_PEGIN".as_slice(),
-                &packet_number.to_be_bytes(),
-                &rootstock_address,
-                &reimbursement_xpk.serialize(),
-            ]
-            .concat()
-            .as_slice(),
-        );
-        Ok(user_data.to_vec())
     }
 
     fn address_to_bytes(&self, address: &str) -> Result<[u8; 20]> {
