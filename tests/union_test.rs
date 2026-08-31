@@ -6,8 +6,8 @@ use bitcoin::{
     PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
-use bitvmx_client::program::protocols::union::common::{
-    request_pegin_op_return_data, REQUEST_PEGIN_OP_RETURN_LEN,
+use bitvmx_client::types::{
+    request_pegin_op_return_data, REQUEST_PEGIN_OP_RETURN_LEN, REQUEST_PEGIN_PUBKEY_OFFSET,
 };
 use protocol_builder::builder::{Protocol, ProtocolBuilder};
 
@@ -100,8 +100,9 @@ fn assert_reimbursement_parity_is_preserved(parity: Parity) -> Result<()> {
     // to the encoder: an x-only-truncating encoder yields a different key here.
     let rootstock_address = address_to_bytes("7ac5496aee77c1ba1f0854206a26dda82a81d6d8")?;
     let op_return_payload = request_pegin_op_return_data(0, rootstock_address, &user_pubkey)?;
-    let reimbursement_pubkey =
-        PublicKey::from_slice(&op_return_payload[37..REQUEST_PEGIN_OP_RETURN_LEN])?;
+    let reimbursement_pubkey = PublicKey::from_slice(
+        &op_return_payload[REQUEST_PEGIN_PUBKEY_OFFSET..REQUEST_PEGIN_OP_RETURN_LEN],
+    )?;
     assert_eq!(
         reimbursement_pubkey, user_pubkey,
         "reimbursement pubkey decoded from the OP_RETURN payload must match the original {parity:?} key"

@@ -26,14 +26,14 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
-        protocols::union::{
-            common::request_pegin_op_return_data,
-            types::{DUST_VALUE, SPEEDUP_VALUE},
-        },
+        protocols::union::types::{DUST_VALUE, SPEEDUP_VALUE},
         variables::PartialUtxo,
     },
     spv_proof::BtcTxSPVProof,
-    types::{OutgoingBitVMXApiMessages::*, OutputPatternFilter, RSK_PEGIN_TAG},
+    types::{
+        request_pegin_op_return_data, OutgoingBitVMXApiMessages::*, OutputPatternFilter,
+        RSK_PEGIN_TAG,
+    },
 };
 
 const KEY_SPEND_FEE: u64 = 135;

@@ -11,7 +11,7 @@ use bitcoin::{
     PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
-use bitvmx_client::program::protocols::union::common::request_pegin_op_return_data;
+use bitvmx_client::types::request_pegin_op_return_data;
 use protocol_builder::scripts::{
     build_taproot_spend_info, op_return_script, reveal_secret, timelock, ProtocolScript, SignMode,
 };
