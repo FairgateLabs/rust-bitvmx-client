@@ -170,6 +170,30 @@ pub fn create_rsk_request_pegin_transaction(
     bitcoin_client: &BitcoinClient,
 ) -> Result<Txid> {
     let secp = secp256k1::Secp256k1::new();
+    let (user_address, user_pubkey, user_sk) =
+        emulated_user_keypair(&secp, bitcoin_client, network)?;
+    create_rsk_request_pegin_transaction_with_keypair(
+        aggregated_key,
+        network,
+        bitcoin_client,
+        &secp,
+        user_address,
+        user_pubkey,
+        user_sk,
+    )
+}
+
+// Same as create_rsk_request_pegin_transaction but takes the user keypair rather than
+// generating a random one, so callers can exercise a specific (e.g. deterministic-parity) key.
+pub fn create_rsk_request_pegin_transaction_with_keypair(
+    aggregated_key: PublicKey,
+    network: Network,
+    bitcoin_client: &BitcoinClient,
+    secp: &Secp256k1<All>,
+    user_address: bitcoin::Address,
+    user_pubkey: BitcoinPubKey,
+    user_sk: SecretKey,
+) -> Result<Txid> {
     // RSK Pegin constants
     pub const STREAM_VALUE: u64 = 100_000;
     pub const KEY_SPEND_FEE: u64 = 335;
@@ -182,9 +206,6 @@ pub fn create_rsk_request_pegin_transaction(
     let op_return_fee = OP_RETURN_FEE;
     let total_amount = value + fee + op_return_fee;
 
-    // Locally created user keypair
-    let (user_address, user_pubkey, user_sk) =
-        emulated_user_keypair(&secp, bitcoin_client, network)?;
     // Fund the user address with enough to cover the taproot output + fees
     let (funding_tx, vout) = bitcoin_client
         .fund_address(&user_address, Amount::from_sat(total_amount))
@@ -210,13 +231,13 @@ pub fn create_rsk_request_pegin_transaction(
     let script_timelock = timelock(TIMELOCK_BLOCKS, &user_pubkey, SignMode::Single);
 
     let taproot_spend_info = build_taproot_spend_info(
-        &secp,
+        secp,
         &aggregated_key.into(),
         &[script_timelock, script_op_return],
     )?;
 
     let taproot_script_pubkey = ScriptBuf::new_p2tr(
-        &secp,
+        secp,
         taproot_spend_info.internal_key(),
         taproot_spend_info.merkle_root(),
     );
@@ -242,7 +263,7 @@ pub fn create_rsk_request_pegin_transaction(
     };
 
     let signed_transaction = sign_p2wpkh_transaction_single_input(
-        &secp,
+        secp,
         network,
         &mut request_pegin_transaction,
         &user_pubkey,
