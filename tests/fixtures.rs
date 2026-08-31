@@ -9,9 +9,9 @@ use bitcoin::{
     sighash::SighashCache,
     transaction, Amount, Network, OutPoint, PrivateKey as BitcoinPrivKey, PublicKey,
     PublicKey as BitcoinPubKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
-    XOnlyPublicKey,
 };
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_client::program::protocols::union::common::request_pegin_op_return_data;
 use protocol_builder::scripts::{
     build_taproot_spend_info, op_return_script, reveal_secret, timelock, ProtocolScript, SignMode,
 };
@@ -57,7 +57,46 @@ pub fn emulated_user_keypair(
     // emulate the user keypair
     let user_sk = SecretKey::new(&mut rng);
     let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
-    let (user_pk, user_sk) = adjust_parity(&secp, user_pk, user_sk);
+    let user_pubkey = BitcoinPubKey {
+        compressed: true,
+        inner: user_pk,
+    };
+    let user_address: bitcoin::Address = bitcoin_client.get_new_address(user_pubkey, network)?;
+    info!(
+        "User Address({}): {:?}",
+        user_address.address_type().unwrap(),
+        user_address
+    );
+    Ok((user_address, user_pubkey, user_sk))
+}
+
+// Deterministic secret keys, one per parity, so parity-sensitive tests are reproducible
+// rather than relying on random key generation landing on the desired parity.
+const EVEN_PARITY_USER_SK: [u8; 32] = {
+    let mut bytes = [0u8; 32];
+    bytes[31] = 0x01;
+    bytes
+};
+const ODD_PARITY_USER_SK: [u8; 32] = {
+    let mut bytes = [0u8; 32];
+    bytes[31] = 0x06;
+    bytes
+};
+
+pub fn user_keypair_with_parity(
+    secp: &Secp256k1<All>,
+    bitcoin_client: &BitcoinClient,
+    network: Network,
+    parity: Parity,
+) -> Result<(bitcoin::Address, BitcoinPubKey, SecretKey)> {
+    let sk_bytes = match parity {
+        Parity::Even => EVEN_PARITY_USER_SK,
+        Parity::Odd => ODD_PARITY_USER_SK,
+    };
+    let user_sk = SecretKey::from_slice(&sk_bytes)?;
+    let user_pk = SecpPublicKey::from_secret_key(secp, &user_sk);
+    assert_eq!(user_pk.x_only_public_key().1, parity);
+
     let user_pubkey = BitcoinPubKey {
         compressed: true,
         inner: user_pk,
@@ -125,25 +164,6 @@ pub fn sign_p2wpkh_transaction_single_input(
 
 // ======= RSK Pegin Functions =======
 
-pub fn request_pegin_op_return_data(
-    packet_number: u64,
-    rootstock_address: [u8; 20],
-    reimbursement_xpk: XOnlyPublicKey,
-) -> Result<Vec<u8>> {
-    let mut user_data = [0u8; 69];
-    user_data.copy_from_slice(
-        [
-            b"RSK_PEGIN".as_slice(),
-            &packet_number.to_be_bytes(),
-            &rootstock_address,
-            &reimbursement_xpk.serialize(),
-        ]
-        .concat()
-        .as_slice(),
-    );
-    Ok(user_data.to_vec())
-}
-
 pub fn create_rsk_request_pegin_transaction(
     aggregated_key: PublicKey,
     network: Network,
@@ -173,7 +193,6 @@ pub fn create_rsk_request_pegin_transaction(
     // RSK Pegin values
     let packet_number: u64 = 0;
     let rootstock_address = address_to_bytes("7ac5496aee77c1ba1f0854206a26dda82a81d6d8")?;
-    let reimbursement_xpk = user_pubkey.into();
 
     // Create the Request pegin transaction
     // Inputs
@@ -209,7 +228,7 @@ pub fn create_rsk_request_pegin_transaction(
 
     // OP_RETURN output
     let op_return_data =
-        request_pegin_op_return_data(packet_number, rootstock_address, reimbursement_xpk)?;
+        request_pegin_op_return_data(packet_number, rootstock_address, &user_pubkey)?;
     let op_return_output = TxOut {
         value: Amount::from_sat(0), // OP_RETURN outputs should have 0 value
         script_pubkey: op_return_script(op_return_data)?.get_script().clone(),
@@ -490,4 +509,25 @@ pub fn create_lockreq_tx_and_sign(
     let signed_transaction = sighasher.into_transaction().to_owned();
 
     signed_transaction
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // user_keypair_with_parity needs a BitcoinClient, so its internal parity assert only runs
+    // under the #[ignore]d integration tests. Check the constants directly instead.
+    #[test]
+    fn parity_constants_have_the_parity_they_claim() {
+        let secp = Secp256k1::new();
+
+        for (bytes, expected) in [
+            (EVEN_PARITY_USER_SK, Parity::Even),
+            (ODD_PARITY_USER_SK, Parity::Odd),
+        ] {
+            let sk = SecretKey::from_slice(&bytes).unwrap();
+            let pk = SecpPublicKey::from_secret_key(&secp, &sk);
+            assert_eq!(pk.x_only_public_key().1, expected);
+        }
+    }
 }
