@@ -800,7 +800,7 @@ dependencies = [
  "rust-bitvmx-storage-backend",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "signature",
  "thiserror 2.0.20",
  "time",
@@ -875,7 +875,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-key-manager"
 version = "0.8.4"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-key-manager.git?tag=v0.8.4#9e3eac963509bdda4a6afd04ba03ed469c85bda1"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-key-manager.git?tag=v0.8.4#f3a2c572007b493dec9e30028e7c57516d6b5e1b"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -907,7 +907,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-protocol-builder"
 version = "0.8.4"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git?tag=v0.8.4#4c3c97fa5b855faefcc3ba7c0bea26006e773afd"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git?tag=v0.8.4#197cdcf4ace800ae7d76d26581a9d8963a35f358"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.102",
@@ -973,7 +973,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-wallet"
 version = "0.8.4"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-wallet.git?tag=v0.8.4#b2f29947f12afc59ba57caac101fbd7dbadf2e87"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-wallet.git?tag=v0.8.4#fe704763d5fe9974ed231291d1fe0cbff94824dd"
 dependencies = [
  "anyhow",
  "bdk_bitcoind_rpc",
