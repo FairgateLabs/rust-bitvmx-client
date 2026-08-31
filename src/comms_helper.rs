@@ -5,7 +5,7 @@ use chrono::Utc;
 use key_manager::key_manager::KeyManager;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use signature::SignatureEncoding;
+use rsa::signature::SignatureEncoding;
 use std::rc::Rc;
 use uuid::Uuid;
 

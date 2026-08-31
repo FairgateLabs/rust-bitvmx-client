@@ -460,7 +460,7 @@ mod tests {
     use super::*;
     use crate::test_utils::TestProgramContextEnv;
     use serde_json::json;
-    use signature::SignatureEncoding;
+    use rsa::signature::SignatureEncoding;
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
 
