@@ -1,6 +1,6 @@
 use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
-use crate::error_severity::{classify, resolve_scope, send_error_report, Severity};
+use crate::error_severity::{classify, ErrorReporter, Severity};
 use crate::ping_helper::PingHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::program::{is_active_program, Program};
@@ -20,9 +20,9 @@ use crate::{
     },
     signature_verifier::SignatureVerifier,
     types::{
-        ErrorReport, ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, JobDispatcherType,
-        MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
-        SetupFailureReason, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+        ErrorReportKind, IncomingBitVMXApiMessages, JobDispatcherType, MessageDisposition,
+        OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, SetupFailureReason,
+        PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -71,8 +71,7 @@ pub struct BitVMX {
     bitvmx_throttle: Throttle,
     wallet: Wallet,
     ping_helper: PingHelper,
-    fatal_reported: bool,
-    rpc_unavailable: bool,
+    error_reporter: ErrorReporter,
     shutdown: bool,
 }
 
@@ -188,6 +187,7 @@ impl BitVMX {
         let coordinator_throttle = Throttle::new(config.coordinator_throttle.clone());
         let bitvmx_throttle = Throttle::new(config.bitvmx_throttle.clone());
 
+        let reporter = ErrorReporter::new(config.components.l2.clone());
         Ok(Self {
             config,
             program_context,
@@ -198,8 +198,7 @@ impl BitVMX {
             bitvmx_throttle,
             wallet,
             ping_helper,
-            fatal_reported: false,
-            rpc_unavailable: false,
+            error_reporter: reporter,
             shutdown: false,
         })
     }
@@ -679,12 +678,13 @@ impl BitVMX {
                         available, required
                     );
                     // No txid or context, so the program cannot be identified.
-                    self.report_coordinator_news(
+                    self.error_reporter.coordinator_news(
                         None,
                         ErrorReportKind::InsufficientFunds {
                             available,
                             required,
                         },
+                        &self.program_context.broker_channel,
                     );
                 }
                 CoordinatorNews::DispatchError { txid, context } => {
@@ -698,23 +698,26 @@ impl BitVMX {
                             error!("Error fetching transaction from wallet: {:?}", e);
                         }
                     }
-                    self.report_coordinator_news(
+                    self.error_reporter.coordinator_news(
                         Some(&context),
                         ErrorReportKind::TransactionDispatchFailed { txid },
+                        &self.program_context.broker_channel,
                     );
                 }
                 CoordinatorNews::SpeedupDispatchError { txid, context } => {
                     error!("Speedup dispatch error: {:?} {:?}", txid, context);
-                    self.report_coordinator_news(
+                    self.error_reporter.coordinator_news(
                         Some(&context),
                         ErrorReportKind::SpeedupDispatchFailed { txid },
+                        &self.program_context.broker_channel,
                     );
                 }
                 CoordinatorNews::TransactionStuckInMempool { txid, context } => {
                     warn!("Transaction stuck in mempool: {:?} {:?}", txid, context);
-                    self.report_coordinator_news(
+                    self.error_reporter.coordinator_news(
                         Some(&context),
                         ErrorReportKind::TransactionStuckInMempool { txid },
+                        &self.program_context.broker_channel,
                     );
                 }
                 CoordinatorNews::MaxFeeRateReached {
@@ -726,12 +729,13 @@ impl BitVMX {
                         "Speedup for {:?} reached the fee rate cap at {} sat/vB. No further boosts",
                         txid, effective_fee_rate
                     );
-                    self.report_coordinator_news(
+                    self.error_reporter.coordinator_news(
                         Some(&context),
                         ErrorReportKind::MaxFeeRateReached {
                             txid,
                             effective_fee_rate,
                         },
+                        &self.program_context.broker_channel,
                     );
                 }
                 CoordinatorNews::EstimateFeerateTooHigh {
@@ -742,17 +746,22 @@ impl BitVMX {
                         "Estimated fee rate {} exceeds the configured maximum {}",
                         estimated_fee_rate, max_fee_rate
                     );
-                    self.report_coordinator_news(
+                    self.error_reporter.coordinator_news(
                         None,
                         ErrorReportKind::FeeRateTooHigh {
                             estimated: estimated_fee_rate,
                             max: max_fee_rate,
                         },
+                        &self.program_context.broker_channel,
                     );
                 }
                 CoordinatorNews::FundingNotAvailable => {
                     error!("No funding UTXO is available");
-                    self.report_coordinator_news(None, ErrorReportKind::FundingNotAvailable);
+                    self.error_reporter.coordinator_news(
+                        None,
+                        ErrorReportKind::FundingNotAvailable,
+                        &self.program_context.broker_channel,
+                    );
                 }
                 CoordinatorNews::InvalidFundingUtxo {
                     amount,
@@ -762,12 +771,13 @@ impl BitVMX {
                         "Funding UTXO of {} is below the {} minimum",
                         amount, min_required
                     );
-                    self.report_coordinator_news(
+                    self.error_reporter.coordinator_news(
                         None,
                         ErrorReportKind::InvalidFundingUtxo {
                             amount,
                             min_required,
                         },
+                        &self.program_context.broker_channel,
                     );
                 }
                 // Not reported: our own invariant broke, which is not L2's problem.
@@ -958,7 +968,8 @@ impl BitVMX {
 
         if let Err(e) = &result {
             if classify(e) == Severity::Fatal {
-                self.report_fatal(e);
+                self.error_reporter
+                    .fatal(e, &self.program_context.broker_channel);
             } else {
                 // A failed tick has already acked messages and broadcast transactions, so
                 // its writes are kept to stay consistent with them.
@@ -969,37 +980,6 @@ impl BitVMX {
         }
 
         result
-    }
-
-    fn report_fatal(&mut self, error: &BitVMXError) {
-        if self.fatal_reported {
-            return;
-        }
-        self.fatal_reported = true;
-
-        error!("Fatal error, stopping the node: {:?}", error);
-        send_error_report(
-            &self.program_context.broker_channel,
-            &self.config.components.l2,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::Fatal,
-                Some(error.to_string()),
-            ),
-        );
-    }
-
-    /// Reports that the node is stopping on a non-fatal error
-    pub fn report_stopping(&mut self, error: &BitVMXError) {
-        send_error_report(
-            &self.program_context.broker_channel,
-            &self.config.components.l2,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::NodeStopping,
-                Some(error.to_string()),
-            ),
-        );
     }
 
     fn tick_inner(&mut self) -> Result<bool, BitVMXError> {
@@ -1079,6 +1059,11 @@ impl BitVMX {
         Ok(true)
     }
 
+    pub fn report_stopping(&self, error: &BitVMXError) {
+        self.error_reporter
+            .stopping(error, &self.program_context.broker_channel);
+    }
+
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
         if let Err(e) = self.wallet.tick() {
             let e = BitVMXError::from(e);
@@ -1090,48 +1075,6 @@ impl BitVMX {
         Ok(())
     }
 
-    fn report_coordinator_news(&self, context: Option<&str>, kind: ErrorReportKind) {
-        let (scope, dest) = context.map_or((ErrorScope::Node, None), resolve_scope);
-
-        send_error_report(
-            &self.program_context.broker_channel,
-            dest.as_ref().unwrap_or(&self.config.components.l2),
-            ErrorReport::new(scope, kind, None),
-        );
-    }
-
-    fn report_rpc_unavailable(&mut self, error: &BitVMXError) {
-        if self.rpc_unavailable {
-            return;
-        }
-        self.rpc_unavailable = true;
-
-        error!("Bitcoin node is unreachable: {:?}", error);
-        send_error_report(
-            &self.program_context.broker_channel,
-            &self.config.components.l2,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::BitcoinRpcUnavailable,
-                Some(error.to_string()),
-            ),
-        );
-    }
-
-    fn report_if_rpc_recovered(&mut self) {
-        if !self.rpc_unavailable {
-            return;
-        }
-        self.rpc_unavailable = false;
-
-        info!("Bitcoin node is reachable again");
-        send_error_report(
-            &self.program_context.broker_channel,
-            &self.config.components.l2,
-            ErrorReport::node(ErrorReportKind::BitcoinRpcRecovered),
-        );
-    }
-
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<bool, BitVMXError> {
         if self.coordinator_throttle.should_call() {
             let result = self.process_bitcoin_updates();
@@ -1140,11 +1083,13 @@ impl BitVMX {
                 //tick instead of at the configured interval
                 return match classify(&e) {
                     Severity::BitcoinNodeUnreachable => {
-                        self.report_rpc_unavailable(&e);
+                        self.error_reporter
+                            .rpc_unavailable(&e, &self.program_context.broker_channel);
                         Ok(false)
                     }
                     Severity::Fatal => {
-                        self.report_fatal(&e);
+                        self.error_reporter
+                            .fatal(&e, &self.program_context.broker_channel);
                         Err(e)
                     }
                     Severity::Other => {
@@ -1154,7 +1099,8 @@ impl BitVMX {
                 };
             }
             let had_work = result.unwrap_or(false);
-            self.report_if_rpc_recovered();
+            self.error_reporter
+                .rpc_recovered(&self.program_context.broker_channel);
             self.coordinator_throttle.record(had_work);
             return Ok(had_work);
         }

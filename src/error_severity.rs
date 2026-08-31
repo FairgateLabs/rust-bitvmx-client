@@ -6,11 +6,12 @@ use bitcoin_coordinator::config::settings::{CPFP_TRANSACTION_CONTEXT, RBF_TRANSA
 use bitcoincore_rpc::{jsonrpc, Error as BitcoinRpcError};
 use bitvmx_broker::{identification::identifier::Identifier, BrokerNode};
 use storage_backend::error::StorageError;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     bitvmx::Context,
-    types::{ErrorReport, ErrorScope, OutgoingBitVMXApiMessages},
+    errors::BitVMXError,
+    types::{ErrorReport, ErrorReportKind, ErrorScope, OutgoingBitVMXApiMessages},
 };
 
 #[derive(Debug, PartialEq)]
@@ -18,6 +19,100 @@ pub enum Severity {
     BitcoinNodeUnreachable,
     Fatal,
     Other,
+}
+
+pub(crate) struct ErrorReporter {
+    fatal_reported: bool,
+    rpc_unavailable: bool,
+    l2_identifier: Identifier,
+}
+
+impl ErrorReporter {
+    pub(crate) fn new(l2_identifier: Identifier) -> Self {
+        Self {
+            fatal_reported: false,
+            rpc_unavailable: false,
+            l2_identifier,
+        }
+    }
+
+    pub(crate) fn fatal(&mut self, error: &BitVMXError, broker_node: &BrokerNode) {
+        if self.fatal_reported {
+            return;
+        }
+        self.fatal_reported = true;
+
+        error!("Fatal error, stopping the node: {:?}", error);
+        send_error_report(
+            broker_node,
+            &self.l2_identifier,
+            ErrorReport::new(
+                ErrorScope::Node,
+                ErrorReportKind::Fatal,
+                Some(error.to_string()),
+            ),
+        );
+    }
+
+    pub(crate) fn rpc_unavailable(&mut self, error: &BitVMXError, broker_node: &BrokerNode) {
+        if self.rpc_unavailable {
+            return;
+        }
+        self.rpc_unavailable = true;
+
+        error!("Bitcoin node is unreachable: {:?}", error);
+        send_error_report(
+            broker_node,
+            &self.l2_identifier,
+            ErrorReport::new(
+                ErrorScope::Node,
+                ErrorReportKind::BitcoinRpcUnavailable,
+                Some(error.to_string()),
+            ),
+        );
+    }
+
+    pub(crate) fn rpc_recovered(&mut self, broker_node: &BrokerNode) {
+        if !self.rpc_unavailable {
+            return;
+        }
+        self.rpc_unavailable = false;
+
+        info!("Bitcoin node is reachable again");
+        send_error_report(
+            broker_node,
+            &self.l2_identifier,
+            ErrorReport::node(ErrorReportKind::BitcoinRpcRecovered),
+        );
+    }
+
+    pub(crate) fn coordinator_news(
+        &self,
+        context: Option<&str>,
+        kind: ErrorReportKind,
+        broker_node: &BrokerNode,
+    ) {
+        let (scope, dest) = context.map_or((ErrorScope::Node, None), resolve_scope);
+
+        send_error_report(
+            broker_node,
+            dest.as_ref().unwrap_or(&self.l2_identifier),
+            ErrorReport::new(scope, kind, None),
+        );
+    }
+
+    /// Reports that the node is stopping on a non-fatal error
+    pub(crate) fn stopping(&self, error: &BitVMXError, broker_node: &BrokerNode) {
+        send_error_report(
+            broker_node,
+            &self.l2_identifier,
+            ErrorReport::new(
+                ErrorScope::Node,
+                ErrorReportKind::NodeStopping,
+                Some(error.to_string()),
+            ),
+        );
+    }
 }
 
 /// Walks the error's source chain. Takes `dyn Error`so an error
@@ -96,7 +191,6 @@ pub(crate) fn send_error_report(channel: &BrokerNode, dest: &Identifier, report:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::BitVMXError;
     use bitcoin_coordinator::errors::BitcoinCoordinatorError;
     use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
     use bitvmx_wallet::wallet::errors::WalletError;
