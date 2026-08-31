@@ -57,6 +57,7 @@ pub fn emulated_user_keypair(
     // emulate the user keypair
     let user_sk = SecretKey::new(&mut rng);
     let user_pk = SecpPublicKey::from_secret_key(&secp, &user_sk);
+    let (user_pk, user_sk) = adjust_parity(&secp, user_pk, user_sk);
     let user_pubkey = BitcoinPubKey {
         compressed: true,
         inner: user_pk,
