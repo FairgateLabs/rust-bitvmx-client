@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Configure SSH for Git Submodule Access
-        uses: webfactory/ssh-agent@v0.5.4
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
@@ -91,7 +91,7 @@ jobs:
           find ${ROOT}/rust-bitvmx-workspace -mindepth 1 -maxdepth 1 ! -name 'rust-bitvmx-client' -exec mv -f {} ${ROOT}/ \;
 
       - name: Checkout current branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 1
@@ -100,7 +100,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo registry and git index
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -112,7 +112,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Cache Submodules Target Directory
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ env.ROOT }}/rust-bitvmx-client/target
@@ -204,7 +204,7 @@ jobs:
 
       - name: Upload BitVMX logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bitvmx-logs-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
@@ -214,7 +214,7 @@ jobs:
 
       - name: Upload Bitcoind logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bitcoind-logs-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
