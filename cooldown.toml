@@ -4,3 +4,11 @@ lockfile-baseline = "floor"
 
 [registry]
 global-min-publish-age = "14 days"
+
+[[allow.exact]]
+crate = "chacha20"
+version = "0.10.2"
+
+[[allow.exact]]
+crate = "bollard"
+version = "0.21.1"
