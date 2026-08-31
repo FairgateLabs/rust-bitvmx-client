@@ -560,7 +560,12 @@ pub const REQUEST_PEGIN_OP_RETURN_LEN: usize = 70;
 /// - `[37..70]` reimbursement_pubkey, compressed secp256k1 (parity byte + X coordinate)
 ///
 /// Takes a full `PublicKey` rather than an `XOnlyPublicKey` so truncation to x-only is a
-/// compile error: P2WPKH destinations built from this key require the parity bit.
+/// compile error: P2WPKH destinations built from this key require the parity bit, since the
+/// even and odd twins of an X coordinate hash to different destinations.
+///
+/// This is length 70, not the legacy 69 (x-only key, no parity byte). Consumers must reject
+/// the legacy 69-byte payload outright: there is no accept-as-even fallback, because the
+/// discarded parity bit cannot be recovered from stored x-only data.
 pub fn request_pegin_op_return_data(
     packet_number: u64,
     rootstock_address: [u8; 20],

@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
   - Add enabler input connected to request pegin tx.
   - Add enabler output with operator dispute keys.
 - Update `USER_TAKE_TX`: Add enabler input connected to `ACCEPT_PEGIN_TX` enabler output.
+- **BREAKING**: Request peg-in `OP_RETURN` payload grows from 69 to 70 bytes: the
+  reimbursement key is now the full 33-byte compressed public key (parity byte + X
+  coordinate) instead of the 32-byte x-only X coordinate, so P2WPKH destinations built from
+  an odd-parity key are spendable. Legacy 69-byte payloads are rejected outright; there is no
+  migration, since the discarded parity bit cannot be recovered from stored x-only data.
 
 
 ## [v0.3.0] - 2025-12-15
