@@ -543,3 +543,116 @@ pub fn get_reveal_output_value(members_count: usize) -> u64 {
 pub fn get_op_disabler_directory_output_value(members_count: usize) -> u64 {
     (SPEEDUP_VALUE * members_count as u64 + estimate_fee(2, members_count, 1)) / 2
 }
+
+/// Magic prefix identifying a request peg-in OP_RETURN payload.
+pub const REQUEST_PEGIN_OP_RETURN_MAGIC: &[u8; 9] = b"RSK_PEGIN";
+
+/// Total length in bytes of a request peg-in OP_RETURN payload:
+/// magic (9) + packet_number (8) + rootstock_address (20) + compressed pubkey (33).
+pub const REQUEST_PEGIN_OP_RETURN_LEN: usize = 70;
+
+/// Builds the request peg-in OP_RETURN payload, preserving the reimbursement key's parity.
+///
+/// Layout (70 bytes total):
+/// - `[0..9]`   magic `"RSK_PEGIN"`
+/// - `[9..17]`  packet_number, big endian u64
+/// - `[17..37]` rootstock_address
+/// - `[37..70]` reimbursement_pubkey, compressed secp256k1 (parity byte + X coordinate)
+///
+/// Takes a full `PublicKey` rather than an `XOnlyPublicKey` so truncation to x-only is a
+/// compile error: P2WPKH destinations built from this key require the parity bit.
+pub fn request_pegin_op_return_data(
+    packet_number: u64,
+    rootstock_address: [u8; 20],
+    reimbursement_pubkey: &PublicKey,
+) -> Result<Vec<u8>, BitVMXError> {
+    if !reimbursement_pubkey.compressed {
+        return Err(BitVMXError::InvalidConversion(format!(
+            "reimbursement public key must be compressed, got {} bytes",
+            reimbursement_pubkey.to_bytes().len()
+        )));
+    }
+
+    let payload = [
+        REQUEST_PEGIN_OP_RETURN_MAGIC.as_slice(),
+        &packet_number.to_be_bytes(),
+        &rootstock_address,
+        &reimbursement_pubkey.to_bytes(),
+    ]
+    .concat();
+
+    assert_eq!(payload.len(), REQUEST_PEGIN_OP_RETURN_LEN);
+
+    Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    // Even parity (0x02).
+    const EVEN_PUBKEY_HEX: &str =
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    // Odd parity (0x03).
+    const ODD_PUBKEY_HEX: &str =
+        "03fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556";
+
+    fn packet_number() -> u64 {
+        42
+    }
+
+    fn rootstock_address() -> [u8; 20] {
+        [7u8; 20]
+    }
+
+    /// Hardcoded expected payload: magic "RSK_PEGIN", packet number 42 big endian,
+    /// rootstock address of twenty 0x07 bytes, then the compressed key.
+    fn expected_payload_hex(pubkey_hex: &str) -> String {
+        format!(
+            "{}{}{}{}",
+            "52534b5f504547494e",
+            "000000000000002a",
+            "07".repeat(20),
+            pubkey_hex
+        )
+    }
+
+    #[test]
+    fn even_parity_key_produces_expected_payload() {
+        let pubkey = PublicKey::from_str(EVEN_PUBKEY_HEX).unwrap();
+        let payload =
+            request_pegin_op_return_data(packet_number(), rootstock_address(), &pubkey).unwrap();
+
+        assert_eq!(payload.len(), REQUEST_PEGIN_OP_RETURN_LEN);
+        assert_eq!(hex::encode(&payload), expected_payload_hex(EVEN_PUBKEY_HEX));
+        assert_eq!(payload[37], 0x02);
+
+        let round_tripped = PublicKey::from_slice(&payload[37..70]).unwrap();
+        assert_eq!(round_tripped, pubkey);
+    }
+
+    #[test]
+    fn uncompressed_key_is_rejected() {
+        let mut pubkey = PublicKey::from_str(EVEN_PUBKEY_HEX).unwrap();
+        pubkey.compressed = false;
+
+        assert!(
+            request_pegin_op_return_data(packet_number(), rootstock_address(), &pubkey).is_err()
+        );
+    }
+
+    #[test]
+    fn odd_parity_key_produces_expected_payload() {
+        let pubkey = PublicKey::from_str(ODD_PUBKEY_HEX).unwrap();
+        let payload =
+            request_pegin_op_return_data(packet_number(), rootstock_address(), &pubkey).unwrap();
+
+        assert_eq!(payload.len(), REQUEST_PEGIN_OP_RETURN_LEN);
+        assert_eq!(hex::encode(&payload), expected_payload_hex(ODD_PUBKEY_HEX));
+        assert_eq!(payload[37], 0x03);
+
+        let round_tripped = PublicKey::from_slice(&payload[37..70]).unwrap();
+        assert_eq!(round_tripped, pubkey);
+    }
+}
