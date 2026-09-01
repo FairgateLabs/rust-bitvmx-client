@@ -36,7 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `input_not_revealed` example. Where the operator does not reveal the input to the challenge.
 - `op_no_cosign` example. Where an Operator does not colaborate to initialize the challenge.
 - `wt_no_challenge` example. Where a Watchtower does not start to a challenge.
-- `claim_gate_timelock`, `input_not_revealed_timelock`, `op_no_cosign_timelock` and `wt_no_challenge_timelock` to `StreamSettings`
+- `claim_gate_timelock`, `input_not_revealed_timelock`, `op_no_cosign_timelock` and `wt_no_challenge_timelock` to `PacketSettings`
 - Send `FundsAdvanceSPV` after advance funds TX is mined.
 
 ### Changed

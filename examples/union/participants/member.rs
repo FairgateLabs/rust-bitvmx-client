@@ -8,7 +8,7 @@ use crate::{
     },
     wait_until_msg,
 };
-use anyhow::{Error, Result};
+use anyhow::Result;
 use bitcoin::{address::NetworkUnchecked, PublicKey, ScriptBuf, Transaction, Txid};
 use bitvmx_broker::identification::allow_list::AllowList;
 // use bitvmx_client::bitvmx::SEND_NEW_BLOCK_NEWS;
@@ -24,8 +24,8 @@ use bitvmx_client::{
             },
             dispute_core::PEGOUT_ID,
             types::{
-                AdvanceFundsRegistered, MemberData, UnionSettings, ADVANCE_FUNDS_INPUT,
-                GLOBAL_SETTINGS_UUID, REIMBURSEMENT_KICKOFF_TX,
+                AdvanceFundsRegistered, MemberData, PacketSettings, ADVANCE_FUNDS_INPUT,
+                REIMBURSEMENT_KICKOFF_TX,
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -216,6 +216,7 @@ impl Member {
         funding_utxos_per_member: &HashMap<PublicKey, PartialUtxo>,
         addresses: &Vec<CommsAddress>,
         stream_denomination: u64,
+        settings: PacketSettings,
     ) -> Result<()> {
         info!(
             id = self.id,
@@ -232,6 +233,7 @@ impl Member {
             funding_utxos_per_member,
             addresses,
             stream_denomination,
+            settings,
         )?;
 
         for i in 0..members.len() {
@@ -729,28 +731,6 @@ impl Member {
         );
         info!("SPV proof: {:?}", spv_proof);
         Ok(())
-    }
-
-    pub fn save_union_settings(&mut self, settings: &UnionSettings) -> Result<(), Error> {
-        self.bitvmx.set_var(
-            GLOBAL_SETTINGS_UUID,
-            &UnionSettings::name(),
-            VariableTypes::String(serde_json::to_string(settings)?),
-        )?;
-        Ok(())
-    }
-
-    pub fn get_union_settings(&mut self) -> Result<UnionSettings, Error> {
-        self.bitvmx
-            .get_var(GLOBAL_SETTINGS_UUID, UnionSettings::name())?;
-        thread::sleep(std::time::Duration::from_secs(1));
-        let settings_str = wait_until_msg!(
-            &self.bitvmx,
-            Variable(_, _settings_str, _) => _settings_str
-        );
-
-        let loaded_settings: UnionSettings = serde_json::from_str(&settings_str)?;
-        Ok(loaded_settings)
     }
 
     pub fn reject_pegin(

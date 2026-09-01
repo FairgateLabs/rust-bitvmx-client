@@ -15,9 +15,9 @@ use crate::{
                     extract_index_from_claim_gate, get_accept_pegin_pid, get_dispatch_action,
                     get_dispute_channel_pid, get_dispute_core_pid, get_dispute_pair_key_name,
                     get_full_penalization_pid, get_initial_deposit_output_type, get_my_idx,
-                    get_op_disabler_directory_output_value, get_reveal_output_value,
-                    get_stream_setting, indexed_name, load_penalized_member, load_union_settings,
-                    set_my_idx, triple_indexed_name, InputSigningInfo, WinternitzData,
+                    get_op_disabler_directory_output_value, get_reveal_output_value, indexed_name,
+                    load_penalized_member, set_my_idx, triple_indexed_name, InputSigningInfo,
+                    WinternitzData,
                 },
                 dispute_core_claim_gate::{
                     ClaimGateAction, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
@@ -414,13 +414,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
         let committee = self.committee(context)?;
         let dispute_core_data = self.dispute_core_data(context)?;
 
-        self.set_requested_confirmations(context, committee.pegin_confirmations)?;
+        self.set_requested_confirmations(context, committee.settings.pegin_confirmations)?;
         self.validate_keys(&keys, context, dispute_core_data.committee_id)?;
 
         self.set_drp_variables(context, dispute_core_data.committee_id, &committee, &keys)?;
 
         let mut protocol = self.load_or_create_protocol();
-        let settings = self.load_stream_setting(context)?;
+        let settings = &committee.settings;
         let member = &committee.members[dispute_core_data.member_index];
         let mut reimbursement_outputs = vec![];
 
@@ -437,7 +437,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 &dispute_core_data,
                 &committee,
                 &keys,
-                &settings,
+                settings,
             )?;
 
         let operator_won_script = timelock(
@@ -745,7 +745,7 @@ impl DisputeCoreProtocol {
         data: &DisputeCoreData,
         committee: &Committee,
         keys: &Vec<ParticipantKeys>,
-        settings: &StreamSettings,
+        settings: &PacketSettings,
     ) -> Result<
         (
             Vec<Option<WtInitChallengeOutputs>>,
@@ -1110,7 +1110,7 @@ impl DisputeCoreProtocol {
         dispute_core_data: &DisputeCoreData,
         keys: &Vec<ParticipantKeys>,
         committee: &Committee,
-        settings: &StreamSettings,
+        settings: &PacketSettings,
     ) -> Result<Vec<OutputType>, BitVMXError> {
         let mut outputs = vec![];
         let member_count = keys.len();
@@ -1167,7 +1167,7 @@ impl DisputeCoreProtocol {
         reimbursement_output: OutputType,
         context: &ProgramContext<BC>,
         reveal_output: &OutputType,
-        settings: &StreamSettings,
+        settings: &PacketSettings,
     ) -> Result<(), BitVMXError> {
         // Operator keys
         let operator_keys = keys[dispute_core_data.member_index].clone();
@@ -1827,7 +1827,8 @@ impl DisputeCoreProtocol {
 
         if tx_name.ends_with(CLAIM_GATE_START) {
             if self.is_my_dispute_core(context)? {
-                let settings = self.load_stream_setting(context)?;
+                let committee = self.committee(context)?;
+                let settings = committee.settings;
                 let blocks = self.get_dispatch_height(tx_status, settings.claim_gate_timelock)?;
                 self.dispatch_claim_gate(
                     context,
@@ -2018,7 +2019,8 @@ impl DisputeCoreProtocol {
 
         if tx_name.ends_with(CLAIM_GATE_START) {
             if self.ctx.my_idx == op_index {
-                let settings = self.load_stream_setting(context)?;
+                let committee = self.committee(context)?;
+                let settings = committee.settings;
                 let blocks = self.get_dispatch_height(tx_status, settings.claim_gate_timelock)?;
                 self.dispatch_claim_gate(
                     context,
@@ -2133,16 +2135,6 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn load_stream_setting<BC: BitcoinCoordinatorApi>(
-        &self,
-        context: &ProgramContext<BC>,
-    ) -> Result<StreamSettings, BitVMXError> {
-        get_stream_setting(
-            &load_union_settings(context)?,
-            self.committee(context)?.stream_denomination,
-        )
-    }
-
     fn handle_op_cosign_tx<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
@@ -2150,7 +2142,8 @@ impl DisputeCoreProtocol {
         tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
         info!(id = self.ctx.my_idx, "Handling {}", tx_name);
-        let settings = self.load_stream_setting(context)?;
+        let committee = self.committee(context)?;
+        let settings = committee.settings;
         let (wt_index, op_index) = extract_double_index(tx_name)?;
 
         let protocol = self.load_protocol()?;
@@ -2247,7 +2240,8 @@ impl DisputeCoreProtocol {
     ) -> Result<(), BitVMXError> {
         info!(id = self.ctx.my_idx, "Handling {}", tx_name);
 
-        let settings = self.load_stream_setting(context)?;
+        let committee = self.committee(context)?;
+        let settings = committee.settings;
         let data = self.dispute_core_data(context)?;
         let (_, op_index) = extract_double_index(tx_name)?;
 
@@ -2510,7 +2504,8 @@ impl DisputeCoreProtocol {
                 "This is my dispute_core, scheduling OPERATOR_WON_TX for slot {}", slot_index
             );
 
-            let settings = self.load_stream_setting(context)?;
+            let committee = self.committee(context)?;
+            let settings = committee.settings;
             self.dispatch(
                 context,
                 DisputeCoreTxType::OperatorWon {
@@ -2662,7 +2657,8 @@ impl DisputeCoreProtocol {
             self.dispatch(context, DisputeCoreTxType::RevealInput { slot_index })?;
         } else {
             // Schedule input not revealed dispatch transaction
-            let settings = self.load_stream_setting(context)?;
+            let committee = self.committee(context)?;
+            let settings = committee.settings;
             let block_height =
                 Some(self.get_dispatch_height(tx_status, settings.input_not_revealed_timelock)?);
 
@@ -2858,7 +2854,8 @@ impl DisputeCoreProtocol {
         let slot_index = extract_index(tx_name, REIMBURSEMENT_KICKOFF_TX)?;
         info!("Extracted slot index: {}", slot_index);
 
-        let settings = self.load_stream_setting(context)?;
+        let committee = self.committee(context)?;
+        let settings = committee.settings;
 
         if self.is_my_dispute_core(context)? {
             info!("My dispute_core. Dispatch OP Take for slot: {}", slot_index);
@@ -2887,10 +2884,9 @@ impl DisputeCoreProtocol {
                     context,
                     DisputeCoreTxType::Challenge {
                         slot_index,
-                        block_height: Some(self.get_dispatch_height(
-                            tx_status,
-                            self.load_stream_setting(context)?.short_timelock,
-                        )?),
+                        block_height: Some(
+                            self.get_dispatch_height(tx_status, settings.short_timelock)?,
+                        ),
                     },
                 )?;
             }

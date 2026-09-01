@@ -1,4 +1,4 @@
-use anyhow::{Error, Result};
+use anyhow::Result;
 use bitcoin::{Network, Txid};
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::program::protocols::union::common::{
@@ -6,8 +6,7 @@ use bitvmx_client::program::protocols::union::common::{
     get_user_take_pid,
 };
 use bitvmx_client::program::protocols::union::types::{
-    MemberData, StreamSettings, UnionSettings, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE,
-    USER_TAKE_TX,
+    MemberData, PacketSettings, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE, USER_TAKE_TX,
 };
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 
@@ -20,7 +19,7 @@ use tracing::info_span;
 use uuid::Uuid;
 
 use crate::bitcoin::{init_client, BitcoinWrapper};
-use crate::participants::common::{get_default_union_settings, prefixed_name};
+use crate::participants::common::prefixed_name;
 use crate::participants::member::{FundingAmount, Member};
 use crate::wallet::helper::non_regtest_warning;
 
@@ -35,8 +34,7 @@ pub struct Committee {
     committee_id: Uuid,
     stream_denomination: u64,
     pub bitcoin_client: BitcoinWrapper,
-    pub union_settings: UnionSettings,
-    pub stream_settings: StreamSettings,
+    pub settings: PacketSettings,
     funding_utxos_per_member: HashMap<PublicKey, PartialUtxo>,
 }
 
@@ -77,19 +75,7 @@ impl Committee {
         let take_aggregation_id = get_take_aggreated_key_pid(committee_id);
         let dispute_aggregation_id = get_dispute_aggregated_key_pid(committee_id);
 
-        let union_settings = get_default_union_settings();
-        if !union_settings.settings.contains_key(&stream_denomination) {
-            return Err(anyhow::anyhow!(format!(
-                "Stream settings not found for denomination: {}",
-                stream_denomination
-            )));
-        }
-
-        let stream_settings = union_settings
-            .settings
-            .get(&stream_denomination)
-            .unwrap()
-            .clone();
+        let settings = PacketSettings::default();
 
         Ok(Self {
             members,
@@ -98,8 +84,7 @@ impl Committee {
             committee_id,
             stream_denomination,
             bitcoin_client,
-            union_settings,
-            stream_settings,
+            settings,
             funding_utxos_per_member: HashMap::new(),
         })
     }
@@ -145,13 +130,11 @@ impl Committee {
         // as source-of-truth data alongside the dispute aggregated key.
         self.funding_utxos_per_member = funding_utxos_per_member.clone();
 
-        let settings = self.union_settings.clone();
-        self.all(|op: &mut Member| op.save_union_settings(&settings))?;
-
         let members = self.get_member_data();
         let addresses = self.get_addresses();
         let committee_id = self.committee_id;
         let stream_denomination = self.stream_denomination;
+        let settings = self.settings.clone();
 
         // Setup Dispute Core covenant
         self.all(|op: &mut Member| {
@@ -161,6 +144,7 @@ impl Committee {
                 &funding_utxos_per_member,
                 &addresses.clone(),
                 stream_denomination,
+                settings.clone(),
             )
         })?;
 
@@ -451,26 +435,6 @@ impl Committee {
         }
 
         Ok(funding_utxos_per_member)
-    }
-
-    pub fn get_stream_settings(&self, stream_denomination: u64) -> Result<StreamSettings, Error> {
-        if !self
-            .union_settings
-            .settings
-            .contains_key(&stream_denomination)
-        {
-            return Err(anyhow::anyhow!(format!(
-                "Stream settings not found for denomination: {}",
-                stream_denomination
-            )));
-        }
-
-        Ok(self
-            .union_settings
-            .settings
-            .get(&stream_denomination)
-            .unwrap()
-            .clone())
     }
 
     pub fn get_dispute_keys(&self) -> Vec<PublicKey> {

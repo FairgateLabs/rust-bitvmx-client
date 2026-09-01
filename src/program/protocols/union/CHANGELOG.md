@@ -11,17 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `PenalizedMember` struct to store penalized operators and watchtowers and dispatch disabler transactions if needed.
 - `RejectPegin` protocol to allow the committee to reject a pegin request.
 - `CANCEL_TAKE0_TX` transactions to consume `ACCEPT_PEGIN_TX` output enabler.
-- `request_pegin_timelock` to `StreamSettings`. It defines the time the user block funds while the committee accepts the pegin request.
+- `request_pegin_timelock` to `PacketSettings`. It defines the time the user block funds while the committee accepts the pegin request.
 - `UnionSPVNotification` message to notify Union Client about SPV proofs related to advance funds and challenge transactions.
 - Send a `CancelUserTake` SPV notification after a `CANCEL_TAKE0_TX` transaction is mined.
 
 ### Changed
 
+- Store `PacketSettings` directly in each `Committee`, including peg-in, peg-out, and reject peg-in confirmation counts.
+- Read Union protocol confirmation and timelock settings from the committee instead of global `UnionSettings`.
 - Update `ACCEPT_PEGIN_TX`:
   - Add enabler input connected to request pegin tx.
   - Add enabler output with operator dispute keys.
 - Update `USER_TAKE_TX`: Add enabler input connected to `ACCEPT_PEGIN_TX` enabler output.
 
+### Removed
+
+- Global `UnionSettings` storage and transport messages.
 
 ## [v0.3.0] - 2025-12-15
 
@@ -30,7 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Dispute Resolution Protocol (DRP) support.
 - DisputeCommitment blocks inside DisputeCore protocol.
 - Send `FundsAdvanceSPV` after advance funds TX is mined.
-- `claim_gate_timelock`, `input_not_revealed_timelock`, `op_no_cosign_timelock` and `wt_no_challenge_timelock` to `StreamSettings`
+- `claim_gate_timelock`, `input_not_revealed_timelock`, `op_no_cosign_timelock` and `wt_no_challenge_timelock` to `PacketSettings`
 - Automatic dispatch of `OPERATOR_WON_TX`.
 - This `CHANGELOG.md` file.
 

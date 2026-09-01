@@ -70,7 +70,10 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             self.ctx.id
         );
 
-        self.set_requested_confirmations(context, self.committee(context)?.pegin_confirmations)?;
+        self.set_requested_confirmations(
+            context,
+            self.committee(context)?.settings.pegin_confirmations,
+        )?;
 
         let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
 
