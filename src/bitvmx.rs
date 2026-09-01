@@ -967,6 +967,12 @@ impl BitVMX {
         let result = self.tick_inner();
 
         if let Err(e) = &result {
+            error!("Error in tick(): {e:#?}");
+            let mut source = std::error::Error::source(e);
+            while let Some(err) = source {
+                error!("  Caused by: {err}");
+                source = std::error::Error::source(err);
+            }
             if classify(e) == Severity::Fatal {
                 self.reporter.fatal(e, &self.program_context.broker_channel);
             } else {
@@ -975,6 +981,11 @@ impl BitVMX {
                 if let Err(commit) = self.store.commit_global_transaction() {
                     error!("Could not commit a failed tick: {:?}", commit);
                 }
+                self.reporter
+                    .stopping(e, &self.program_context.broker_channel);
+                //TODO: keep ticking instead of stopping, once we know a partially
+                //applied tick is safe to carry on from.
+                return Ok(false);
             }
         }
 
@@ -1056,11 +1067,6 @@ impl BitVMX {
         self.store.commit_global_transaction()?;
 
         Ok(true)
-    }
-
-    pub fn report_stopping(&self, error: &BitVMXError) {
-        self.reporter
-            .stopping(error, &self.program_context.broker_channel);
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {

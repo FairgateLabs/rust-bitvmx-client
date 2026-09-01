@@ -12,11 +12,7 @@ use clap::{Arg, Command};
 use tracing::{info, info_span};
 use tracing_subscriber::EnvFilter;
 
-use bitvmx_client::{
-    bitvmx::BitVMX,
-    config::Config,
-    error_handling::{classify, Severity},
-};
+use bitvmx_client::{bitvmx::BitVMX, config::Config};
 
 struct OperatorInstance {
     name: String,
@@ -146,23 +142,8 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                             break 'main;
                         }
                         Err(e) => {
-                            tracing::error!("Error in tick(): {e:#?}");
-                            let mut source = std::error::Error::source(&e);
-                            while let Some(err) = source {
-                                tracing::error!("  Caused by: {err}");
-                                source = std::error::Error::source(err);
-                            }
-                            // Only fatal errors exit non-zero: a bad dispatcher message
-                            // must not become a supervisor crash loop.
-                            if classify(&e) == Severity::Fatal {
-                                info!("Fatal error detected, initiating shutdown");
-                                return Err(e.into());
-                            }
-                            //TODO: keep ticking instead of stopping, once we know a partially
-                            //applied tick is safe to carry on from.
-                            info!("Error detected, initiating shutdown");
-                            instance.bitvmx.report_stopping(&e);
-                            return Ok(());
+                            // tick only returns Err when the error is fatal, we can safely exit here
+                            return Err(e.into());
                         }
                     }
                 } else {
@@ -181,17 +162,9 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                             }
                         }
                         Err(e) => {
+                            // process_bitcoin_updates_with_throttle only returns Err when the error is fatal
                             tracing::error!("Error syncing bitcoin updates: {e:?}");
-                            if classify(&e) == Severity::Fatal {
-                                info!("Fatal error during sync, initiating shutdown");
-                                return Err(e.into());
-                            }
-                            //TODO: keep syncing instead of stopping, see the TODO above.
-                            //Unreachable today: process_bitcoin_updates_with_throttle only
-                            //returns Err on Fatal.
-                            info!("Error during sync, initiating shutdown");
-                            instance.bitvmx.report_stopping(&e);
-                            return Ok(());
+                            return Err(e.into());
                         }
                     }
                 }
