@@ -16,9 +16,8 @@ const TIMEOUT_SECS: u64 = 1;
 
 fn ping_config() -> PingConfig {
     PingConfig {
-        enabled: true,
-        interval_secs: INTERVAL_SECS,
-        timeout_secs: TIMEOUT_SECS,
+        interval_secs: Some(INTERVAL_SECS),
+        timeout_secs: Some(TIMEOUT_SECS),
         services: vec![JobDispatcherType::Emulator],
     }
 }
