@@ -297,6 +297,7 @@ impl AdvanceFundsRegistered {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnionTxType {
+    CancelUserTake,
     ReimbursementKickoff,
     OperatorTake,
     OperatorWon,
