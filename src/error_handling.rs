@@ -4,7 +4,7 @@ use std::error::Error;
 
 use bitcoin_coordinator::config::settings::{CPFP_TRANSACTION_CONTEXT, RBF_TRANSACTION_CONTEXT};
 use bitcoincore_rpc::{jsonrpc, Error as BitcoinRpcError};
-use bitvmx_broker::{identification::identifier::Identifier, BrokerNode};
+use bitvmx_broker::{identification::identifier::Identifier, BrokerError, BrokerNode};
 use storage_backend::error::StorageError;
 use tracing::{error, info, warn};
 
@@ -122,22 +122,28 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
 
     while let Some(error) = next {
         if let Some(error) = error.downcast_ref::<StorageError>() {
-            return match error {
-                StorageError::WriteError | StorageError::ReadError | StorageError::CommitError => {
-                    Severity::Fatal
-                }
-                _ => Severity::Other,
-            };
+            if matches!(
+                error,
+                StorageError::WriteError | StorageError::ReadError | StorageError::CommitError
+            ) {
+                return Severity::Fatal;
+            }
         }
 
         if let Some(error) = error.downcast_ref::<BitcoinRpcError>() {
             // Anything else means the node answered and refused, which is not an outage.
-            return match error {
-                BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(_)) => {
-                    Severity::BitcoinNodeUnreachable
-                }
-                _ => Severity::Other,
-            };
+            if matches!(
+                error,
+                BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(_))
+            ) {
+                return Severity::BitcoinNodeUnreachable;
+            }
+        }
+
+        if let Some(error) = error.downcast_ref::<BrokerError>() {
+            if error.is_fatal() {
+                return Severity::Fatal;
+            }
         }
 
         next = error.source();
@@ -193,8 +199,44 @@ mod tests {
     use super::*;
     use bitcoin_coordinator::errors::BitcoinCoordinatorError;
     use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
+    use bitvmx_broker::storage::BrokerStorageError;
     use bitvmx_wallet::wallet::errors::WalletError;
     use uuid::Uuid;
+
+    #[test]
+    fn a_failed_broker_write_is_fatal() {
+        let error =
+            BrokerError::BrokerStorageError(BrokerStorageError::Backend(StorageError::WriteError));
+
+        // A tripwire: once the broker discriminates the inner variant, drop the override.
+        assert!(
+            !error.is_fatal(),
+            "the broker is expected to still report this as non-fatal"
+        );
+        assert_eq!(classify(&error), Severity::Fatal);
+    }
+
+    // Conditions the broker calls fatal that our own source-chain walk does not reach.
+    #[test]
+    fn a_broker_fatal_condition_is_fatal() {
+        assert_eq!(
+            classify(&BrokerError::MutexError("storage".to_string())),
+            Severity::Fatal
+        );
+        assert_eq!(
+            classify(&BrokerError::WrongNodeMode("peers".to_string())),
+            Severity::Fatal
+        );
+    }
+
+    // One refused message must not take the node down, or a single oversized ping would.
+    #[test]
+    fn an_ordinary_broker_failure_is_not_fatal() {
+        assert_eq!(
+            classify(&BrokerError::MessageTooLarge(10, 5)),
+            Severity::Other
+        );
+    }
 
     fn unreachable_node() -> BitcoinRpcError {
         BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(Box::new(std::io::Error::new(
