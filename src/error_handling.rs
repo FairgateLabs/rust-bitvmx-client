@@ -115,8 +115,8 @@ impl Reporter {
     }
 }
 
-/// Walks the error's source chain. Takes `dyn Error`so an error
-/// borrowed from a dependency can be classified without a conversion that would consume it.
+/// Walks the error's source chain. Takes `dyn Error` so an error borrowed from a
+/// dependency can be classified without a conversion that would consume it.
 pub fn classify(error: &(dyn Error + 'static)) -> Severity {
     let mut next = Some(error);
 

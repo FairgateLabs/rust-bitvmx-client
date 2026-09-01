@@ -208,7 +208,7 @@ pub enum ErrorReportKind {
     },
     JobDispatcherUnresponsive(JobDispatcherType),
     JobDispatcherRecovered(JobDispatcherType),
-    /// Storage failed; the node is exiting. Best-effort: may not arrive.
+    /// Storage or the broker failed; the node is exiting. Best-effort: may not arrive.
     Fatal,
     NodeStopping,
     BitcoinRpcUnavailable,

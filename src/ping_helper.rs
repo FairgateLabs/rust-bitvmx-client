@@ -405,7 +405,7 @@ mod tests {
         assert!(helper.dispatchers.is_empty());
     }
 
-    // The block shipped in config/.
+    // Mirrors the block shipped in config/.
     #[test]
     fn shipped_config_is_accepted() {
         let helper = PingHelper::new(Some(PingConfig {
@@ -415,7 +415,7 @@ mod tests {
         }))
         .unwrap();
 
-        // No deployment runs a garbler or a ZKP, so only the emulator is pinged.
+        // Only what the block names is registered.
         assert_eq!(helper.dispatchers.len(), 1);
         assert!(helper
             .dispatchers

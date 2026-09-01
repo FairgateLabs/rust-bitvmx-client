@@ -174,7 +174,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
         Ok(())
     }));
 
-    // A caught panic still exits zero, as before. Only the inner error propagates.
+    // A caught panic exits zero; only the inner error propagates.
     match loop_result {
         Err(_) => info!("Panic captured in main loop, initiating shutdown"),
         Ok(result) => result?,

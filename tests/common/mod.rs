@@ -170,9 +170,7 @@ pub fn init_bitvmx_with_config(
     tune: impl FnOnce(&mut Config),
 ) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
     let mut config = Config::new(Some(format!("config/{}.yaml", role)))?;
-    // Tests tick the client in loops that do not always tick its dispatchers, so a pong can
-    // go unsent and a live dispatcher look dead. A test that wants pings sets them in `tune`.
-    // The config block is still parsed above, so a malformed one fails the test.
+    // Tests do not always tick the dispatchers, so a live one would look dead. Opt in via `tune`.
     config.job_dispatcher_ping = None;
     tune(&mut config);
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
