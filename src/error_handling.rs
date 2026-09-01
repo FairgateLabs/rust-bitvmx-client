@@ -1,4 +1,4 @@
-//! Severity of an error, and delivery of push-style error reports.
+//! Classification of errors, and delivery of push-style error reports.
 
 use std::error::Error;
 
@@ -21,13 +21,13 @@ pub enum Severity {
     Other,
 }
 
-pub(crate) struct ErrorReporter {
+pub(crate) struct Reporter {
     fatal_reported: bool,
     rpc_unavailable: bool,
     l2_identifier: Identifier,
 }
 
-impl ErrorReporter {
+impl Reporter {
     pub(crate) fn new(l2_identifier: Identifier) -> Self {
         Self {
             fatal_reported: false,

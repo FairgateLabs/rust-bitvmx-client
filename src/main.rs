@@ -15,7 +15,7 @@ use tracing_subscriber::EnvFilter;
 use bitvmx_client::{
     bitvmx::BitVMX,
     config::Config,
-    error_severity::{classify, Severity},
+    error_handling::{classify, Severity},
 };
 
 struct OperatorInstance {

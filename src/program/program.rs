@@ -7,7 +7,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    error_severity::{classify, send_error_report, Severity},
+    error_handling::{classify, send_error_report, Severity},
     errors::{BitVMXError, ProgramError},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},

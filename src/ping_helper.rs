@@ -1,4 +1,4 @@
-use crate::error_severity::{classify, send_error_report, Severity};
+use crate::error_handling::{classify, send_error_report, Severity};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     config::{ComponentsConfig, PingConfig},

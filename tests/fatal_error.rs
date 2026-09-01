@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use bitvmx_client::error_severity::{classify, Severity};
+use bitvmx_client::error_handling::{classify, Severity};
 use bitvmx_client::types::{
     ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
 };
