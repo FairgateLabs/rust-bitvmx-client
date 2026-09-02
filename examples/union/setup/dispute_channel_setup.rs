@@ -23,9 +23,7 @@ use bitvmx_client::{
             },
             union::{
                 common::{get_dispute_channel_pid, get_dispute_core_pid},
-                types::{
-                    MemberData, WtInitChallengeUtxos, OP_COSIGN_UTXOS, WT_INIT_CHALLENGE_UTXOS,
-                },
+                types::{ClaimInitUtxos, MemberData, CLAIM_INIT_UTXOS, OP_COSIGN_UTXOS},
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -66,7 +64,7 @@ impl DisputeChannelSetup {
         let my_dispute_core_pid = get_dispute_core_pid(committee_id, &members[my_index].take_key);
 
         let my_op_cosign_utxos = Self::op_cosign_utxos(my_dispute_core_pid, bitvmx)?;
-        let my_claim_gate_stoppers = Self::wt_init_challenge_utxos(my_dispute_core_pid, &bitvmx)?;
+        let my_claim_gate_stoppers = Self::claim_init_utxos(my_dispute_core_pid, &bitvmx)?;
 
         // Iterate over partners
         for partner_index in 0..members.len() {
@@ -92,7 +90,7 @@ impl DisputeChannelSetup {
                     get_dispute_core_pid(committee_id, &members[partner_index].take_key);
 
                 let partner_claim_gate_stoppers =
-                    Self::wt_init_challenge_utxos(partner_dispute_core_pid, &bitvmx)?;
+                    Self::claim_init_utxos(partner_dispute_core_pid, &bitvmx)?;
 
                 let partner_op_cosign_utxos =
                     Self::op_cosign_utxos(partner_dispute_core_pid, &bitvmx)?;
@@ -148,18 +146,18 @@ impl DisputeChannelSetup {
         Ok(total_setups)
     }
 
-    fn wt_init_challenge_utxos(
+    fn claim_init_utxos(
         dispute_core_pid: Uuid,
         bitvmx: &BitVMXClient,
-    ) -> Result<Vec<Option<WtInitChallengeUtxos>>> {
-        bitvmx.get_var(dispute_core_pid, WT_INIT_CHALLENGE_UTXOS.to_string())?;
+    ) -> Result<Vec<Option<ClaimInitUtxos>>> {
+        bitvmx.get_var(dispute_core_pid, CLAIM_INIT_UTXOS.to_string())?;
         std::thread::sleep(std::time::Duration::from_secs(1)); // wait a bit for the message to be processed
 
         let variable =
             wait_until_msg!(&bitvmx, OutgoingBitVMXApiMessages::Variable(_, _, _var) => _var);
 
         let data = variable.string()?;
-        let claim_stoppers: Vec<Option<WtInitChallengeUtxos>> = serde_json::from_str(&data)?;
+        let claim_stoppers: Vec<Option<ClaimInitUtxos>> = serde_json::from_str(&data)?;
         Ok(claim_stoppers)
     }
 

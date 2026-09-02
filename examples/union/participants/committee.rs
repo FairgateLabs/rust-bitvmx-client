@@ -365,10 +365,11 @@ impl Committee {
     }
 
     fn get_watchtower_funding_value(&self) -> u64 {
-        // Considerate each WT start enabler output
+        // WT_START_ENABLER_TX carries two outputs per member, one funding WT_INIT_CHALLENGE_TX and
+        // one funding CLAIM_INIT_TX, plus the disabler directory and speedup outputs.
         return DISPUTE_CHANNEL_FUNDING_PER_MEMBER * self.members.len() as u64
             + SPEEDUP_VALUE
-            + estimate_fee(1, self.members.len() as usize + 2, 1);
+            + estimate_fee(1, self.members.len() * 2 + 2, 1);
     }
 
     fn get_funding_wt_disabler_directory_value(&self) -> u64 {

@@ -30,8 +30,12 @@ pub fn create_transaction_reference(
     tx_name: &str,
     utxos: &mut Vec<PartialUtxo>,
 ) -> Result<(), BitVMXError> {
+    if utxos.is_empty() {
+        return Err(BitVMXError::InvalidParameter("UTXOs list is empty".into()));
+    }
+
     // Create transaction
-    protocol.add_external_transaction(tx_name)?;
+    protocol.add_external_transaction_with_txid(tx_name, utxos[0].0)?;
 
     // Sort UTXOs by index
     utxos.sort_by_key(|utxo| utxo.1);
@@ -104,6 +108,24 @@ pub fn extract_double_index(input: &str) -> Result<(usize, usize), BitVMXError> 
     })?;
 
     Ok((index2, index1))
+}
+
+pub fn extract_triple_index(input: &str) -> Result<(usize, usize, usize), BitVMXError> {
+    let mut parts = input.rsplit('_');
+    let index3 = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .ok_or_else(|| BitVMXError::InvalidParameter(format!("Invalid third index in {input}")))?;
+    let index2 = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .ok_or_else(|| BitVMXError::InvalidParameter(format!("Invalid second index in {input}")))?;
+    let index1 = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .ok_or_else(|| BitVMXError::InvalidParameter(format!("Invalid first index in {input}")))?;
+
+    Ok((index1, index2, index3))
 }
 
 pub fn extract_index_from_claim_gate(input: &str) -> Result<(usize, usize), BitVMXError> {

@@ -30,6 +30,8 @@ pub const WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO: &str =
 pub const OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO: &str =
     "OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO";
 pub const WT_INIT_CHALLENGE_UTXOS: &str = "WT_INIT_CHALLENGE_UTXOS";
+pub const CLAIM_INIT_UTXOS: &str = "CLAIM_INIT_UTXOS";
+pub const INPUT_NOT_REVEALED_ENABLER: &str = "INPUT_NOT_REVEALED_ENABLER";
 pub const OP_COSIGN_UTXOS: &str = "OP_COSIGN_UTXOS";
 pub const PAIRWISE_DISPUTE_KEY: &str = "PAIRWISE_DISPUTE_KEY";
 pub const OPERATOR_PENALIZED: &str = "OPERATOR_PENALIZED";
@@ -76,6 +78,7 @@ pub const WT_DISABLER_DIRECTORY_TX: &str = "WT_DISABLER_DIRECTORY_TX";
 pub const FUNDING_TX: &str = "FUNDING_TX";
 pub const WT_START_ENABLER_TX: &str = "WT_START_ENABLER_TX";
 pub const WT_INIT_CHALLENGE_TX: &str = "WT_INIT_CHALLENGE_TX";
+pub const CLAIM_INIT_TX: &str = "CLAIM_INIT_TX";
 pub const PROTOCOL_FUNDING_TX: &str = "PROTOCOL_FUNDING_TX";
 pub const WT_CLAIM_GATE: &str = "WT_CLAIM_GATE";
 pub const WT_CLAIM_GATE_SUCCESS: &str = "WT_CLAIM_GATE_SUCCESS";
@@ -85,6 +88,7 @@ pub const OP_COSIGN_TX: &str = "OP_COSIGN_TX";
 pub const OP_NO_COSIGN_TX: &str = "OP_NO_COSIGN_TX";
 pub const WT_NO_CHALLENGE_TX: &str = "WT_NO_CHALLENGE_TX";
 pub const STOP_OP_WON_TX: &str = "STOP_OP_WON_TX";
+pub const STOPPER_TX: &str = "STOPPER_TX";
 
 // Parameters
 pub const DUST_VALUE: u64 = 540;
@@ -359,15 +363,13 @@ impl Default for PacketSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WtInitChallengeOutputs {
-    pub op_cosign: OutputType,
+pub struct ClaimInitOutputs {
     pub wt_stopper: OutputType,
     pub op_stopper: OutputType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WtInitChallengeUtxos {
-    pub op_cosign: PartialUtxo,
+pub struct ClaimInitUtxos {
     pub wt_stopper: PartialUtxo,
     pub op_stopper: PartialUtxo,
 }
