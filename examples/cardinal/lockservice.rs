@@ -5,7 +5,7 @@ use bitcoin::{
     Amount, Network, PublicKey as BitcoinPubKey, Txid,
 };
 use bitvmx_broker::{
-    identification::{allow_list::AllowList, identifier::Identifier},
+    identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{tls_helper::Cert, BrokerConfig},
     BrokerServer, LocalChannel, RemoteChannel,
 };
@@ -111,7 +111,17 @@ pub fn main() -> Result<()> {
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/services.key")?.as_str())?;
     let server_config = BrokerConfig::new(54321, None, None);
-    let mut broker = BrokerServer::new_simple(&server_config, "/tmp/lockservice_broker", cert)?;
+    let allow_list = AllowList::new();
+    allow_list.lock().unwrap().set_allow_all(true);
+    let routing = RoutingTable::new();
+    routing.lock().unwrap().allow_all();
+    let mut broker = BrokerServer::new(
+        &server_config,
+        "/tmp/lockservice_broker",
+        cert,
+        allow_list,
+        routing,
+    )?;
 
     // The channel has to come from the server so that both share the same storage handle.
     let broker_channel = broker.create_local_channel(Identifier::new(
