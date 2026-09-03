@@ -160,6 +160,23 @@ impl BitVMXClient {
         ))
     }
 
+    /// Tracks the UTXO identified by `txid` and `vout` and sends a
+    /// `SpendingUTXOTransactionFound` notification when a transaction spends it.
+    pub fn subscribe_to_spending_utxo(
+        &self,
+        request_id: Uuid,
+        txid: Txid,
+        vout: u32,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::SubscribeToSpendingUTXO(
+            request_id,
+            txid,
+            vout,
+            confirmation_threshold,
+        ))
+    }
+
     pub fn subscribe_to_output_pattern(
         &self,
         filter: OutputPatternFilter,
