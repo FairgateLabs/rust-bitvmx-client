@@ -111,6 +111,7 @@ This table shows the mapping between request messages and their expected respons
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
 | `SubscribeToTransaction(uuid, txid)` | `Transaction(uuid, transaction_status, name)` | Subscribe to transaction updates |
+| `SubscribeToSpendingUTXO(uuid, txid, vout, confirmation_threshold)` | `SpendingUTXOTransactionFound(uuid, txid, vout, transaction_status)` | Track a UTXO and notify when it is spent |
 | `SubscribeToRskPegin()` | `PeginTransactionFound(txid, transaction_status)` | Subscribe to RSK pegin transactions |
 
 #### Speed up
