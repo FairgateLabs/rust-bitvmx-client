@@ -1,6 +1,6 @@
 use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
-use crate::error_handling::{classify, Reporter, Severity};
+use crate::error_handling::{classify, is_fatal, Reporter, Severity};
 use crate::ping_helper::PingHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::program::{is_active_program, Program};
@@ -973,7 +973,7 @@ impl BitVMX {
                 error!("  Caused by: {err}");
                 source = std::error::Error::source(err);
             }
-            if classify(e) == Severity::Fatal {
+            if is_fatal(e) {
                 self.reporter.fatal(e, &self.program_context.broker_channel);
             } else {
                 // A failed tick has already acked messages and broadcast transactions, so
@@ -1073,7 +1073,7 @@ impl BitVMX {
         if let Err(e) = self.wallet.tick() {
             let e = BitVMXError::from(e);
             error!("Error updating wallet: {:?}", e);
-            if classify(&e) == Severity::Fatal {
+            if is_fatal(&e) {
                 return Err(e);
             }
         }

@@ -52,6 +52,14 @@ pub struct Program {
     storage: Option<Rc<Storage>>,
 }
 
+/// Whether a bitcoin outage is worth waiting out at the call site.
+enum OnOutage {
+    /// Nothing was consumed, so the next tick retries for free.
+    Retry,
+    /// The work was already partly applied; a retry would replay it.
+    FailSetup,
+}
+
 impl Program {
     /// Returns the storage key for a program.
     fn key_program(program_id: &Uuid) -> String {
@@ -291,33 +299,16 @@ impl Program {
         Ok(())
     }
 
-    /// Main tick function - drives the program forward.
-    ///
-    /// A setup-phase error is reported as `SetupFailed` and swallowed rather than returned,
-    /// unless it is fatal or a bitcoin outage. Errors past `Ready` propagate unchanged.
+    /// Errors past `Ready` propagate unchanged; setup-phase errors go through
+    /// `recover_from_setup_error`.
     pub fn tick<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
-            Err(e) if self.state != ProgramState::Ready => match classify(&e) {
-                Severity::Fatal => Err(e),
-                Severity::BitcoinNodeUnreachable => {
-                    warn!(
-                        "Program {} cannot advance while bitcoin is unreachable: {:?}",
-                        self.program_id, e
-                    );
-                    Ok(())
-                }
-                Severity::Other => {
-                    self.fail_setup(
-                        None,
-                        SetupFailureReason::StepError(e.to_string()),
-                        program_context,
-                    )?;
-                    Ok(())
-                }
-            },
+            Err(e) if self.state != ProgramState::Ready => {
+                self.recover_from_setup_error(e, None, OnOutage::Retry, program_context)
+            }
             other => other,
         }
     }
@@ -397,6 +388,33 @@ impl Program {
         Ok(())
     }
 
+    /// Decides what a setup-phase failure means for this program. A fatal error is handed
+    /// back to the caller, the only layer that can act on it. Everything else fails the
+    /// setup, except an outage the caller can safely wait out.
+    fn recover_from_setup_error<BC: BitcoinCoordinatorApi>(
+        &mut self,
+        error: BitVMXError,
+        peer: Option<PubKeyHash>,
+        on_outage: OnOutage,
+        program_context: &mut ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
+        match classify(&error) {
+            Severity::Fatal => Err(error),
+            Severity::BitcoinNodeUnreachable if matches!(on_outage, OnOutage::Retry) => {
+                warn!(
+                    "Program {} cannot advance while bitcoin is unreachable: {:?}",
+                    self.program_id, error
+                );
+                Ok(())
+            }
+            Severity::BitcoinNodeUnreachable | Severity::Other => self.fail_setup(
+                peer,
+                SetupFailureReason::StepError(error.to_string()),
+                program_context,
+            ),
+        }
+    }
+
     fn start_monitoring<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
@@ -451,8 +469,8 @@ impl Program {
     }
 
     /// Receives results from job dispatchers (Garbler, Emulator).
-    ///
-    /// Errors during setup are reported to L2 rather than propagated; see `tick`.
+    /// Errors during setup are reported to L2 rather than propagated; see
+    /// `recover_from_setup_error`.
     pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
@@ -461,24 +479,9 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
-            Err(e) if self.state != ProgramState::Ready => match classify(&e) {
-                Severity::Fatal => Err(e),
-                Severity::BitcoinNodeUnreachable => {
-                    warn!(
-                        "Program {} cannot advance while bitcoin is unreachable: {:?}",
-                        self.program_id, e
-                    );
-                    Ok(())
-                }
-                Severity::Other => {
-                    self.fail_setup(
-                        None,
-                        SetupFailureReason::StepError(e.to_string()),
-                        program_context,
-                    )?;
-                    Ok(())
-                }
-            },
+            Err(e) if self.state != ProgramState::Ready => {
+                self.recover_from_setup_error(e, None, OnOutage::Retry, program_context)
+            }
             other => other,
         }
     }
@@ -650,18 +653,15 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
-            Err(e) if self.state != ProgramState::Ready => match classify(&e) {
-                Severity::Fatal => Err(e),
-                // No outage arm here: a retry would replay a partly applied message.
-                _ => {
-                    self.fail_setup(
-                        Some(comms_address.clone()),
-                        SetupFailureReason::StepError(e.to_string()),
-                        program_context,
-                    )?;
-                    Ok(MessageDisposition::Processed)
-                }
-            },
+            Err(e) if self.state != ProgramState::Ready => {
+                self.recover_from_setup_error(
+                    e,
+                    Some(comms_address.clone()),
+                    OnOutage::FailSetup,
+                    program_context,
+                )?;
+                Ok(MessageDisposition::Processed)
+            }
             other => other,
         }
     }

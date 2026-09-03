@@ -1,4 +1,4 @@
-use crate::error_handling::{classify, send_error_report, Severity};
+use crate::error_handling::{is_fatal, send_error_report};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     config::{ComponentsConfig, PingConfig},
@@ -181,7 +181,7 @@ impl PingHelper {
             {
                 // Failing to send a health check must not be worse than the dispatcher
                 // being down, so only a fatal condition propagates.
-                if classify(&e) == Severity::Fatal {
+                if is_fatal(&e) {
                     return Err(e.into());
                 }
 

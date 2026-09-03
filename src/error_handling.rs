@@ -4,7 +4,11 @@ use std::error::Error;
 
 use bitcoin_coordinator::config::settings::{CPFP_TRANSACTION_CONTEXT, RBF_TRANSACTION_CONTEXT};
 use bitcoincore_rpc::{jsonrpc, Error as BitcoinRpcError};
-use bitvmx_broker::{identification::identifier::Identifier, BrokerError, BrokerNode};
+use bitvmx_broker::{
+    identification::{errors::IdentificationError, identifier::Identifier},
+    retry::RetryPolicyError,
+    BrokerError, BrokerNode,
+};
 use storage_backend::error::StorageError;
 use tracing::{error, info, warn};
 
@@ -146,10 +150,33 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
             }
         }
 
+        // Both are broker types that BitVMXError wraps directly, so they reach here without
+        // passing through BrokerError and have to be asked for their severity separately.
+        if let Some(error) = error.downcast_ref::<IdentificationError>() {
+            if error.severity().is_fatal() {
+                return Severity::Fatal;
+            }
+        }
+
+        if let Some(error) = error.downcast_ref::<RetryPolicyError>() {
+            if error.severity().is_fatal() {
+                return Severity::Fatal;
+            }
+        }
+
+        if let Some(BitVMXError::PoisonedLockError(_)) = error.downcast_ref::<BitVMXError>() {
+            return Severity::Fatal;
+        }
+
         next = error.source();
     }
 
     Severity::Other
+}
+
+/// Most callers only need to know whether an error is survivable at their layer.
+pub fn is_fatal(error: &(dyn Error + 'static)) -> bool {
+    classify(error) == Severity::Fatal
 }
 
 /// Resolves the `context` a coordinator news item carries into who the report concerns
@@ -226,6 +253,52 @@ mod tests {
         assert_eq!(
             classify(&BrokerError::WrongNodeMode("peers".to_string())),
             Severity::Fatal
+        );
+    }
+
+    // Wrapped in BrokerError these are already covered; BitVMXError also wraps them directly,
+    // and the answer has to be the same either way.
+    #[test]
+    fn a_broker_type_reached_directly_is_still_fatal() {
+        assert_eq!(
+            classify(&IdentificationError::InvalidIdentifier("cafe".to_string())),
+            Severity::Fatal
+        );
+        assert_eq!(
+            classify(&RetryPolicyError::InvalidMaxAttempts(1)),
+            Severity::Fatal
+        );
+    }
+
+    // The same two errors arriving through the wrapper, to keep the paths in step.
+    #[test]
+    fn a_broker_type_reached_through_the_wrapper_agrees() {
+        assert_eq!(
+            classify(&BrokerError::IdentificationError(
+                IdentificationError::InvalidIdentifier("cafe".to_string())
+            )),
+            Severity::Fatal
+        );
+        assert_eq!(
+            classify(&BrokerError::RetryPolicyError(
+                RetryPolicyError::InvalidMaxAttempts(1)
+            )),
+            Severity::Fatal
+        );
+    }
+
+    // A panic while the allow list was held leaves it half-applied, and the allow list decides
+    // who may talk to this node. The second assert keeps the arm a test for one variant rather
+    // than a verdict on every BitVMXError.
+    #[test]
+    fn a_poisoned_lock_is_fatal() {
+        assert_eq!(
+            classify(&BitVMXError::PoisonedLockError("allow list".to_string())),
+            Severity::Fatal
+        );
+        assert_eq!(
+            classify(&BitVMXError::NotImplemented("something else".to_string())),
+            Severity::Other
         );
     }
 
