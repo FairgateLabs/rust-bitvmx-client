@@ -52,14 +52,6 @@ pub struct Program {
     storage: Option<Rc<Storage>>,
 }
 
-/// Whether a bitcoin outage is worth waiting out at the call site.
-enum OnOutage {
-    /// Nothing was consumed, so the next tick retries for free.
-    Retry,
-    /// The work was already partly applied; a retry would replay it.
-    FailSetup,
-}
-
 impl Program {
     /// Returns the storage key for a program.
     fn key_program(program_id: &Uuid) -> String {
@@ -307,7 +299,7 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.handle_setup_error(e, None, OnOutage::Retry, program_context)
+                self.handle_setup_error(e, None, program_context)
             }
             other => other,
         }
@@ -390,24 +382,23 @@ impl Program {
 
     /// Decides what a setup-phase failure means for this program. A fatal error is handed
     /// back to the caller, the only layer that can act on it. Everything else fails the
-    /// setup, except an outage the caller can safely wait out.
+    /// setup, except a bitcoin outage, which is left to retry.
     fn handle_setup_error<BC: BitcoinCoordinatorApi>(
         &mut self,
         error: BitVMXError,
         peer: Option<PubKeyHash>,
-        on_outage: OnOutage,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match classify(&error) {
             Severity::Fatal => Err(error),
-            Severity::BitcoinNodeUnreachable if matches!(on_outage, OnOutage::Retry) => {
+            Severity::BitcoinNodeUnreachable => {
                 warn!(
                     "Program {} cannot advance while bitcoin is unreachable: {:?}",
                     self.program_id, error
                 );
                 Ok(())
             }
-            Severity::BitcoinNodeUnreachable | Severity::Other => self.fail_setup(
+            Severity::Other => self.fail_setup(
                 peer,
                 SetupFailureReason::StepError(error.to_string()),
                 program_context,
@@ -480,7 +471,7 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.handle_setup_error(e, None, OnOutage::Retry, program_context)
+                self.handle_setup_error(e, None, program_context)
             }
             other => other,
         }
@@ -654,12 +645,7 @@ impl Program {
     ) -> Result<MessageDisposition, BitVMXError> {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.handle_setup_error(
-                    e,
-                    Some(comms_address.clone()),
-                    OnOutage::FailSetup,
-                    program_context,
-                )?;
+                self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
                 Ok(MessageDisposition::Processed)
             }
             other => other,
