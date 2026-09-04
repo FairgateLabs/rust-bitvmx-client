@@ -318,6 +318,7 @@ pub trait ProtocolHandler {
     }
 
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
+        log_amounts(&protocol, &self.context().protocol_name)?;
         protocol.save(
             self.context()
                 .storage
@@ -1072,6 +1073,46 @@ pub fn external_action(role: &ParticipantRole, n: u32) -> String {
         ParticipantRole::Prover => format!("EXTERNAL_ACTION_PROVER_{n}"),
         ParticipantRole::Verifier => format!("EXTERNAL_ACTION_VERIFIER_{n}"),
     }
+}
+
+// For amounts logging control, without txids
+fn log_amounts(protocol: &Protocol, protocol_name: &str) -> Result<(), ProtocolBuilderError> {
+    let tag = protocol_name
+        .rsplit_once('_')
+        .map_or(protocol_name, |(p, _)| p);
+
+    let mut outs = 0;
+    let mut sum = 0u64;
+    let mut max_fee = (0u64, String::new());
+
+    for name in protocol.transaction_names() {
+        let tx = protocol.transaction_by_name(&name)?;
+        let out: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
+        let mut into = 0u64;
+        for input in protocol.inputs(&name)? {
+            into += input
+                .output_type()
+                .map_err(ProtocolBuilderError::from)?
+                .get_value()
+                .map_or(0, |v| v.to_sat());
+        }
+
+        outs += tx.output.len();
+        sum += out;
+        let fee = into.saturating_sub(out);
+        if fee > max_fee.0 {
+            max_fee = (fee, name);
+        }
+    }
+
+    // 'outs' is the number of outputs in the whole graph.
+    // 'sum' is every output value added up, across all branches. Alternative branches are mutually exclusive, so this is not a real cost.
+    // 'max_fee' is the largest single transaction fee, and 'at' names that transaction.
+    info!(
+        "amounts {} outs={} sum={} max_fee={} at={}",
+        tag, outs, sum, max_fee.0, max_fee.1
+    );
+    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize)]

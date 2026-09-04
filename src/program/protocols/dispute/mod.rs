@@ -31,7 +31,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{AmountType, SpeedupData},
         OutputType,
     },
 };
@@ -510,7 +510,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut protocol = self.load_or_create_protocol();
 
-        let mut amount = utxo
+        let amount = utxo
             .2
             .ok_or_else(|| BitVMXError::MissingParameter("UTXO amount is required".to_string()))?;
         info!("Protocol amount: {}", amount);
@@ -534,21 +534,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let pb = ProtocolBuilder {};
         pb.add_speedup_output(&mut protocol, START_CH, speedup_dust, verifier_speedup_pub)?;
-
-        amount = self.checked_sub(amount, speedup_dust)?;
-
-        amount = self.checked_sub(amount, fee)?;
-
-        let prover_outputs = config.prover_actions.len() + config.prover_enablers.len();
-        let verifier_outputs = config.verifier_actions.len() + config.verifier_enablers.len();
-        amount = self.checked_sub(
-            amount,
-            ClaimGate::cost(fee, speedup_dust, 1, prover_outputs, true),
-        )?;
-        amount = self.checked_sub(
-            amount,
-            ClaimGate::cost(fee, speedup_dust, 1, verifier_outputs, false),
-        )?;
 
         let timelock_blocks = config.timelock_blocks;
 
@@ -674,7 +659,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 aggregated,
                 &mut protocol,
                 timelock_blocks,
-                amount,
+                AmountType::Auto,
                 speedup_dust,
                 &prev_tx,
                 &input_tx,
@@ -689,8 +674,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_keys,
             )?;
 
-            amount = self.checked_sub(amount, fee)?;
-            amount = self.checked_sub(amount, speedup_dust)?;
             prev_tx = input_tx.clone();
         }
 
@@ -699,7 +682,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             aggregated,
             &mut protocol,
             timelock_blocks,
-            amount,
+            AmountType::Auto,
             speedup_dust,
             &prev_tx,
             PRE_COMMITMENT,
@@ -707,9 +690,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             Self::winternitz_check(agg_or_verifier, sign_mode, &keys[1], &Vec::<&str>::new())?,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
-
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
 
         let reverse_script = Self::get_reverse_script(16 + 40); // sizeof prover_last_step + sizeof prover_last_hash
         let validate_last_step_script =
@@ -720,7 +700,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             aggregated,
             &mut protocol,
             timelock_blocks,
-            amount,
+            AmountType::Auto,
             speedup_dust,
             PRE_COMMITMENT,
             COMMITMENT,
@@ -734,15 +714,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?,
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
 
         self.add_connection_with_scripts(
             context,
             aggregated,
             &mut protocol,
             timelock_blocks,
-            amount,
+            AmountType::Auto,
             speedup_dust,
             COMMITMENT,
             POST_COMMITMENT,
@@ -757,9 +735,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&verifier_speedup_pub, prover_speedup_pub),
         )?;
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
-
         let mut prev = POST_COMMITMENT.to_string();
         for i in 1..nary_def.total_rounds() + 1 {
             let next = format!("NARY_PROVER_{}", i);
@@ -773,7 +748,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 aggregated,
                 &mut protocol,
                 timelock_blocks,
-                amount,
+                AmountType::Auto,
                 speedup_dust,
                 &prev,
                 &next,
@@ -786,8 +761,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
-            amount = self.checked_sub(amount, fee)?;
-            amount = self.checked_sub(amount, speedup_dust)?;
 
             prev = next;
             let next = format!("NARY_VERIFIER_{}", i);
@@ -800,7 +773,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 aggregated,
                 &mut protocol,
                 timelock_blocks,
-                amount,
+                AmountType::Auto,
                 speedup_dust,
                 &prev,
                 &next,
@@ -814,8 +787,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
-            amount = self.checked_sub(amount, fee)?;
-            amount = self.checked_sub(amount, speedup_dust)?;
             prev = next;
         }
 
@@ -824,7 +795,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             aggregated,
             &mut protocol,
             timelock_blocks,
-            amount,
+            AmountType::Auto,
             speedup_dust,
             &prev,
             EXECUTE,
@@ -839,20 +810,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
-        info!(
-            "Amount {}, fee {}, speedup_dust {}",
-            amount, fee, speedup_dust
-        );
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
-
         let (program_def, _) = self.get_program_definition(context)?;
         self.add_connection_with_scripts(
             context,
             aggregated,
             &mut protocol,
             timelock_blocks,
-            amount,
+            AmountType::Auto,
             speedup_dust,
             EXECUTE,
             CHALLENGE,
@@ -870,8 +834,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
         prev = CHALLENGE.to_string();
         for i in 2..nary_def.total_rounds() + 1 {
             let next = format!("NARY2_PROVER_{}", i);
@@ -905,7 +867,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 aggregated,
                 &mut protocol,
                 timelock_blocks,
-                amount,
+                AmountType::Auto,
                 speedup_dust,
                 &prev,
                 &next,
@@ -913,8 +875,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 winternitz_check,
                 (&prover_speedup_pub, &verifier_speedup_pub),
             )?;
-            amount = self.checked_sub(amount, fee)?;
-            amount = self.checked_sub(amount, speedup_dust)?;
 
             prev = next;
             let next = format!("NARY2_VERIFIER_{}", i);
@@ -927,7 +887,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 aggregated,
                 &mut protocol,
                 timelock_blocks,
-                amount,
+                AmountType::Auto,
                 speedup_dust,
                 &prev,
                 &next,
@@ -941,8 +901,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?,
                 (&verifier_speedup_pub, &prover_speedup_pub),
             )?;
-            amount = self.checked_sub(amount, fee)?;
-            amount = self.checked_sub(amount, speedup_dust)?;
             prev = next;
         }
 
@@ -951,7 +909,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             aggregated,
             &mut protocol,
             timelock_blocks,
-            amount,
+            AmountType::Auto,
             speedup_dust,
             &prev,
             GET_HASHES_AND_STEP,
@@ -966,15 +924,12 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&prover_speedup_pub, &verifier_speedup_pub),
         )?;
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
-
         self.add_connection_with_scripts(
             context,
             aggregated,
             &mut protocol,
             timelock_blocks,
-            amount,
+            AmountType::Auto,
             speedup_dust,
             &GET_HASHES_AND_STEP,
             CHALLENGE_READ,
@@ -992,9 +947,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
 
-        amount = self.checked_sub(amount, fee)?;
-        amount = self.checked_sub(amount, speedup_dust)?;
-
         let mut speedup_timeout =
             scripts::check_aggregated_signature(&aggregated, SignMode::Aggregate);
         speedup_timeout.set_assert_leaf_id(0);
@@ -1002,8 +954,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             scripts::timelock(2 * timelock_blocks, &aggregated, SignMode::Aggregate);
         verifier_final.set_assert_leaf_id(1);
 
-        let output_type =
-            OutputType::taproot(amount, aggregated, &vec![speedup_timeout, verifier_final])?;
+        let output_type = OutputType::taproot(
+            AmountType::Auto,
+            aggregated,
+            &vec![speedup_timeout, verifier_final],
+        )?;
 
         protocol.add_connection(
             &format!(
@@ -1038,6 +993,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;
+        // Sizes every connector output marked Auto by walking the graph backwards. The funding output stays fixed.
+        protocol.compute_minimum_output_values()?;
         protocol.build(&context.key_manager, &self.ctx.protocol_name)?;
         info!("\n{}", protocol.visualize(GraphOptions::EdgeArrows)?);
         self.save_protocol(protocol)?;
