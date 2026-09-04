@@ -300,14 +300,14 @@ impl Program {
     }
 
     /// Errors past `Ready` propagate unchanged; setup-phase errors go through
-    /// `recover_from_setup_error`.
+    /// `handle_setup_error`.
     pub fn tick<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.recover_from_setup_error(e, None, OnOutage::Retry, program_context)
+                self.handle_setup_error(e, None, OnOutage::Retry, program_context)
             }
             other => other,
         }
@@ -391,7 +391,7 @@ impl Program {
     /// Decides what a setup-phase failure means for this program. A fatal error is handed
     /// back to the caller, the only layer that can act on it. Everything else fails the
     /// setup, except an outage the caller can safely wait out.
-    fn recover_from_setup_error<BC: BitcoinCoordinatorApi>(
+    fn handle_setup_error<BC: BitcoinCoordinatorApi>(
         &mut self,
         error: BitVMXError,
         peer: Option<PubKeyHash>,
@@ -470,7 +470,7 @@ impl Program {
 
     /// Receives results from job dispatchers (Garbler, Emulator).
     /// Errors during setup are reported to L2 rather than propagated; see
-    /// `recover_from_setup_error`.
+    /// `handle_setup_error`.
     pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
@@ -480,7 +480,7 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.recover_from_setup_error(e, None, OnOutage::Retry, program_context)
+                self.handle_setup_error(e, None, OnOutage::Retry, program_context)
             }
             other => other,
         }
@@ -654,7 +654,7 @@ impl Program {
     ) -> Result<MessageDisposition, BitVMXError> {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.recover_from_setup_error(
+                self.handle_setup_error(
                     e,
                     Some(comms_address.clone()),
                     OnOutage::FailSetup,
