@@ -9,7 +9,7 @@ use bitvmx_job_dispatcher::dispatcher_job::{DispatcherJob, ResultMessage};
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::garbled_messages::{
-    GCJobEvaluationResult, GCJobProveResult, GarbledJobType, ProofBlob,
+    GCCommitmentsFile, GCJobEvaluationResult, GCJobProveResult, GarbledJobType, ProofBlob,
 };
 use bitvmx_settings::settings::decrypt_or_read_file_bytes;
 use key_manager::{
@@ -101,10 +101,14 @@ pub fn test_gnova_commands() -> Result<()> {
     let gc_proof = std::fs::read(gc_proof_path)?;
     let lamport_proof = std::fs::read(lamport_proof_path)?;
 
+    let commitments_path = &prove_result.commitments_path;
+    let commitments = std::fs::read(commitments_path)?;
+
     let proof_blob = ProofBlob {
         prove_result,
         gc_proof,
         lamport_proof,
+        commitments,
     };
 
     // --- Step 2: Verify (verifies both GC and Lamport proofs) ---
@@ -310,10 +314,14 @@ fn run_garbled_client_test() -> Result<()> {
     let gc_proof = std::fs::read(gc_proof_path)?;
     let lamport_proof = std::fs::read(lamport_proof_path)?;
 
+    let commitments_path = &prove_parsed.commitments_path;
+    let commitments = std::fs::read(commitments_path)?;
+
     let proof_blob = ProofBlob {
         prove_result: prove_parsed,
         gc_proof,
         lamport_proof,
+        commitments,
     };
 
     let verify_job = DispatcherJob {
@@ -470,10 +478,14 @@ pub fn test_full_protocol() -> Result<()> {
     let gc_proof = std::fs::read(gc_proof_path)?;
     let lamport_proof = std::fs::read(lamport_proof_path)?;
 
+    let commitments_path = &prove_result.commitments_path;
+    let commitments = std::fs::read(commitments_path)?;
+
     let proof_blob = ProofBlob {
         prove_result: prove_result.clone(),
         gc_proof,
         lamport_proof,
+        commitments: commitments.clone(),
     };
 
     let verify_job = GarbledJobType::Verify(
@@ -587,7 +599,7 @@ pub fn test_full_protocol() -> Result<()> {
 
     let eval_job = GarbledJobType::Evaluate(
         TEST_CIRCUIT_PATH.to_string(),
-        prove_result.clone(),
+        commitments,
         circuit_input,
         format!("{}/evaluate", output_dir),
     );
@@ -610,7 +622,12 @@ pub fn test_full_protocol() -> Result<()> {
 
     let sha_output = compute_sha256(output);
 
-    let expected_lamport = prove_result
+    let commitments_path = &prove_result.commitments_path;
+    let encoded_commitments = std::fs::read(commitments_path)?;
+
+    let commitments: GCCommitmentsFile = serde_json::from_slice(&encoded_commitments)?;
+
+    let expected_lamport = commitments
         .sha256_commitments
         .last()
         .map(|commitment| hex::decode(&commitment.h1).ok())
