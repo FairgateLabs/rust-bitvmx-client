@@ -600,7 +600,7 @@ impl BitVMX {
 
     fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         self.program_context.bitcoin_coordinator.tick()?;
-        self.process_wallet_updates()?;
+        self.wallet.tick()?;
 
         if !self.program_context.bitcoin_coordinator.is_ready()? {
             return Ok(true);
@@ -1095,17 +1095,6 @@ impl BitVMX {
         self.store.commit_global_transaction()?;
 
         Ok(TickOutcome::Operating)
-    }
-
-    pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
-        if let Err(e) = self.wallet.tick() {
-            let e = BitVMXError::from(e);
-            error!("Error updating wallet: {:?}", e);
-            if is_fatal(&e) {
-                return Err(e);
-            }
-        }
-        Ok(())
     }
 
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<bool, BitVMXError> {
