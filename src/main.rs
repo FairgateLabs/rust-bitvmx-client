@@ -12,12 +12,14 @@ use clap::{Arg, Command};
 use tracing::{info, info_span};
 use tracing_subscriber::EnvFilter;
 
-use bitvmx_client::{bitvmx::BitVMX, config::Config};
+use bitvmx_client::{
+    bitvmx::{BitVMX, TickOutcome},
+    config::Config,
+};
 
 struct OperatorInstance {
     name: String,
     bitvmx: BitVMX,
-    ready: bool,
 }
 
 impl OperatorInstance {
@@ -26,7 +28,6 @@ impl OperatorInstance {
         Ok(Self {
             name: name.to_string(),
             bitvmx: init_bitvmx(name, fresh)?,
-            ready: false,
         })
     }
 }
@@ -134,38 +135,23 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                 // include operator name in logs
                 let _span = info_span!("", id = instance.name).entered();
 
-                if instance.ready {
-                    match instance.bitvmx.tick() {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            info!("BitVMX requested shutdown");
-                            break 'main;
-                        }
-                        Err(e) => {
-                            // tick only returns Err when the error is fatal, we can safely exit here
-                            return Err(e.into());
+                // A tick catches up with the chain tip first and only runs the rest of
+                // the node once it is there.
+                match instance.bitvmx.tick() {
+                    Ok(TickOutcome::Syncing) | Ok(TickOutcome::Operating) => {}
+                    Ok(TickOutcome::CaughtUp) => {
+                        // Signal to any waiting threads that initialization is complete
+                        if let Some(tx) = &tx {
+                            let _ = tx.send(());
                         }
                     }
-                } else {
-                    // Still syncing with Bitcoin blockchain. Process bitcoin updates to catch up to the
-                    // current chain tip
-                    match instance.bitvmx.process_bitcoin_updates_with_throttle() {
-                        Ok(ready) => {
-                            instance.ready = ready;
-                            if instance.ready {
-                                // Sync complete - ready to start normal operation
-                                info!("Sync complete, starting normal operation");
-                                // Signal to any waiting threads that initialization is complete
-                                if let Some(tx) = &tx {
-                                    let _ = tx.send(());
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            // process_bitcoin_updates_with_throttle only returns Err when the error is fatal
-                            tracing::error!("Error syncing bitcoin updates: {e:?}");
-                            return Err(e.into());
-                        }
+                    Ok(TickOutcome::Stopping) => {
+                        info!("BitVMX stopped ticking");
+                        break 'main;
+                    }
+                    Err(e) => {
+                        // tick only returns Err when the error is fatal, we can safely exit here
+                        return Err(e.into());
                     }
                 }
             }

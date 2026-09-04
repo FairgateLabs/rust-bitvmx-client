@@ -1,7 +1,10 @@
 use anyhow::Result;
 
 use bitvmx_broker::RemoteChannel;
-use bitvmx_client::types::{ErrorReportKind, OutgoingBitVMXApiMessages};
+use bitvmx_client::{
+    bitvmx::TickOutcome,
+    types::{ErrorReportKind, OutgoingBitVMXApiMessages},
+};
 use std::time::Duration;
 
 mod common;
@@ -36,14 +39,14 @@ fn bitcoin_outage_is_reported_once_and_the_node_keeps_ticking() -> Result<()> {
 
     let mut healthy = true;
     for _ in 0..20 {
-        healthy &= bitvmx.tick()?;
+        healthy &= bitvmx.tick()? != TickOutcome::Stopping;
     }
 
     bitcoind.stop()?;
 
     let mut alive_during_outage = true;
     for _ in 0..200 {
-        alive_during_outage &= bitvmx.tick()?;
+        alive_during_outage &= bitvmx.tick()? != TickOutcome::Stopping;
         std::thread::sleep(Duration::from_millis(10));
     }
     let unavailable = count_kind(&drain(&l2)?, &ErrorReportKind::BitcoinRpcUnavailable);

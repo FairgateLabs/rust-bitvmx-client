@@ -61,6 +61,14 @@ pub const WALLET_CHANGE_INDEX: u32 = 101;
 pub const CLIENT_GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_bytes(*b"GLOBAL_SETTINGS-");
 pub const SEND_NEW_BLOCK_NEWS: &str = "send_new_block_news";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickOutcome {
+    Syncing,
+    CaughtUp,
+    Operating,
+    Stopping,
+}
+
 pub struct BitVMX {
     config: Config,
     program_context: ProgramContext,
@@ -73,6 +81,8 @@ pub struct BitVMX {
     ping_helper: PingHelper,
     reporter: Reporter,
     shutdown: bool,
+    /// Set once the indexer reaches the chain tip; until then a tick only syncs.
+    chain_synced: bool,
 }
 
 impl Drop for BitVMX {
@@ -200,6 +210,7 @@ impl BitVMX {
             ping_helper,
             reporter,
             shutdown: false,
+            chain_synced: false,
         })
     }
 
@@ -595,6 +606,11 @@ impl BitVMX {
             return Ok(true);
         }
 
+        if !self.chain_synced {
+            info!("Sync complete, starting normal operation");
+            self.chain_synced = true;
+        }
+
         let news = self.program_context.bitcoin_coordinator.get_news()?;
 
         if news.monitor_news.is_empty() && news.coordinator_news.is_empty() {
@@ -963,7 +979,7 @@ impl BitVMX {
         Ok(processed)
     }
 
-    pub fn tick(&mut self) -> Result<bool, BitVMXError> {
+    pub fn tick(&mut self) -> Result<TickOutcome, BitVMXError> {
         let result = self.tick_inner();
 
         if let Err(e) = &result {
@@ -985,24 +1001,36 @@ impl BitVMX {
                     .stopping(e, &self.program_context.broker_channel);
                 //TODO: keep ticking instead of stopping, once we know a partially
                 //applied tick is safe to carry on from.
-                return Ok(false);
+                return Ok(TickOutcome::Stopping);
             }
         }
 
         result
     }
 
-    fn tick_inner(&mut self) -> Result<bool, BitVMXError> {
+    fn tick_inner(&mut self) -> Result<TickOutcome, BitVMXError> {
         debug!("Ticking BitVMX: {}", self.count);
-
-        self.store.begin_global_transaction()?;
 
         if self.shutdown {
             info!("BitVMX is shutdown, stopping tick processing.");
-            return Ok(false);
+            return Ok(TickOutcome::Stopping);
         }
 
         self.count += 1;
+
+        // Nothing else can run against a chain we have not caught up with, so until the
+        // coordinator reaches the tip a tick only advances the sync.
+        if !self.chain_synced {
+            self.process_bitcoin_updates_with_throttle()?;
+            return Ok(if self.chain_synced {
+                TickOutcome::CaughtUp
+            } else {
+                TickOutcome::Syncing
+            });
+        }
+
+        self.store.begin_global_transaction()?;
+
         const WARN_THRESHOLD: Duration = Duration::from_secs(10);
 
         if self.bitvmx_throttle.should_call() {
@@ -1066,7 +1094,7 @@ impl BitVMX {
 
         self.store.commit_global_transaction()?;
 
-        Ok(true)
+        Ok(TickOutcome::Operating)
     }
 
     pub fn process_wallet_updates(&mut self) -> Result<(), BitVMXError> {
@@ -1111,6 +1139,7 @@ impl BitVMX {
         }
         Ok(false)
     }
+
     pub fn process_programs(&mut self) -> Result<bool, BitVMXError> {
         let all_programs = self.get_programs()?;
 
