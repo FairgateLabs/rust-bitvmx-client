@@ -33,6 +33,9 @@ bitvmx_throttle:
   busy_interval: 20
   idle_interval: 200
 
+job_dispatcher_ping:
+  services: [Emulator]
+
 broker:
   settings: config/broker_settings.yaml
   allow_list: config/broker_allow_list.yaml

@@ -7,8 +7,8 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
+    error_handling::{classify, send_error_report, Severity},
     errors::{BitVMXError, ProgramError},
-    ping_helper::JobDispatcherType,
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -16,7 +16,10 @@ use crate::{
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
-    types::{MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext, SetupFailureReason},
+    types::{
+        ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType, MessageDisposition,
+        OutgoingBitVMXApiMessages, ProgramContext, SetupFailureReason,
+    },
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
@@ -25,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::participant::CommsAddress;
@@ -107,19 +110,22 @@ impl Program {
             .map(|engine| engine.current_step_name().to_string())
             .unwrap_or_default();
 
-        let msg = OutgoingBitVMXApiMessages::SetupFailed(
-            self.program_id,
-            step.clone(),
-            peer.clone(),
-            reason.clone(),
-        )
-        .to_string()?;
-        program_context
-            .broker_channel
-            .send_service(&program_context.components_config.l2, msg)?;
-
         self.state = ProgramState::Failed;
         self.save()?;
+
+        send_error_report(
+            &program_context.broker_channel,
+            &program_context.components_config.l2,
+            ErrorReport::new(
+                ErrorScope::Program(self.program_id),
+                ErrorReportKind::SetupFailed {
+                    step: step.clone(),
+                    peer: peer.clone(),
+                    reason: reason.clone(),
+                },
+                None,
+            ),
+        );
 
         info!(
             "Program: Sent SetupFailed for program {} at step '{}' (peer: {:?}): {:?}",
@@ -285,22 +291,15 @@ impl Program {
         Ok(())
     }
 
-    /// Main tick function - drives the program forward.
-    ///
-    /// A setup-phase error is reported as `SetupFailed` and swallowed rather than returned:
-    /// `main.rs` treats a `tick` error as fatal. Errors past `Ready` propagate unchanged.
+    /// Errors past `Ready` propagate unchanged; setup-phase errors go through
+    /// `handle_setup_error`.
     pub fn tick<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(
-                    None,
-                    SetupFailureReason::StepError(e.to_string()),
-                    program_context,
-                )?;
-                Ok(())
+                self.handle_setup_error(e, None, program_context)
             }
             other => other,
         }
@@ -381,6 +380,32 @@ impl Program {
         Ok(())
     }
 
+    /// Decides what a setup-phase failure means for this program. A fatal error is handed
+    /// back to the caller, the only layer that can act on it. Everything else fails the
+    /// setup, except a bitcoin outage, which is left to retry.
+    fn handle_setup_error<BC: BitcoinCoordinatorApi>(
+        &mut self,
+        error: BitVMXError,
+        peer: Option<PubKeyHash>,
+        program_context: &mut ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
+        match classify(&error) {
+            Severity::Fatal => Err(error),
+            Severity::BitcoinNodeUnreachable => {
+                warn!(
+                    "Program {} cannot advance while bitcoin is unreachable: {:?}",
+                    self.program_id, error
+                );
+                Ok(())
+            }
+            Severity::Other => self.fail_setup(
+                peer,
+                SetupFailureReason::StepError(error.to_string()),
+                program_context,
+            ),
+        }
+    }
+
     fn start_monitoring<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
@@ -435,8 +460,8 @@ impl Program {
     }
 
     /// Receives results from job dispatchers (Garbler, Emulator).
-    ///
-    /// Errors during setup are reported to L2 rather than propagated; see `tick`.
+    /// Errors during setup are reported to L2 rather than propagated; see
+    /// `handle_setup_error`.
     pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
@@ -446,12 +471,7 @@ impl Program {
     ) -> Result<(), BitVMXError> {
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(
-                    None,
-                    SetupFailureReason::StepError(e.to_string()),
-                    program_context,
-                )?;
-                Ok(())
+                self.handle_setup_error(e, None, program_context)
             }
             other => other,
         }
@@ -625,11 +645,7 @@ impl Program {
     ) -> Result<MessageDisposition, BitVMXError> {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
-                self.fail_setup(
-                    Some(comms_address.clone()),
-                    SetupFailureReason::StepError(e.to_string()),
-                    program_context,
-                )?;
+                self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
                 Ok(MessageDisposition::Processed)
             }
             other => other,
@@ -1017,13 +1033,18 @@ mod tests {
         let messages = env.l2_messages().unwrap();
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            OutgoingBitVMXApiMessages::SetupFailed(id, _, peer, reason) => {
-                assert_eq!(*id, program_id);
-                assert!(peer.is_none());
-                assert!(matches!(reason, SetupFailureReason::StepError(text)
-                    if text.contains("Protocol must return setup steps")));
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Program(program_id));
+                match &report.kind {
+                    ErrorReportKind::SetupFailed { peer, reason, .. } => {
+                        assert!(peer.is_none());
+                        assert!(matches!(reason, SetupFailureReason::StepError(text)
+                            if text.contains("Protocol must return setup steps")));
+                    }
+                    other => panic!("expected SetupFailed, got {other:?}"),
+                }
             }
-            other => panic!("expected SetupFailed, got {other:?}"),
+            other => panic!("expected Error, got {other:?}"),
         }
     }
 
@@ -1057,14 +1078,19 @@ mod tests {
         let messages = env.l2_messages().unwrap();
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            OutgoingBitVMXApiMessages::SetupFailed(id, step, peer, reason) => {
-                assert_eq!(*id, program_id);
-                assert_eq!(step, "keys");
-                assert_eq!(peer.as_ref(), Some(&sender));
-                assert!(matches!(reason, SetupFailureReason::StepError(text)
-                    if text.contains("Failed to deserialize key declaration")));
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Program(program_id));
+                match &report.kind {
+                    ErrorReportKind::SetupFailed { step, peer, reason } => {
+                        assert_eq!(step, "keys");
+                        assert_eq!(peer.as_ref(), Some(&sender));
+                        assert!(matches!(reason, SetupFailureReason::StepError(text)
+                            if text.contains("Failed to deserialize key declaration")));
+                    }
+                    other => panic!("expected SetupFailed, got {other:?}"),
+                }
             }
-            other => panic!("expected SetupFailed, got {other:?}"),
+            other => panic!("expected Error, got {other:?}"),
         }
     }
 
@@ -1206,13 +1232,18 @@ mod tests {
         let messages = env.l2_messages().unwrap();
         assert_eq!(messages.len(), 1);
         match &messages[0] {
-            OutgoingBitVMXApiMessages::SetupFailed(id, _, peer, reason) => {
-                assert_eq!(*id, program_id);
-                assert!(peer.is_none());
-                assert!(matches!(reason, SetupFailureReason::StepError(text)
-                    if text.contains("Invalid context for Garbler result")));
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Program(program_id));
+                match &report.kind {
+                    ErrorReportKind::SetupFailed { peer, reason, .. } => {
+                        assert!(peer.is_none());
+                        assert!(matches!(reason, SetupFailureReason::StepError(text)
+                            if text.contains("Invalid context for Garbler result")));
+                    }
+                    other => panic!("expected SetupFailed, got {other:?}"),
+                }
             }
-            other => panic!("expected SetupFailed, got {other:?}"),
+            other => panic!("expected Error, got {other:?}"),
         }
 
         // Same for the emulator route, which this protocol does not support. Uses a second
@@ -1313,8 +1344,13 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert!(matches!(
             &messages[0],
-            OutgoingBitVMXApiMessages::SetupFailed(_, _, _, SetupFailureReason::StepError(reason))
-                if reason.contains("Unknown dispatcher type: ZKP")
+            OutgoingBitVMXApiMessages::Error(ErrorReport {
+                kind: ErrorReportKind::SetupFailed {
+                    reason: SetupFailureReason::StepError(reason),
+                    ..
+                },
+                ..
+            }) if reason.contains("Unknown dispatcher type: ZKP")
         ));
     }
 

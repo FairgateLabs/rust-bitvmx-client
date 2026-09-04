@@ -23,7 +23,7 @@ pub enum BitVMXError {
     /* =========================
      * Configuration & Init
      * ========================= */
-    #[error("Invalid configuration")]
+    #[error("Invalid configuration: {0}")]
     ConfigurationError(#[from] ConfigError),
 
     #[error("Configuration error: {0}")]
@@ -56,10 +56,10 @@ pub enum BitVMXError {
     /* =========================
      * Parsing / Serialization
      * ========================= */
-    #[error("Error parsing int")]
+    #[error("Error parsing int: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
 
-    #[error("Error parsing from script int")]
+    #[error("Error parsing from script int: {0}")]
     ScriptIntParseError(#[from] bitcoin::script::Error),
 
     #[error("Error decoding hex string: {0}")]
@@ -158,7 +158,7 @@ pub enum BitVMXError {
     #[error("ProgramDefinition Error {0}")]
     ProgramDefinitionError(#[from] ProgramDefinitionError),
 
-    #[error("Program already exists")]
+    #[error("Program already exists: {0}")]
     ProgramAlreadyExists(Uuid),
 
     #[error("Program {0} is not ready to run. Please install it first.")]
@@ -227,10 +227,10 @@ pub enum BitVMXError {
     #[error("Invalid Comms address: {0}")]
     InvalidCommsAddress(String),
 
-    #[error("Broker channel error")]
+    #[error("Broker channel error: {0}")]
     BrokerError(#[from] BrokerError),
 
-    #[error("Client error")]
+    #[error("Client error: {0}")]
     ClientError(#[from] ClientError),
 
     #[error("Invalid parser version")]
@@ -371,10 +371,10 @@ impl<T> From<PoisonError<T>> for BitVMXError {
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    #[error("Public key in config is invalid")]
+    #[error("Public key in config is invalid: {0}")]
     InvalidPublicKey(#[from] ParsePublicKeyError),
 
-    #[error("SighashType in config is invalid")]
+    #[error("SighashType in config is invalid: {0}")]
     InvalidSighashType(#[from] SighashTypeParseError),
 
     #[error("Winternitz seed is invalid")]
@@ -383,10 +383,10 @@ pub enum ConfigError {
     #[error("Key derivation seed is invalid")]
     InvalidKeyDerivationSeed,
 
-    #[error("Network is invalid")]
+    #[error("Network is invalid: {0}")]
     InvalidNetwork(#[from] ParseNetworkError),
 
-    #[error("Hex value is invalid")]
+    #[error("Hex value is invalid: {0}")]
     InvalidHexValue(#[from] FromHexError),
 
     #[error("Invalid program path {0}")]
@@ -395,7 +395,10 @@ pub enum ConfigError {
     #[error("Invalid configuation path {0}")]
     InvalidConfigPath(String),
 
-    #[error("Invalid configuration from file")]
+    #[error("Invalid job dispatcher ping config: {0}")]
+    InvalidPingConfig(String),
+
+    #[error("Invalid configuration from file: {0}")]
     SettingsError(#[from] bitvmx_settings::errors::ConfigError),
 
     #[error("Invalid private key {0}")]
@@ -410,10 +413,10 @@ pub enum ProgramError {
     #[error("Storage path configured for program is invalid {0}")]
     InvalidProgramStoragePath(String),
 
-    #[error("Error while building dispute resolution protocol")]
+    #[error("Error while building dispute resolution protocol: {0}")]
     FailedToBuildDisputeResolutionProtocol(#[from] ProtocolBuilderError),
 
-    #[error("Error loading Program")]
+    #[error("Error loading Program: {0}")]
     LoadError(#[from] StorageError),
 
     #[error("Program not found in storage. Program id: {0}")]
@@ -452,7 +455,7 @@ pub enum BitcoinClientError {
     #[error("Failed to list wallets")]
     FailedToListWallets { error: String },
 
-    #[error("Rpc error")]
+    #[error("Rpc error: {0}")]
     RpcError(#[from] bitvmx_bitcoin_rpc::errors::BitcoinClientError),
 }
 

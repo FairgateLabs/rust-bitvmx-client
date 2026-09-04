@@ -166,8 +166,46 @@ This table shows the mapping between request messages and their expected respons
 
 #### Error Handling
 
-- Some operations can return error responses like `NotFound`, `WalletNotReady`, or `WalletError`
-- The UUID ensures that responses are matched to the correct request even in error cases
+Errors come in two shapes.
+
+**Reply-style** errors answer a request and carry its UUID: `NotFound`, `WalletNotReady`,
+`WalletError`, `ProofGenerationError`. The UUID ensures that responses are matched to the correct
+request even in error cases. These appear in the tables above.
+
+**Push-style** errors are unprompted — the client detected something and is telling you. There is
+exactly one such message, and because it answers no request it appears in no table:
+
+```
+Error(ErrorReport { scope, kind, detail })
+```
+
+`scope` says who it concerns: `Node` (the client itself), `Program(uuid)`, or `Request(uuid)`.
+A `Request`-scoped report is delivered to whoever issued that request, not to L2.
+
+`kind` says what happened:
+
+| Kind | Meaning |
+|---|---|
+| `SetupFailed { step, peer, reason }` | A setup cannot complete. Terminal: no further messages for that program, and its id cannot be reused. |
+| `JobDispatcherUnresponsive(which)` | A job dispatcher stopped answering pings within the timeout. It may be gone, or far enough behind on its inbox to look that way, so treat it as a warning about job progress rather than proof the process died. |
+| `JobDispatcherRecovered(which)` | That dispatcher is answering again. |
+| `BitcoinRpcUnavailable` | The bitcoin node is unreachable. The client keeps running and retrying. |
+| `BitcoinRpcRecovered` | The bitcoin node is reachable again. |
+| `Fatal` | The client cannot continue and is exiting — storage or the message broker failed. Best-effort: it may not arrive. |
+| `NodeStopping` | The client is stopping on an error that does not indicate corrupted state. It exits zero, unlike `Fatal`, so it is not asking to be restarted. Carrying on past these is not implemented yet. |
+| `TransactionDispatchFailed { txid }` | Dispatch retries exhausted; the transaction will never confirm. |
+| `SpeedupDispatchFailed { txid }` | A CPFP/RBF speedup could not be dispatched. |
+| `TransactionStuckInMempool { txid }` | A transaction has sat in the mempool past its threshold. |
+| `FeeRateTooHigh { estimated, max }` | The estimated fee rate exceeded the configured cap; nothing was dispatched. |
+| `MaxFeeRateReached { txid, effective_fee_rate }` | A speedup hit the fee cap. No further boosts will be applied. |
+| `InsufficientFunds { available, required }` | A funding UTXO could not cover a speedup fee. |
+| `FundingNotAvailable` | No funding UTXO is available at all. |
+| `InvalidFundingUtxo { amount, min_required }` | A funding UTXO was provided but is unusable. |
+
+`detail` is optional free text for logs and operators; never match on it.
+
+The liveness kinds are reported on change, not repeatedly: one message when the condition starts,
+one when it clears.
 
 ### Notes
 
