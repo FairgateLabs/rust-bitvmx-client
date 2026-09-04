@@ -135,7 +135,6 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
         }
 
         if let Some(error) = error.downcast_ref::<BitcoinRpcError>() {
-            // Anything else means the node answered and refused, which is not an outage.
             if matches!(
                 error,
                 BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(_))
