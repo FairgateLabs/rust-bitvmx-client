@@ -230,9 +230,9 @@ pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
 }
 
+// Measured requirement for a 10 round, 1 input program (test_generic_verifier).
 pub fn protocol_cost() -> u64 {
-    //38_000 // This is a placeholder value, adjust as needed
-    80_000
+    44_800
 }
 
 fn get_role(my_idx: usize) -> ParticipantRole {
@@ -990,6 +990,13 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             VERIFIER_FINAL,
             speedup_dust,
             &verifier_speedup_pub,
+        )?;
+
+        // Last transaction of the protocol, so the remaining amount would be burned as fee.
+        // Send it to the verifier, who is the party that reaches this transaction.
+        protocol.add_transaction_output(
+            VERIFIER_FINAL,
+            &OutputType::segwit_key(AmountType::Recover, verifier_speedup_pub)?,
         )?;
 
         claim_verifier.add_claimer_win_connection(&mut protocol, VERIFIER_FINAL)?;

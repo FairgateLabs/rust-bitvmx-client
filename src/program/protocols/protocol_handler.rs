@@ -892,6 +892,12 @@ pub trait ProtocolHandler {
         let pb = ProtocolBuilder {};
         pb.add_speedup_output(protocol, &timeout_tx(to), amount_speedup, other_speedup)?;
 
+        // This transaction ends the protocol. Send it to the party that wins on timeout instead of leaving it to the miner as fee.
+        protocol.add_transaction_output(
+            &timeout_tx(to),
+            &OutputType::segwit_key(AmountType::Recover, other_speedup)?,
+        )?;
+
         // store the input and leaf for the timeout tx
         context.globals.set_var(
             &self.context().id,
@@ -923,6 +929,12 @@ pub trait ProtocolHandler {
             &timeout_input_tx(to),
             amount_speedup,
             other_speedup,
+        )?;
+
+        // This transaction also ends the protocol and would otherwise burn the remaining amount.
+        protocol.add_transaction_output(
+            &timeout_input_tx(to),
+            &OutputType::segwit_key(AmountType::Recover, other_speedup)?,
         )?;
 
         Ok(())
