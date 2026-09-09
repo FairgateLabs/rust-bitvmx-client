@@ -1148,7 +1148,7 @@ impl BitVMX {
         Ok(TickOutcome::Operating)
     }
 
-    pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<bool, BitVMXError> {
+    pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<(), BitVMXError> {
         if self.coordinator_throttle.should_call() {
             // Catch-up runs before the normal application transaction is opened, but it
             // can still update persisted coordinator and wallet state. Give that work its
@@ -1167,32 +1167,15 @@ impl BitVMX {
             }
 
             if let Err(e) = result {
-                //TODO: record(false) here, otherwise an unreachable node is retried every
-                //tick instead of at the configured interval
-                return match classify(&e) {
-                    Severity::BitcoinNodeUnreachable => {
-                        self.reporter
-                            .rpc_unavailable(&e, &self.program_context.broker_channel);
-                        Ok(false)
-                    }
-                    Severity::Fatal => {
-                        self.reporter
-                            .fatal(&e, &self.program_context.broker_channel);
-                        Err(e)
-                    }
-                    Severity::Other => {
-                        error!("Critical error processing bitcoin updates: {:?}", e);
-                        Ok(false)
-                    }
-                };
+                return Err(e);
             }
             let had_work = result.unwrap_or(false);
             self.reporter
                 .rpc_recovered(&self.program_context.broker_channel);
             self.coordinator_throttle.record(had_work);
-            return Ok(had_work);
+            return Ok(());
         }
-        Ok(false)
+        Ok(())
     }
 
     pub fn process_programs(&mut self) -> Result<bool, BitVMXError> {
