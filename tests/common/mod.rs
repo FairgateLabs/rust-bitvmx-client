@@ -170,6 +170,8 @@ pub fn init_bitvmx_with_config(
     tune: impl FnOnce(&mut Config),
 ) -> Result<(BitVMX, CommsAddress, RemoteChannel, Option<RemoteChannel>)> {
     let mut config = Config::new(Some(format!("config/{}.yaml", role)))?;
+    // Tests do not always tick the dispatchers, so a live one would look dead. Opt in via `tune`.
+    config.job_dispatcher_ping = None;
     tune(&mut config);
     let allow_list = AllowList::from_file(&config.broker.allow_list)?;
     let broker_config = BrokerConfig::new(

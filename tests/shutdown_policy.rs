@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
+use bitvmx_client::{
+    bitvmx::TickOutcome,
+    types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages},
+};
 use uuid::Uuid;
 
 mod common;
@@ -25,12 +28,16 @@ fn shutdown_without_errors() -> Result<()> {
     }
 
     let result = bitvmx.tick()?;
-    assert!(result, "expected continue from tick");
+    assert_ne!(result, TickOutcome::Stopping, "expected continue from tick");
 
     // Now shutdown cleanly
     bitvmx.shutdown()?;
     let result = bitvmx.tick()?; // should indicate stop
-    assert!(!result, "expected stop from tick after shutdown");
+    assert_eq!(
+        result,
+        TickOutcome::Stopping,
+        "expected stop from tick after shutdown"
+    );
 
     Ok(())
 }

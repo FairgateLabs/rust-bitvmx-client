@@ -3,9 +3,9 @@ use crate::{errors::BitVMXError, program::participant::CommsAddress};
 use bitvmx_broker::BrokerNode;
 use chrono::Utc;
 use key_manager::key_manager::KeyManager;
+use rsa::signature::SignatureEncoding;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use rsa::signature::SignatureEncoding;
 use std::rc::Rc;
 use uuid::Uuid;
 

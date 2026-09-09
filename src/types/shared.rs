@@ -172,6 +172,13 @@ impl IncomingBitVMXApiMessages {
 
 type ProgramId = Uuid;
 
+#[derive(Eq, Hash, PartialEq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum JobDispatcherType {
+    ZKP,
+    Emulator,
+    Garbler,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum SetupFailureReason {
     StepError(String),
@@ -181,6 +188,78 @@ pub enum SetupFailureReason {
     MessageLost,
     /// A message addressed to this peer could not be delivered.
     Undeliverable,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum ErrorScope {
+    Node,
+    Program(ProgramId),
+    /// Reports carrying this are answered to the requester, not to L2.
+    Request(Uuid),
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum ErrorReportKind {
+    /// Terminal: no further messages for this program, and its id cannot be reused.
+    SetupFailed {
+        step: String,
+        peer: Option<PubkHash>,
+        reason: SetupFailureReason,
+    },
+    JobDispatcherUnresponsive(JobDispatcherType),
+    JobDispatcherRecovered(JobDispatcherType),
+    /// Storage or the broker failed; the node is exiting. Best-effort: may not arrive.
+    Fatal,
+    NodeStopping,
+    BitcoinRpcUnavailable,
+    BitcoinRpcRecovered,
+    TransactionDispatchFailed {
+        txid: Txid,
+    },
+    SpeedupDispatchFailed {
+        txid: Txid,
+    },
+    TransactionStuckInMempool {
+        txid: Txid,
+    },
+    FeeRateTooHigh {
+        estimated: u64,
+        max: u64,
+    },
+    MaxFeeRateReached {
+        txid: Txid,
+        effective_fee_rate: u64,
+    },
+    InsufficientFunds {
+        available: u64,
+        required: u64,
+    },
+    FundingNotAvailable,
+    InvalidFundingUtxo {
+        amount: u64,
+        min_required: u64,
+    },
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct ErrorReport {
+    pub scope: ErrorScope,
+    pub kind: ErrorReportKind,
+    pub detail: Option<String>,
+}
+
+impl ErrorReport {
+    pub fn new(scope: ErrorScope, kind: ErrorReportKind, detail: Option<String>) -> Self {
+        Self {
+            scope,
+            kind,
+            detail,
+        }
+    }
+
+    pub fn node(kind: ErrorReportKind) -> Self {
+        Self::new(ErrorScope::Node, kind, None)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -194,12 +273,10 @@ pub enum OutgoingBitVMXApiMessages {
     PeginTransactionFound(Txid, TransactionStatus),
     // Represents when a spending utxo transaction is found
     SpendingUTXOTransactionFound(Uuid, Txid, u32, TransactionStatus),
-    // Represents when a program is running out of funds
-    SpeedUpProgramNoFunds(),
     // Setup Completed,
     SetupCompleted(ProgramId),
-    // Setup could not be completed. Terminal: no further messages arrive for this program.
-    SetupFailed(ProgramId, String, Option<PubkHash>, SetupFailureReason), // id, step, peer involved, reason
+    // Unprompted error report, scoped by `ErrorScope`
+    Error(ErrorReport),
     // Add response types for the new messages if needed
     AggregatedPubkey(Uuid, PublicKey),
     AggregatedPubkeyNotReady(Uuid),
@@ -360,11 +437,8 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(_, _, _, _) => {
                 "SpendingUTXOTransactionFound".to_string()
             }
-            OutgoingBitVMXApiMessages::SpeedUpProgramNoFunds() => {
-                "SpeedUpProgramNoFunds".to_string()
-            }
             OutgoingBitVMXApiMessages::SetupCompleted(_) => "SetupCompleted".to_string(),
-            OutgoingBitVMXApiMessages::SetupFailed(_, _, _, _) => "SetupFailed".to_string(),
+            OutgoingBitVMXApiMessages::Error(_) => "Error".to_string(),
             OutgoingBitVMXApiMessages::AggregatedPubkey(_, _) => "AggregatedPubkey".to_string(),
             OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(_) => {
                 "AggregatedPubkeyNotReady".to_string()

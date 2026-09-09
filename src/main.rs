@@ -12,12 +12,14 @@ use clap::{Arg, Command};
 use tracing::{info, info_span};
 use tracing_subscriber::EnvFilter;
 
-use bitvmx_client::{bitvmx::BitVMX, config::Config};
+use bitvmx_client::{
+    bitvmx::{BitVMX, TickOutcome},
+    config::Config,
+};
 
 struct OperatorInstance {
     name: String,
     bitvmx: BitVMX,
-    ready: bool,
 }
 
 impl OperatorInstance {
@@ -26,7 +28,6 @@ impl OperatorInstance {
         Ok(Self {
             name: name.to_string(),
             bitvmx: init_bitvmx(name, fresh)?,
-            ready: false,
         })
     }
 }
@@ -122,7 +123,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     }));
 
     // Main processing loop wrapped in catch_unwind to ensure coordinated shutdown on panic
-    let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
         'main: loop {
             // Check if Ctrl+C was pressed to gracefully shutdown
             if rx.try_recv().is_ok() {
@@ -134,54 +135,35 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
                 // include operator name in logs
                 let _span = info_span!("", id = instance.name).entered();
 
-                if instance.ready {
-                    match instance.bitvmx.tick() {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            info!("BitVMX requested shutdown");
-                            break 'main;
-                        }
-                        Err(e) => {
-                            tracing::error!("Error in tick(): {e:#?}");
-                            let mut source = std::error::Error::source(&e);
-                            while let Some(err) = source {
-                                tracing::error!("  Caused by: {err}");
-                                source = std::error::Error::source(err);
-                            }
-                            // escalate fatal errors to shutdown signal
-                            info!("Fatal error detected, initiating shutdown");
-                            return; // break out to shutdown
+                // A tick catches up with the chain tip first and only runs the rest of
+                // the node once it is there.
+                match instance.bitvmx.tick() {
+                    Ok(TickOutcome::Syncing) | Ok(TickOutcome::Operating) => {}
+                    Ok(TickOutcome::CaughtUp) => {
+                        // Signal to any waiting threads that initialization is complete
+                        if let Some(tx) = &tx {
+                            let _ = tx.send(());
                         }
                     }
-                } else {
-                    // Still syncing with Bitcoin blockchain. Process bitcoin updates to catch up to the
-                    // current chain tip
-                    match instance.bitvmx.process_bitcoin_updates_with_throttle() {
-                        Ok(ready) => {
-                            instance.ready = ready;
-                            if instance.ready {
-                                // Sync complete - ready to start normal operation
-                                info!("Sync complete, starting normal operation");
-                                // Signal to any waiting threads that initialization is complete
-                                if let Some(tx) = &tx {
-                                    let _ = tx.send(());
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Error syncing bitcoin updates: {e:?}");
-                            info!("Fatal error during sync, initiating shutdown");
-                            return; // break out to shutdown
-                        }
+                    Ok(TickOutcome::Stopping) => {
+                        info!("BitVMX stopped ticking");
+                        break 'main;
+                    }
+                    Err(e) => {
+                        // tick only returns Err when the error is fatal, we can safely exit here
+                        return Err(e.into());
                     }
                 }
             }
             thread::sleep(Duration::from_millis(10));
         }
+        Ok(())
     }));
 
-    if loop_result.is_err() {
-        info!("Panic captured in main loop, initiating shutdown");
+    // A caught panic exits zero; only the inner error propagates.
+    match loop_result {
+        Err(_) => info!("Panic captured in main loop, initiating shutdown"),
+        Ok(result) => result?,
     }
 
     Ok(())

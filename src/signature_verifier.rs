@@ -459,8 +459,8 @@ impl SignatureVerifier {
 mod tests {
     use super::*;
     use crate::test_utils::TestProgramContextEnv;
-    use serde_json::json;
     use rsa::signature::SignatureEncoding;
+    use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
 

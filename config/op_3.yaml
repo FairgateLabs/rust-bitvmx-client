@@ -74,6 +74,9 @@ bitvmx_throttle:
   busy_interval: 20
   idle_interval: 200
 
+job_dispatcher_ping:
+  services: [Emulator]
+
 
 client: 
   # Number of retries for requests

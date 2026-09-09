@@ -8,7 +8,8 @@ use bitvmx_client::comms_helper::{deserialize_msg, serialize_msg, CommsMessageTy
 use bitvmx_client::config::Config;
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, SetupFailureReason,
+    ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
+    SetupFailureReason,
 };
 use bitvmx_settings::settings;
 use serde_json::{json, Value};
@@ -164,20 +165,29 @@ fn assert_setup_failed(
     phase: &str,
 ) {
     match message {
-        OutgoingBitVMXApiMessages::SetupFailed(id, step, peer, reason) => {
-            assert_eq!(id, expected_id, "{phase}: wrong program");
-            assert!(
-                !step.is_empty(),
-                "{phase}: the failing step should be named"
-            );
+        OutgoingBitVMXApiMessages::Error(report) => {
             assert_eq!(
-                peer.as_deref(),
-                Some(expected_peer),
-                "{phase}: the peer that sent the message should be named",
+                report.scope,
+                ErrorScope::Program(expected_id),
+                "{phase}: wrong program"
             );
-            assert_eq!(reason, expected_reason, "{phase}: wrong failure reported");
+            match report.kind {
+                ErrorReportKind::SetupFailed { step, peer, reason } => {
+                    assert!(
+                        !step.is_empty(),
+                        "{phase}: the failing step should be named"
+                    );
+                    assert_eq!(
+                        peer.as_deref(),
+                        Some(expected_peer),
+                        "{phase}: the peer that sent the message should be named",
+                    );
+                    assert_eq!(reason, expected_reason, "{phase}: wrong failure reported");
+                }
+                other => panic!("{phase}: expected SetupFailed, got {other:?}"),
+            }
         }
-        other => panic!("{phase}: expected SetupFailed, got {other:?}"),
+        other => panic!("{phase}: expected Error, got {other:?}"),
     }
 }
 

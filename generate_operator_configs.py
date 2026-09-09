@@ -95,6 +95,9 @@ class OperatorConfigGenerator:
                 "busy_interval": 20,
                 "idle_interval": 200
             },
+            "job_dispatcher_ping": {
+                "services": ["Emulator"]
+            },
             "client": {
                 "retry": 1,
                 "retry_delay": 1000

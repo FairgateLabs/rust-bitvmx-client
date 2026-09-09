@@ -10,7 +10,7 @@ use bitvmx_broker::{
     RemoteChannel,
 };
 use bitvmx_client::{
-    bitvmx::BitVMX,
+    bitvmx::{BitVMX, TickOutcome},
     config::Config,
     errors::BitVMXError,
     program::{
@@ -646,8 +646,6 @@ fn run_bitvmx(network: Network, clear_state: bool, rx: Receiver<()>, tx: Sender<
         instances.push(bitvmx.unwrap());
     });
 
-    let mut ready = false;
-
     // Main processing loop
     loop {
         if rx.try_recv().is_ok() {
@@ -656,19 +654,15 @@ fn run_bitvmx(network: Network, clear_state: bool, rx: Receiver<()>, tx: Sender<
         }
         for (i, bitvmx) in instances.iter_mut().enumerate() {
             let _span = info_span!("", id = i).entered();
-            if ready {
-                let ret = bitvmx.tick();
-                if let Err(e) = ret {
-                    error!("Error in BitVMX tick: {:?}", e);
-                    return Err(e.into());
-                }
-            } else {
-                ready = bitvmx.process_bitcoin_updates_with_throttle()?;
-                if !ready {
-                    //info!("Waiting to get to the top of the Bitcoin chain...");
-                } else {
+            match bitvmx.tick() {
+                Ok(TickOutcome::CaughtUp) => {
                     info!("Bitcoin updates processed, ready to run.");
                     let _ = tx.send(());
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Error in BitVMX tick: {:?}", e);
+                    return Err(e.into());
                 }
             }
         }

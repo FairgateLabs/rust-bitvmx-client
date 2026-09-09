@@ -2,7 +2,8 @@ use anyhow::Result;
 
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, SetupFailureReason,
+    ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
+    SetupFailureReason,
 };
 use uuid::Uuid;
 
@@ -53,21 +54,26 @@ fn undeliverable_setup_message_is_reported_to_l2() -> Result<()> {
         common::wait_message_from_channel(&channel, &mut vec![&mut bitvmx], true)?;
 
     match OutgoingBitVMXApiMessages::from_string(&msg)? {
-        OutgoingBitVMXApiMessages::SetupFailed(id, step, peer, reason) => {
-            assert_eq!(id, program_id);
-            assert!(!step.is_empty(), "the failing step should be named");
-            assert_eq!(
-                peer.as_deref(),
-                Some(ABSENT_PEER),
-                "the peer that could not be reached should be named",
-            );
-            assert_eq!(
-                reason,
-                SetupFailureReason::Undeliverable,
-                "an unreachable peer should be reported as undeliverable",
-            );
+        OutgoingBitVMXApiMessages::Error(report) => {
+            assert_eq!(report.scope, ErrorScope::Program(program_id));
+            match report.kind {
+                ErrorReportKind::SetupFailed { step, peer, reason } => {
+                    assert!(!step.is_empty(), "the failing step should be named");
+                    assert_eq!(
+                        peer.as_deref(),
+                        Some(ABSENT_PEER),
+                        "the peer that could not be reached should be named",
+                    );
+                    assert_eq!(
+                        reason,
+                        SetupFailureReason::Undeliverable,
+                        "an unreachable peer should be reported as undeliverable",
+                    );
+                }
+                other => panic!("expected SetupFailed, got {other:?}"),
+            }
         }
-        other => panic!("expected SetupFailed, got {other:?}"),
+        other => panic!("expected Error, got {other:?}"),
     }
 
     bitvmx.shutdown()?;
