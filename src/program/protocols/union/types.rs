@@ -50,6 +50,7 @@ pub const ADVANCE_FUNDS_REQUEST: &str = "advance_funds_request";
 pub const FUNDS_ADVANCED: &str = "funds_advanced";
 pub const FUNDS_ADVANCE_SPV: &str = "funds_advance_spv";
 pub const UNION_SPV_NOTIFICATION: &str = "union_spv_notification";
+pub const DISPUTE_TX_NOTIFICATION: &str = "dispute_tx_notification";
 pub const FULL_PENALIZATION_DATA: &str = "full_penalization_data";
 
 // Transaction names
@@ -298,9 +299,6 @@ pub enum UnionTxType {
     CancelUserTake,
     ReimbursementKickoff,
     OperatorTake,
-    OperatorWon,
-    Challenge,
-    RevealInput,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,6 +316,32 @@ impl UnionSPVNotification {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DisputeTxType {
+    Challenge,
+    InputNotRevealed,
+    InputRevealed,
+    OperatorWon,
+    StopOperatorWon,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisputeTxNotification {
+    pub txid: Txid,
+    pub challenge_txid: Txid,
+    pub accept_pegin_txid: Txid,
+    pub committee_id: Uuid,
+    pub slot_index: usize,
+    pub spv_proof: Option<BtcTxSPVProof>,
+    pub tx_type: DisputeTxType,
+}
+
+impl DisputeTxNotification {
+    pub fn name() -> String {
+        DISPUTE_TX_NOTIFICATION.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullPenalizationData {
     pub committee_id: Uuid,
@@ -326,6 +350,43 @@ pub struct FullPenalizationData {
 impl FullPenalizationData {
     pub fn name() -> String {
         FULL_PENALIZATION_DATA.to_string()
+    }
+}
+
+#[cfg(test)]
+mod dispute_notification_tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn dispute_notification_round_trips_with_both_correlations() {
+        let notification = DisputeTxNotification {
+            txid: Txid::from_str(
+                "0101010101010101010101010101010101010101010101010101010101010101",
+            )
+            .unwrap(),
+            challenge_txid: Txid::from_str(
+                "0202020202020202020202020202020202020202020202020202020202020202",
+            )
+            .unwrap(),
+            accept_pegin_txid: Txid::from_str(
+                "0303030303030303030303030303030303030303030303030303030303030303",
+            )
+            .unwrap(),
+            committee_id: Uuid::new_v4(),
+            slot_index: 4,
+            spv_proof: None,
+            tx_type: DisputeTxType::InputRevealed,
+        };
+
+        let encoded = serde_json::to_string(&notification).unwrap();
+        let decoded: DisputeTxNotification = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.txid, notification.txid);
+        assert_eq!(decoded.challenge_txid, notification.challenge_txid);
+        assert_eq!(decoded.accept_pegin_txid, notification.accept_pegin_txid);
+        assert_eq!(decoded.tx_type, DisputeTxType::InputRevealed);
     }
 }
 

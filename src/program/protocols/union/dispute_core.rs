@@ -16,8 +16,8 @@ use crate::{
                     get_dispute_channel_pid, get_dispute_core_pid, get_dispute_pair_key_name,
                     get_full_penalization_pid, get_initial_deposit_output_type, get_my_idx,
                     get_op_disabler_directory_output_value, get_reveal_output_value, indexed_name,
-                    load_penalized_member, set_my_idx, triple_indexed_name, InputSigningInfo,
-                    WinternitzData,
+                    load_penalized_member, send_dispute_tx_notification, set_my_idx,
+                    triple_indexed_name, InputSigningInfo, WinternitzData,
                 },
                 dispute_core_claim_gate::{
                     ClaimGateAction, CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
@@ -611,17 +611,42 @@ impl ProtocolHandler for DisputeCoreProtocol {
         } else if tx_name.starts_with(CHALLENGE_TX) {
             let slot_index = extract_index(&tx_name, CHALLENGE_TX)?;
 
+            self.send_dispute_spv_notification(
+                program_context,
+                tx_id,
+                tx_id,
+                slot_index,
+                DisputeTxType::Challenge,
+            )?;
+
             self.handle_challenge_tx(program_context, slot_index, &tx_status)?;
         } else if tx_name.starts_with(REVEAL_INPUT_TX) {
+            let slot_index = extract_index(&tx_name, REVEAL_INPUT_TX)?;
+            let challenge_txid = self.challenge_txid(program_context, slot_index)?;
+            self.send_dispute_spv_notification(
+                program_context,
+                tx_id,
+                challenge_txid,
+                slot_index,
+                DisputeTxType::InputRevealed,
+            )?;
+
             // Handle double reveal penalization if needed
-            if self
-                .handle_double_reveal(program_context, extract_index(&tx_name, REVEAL_INPUT_TX)?)?
-            {
+            if self.handle_double_reveal(program_context, slot_index)? {
                 return Ok(());
             } else {
                 self.handle_reveal_input_tx(program_context, &tx_name, &tx_status)?;
             }
         } else if tx_name.starts_with(INPUT_NOT_REVEALED_TX) {
+            let slot_index = extract_index(&tx_name, INPUT_NOT_REVEALED_TX)?;
+            let challenge_txid = self.challenge_txid(program_context, slot_index)?;
+            self.send_dispute_spv_notification(
+                program_context,
+                tx_id,
+                challenge_txid,
+                slot_index,
+                DisputeTxType::InputNotRevealed,
+            )?;
             self.handle_input_not_revealed_tx(program_context, &tx_name)?;
         } else if tx_name.starts_with(CLAIM_INIT_TX) {
             self.handle_claim_init_tx(program_context, &tx_name)?;
@@ -3318,6 +3343,35 @@ impl DisputeCoreProtocol {
             .send_service(&context.components_config.l2, data)?;
 
         Ok(())
+    }
+
+    fn challenge_txid<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        slot_index: usize,
+    ) -> Result<Txid, BitVMXError> {
+        let (challenge, _) = self.challenge_tx(&indexed_name(CHALLENGE_TX, slot_index), context)?;
+        Ok(challenge.compute_txid())
+    }
+
+    fn send_dispute_spv_notification<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        txid: Txid,
+        challenge_txid: Txid,
+        slot_index: usize,
+        tx_type: DisputeTxType,
+    ) -> Result<(), BitVMXError> {
+        send_dispute_tx_notification(
+            context,
+            self.ctx.id,
+            self.ctx.my_idx,
+            txid,
+            challenge_txid,
+            self.dispute_core_data(context)?.committee_id,
+            slot_index,
+            tx_type,
+        )
     }
 
     fn dispatch<BC: BitcoinCoordinatorApi>(

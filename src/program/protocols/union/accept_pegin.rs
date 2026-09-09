@@ -10,22 +10,23 @@ use crate::{
             union::{
                 common::{
                     collect_input_signatures, create_transaction_reference, extract_index,
-                    get_dispute_core_pid, get_operator_output_type, indexed_name, InputSigningInfo,
+                    get_dispute_core_pid, get_operator_output_type, indexed_name,
+                    send_dispute_tx_notification, InputSigningInfo,
                 },
                 types::{
-                    Committee, PacketSettings, PegInAccepted, PegInRequest, UnionSPVNotification,
-                    UnionTxType, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, DUST_VALUE,
-                    LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX,
-                    OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE, REIMBURSEMENT_KICKOFF_TX,
-                    REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY, SPEEDUP_VALUE,
-                    TAKE_AGGREGATED_KEY,
+                    Committee, DisputeTxType, PacketSettings, PegInAccepted, PegInRequest,
+                    UnionSPVNotification, UnionTxType, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX,
+                    CHALLENGE_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER,
+                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
+                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY,
+                    SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
                 },
             },
         },
         variables::{PartialUtxo, VariableTypes},
     },
     spv_proof::get_spv_proof,
-    types::{OutgoingBitVMXApiMessages, ProgramContext},
+    types::{OutgoingBitVMXApiMessages, ProgramContext, PROGRAM_TYPE_DISPUTE_CORE},
 };
 use bitcoin::{hex::FromHex, PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -349,24 +350,14 @@ impl ProtocolHandler for AcceptPegInProtocol {
         if tx_name.starts_with(CANCEL_TAKE0_TX) {
             self.send_spv_notification(context, tx_id, UnionTxType::CancelUserTake)?;
         } else if tx_name.starts_with(OPERATOR_TAKE_TX) || tx_name.starts_with(OPERATOR_WON_TX) {
-            let (operator_index, tx_type) = match tx_name.clone() {
-                name if name.starts_with(OPERATOR_TAKE_TX) => (
-                    extract_index(&tx_name.clone(), OPERATOR_TAKE_TX)?,
-                    UnionTxType::OperatorTake,
-                ),
-                name if name.starts_with(OPERATOR_WON_TX) => (
-                    extract_index(&tx_name.clone(), OPERATOR_WON_TX)?,
-                    UnionTxType::OperatorWon,
-                ),
-                _ => {
-                    return Err(BitVMXError::InvalidTransactionName(format!(
-                        "{} is not supported to call update_operator_take_utxo",
-                        tx_name
-                    )));
-                }
+            let operator_won = tx_name.starts_with(OPERATOR_WON_TX);
+            let operator_index = if operator_won {
+                extract_index(&tx_name, OPERATOR_WON_TX)?
+            } else {
+                extract_index(&tx_name, OPERATOR_TAKE_TX)?
             };
 
-            if tx_name.starts_with(OPERATOR_WON_TX) {
+            if operator_won {
                 self.clean_reveal_in_progress(context, operator_index)?;
             }
 
@@ -389,7 +380,32 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 self.update_operator_take_utxo(context, utxo)?;
             }
 
-            self.send_spv_notification(context, tx_id, tx_type)?;
+            if operator_won {
+                let request = self.pegin_request(context)?;
+                let committee = self.committee(context, request.committee_id)?;
+                let dispute_protocol_id = get_dispute_core_pid(
+                    request.committee_id,
+                    &committee.members[operator_index].take_key,
+                );
+                let dispute_protocol =
+                    self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
+                let (challenge, _) = dispute_protocol.get_transaction_by_name(
+                    &indexed_name(CHALLENGE_TX, request.slot_index),
+                    context,
+                )?;
+                send_dispute_tx_notification(
+                    context,
+                    self.ctx.id,
+                    self.ctx.my_idx,
+                    tx_id,
+                    challenge.compute_txid(),
+                    request.committee_id,
+                    request.slot_index,
+                    DisputeTxType::OperatorWon,
+                )?;
+            } else {
+                self.send_spv_notification(context, tx_id, UnionTxType::OperatorTake)?;
+            }
         }
 
         Ok(())
