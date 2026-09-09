@@ -492,9 +492,6 @@ impl BitVMX {
     }
 
     pub fn process_comms_messages(&mut self) -> Result<bool, BitVMXError> {
-        //Send enqueued messages
-        self.program_context.comms.tick()?;
-
         let messages = match self.program_context.comms.check_receive(None) {
             Ok(messages) => messages,
             Err(e) => {
@@ -609,6 +606,9 @@ impl BitVMX {
         if !self.chain_synced {
             info!("Sync complete, starting normal operation");
             self.chain_synced = true;
+            // This invocation belongs exclusively to the catch-up phase. Process queued
+            // news on the next tick, when the normal application transaction is active.
+            return Ok(true);
         }
 
         let news = self.program_context.bitcoin_coordinator.get_news()?;
@@ -946,9 +946,6 @@ impl BitVMX {
     pub fn process_api_messages(&mut self) -> Result<bool, BitVMXError> {
         const MAX_MESSAGES_PER_TICK: usize = 20;
 
-        // Moves whatever the components left on the broker into the in queue
-        self.program_context.broker_channel.tick()?;
-
         // Takes only a bounded slice of it, the rest waits for the next tick
         let messages = self
             .program_context
@@ -980,7 +977,8 @@ impl BitVMX {
     }
 
     pub fn tick(&mut self) -> Result<TickOutcome, BitVMXError> {
-        let result = self.tick_inner();
+        let mut application_transaction_active = false;
+        let result = self.tick_inner(&mut application_transaction_active);
 
         if let Err(e) = &result {
             error!("Error in tick(): {e:#?}");
@@ -992,10 +990,17 @@ impl BitVMX {
             if is_fatal(e) {
                 self.reporter.fatal(e, &self.program_context.broker_channel);
             } else {
-                // A failed tick has already acked messages and broadcast transactions, so
-                // its writes are kept to stay consistent with them.
-                if let Err(commit) = self.store.commit_global_transaction() {
-                    error!("Could not commit a failed tick: {:?}", commit);
+                // Preserve the existing application-error policy: coordinator effects and
+                // partially processed inputs still need their own recovery boundaries.
+                // Transport failures have already rolled back their own transaction.
+                if application_transaction_active {
+                    if let Err(commit) = self.store.commit_global_transaction() {
+                        error!("Could not commit a failed tick: {:?}", commit);
+                        let commit = BitVMXError::from(commit);
+                        self.reporter
+                            .fatal(&commit, &self.program_context.broker_channel);
+                        return Err(commit);
+                    }
                 }
                 self.reporter
                     .stopping(e, &self.program_context.broker_channel);
@@ -1008,7 +1013,36 @@ impl BitVMX {
         result
     }
 
-    fn tick_inner(&mut self) -> Result<TickOutcome, BitVMXError> {
+    /// Runs transport work independently of application writes. A rollback may cause
+    /// already-delivered messages to be sent again; it cannot undo network delivery.
+    fn run_broker_tick(
+        store: &Storage,
+        tick: impl FnOnce() -> Result<(), BitVMXError>,
+    ) -> Result<(), BitVMXError> {
+        store.begin_global_transaction()?;
+        match tick() {
+            Ok(()) => {
+                // Storage consumes the transaction even when commit fails.
+                store.commit_global_transaction()?;
+                Ok(())
+            }
+            Err(error) => {
+                if let Err(rollback) = store.rollback_global_transaction() {
+                    error!(
+                        "Could not roll back broker tick after {:?}: {:?}",
+                        error, rollback
+                    );
+                    return Err(rollback.into());
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn tick_inner(
+        &mut self,
+        application_transaction_active: &mut bool,
+    ) -> Result<TickOutcome, BitVMXError> {
         debug!("Ticking BitVMX: {}", self.count);
 
         if self.shutdown {
@@ -1029,11 +1063,27 @@ impl BitVMX {
             });
         }
 
+        let process_application = self.bitvmx_throttle.should_call();
+        if process_application {
+            // Only deliver previously committed outgoing work. Each broker commits
+            // independently, before any application handler can enqueue new messages.
+            Self::run_broker_tick(&self.store, || {
+                self.program_context.comms.tick().map_err(BitVMXError::from)
+            })?;
+            Self::run_broker_tick(&self.store, || {
+                self.program_context
+                    .broker_channel
+                    .tick()
+                    .map_err(BitVMXError::from)
+            })?;
+        }
+
         self.store.begin_global_transaction()?;
+        *application_transaction_active = true;
 
         const WARN_THRESHOLD: Duration = Duration::from_secs(10);
 
-        if self.bitvmx_throttle.should_call() {
+        if process_application {
             let mut had_work = false;
 
             let instant = Instant::now();
@@ -1092,6 +1142,7 @@ impl BitVMX {
         self.ping_helper
             .check_job_dispatchers_liveness(&self.program_context, &self.config.components)?;
 
+        *application_transaction_active = false;
         self.store.commit_global_transaction()?;
 
         Ok(TickOutcome::Operating)
@@ -1099,7 +1150,22 @@ impl BitVMX {
 
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<bool, BitVMXError> {
         if self.coordinator_throttle.should_call() {
+            // Catch-up runs before the normal application transaction is opened, but it
+            // can still update persisted coordinator and wallet state. Give that work its
+            // own transaction and never leave a partial catch-up update behind.
+            let syncing = !self.chain_synced;
+            if syncing {
+                self.store.begin_global_transaction()?;
+            }
+
             let result = self.process_bitcoin_updates();
+            if syncing {
+                match &result {
+                    Ok(_) => self.store.commit_global_transaction()?,
+                    Err(_) => self.store.rollback_global_transaction()?,
+                }
+            }
+
             if let Err(e) = result {
                 //TODO: record(false) here, otherwise an unreachable node is retried every
                 //tick instead of at the configured interval
@@ -1975,6 +2041,70 @@ impl BitVMX {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod broker_transaction_tests {
+    use super::*;
+    use crate::test_utils::TestStorageDir;
+    use storage_backend::error::StorageError;
+
+    #[test]
+    fn broker_commit_survives_application_rollback() {
+        let dir = TestStorageDir::new("broker-tick-commit");
+        let store = dir.storage();
+        BitVMX::run_broker_tick(&store, || {
+            store.set("broker", true, None)?;
+            Ok(())
+        })
+        .unwrap();
+
+        store.begin_global_transaction().unwrap();
+        store.set("application", true, None).unwrap();
+        store.rollback_global_transaction().unwrap();
+        assert_eq!(store.get::<_, bool>("broker", None).unwrap(), Some(true));
+        assert_eq!(store.get::<_, bool>("application", None).unwrap(), None);
+    }
+
+    #[test]
+    fn failed_second_broker_does_not_undo_first_broker() {
+        let dir = TestStorageDir::new("broker-tick-independent");
+        let store = dir.storage();
+        BitVMX::run_broker_tick(&store, || {
+            store.set("comms", true, None)?;
+            Ok(())
+        })
+        .unwrap();
+
+        let result = BitVMX::run_broker_tick(&store, || {
+            store.set("services", true, None)?;
+            Err(BitVMXError::InvalidMessageFormat)
+        });
+        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+        assert_eq!(store.get::<_, bool>("comms", None).unwrap(), Some(true));
+        assert_eq!(store.get::<_, bool>("services", None).unwrap(), None);
+        // No leaked transaction blocks the next phase.
+        store.begin_global_transaction().unwrap();
+        store.rollback_global_transaction().unwrap();
+    }
+
+    #[test]
+    fn fatal_broker_error_also_rolls_back() {
+        let dir = TestStorageDir::new("broker-tick-fatal");
+        let store = dir.storage();
+        store.set("incoming", true, None).unwrap();
+        let result = BitVMX::run_broker_tick(&store, || {
+            store.remove("incoming", None)?;
+            Err(BitVMXError::StorageError(StorageError::WriteError))
+        });
+        assert!(matches!(
+            result,
+            Err(BitVMXError::StorageError(StorageError::WriteError))
+        ));
+        assert_eq!(store.get::<_, bool>("incoming", None).unwrap(), Some(true));
+        store.begin_global_transaction().unwrap();
+        store.rollback_global_transaction().unwrap();
     }
 }
 
