@@ -11,11 +11,12 @@ use crate::{
 };
 
 use super::types::{
-    AdvanceFundsRegistered, AdvanceFundsRequest, Committee, DisputeCoreData, FullPenalizationData,
-    FundsAdvanceSPV, FundsAdvanced, InitData, PegInRequest, PegOutAccepted, PegOutRequest,
-    PenalizedMember, RejectPeginData, UnionSPVNotification, ADVANCE_FUNDS_REQUEST, COMMITTEE,
-    DISPUTE_CORE_DATA, FULL_PENALIZATION_DATA, FUNDS_ADVANCED, FUNDS_ADVANCE_SPV, INIT_DATA,
-    PEGIN_REQUEST, PEGOUT_ACCEPTED, PEGOUT_REQUEST, REJECT_PEGIN_DATA, UNION_SPV_NOTIFICATION,
+    AdvanceFundsRegistered, AdvanceFundsRequest, Committee, DisputeCoreData, DisputeTxNotification,
+    FullPenalizationData, FundsAdvanceSPV, FundsAdvanced, InitData, PegInRequest, PegOutAccepted,
+    PegOutRequest, PenalizedMember, RejectPeginData, UnionSPVNotification, ADVANCE_FUNDS_REQUEST,
+    COMMITTEE, DISPUTE_CORE_DATA, DISPUTE_TX_NOTIFICATION, FULL_PENALIZATION_DATA, FUNDS_ADVANCED,
+    FUNDS_ADVANCE_SPV, INIT_DATA, PEGIN_REQUEST, PEGOUT_ACCEPTED, PEGOUT_REQUEST,
+    REJECT_PEGIN_DATA, UNION_SPV_NOTIFICATION,
 };
 
 /// Transport for union messages carried over `IncomingBitVMXApiMessages::SetVar`/`GetVar`.
@@ -85,6 +86,10 @@ impl UnionMessage for FundsAdvanceSPV {
 
 impl UnionMessage for UnionSPVNotification {
     const KEY: &'static str = UNION_SPV_NOTIFICATION;
+}
+
+impl UnionMessage for DisputeTxNotification {
+    const KEY: &'static str = DISPUTE_TX_NOTIFICATION;
 }
 
 impl UnionMessage for FullPenalizationData {
