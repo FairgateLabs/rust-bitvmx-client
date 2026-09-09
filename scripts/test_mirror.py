@@ -1,4 +1,5 @@
 """Tests for mirror.py. Run with: python -m unittest test_mirror -v"""
+import hashlib
 import pathlib
 import tempfile
 import unittest
@@ -59,7 +60,7 @@ class MirrorTest(unittest.TestCase):
             header, body = mirror.split_header(generated_b)
             self.assertEqual(body, b_content)
 
-    def test_mirror_toml_records_tag_files_and_line_counts(self):
+    def test_mirror_toml_records_tag_files_and_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
             client_dir, file_list, a_content, b_content = self._make_source_tree(tmp)
@@ -184,3 +185,41 @@ serde = "1.0"
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckTest(unittest.TestCase):
+    def _generate(self, tmp: pathlib.Path) -> pathlib.Path:
+        client_dir = tmp / "client"
+        _write(client_dir / "src" / "c.rs", b"pub struct B;\n")
+        _write(client_dir / "scripts" / "mirror_files.txt", b"src/c.rs\n")
+        out_dir = tmp / "out"
+        mirror.run(client_dir, client_dir / "scripts" / "mirror_files.txt", out_dir, "v0.0.1-test")
+        return out_dir
+
+    def test_clean_tree_reports_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(mirror.check(self._generate(pathlib.Path(tmp))), [])
+
+    def test_hand_edit_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = self._generate(pathlib.Path(tmp))
+            target = out_dir / "src" / "c.rs"
+            target.write_bytes(target.read_bytes() + b"// sneaky\n")
+            drifted = mirror.check(out_dir)
+            self.assertEqual(len(drifted), 1)
+            self.assertIn("src/c.rs", drifted[0])
+
+    def test_deleted_file_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = self._generate(pathlib.Path(tmp))
+            (out_dir / "src" / "c.rs").unlink()
+            self.assertIn("missing", mirror.check(out_dir)[0])
+
+    def test_manifest_without_hashes_reports_nothing(self):
+        """A mirror.toml from before hashes existed must not warn on every file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = self._generate(pathlib.Path(tmp))
+            (out_dir / "mirror.toml").write_text(
+                'source_tag = "v0.0.1-test"\n\n[files]\n"src/c.rs" = 1\n', encoding="utf-8"
+            )
+            self.assertEqual(mirror.check(out_dir), [])
