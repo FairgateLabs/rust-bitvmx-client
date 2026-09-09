@@ -6,6 +6,7 @@ restraint is the point -- Stage 1 restructured the crate precisely so the
 wire contract lives in files that can be copied byte for byte.
 """
 import argparse
+import hashlib
 import pathlib
 import re
 
@@ -74,10 +75,40 @@ def sync_dep_tags(client_cargo: pathlib.Path, mirror_cargo: pathlib.Path, releas
     mirror_cargo.write_text(GIT_DEP_RE.sub(repin, text), encoding="utf-8")
 
 
+def read_hashes(manifest: pathlib.Path) -> dict[str, str]:
+    """The `[files]` table of a mirror.toml, as {path: sha256-of-body}."""
+    if not manifest.is_file():
+        return {}
+    lines = manifest.read_text(encoding="utf-8").splitlines()
+    if "[files]" not in lines:
+        return {}
+    body = lines[lines.index("[files]") + 1 :]
+    return dict(re.findall(r'"([^"]+)" = "([0-9a-f]{64})"', "\n".join(body)))
+
+
+def check(out_dir: pathlib.Path) -> list[str]:
+    """Names every generated file whose bytes no longer match its recorded hash.
+
+    The generated tree carries a DO-NOT-EDIT header but nothing enforced it. A
+    hand-edit here silently diverges the published contract from the client and
+    survives until someone diffs the two repos by eye.
+    """
+    drifted = []
+    for rel_path, recorded in read_hashes(out_dir / "mirror.toml").items():
+        path = out_dir / rel_path
+        if not path.is_file():
+            drifted.append(f"{rel_path}: missing")
+            continue
+        _, body = split_header(path.read_bytes())
+        if hashlib.sha256(body).hexdigest() != recorded:
+            drifted.append(f"{rel_path}: hand-edited since the last regenerate")
+    return drifted
+
+
 def run(client_dir: pathlib.Path, file_list: pathlib.Path, out_dir: pathlib.Path, tag: str) -> None:
     rel_paths = parse_file_list(file_list)
     header = HEADER_TEMPLATE.format(tag=tag).encode("utf-8")
-    line_counts = {}
+    hashes = {}
     for rel_path in rel_paths:
         src = client_dir / rel_path
         if not src.is_file():
@@ -86,10 +117,10 @@ def run(client_dir: pathlib.Path, file_list: pathlib.Path, out_dir: pathlib.Path
         dest = out_dir / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(header + body)
-        line_counts[rel_path] = body.count(b"\n")
+        hashes[rel_path] = hashlib.sha256(body).hexdigest()
 
     toml_lines = [f'source_tag = "{tag}"', "", "[files]"]
-    toml_lines += [f'"{rel_path}" = {count}' for rel_path, count in line_counts.items()]
+    toml_lines += [f'"{rel_path}" = "{digest}"' for rel_path, digest in hashes.items()]
     (out_dir / "mirror.toml").write_text("\n".join(toml_lines) + "\n", encoding="utf-8")
 
     mirror_cargo = out_dir / "Cargo.toml"
@@ -102,9 +133,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--client-dir", type=pathlib.Path, default=repo_root)
     parser.add_argument("--out", type=pathlib.Path, required=True)
-    parser.add_argument("--tag", required=True)
+    parser.add_argument("--tag")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report hand-edited generated files and exit; never fails the build",
+    )
     args = parser.parse_args()
 
+    if args.check:
+        for line in check(args.out):
+            print(f"::warning::mirror {line}")
+        return
+
+    if not args.tag:
+        parser.error("--tag is required unless --check is given")
     file_list = args.client_dir / "scripts" / "mirror_files.txt"
     run(args.client_dir, file_list, args.out, args.tag)
 

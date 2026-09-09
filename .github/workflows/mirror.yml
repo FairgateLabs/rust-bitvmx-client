@@ -48,12 +48,31 @@ jobs:
           path: mirror
           persist-credentials: false
 
+      # Advisory only: a hand-edit in the generated tree is a process problem
+      # to fix in the next PR, not a reason to block a release the regenerate
+      # is about to overwrite anyway.
+      - name: Warn on hand-edited mirror files
+        run: python3 client/scripts/mirror.py --check --out mirror
+
       - name: Regenerate mirror from client
+        id: regenerate
         run: |
+          before=$(sed -n '/^\[files]/,$p' mirror/mirror.toml)
           python3 client/scripts/mirror.py \
             --client-dir client \
             --out mirror \
             --tag "$TAG"
+          after=$(sed -n '/^\[files]/,$p' mirror/mirror.toml)
+          # Byte-identical contract: the crate this would publish differs from
+          # the last release only by its version stamp, so there is nothing to
+          # release. Dependency-only changes are deliberately not a release
+          # trigger either -- the contract is what consumers pin this crate for.
+          if [ "$before" = "$after" ]; then
+            echo "contract unchanged -- skipping publish"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Stamp mirror Cargo.toml version from tag
         run: |
@@ -75,7 +94,7 @@ jobs:
         working-directory: mirror
 
       - name: Commit mirror
-        if: github.event_name == 'push' || inputs.publish
+        if: steps.regenerate.outputs.changed == 'true' && (github.event_name == 'push' || inputs.publish)
         working-directory: mirror
         run: |
           git config user.name "github-actions[bot]"
@@ -84,7 +103,7 @@ jobs:
           git diff --cached --quiet || git commit -m "Regenerate mirror at $TAG"
 
       - name: Tag and push mirror
-        if: github.event_name == 'push' || inputs.publish
+        if: steps.regenerate.outputs.changed == 'true' && (github.event_name == 'push' || inputs.publish)
         working-directory: mirror
         run: |
           git tag "$TAG"
