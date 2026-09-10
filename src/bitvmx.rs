@@ -494,17 +494,33 @@ impl BitVMX {
     /// Processes up to 20 inputs from each comms queue, committing each independently.
     /// Must be called without an active global transaction.
     pub fn process_comms_messages(&mut self) -> Result<bool, BitVMXError> {
-        const MAX_MESSAGES_PER_QUEUE: usize = 20;
+        let incoming = self
+            .run_step("comms inbox", Self::process_comms_inbox)?
+            .unwrap_or(true);
+        let deadletters = self
+            .run_step("comms dead letters", Self::process_deadletters)?
+            .unwrap_or(true);
+        Ok(incoming || deadletters)
+    }
 
+    fn process_comms_inbox(&mut self) -> Result<bool, BitVMXError> {
+        const MAX_MESSAGES: usize = 20;
         let store = self.store.clone();
         let mut had_work = false;
-        for _ in 0..MAX_MESSAGES_PER_QUEUE {
+        for _ in 0..MAX_MESSAGES {
             if !Self::run_transaction(&store, || self.process_one_comms_message())? {
                 break;
             }
             had_work = true;
         }
-        for _ in 0..MAX_MESSAGES_PER_QUEUE {
+        Ok(had_work)
+    }
+
+    fn process_deadletters(&mut self) -> Result<bool, BitVMXError> {
+        const MAX_MESSAGES: usize = 20;
+        let store = self.store.clone();
+        let mut had_work = false;
+        for _ in 0..MAX_MESSAGES {
             if !Self::run_transaction(&store, || self.process_one_deadletter())? {
                 break;
             }
@@ -1021,6 +1037,45 @@ impl BitVMX {
         result
     }
 
+    /// Reports nonfatal step failures without preventing independent work from running.
+    /// The work owns its transactions and must close them before returning.
+    fn run_step<T>(
+        &mut self,
+        name: &str,
+        work: impl FnOnce(&mut Self) -> Result<T, BitVMXError>,
+    ) -> Result<Option<T>, BitVMXError> {
+        let result = work(self);
+        Self::finish_step(
+            name,
+            result,
+            &mut self.reporter,
+            &self.program_context.broker_channel,
+        )
+    }
+
+    fn finish_step<T>(
+        name: &str,
+        result: Result<T, BitVMXError>,
+        reporter: &mut Reporter,
+        broker_channel: &BrokerNode,
+    ) -> Result<Option<T>, BitVMXError> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(error) => {
+                match classify(&error) {
+                    // Let tick report fatal errors once and stop processing.
+                    Severity::Fatal => return Err(error),
+                    Severity::BitcoinNodeUnreachable => {
+                        reporter.rpc_unavailable(&error, broker_channel);
+                    }
+                    Severity::Other => reporter.non_fatal(&error, broker_channel),
+                }
+                error!("Error in {name}: {error:#?}");
+                Ok(None)
+            }
+        }
+    }
+
     /// Commits the work on success and rolls it back on error.
     /// Requires no active global transaction. Rollback covers database writes only,
     /// not live memory or external effects.
@@ -1073,14 +1128,18 @@ impl BitVMX {
         if process_application {
             // Deliver committed outgoing work before processing application messages.
             // Rollback cannot undo delivery, so transport retries may send duplicates.
-            Self::run_transaction(&self.store, || {
-                self.program_context.comms.tick().map_err(BitVMXError::from)
+            self.run_step("comms transport", |this| {
+                Self::run_transaction(&this.store, || {
+                    this.program_context.comms.tick().map_err(BitVMXError::from)
+                })
             })?;
-            Self::run_transaction(&self.store, || {
-                self.program_context
-                    .broker_channel
-                    .tick()
-                    .map_err(BitVMXError::from)
+            self.run_step("service transport", |this| {
+                Self::run_transaction(&this.store, || {
+                    this.program_context
+                        .broker_channel
+                        .tick()
+                        .map_err(BitVMXError::from)
+                })
             })?;
         }
 
@@ -1090,10 +1149,13 @@ impl BitVMX {
         const WARN_THRESHOLD: Duration = Duration::from_secs(10);
 
         if process_application {
+            // Failed work stays pending; do not count a failed phase as idle.
             let mut had_work = false;
 
             let instant = Instant::now();
-            had_work |= self.process_programs()?;
+            had_work |= self
+                .run_step("programs", Self::process_programs)?
+                .unwrap_or(true);
             let duration = instant.elapsed();
             if duration > WARN_THRESHOLD {
                 warn!(
@@ -1103,7 +1165,11 @@ impl BitVMX {
             }
 
             let instant = Instant::now();
-            had_work |= Self::run_transaction(&store, || self.process_pending_messages())?;
+            had_work |= self
+                .run_step("pending messages", |this| {
+                    Self::run_transaction(&store, || this.process_pending_messages())
+                })?
+                .unwrap_or(true);
             let duration = instant.elapsed();
             if duration > WARN_THRESHOLD {
                 warn!(
@@ -1123,7 +1189,9 @@ impl BitVMX {
             }
 
             let instant = Instant::now();
-            had_work |= self.process_api_messages()?;
+            had_work |= self
+                .run_step("API messages", Self::process_api_messages)?
+                .unwrap_or(true);
             let duration = instant.elapsed();
             if duration > WARN_THRESHOLD {
                 warn!(
@@ -1136,7 +1204,7 @@ impl BitVMX {
         }
 
         let instant = Instant::now();
-        self.process_bitcoin_updates_with_throttle()?;
+        self.run_step("bitcoin updates", Self::process_bitcoin_updates_with_throttle)?;
         let duration = instant.elapsed();
         if duration > WARN_THRESHOLD {
             warn!(
@@ -1145,9 +1213,11 @@ impl BitVMX {
             );
         }
 
-        Self::run_transaction(&store, || {
-            self.ping_helper
-                .check_job_dispatchers_liveness(&self.program_context, &self.config.components)
+        self.run_step("dispatcher liveness", |this| {
+            Self::run_transaction(&store, || {
+                this.ping_helper
+                    .check_job_dispatchers_liveness(&this.program_context, &this.config.components)
+            })
         })?;
 
         Ok(TickOutcome::Operating)
@@ -1167,7 +1237,7 @@ impl BitVMX {
         Ok(())
     }
 
-    /// Advances each program in its own transaction.
+    /// Advances each program in its own transaction, reporting nonfatal failures locally.
     /// Must be called without an active global transaction.
     pub fn process_programs(&mut self) -> Result<bool, BitVMXError> {
         let all_programs = self.get_programs()?;
@@ -1176,15 +1246,19 @@ impl BitVMX {
 
         let store = self.store.clone();
         for status in all_programs {
-            had_work |= Self::run_transaction(&store, || {
-                let program_id = status.program_id;
-                if !is_active_program(&self.store, &program_id)? {
-                    return Ok(false);
-                }
-                let mut program = self.load_program(&program_id)?;
-                program.tick(&mut self.program_context)?;
-                Ok(true)
-            })?;
+            let program_id = status.program_id;
+            had_work |= self
+                .run_step(&format!("program {program_id}"), |this| {
+                    Self::run_transaction(&store, || {
+                        if !is_active_program(&this.store, &program_id)? {
+                            return Ok(false);
+                        }
+                        let mut program = this.load_program(&program_id)?;
+                        program.tick(&mut this.program_context)?;
+                        Ok(true)
+                    })
+                })?
+                .unwrap_or(true);
         }
         Ok(had_work)
     }
@@ -2025,6 +2099,59 @@ mod transaction_tests {
     use super::*;
     use crate::test_utils::TestStorageDir;
     use storage_backend::error::StorageError;
+
+    #[test]
+    fn nonfatal_step_reports_after_rollback_and_allows_independent_work() {
+        let env = crate::test_utils::TestProgramContextEnv::new("nonfatal-step").unwrap();
+        let mut reporter = Reporter::new(env.context.components_config.l2.clone());
+        let dir = TestStorageDir::new("nonfatal-step-storage");
+        let store = dir.storage();
+        store.set("input", true, None).unwrap();
+
+        let failed: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
+            store.remove("input", None)?;
+            store.set("partial", true, None)?;
+            Err(BitVMXError::InvalidMessageFormat)
+        });
+        assert_eq!(
+            BitVMX::finish_step("input", failed, &mut reporter, &env.context.broker_channel)
+                .unwrap(),
+            None
+        );
+        assert_eq!(store.get::<_, bool>("input", None).unwrap(), Some(true));
+        assert_eq!(store.get::<_, bool>("partial", None).unwrap(), None);
+        assert_eq!(env.l2_messages().unwrap().len(), 1);
+
+        let next = BitVMX::run_transaction(&store, || {
+            store.set("independent", true, None)?;
+            Ok(true)
+        });
+        assert_eq!(
+            BitVMX::finish_step("next", next, &mut reporter, &env.context.broker_channel)
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(store.get::<_, bool>("independent", None).unwrap(), Some(true));
+        assert_eq!(env.l2_messages().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn fatal_step_propagates_without_reporting_twice() {
+        let env = crate::test_utils::TestProgramContextEnv::new("fatal-step").unwrap();
+        let mut reporter = Reporter::new(env.context.components_config.l2.clone());
+        let result = BitVMX::finish_step::<()>(
+            "storage",
+            Err(BitVMXError::StorageError(StorageError::WriteError)),
+            &mut reporter,
+            &env.context.broker_channel,
+        );
+        assert!(matches!(
+            result,
+            Err(BitVMXError::StorageError(StorageError::WriteError))
+        ));
+        // Fatal reporting belongs to tick, not the individual step.
+        assert!(env.l2_messages().unwrap().is_empty());
+    }
 
     #[test]
     fn broker_commit_survives_application_rollback() {
