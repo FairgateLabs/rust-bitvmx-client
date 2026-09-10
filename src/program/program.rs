@@ -382,7 +382,7 @@ impl Program {
 
     /// Decides what a setup-phase failure means for this program. A fatal error is handed
     /// back to the caller, the only layer that can act on it. Everything else fails the
-    /// setup, except a bitcoin outage, which is left to retry.
+    /// setup, except a bitcoin outage, which propagates so the caller can roll back and retry.
     fn handle_setup_error<BC: BitcoinCoordinatorApi>(
         &mut self,
         error: BitVMXError,
@@ -396,7 +396,7 @@ impl Program {
                     "Program {} cannot advance while bitcoin is unreachable: {:?}",
                     self.program_id, error
                 );
-                Ok(())
+                Err(error)
             }
             Severity::Other => self.fail_setup(
                 peer,
@@ -1016,6 +1016,38 @@ mod tests {
 
         program.tick(&mut env.context).unwrap();
         assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_setup_rpc_outage_propagates_without_failing_setup() {
+        use bitcoin_coordinator::errors::BitcoinCoordinatorError;
+        use bitcoincore_rpc::{jsonrpc, Error as BitcoinRpcError};
+        use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
+
+        let mut env = TestProgramContextEnv::new("program-setup-rpc-outage").unwrap();
+        let dir = TestStorageDir::new("program-setup-rpc-outage-storage");
+        let storage = dir.storage();
+        let mut program = test_program(storage.clone(), Uuid::new_v4());
+        program.save().unwrap();
+        let error = BitVMXError::BitcoinCoordinatorError(
+            BitcoinCoordinatorError::BitcoinClientError(BitcoinClientError::RpcError(
+                BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "connection refused",
+                )))),
+            )),
+        );
+
+        let error = program
+            .handle_setup_error(error, None, &mut env.context)
+            .unwrap_err();
+        assert_eq!(classify(&error), Severity::BitcoinNodeUnreachable);
+        assert_eq!(program.state, ProgramState::SettingUp);
+        assert_eq!(
+            Program::load(storage, &program.program_id).unwrap().state,
+            ProgramState::SettingUp
+        );
+        assert!(env.l2_messages().unwrap().is_empty());
     }
 
     #[test]
