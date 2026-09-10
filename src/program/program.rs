@@ -7,7 +7,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    error_handling::{classify, send_error_report, Severity},
+    error_handling::{classify, try_send_error_report, Severity},
     errors::{BitVMXError, ProgramError},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
@@ -85,6 +85,10 @@ impl Program {
         Ok(())
     }
 
+    pub(crate) fn is_failed(&self) -> bool {
+        self.state == ProgramState::Failed
+    }
+
     /// Reports an unrecoverable setup failure to the L2 channel and marks the program dead.
     /// Once the program is `Failed`, later calls do nothing.
     pub(crate) fn fail_setup<BC: BitcoinCoordinatorApi>(
@@ -113,7 +117,7 @@ impl Program {
         self.state = ProgramState::Failed;
         self.save()?;
 
-        send_error_report(
+        try_send_error_report(
             &program_context.broker_channel,
             &program_context.components_config.l2,
             ErrorReport::new(
@@ -125,7 +129,7 @@ impl Program {
                 },
                 None,
             ),
-        );
+        )?;
 
         info!(
             "Program: Sent SetupFailed for program {} at step '{}' (peer: {:?}): {:?}",
@@ -380,14 +384,13 @@ impl Program {
         Ok(())
     }
 
-    /// Decides what a setup-phase failure means for this program. A fatal error is handed
-    /// back to the caller, the only layer that can act on it. Everything else fails the
-    /// setup, except a bitcoin outage, which propagates so the caller can roll back and retry.
+    /// Returns errors without persisting partial setup state. Terminal failures carry
+    /// the program and peer so the caller can record failure after rolling back.
     fn handle_setup_error<BC: BitcoinCoordinatorApi>(
         &mut self,
         error: BitVMXError,
         peer: Option<PubKeyHash>,
-        program_context: &mut ProgramContext<BC>,
+        _program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match classify(&error) {
             Severity::Fatal => Err(error),
@@ -398,11 +401,11 @@ impl Program {
                 );
                 Err(error)
             }
-            Severity::Other => self.fail_setup(
+            Severity::Other => Err(BitVMXError::SetupAttemptFailed {
+                program_id: self.program_id,
                 peer,
-                SetupFailureReason::StepError(error.to_string()),
-                program_context,
-            ),
+                source: Box::new(error),
+            }),
         }
     }
 
@@ -460,7 +463,7 @@ impl Program {
     }
 
     /// Receives results from job dispatchers (Garbler, Emulator).
-    /// Errors during setup are reported to L2 rather than propagated; see
+    /// Terminal setup errors request failure recording after rollback; see
     /// `handle_setup_error`.
     pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
@@ -469,6 +472,9 @@ impl Program {
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
+        if self.is_failed() {
+            return Ok(());
+        }
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
                 self.handle_setup_error(e, None, program_context)
@@ -571,7 +577,7 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
         // Terminal: discard rather than requeue, since a retry can only exhaust and re-report.
-        if matches!(self.state, ProgramState::Failed) {
+        if self.is_failed() {
             debug!("Program::receive_setup_data() - Program setup failed, discarding message");
             return Ok(MessageDisposition::Processed);
         }
@@ -634,8 +640,8 @@ impl Program {
     ///
     /// Routes SetupStepData messages to receive_setup_data().
     ///
-    /// A peer's message that fails verification fails the setup: L2 is told which peer sent it,
-    /// and the message is `Processed` rather than queued for a retry that cannot succeed.
+    /// Terminal setup errors propagate for rollback and separate failure recording.
+    /// Messages for a failed program are consumed without running setup again.
     pub fn process_comms_message<BC: BitcoinCoordinatorApi>(
         &mut self,
         comms_address: &PubKeyHash,
@@ -643,6 +649,9 @@ impl Program {
         data: Value,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
+        if self.is_failed() {
+            return Ok(MessageDisposition::Processed);
+        }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
                 self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
@@ -796,6 +805,27 @@ mod tests {
             setup_engine,
             storage: Some(storage),
         }
+    }
+
+    // Exercises failure reporting independently of the handler's failure request.
+    // Database rollback is covered by BitVMX transaction-helper tests.
+    fn record_failure_request(
+        program: &mut Program,
+        error: BitVMXError,
+        env: &mut TestProgramContextEnv,
+    ) {
+        let BitVMXError::SetupAttemptFailed {
+            program_id,
+            peer,
+            source,
+        } = error else {
+            panic!("expected setup failure request, got {error:?}");
+        };
+        assert_eq!(program_id, program.program_id);
+        assert_ne!(program.state, ProgramState::Failed);
+        program
+            .fail_setup(peer, SetupFailureReason::StepError(source.to_string()), &mut env.context)
+            .unwrap();
     }
 
     #[test]
@@ -1051,15 +1081,16 @@ mod tests {
     }
 
     #[test]
-    fn test_tick_reports_setup_failure_instead_of_propagating() {
+    fn test_tick_requests_setup_failure_recording() {
         let mut env = TestProgramContextEnv::new("program-tick-no-engine").unwrap();
         let dir = TestStorageDir::new("program-tick-no-engine-storage");
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         let program_id = program.program_id;
         program.setup_engine = None;
 
-        // This error used to propagate, and main.rs treats a tick error as fatal.
-        program.tick(&mut env.context).unwrap();
+        let error = program.tick(&mut env.context).unwrap_err();
+        assert!(env.l2_messages().unwrap().is_empty());
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
 
         let messages = env.l2_messages().unwrap();
@@ -1089,17 +1120,16 @@ mod tests {
         let mut program = test_program(storage.clone(), program_id);
         let sender = program.participants[0].pubkey_hash.clone();
 
-        let disposition = program
+        let error = program
             .process_comms_message(
                 &sender,
                 &CommsMessageType::Keys,
                 serde_json::json!({}),
                 &mut env.context,
             )
-            .unwrap();
-
-        // The message that killed the setup is not queued for a retry.
-        assert_eq!(disposition, MessageDisposition::Processed);
+            .unwrap_err();
+        assert!(env.l2_messages().unwrap().is_empty());
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
         assert_eq!(
             Program::load(storage.clone(), &program_id).unwrap().state,
@@ -1149,14 +1179,15 @@ mod tests {
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         let sender = program.participants[0].pubkey_hash.clone();
 
-        program
+        let error = program
             .process_comms_message(
                 &sender,
                 &CommsMessageType::Keys,
                 serde_json::json!({}),
                 &mut env.context,
             )
-            .unwrap();
+            .unwrap_err();
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(env.l2_messages().unwrap().len(), 1);
 
         // Later messages for a dead program are discarded, not queued for retry.
@@ -1170,7 +1201,15 @@ mod tests {
             .unwrap();
         assert_eq!(disposition, MessageDisposition::Processed);
 
-        // And ticking it again reports nothing further.
+        // Replayed dispatcher results and ticks cannot restart a failed setup.
+        program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program.program_id),
+                JobDispatcherType::Garbler,
+                &mut env.context,
+            )
+            .unwrap();
         program.tick(&mut env.context).unwrap();
 
         assert_eq!(program.state, ProgramState::Failed);
@@ -1251,14 +1290,15 @@ mod tests {
         let mut program = test_program(storage.clone(), program_id);
 
         // A Garbler result carrying a non-SetupStep context cannot be routed.
-        program
+        let error = program
             .receive_dispatcher_result(
                 serde_json::json!({}),
                 Context::ProgramId(program_id),
                 JobDispatcherType::Garbler,
                 &mut env.context,
             )
-            .unwrap();
+            .unwrap_err();
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
 
         let messages = env.l2_messages().unwrap();
@@ -1282,14 +1322,15 @@ mod tests {
         // program because the first one is already terminal.
         let other_id = Uuid::new_v4();
         let mut other_program = test_program(storage, other_id);
-        other_program
+        let error = other_program
             .receive_dispatcher_result(
                 serde_json::json!({}),
                 Context::ProgramId(other_id),
                 JobDispatcherType::Emulator,
                 &mut env.context,
             )
-            .unwrap();
+            .unwrap_err();
+        record_failure_request(&mut other_program, error, &mut env);
         assert_eq!(other_program.state, ProgramState::Failed);
         assert_eq!(env.l2_messages().unwrap().len(), 2);
     }
@@ -1361,15 +1402,16 @@ mod tests {
             )
             .is_err());
 
-        // An unroutable dispatcher result is reported to L2 rather than propagated.
-        program
+        // An unroutable dispatcher result requests separate failure recording.
+        let error = program
             .receive_dispatcher_result(
                 serde_json::json!({}),
                 Context::ProgramId(program_id),
                 JobDispatcherType::ZKP,
                 &mut env.context,
             )
-            .unwrap();
+            .unwrap_err();
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
 
         let messages = env.l2_messages().unwrap();

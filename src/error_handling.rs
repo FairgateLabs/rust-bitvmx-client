@@ -97,12 +97,11 @@ impl Reporter {
         broker_node: &BrokerNode,
     ) -> Result<(), BitVMXError> {
         let (scope, dest) = context.map_or((ErrorScope::Node, None), resolve_scope);
-        let message = OutgoingBitVMXApiMessages::Error(ErrorReport::new(scope, kind, None));
-        broker_node.send_service(
+        try_send_error_report(
+            broker_node,
             dest.as_ref().unwrap_or(&self.l2_identifier),
-            message.to_string()?,
-        )?;
-        Ok(())
+            ErrorReport::new(scope, kind, None),
+        )
     }
 
     /// Reports that the node is stopping on a non-fatal error
@@ -210,17 +209,19 @@ pub(crate) fn resolve_scope(context: &str) -> (ErrorScope, Option<Identifier>) {
 /// Sends a push-style [`ErrorReport`] to `dest`. Logs and drops on failure: a report that
 /// cannot be delivered must not take down the path that was only reporting a condition.
 pub(crate) fn send_error_report(channel: &BrokerNode, dest: &Identifier, report: ErrorReport) {
-    let message = match OutgoingBitVMXApiMessages::Error(report).to_string() {
-        Ok(message) => message,
-        Err(e) => {
-            error!("Could not serialize error report: {:?}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = channel.send_service(dest, message) {
+    if let Err(e) = try_send_error_report(channel, dest, report) {
         error!("Could not send error report to {:?}: {:?}", dest, e);
     }
+}
+
+/// Sends an error report, propagating failures to transaction-owning callers.
+pub(crate) fn try_send_error_report(
+    channel: &BrokerNode,
+    dest: &Identifier,
+    report: ErrorReport,
+) -> Result<(), BitVMXError> {
+    channel.send_service(dest, OutgoingBitVMXApiMessages::Error(report).to_string()?)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -231,6 +232,41 @@ mod tests {
     use bitvmx_broker::storage::BrokerStorageError;
     use bitvmx_wallet::wallet::errors::WalletError;
     use uuid::Uuid;
+
+    #[test]
+    fn fallible_error_report_reaches_l2() {
+        let mut env = crate::test_utils::TestProgramContextEnv::new("fallible-report").unwrap();
+        try_send_error_report(
+            &env.context.broker_channel,
+            &env.context.components_config.l2,
+            ErrorReport::new(ErrorScope::Node, ErrorReportKind::FundingNotAvailable, None),
+        )
+        .unwrap();
+        let messages = env.l2_messages().unwrap();
+        assert!(matches!(
+            messages.as_slice(),
+            [OutgoingBitVMXApiMessages::Error(ErrorReport {
+                kind: ErrorReportKind::FundingNotAvailable,
+                ..
+            })]
+        ));
+    }
+
+    #[test]
+    fn fallible_error_report_propagates_send_failure() {
+        let mut env = crate::test_utils::TestProgramContextEnv::new("fallible-report-error").unwrap();
+        let invalid_dest = Identifier::new(String::new(), 1);
+        let report = || ErrorReport::new(ErrorScope::Node, ErrorReportKind::FundingNotAvailable, None);
+        assert!(try_send_error_report(
+            &env.context.broker_channel,
+            &invalid_dest,
+            report(),
+        )
+        .is_err());
+        // Best-effort reporting remains safe for paths that cannot propagate failures.
+        send_error_report(&env.context.broker_channel, &invalid_dest, report());
+        assert!(env.l2_messages().unwrap().is_empty());
+    }
 
     #[test]
     fn a_failed_broker_write_is_fatal() {

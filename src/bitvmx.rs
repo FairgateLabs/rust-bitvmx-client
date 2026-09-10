@@ -467,6 +467,9 @@ impl BitVMX {
         }
         let disposition = match self.load_program(&program_id) {
             Ok(mut program) => {
+                if program.is_failed() {
+                    return Ok(());
+                }
                 let peer_address =
                     program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
@@ -1136,12 +1139,40 @@ impl BitVMX {
         work: impl FnOnce(&mut Self) -> Result<T, BitVMXError>,
     ) -> Result<Option<T>, BitVMXError> {
         let result = work(self);
+        let result = self.settle_setup_attempt(result);
         Self::finish_step(
             name,
             result,
             &mut self.reporter,
             &self.program_context.broker_channel,
         )
+        .map(Option::flatten)
+    }
+
+    /// Requires the attempt transaction to be closed. Restored inputs remain queued;
+    /// the persisted terminal state prevents setup from running on their next delivery.
+    fn settle_setup_attempt<T>(
+        &mut self,
+        result: Result<T, BitVMXError>,
+    ) -> Result<Option<T>, BitVMXError> {
+        match result {
+            Err(BitVMXError::SetupAttemptFailed {
+                program_id,
+                peer,
+                source,
+            }) => {
+                let store = self.store.clone();
+                Self::run_transaction(&store, || {
+                    self.load_program(&program_id)?.fail_setup(
+                        peer,
+                        SetupFailureReason::StepError(source.to_string()),
+                        &mut self.program_context,
+                    )
+                })?;
+                Ok(None)
+            }
+            other => other.map(Some),
+        }
     }
 
     fn finish_step<T>(

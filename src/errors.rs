@@ -164,6 +164,14 @@ pub enum BitVMXError {
     #[error("Program already exists: {0}")]
     ProgramAlreadyExists(Uuid),
 
+    #[error("Setup attempt failed for program {program_id}: {source}")]
+    SetupAttemptFailed {
+        program_id: Uuid,
+        peer: Option<bitvmx_broker::identification::identifier::PubkHash>,
+        #[source]
+        source: Box<BitVMXError>,
+    },
+
     #[error("Program {0} is not ready to run. Please install it first.")]
     ProgramNotReady(Uuid),
 
