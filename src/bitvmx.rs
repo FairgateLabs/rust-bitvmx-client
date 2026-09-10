@@ -491,19 +491,31 @@ impl BitVMX {
         Ok(true)
     }
 
+    /// Processes up to 20 inputs from each comms queue, committing each independently.
+    /// Must be called without an active global transaction.
     pub fn process_comms_messages(&mut self) -> Result<bool, BitVMXError> {
-        let messages = match self.program_context.comms.check_receive(None) {
-            Ok(messages) => messages,
-            Err(e) => {
-                error!("Error receiving messages: {:?}", e);
-                return Ok(true);
-            }
-        };
+        const MAX_MESSAGES_PER_QUEUE: usize = 20;
 
+        let store = self.store.clone();
         let mut had_work = false;
-        if messages.len() > 0 {
+        for _ in 0..MAX_MESSAGES_PER_QUEUE {
+            if !Self::run_transaction(&store, || self.process_one_comms_message())? {
+                break;
+            }
             had_work = true;
         }
+        for _ in 0..MAX_MESSAGES_PER_QUEUE {
+            if !Self::run_transaction(&store, || self.process_one_deadletter())? {
+                break;
+            }
+            had_work = true;
+        }
+        Ok(had_work)
+    }
+
+    fn process_one_comms_message(&mut self) -> Result<bool, BitVMXError> {
+        let messages = self.program_context.comms.check_receive(Some(1))?;
+        let had_work = !messages.is_empty();
         for message in messages {
             match message {
                 ReceivedMessage::Msg(identifier, msg) => {
@@ -513,16 +525,12 @@ impl BitVMX {
             }
         }
 
-        let deadletter_messages = match self.program_context.comms.check_deadletter(None) {
-            Ok(messages) => messages,
-            Err(e) => {
-                error!("Error receiving deadletter messages: {:?}", e);
-                return Ok(true);
-            }
-        };
-        if deadletter_messages.len() > 0 {
-            had_work = true;
-        }
+        Ok(had_work)
+    }
+
+    fn process_one_deadletter(&mut self) -> Result<bool, BitVMXError> {
+        let deadletter_messages = self.program_context.comms.check_deadletter(Some(1))?;
+        let had_work = !deadletter_messages.is_empty();
         for deadletter in deadletter_messages {
             match deadletter {
                 (ReceivedMessage::Msg(identifier, _msg), ctx) => {
@@ -1076,7 +1084,7 @@ impl BitVMX {
             })?;
         }
 
-        // Each step commits independently; comms and news use batch transactions.
+        // Each step commits independently; news uses a batch transaction.
         let store = self.store.clone();
 
         const WARN_THRESHOLD: Duration = Duration::from_secs(10);
@@ -1105,7 +1113,7 @@ impl BitVMX {
             }
 
             let instant = Instant::now();
-            had_work |= Self::run_transaction(&store, || self.process_comms_messages())?;
+            had_work |= self.process_comms_messages()?;
             let duration = instant.elapsed();
             if duration > WARN_THRESHOLD {
                 warn!(
