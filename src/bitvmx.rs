@@ -25,6 +25,7 @@ use crate::{
         PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -91,8 +92,28 @@ impl Drop for BitVMX {
         sleep(Duration::from_millis(100));
     }
 }
+const MAX_REJECTED_INPUTS: usize = 100;
+const MAX_REJECTION_REASON_CHARS: usize = 1024;
+
+#[derive(Debug, Serialize, Deserialize)]
+enum RejectedInputSource {
+    Api,
+    Comms,
+    DeadLetterContext,
+}
+
+/// Recent rejection diagnostics, not a replay queue. Payloads are identified by hash.
+#[derive(Debug, Serialize, Deserialize)]
+struct RejectedInput {
+    source: RejectedInputSource,
+    sender: Identifier,
+    payload_hash: String,
+    reason: String,
+}
+
 enum StoreKey {
     Programs,
+    RejectedInputs,
     ZKPProof(Uuid),
     ZKPStatus(Uuid),
     ZKPFrom(Uuid),
@@ -103,6 +124,7 @@ impl StoreKey {
     fn get_key(&self) -> String {
         match self {
             StoreKey::Programs => "bitvmx/programs/all".to_string(),
+            StoreKey::RejectedInputs => "bitvmx/rejected_inputs".to_string(),
             StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
@@ -377,7 +399,7 @@ impl BitVMX {
     }
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
-        let (version, msg_type, program_id, data, timestamp, signature) = deserialize_msg(
+        let decoded = deserialize_msg(
             msg.data.clone(),
             self.config
                 .broker
@@ -385,7 +407,18 @@ impl BitVMX {
                 .msg_size_config
                 .max_frame_size_kb
                 - 4, // Payload
-        )?;
+        );
+        let Some((version, msg_type, program_id, data, timestamp, signature)) =
+            Self::accept_decoded_input(
+                &self.store,
+                RejectedInputSource::Comms,
+                &msg.identifier,
+                &msg.data,
+                decoded,
+            )?
+        else {
+            return Ok(());
+        };
 
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
@@ -550,7 +583,15 @@ impl BitVMX {
         for deadletter in deadletter_messages {
             match deadletter {
                 (ReceivedMessage::Msg(identifier, _msg), ctx) => {
-                    let context = Context::from_string(&ctx)?;
+                    let Some(context) = Self::accept_decoded_input(
+                        &self.store,
+                        RejectedInputSource::DeadLetterContext,
+                        &identifier,
+                        &ctx,
+                        Context::from_string(&ctx),
+                    )? else {
+                        continue;
+                    };
                     warn!(
                         "Processing deadletter message for context: {:?} and identifier: {:?}",
                         context, identifier
@@ -1035,6 +1076,41 @@ impl BitVMX {
         }
 
         result
+    }
+
+    /// Accepts pure decoding results before handler state changes. Invalid inputs are
+    /// consumed only when their diagnostic record commits with the receive transaction.
+    /// Do not pass results from effectful handlers: their errors require rollback.
+    fn accept_decoded_input<T, E: std::fmt::Display>(
+        store: &Storage,
+        source: RejectedInputSource,
+        sender: &Identifier,
+        payload: &str,
+        decoded: Result<T, E>,
+    ) -> Result<Option<T>, BitVMXError> {
+        match decoded {
+            Ok(value) => Ok(Some(value)),
+            Err(error) => {
+                let rejection = RejectedInput {
+                    source,
+                    sender: sender.clone(),
+                    payload_hash: sha256::Hash::hash(payload.as_bytes()).to_string(),
+                    reason: error
+                        .to_string()
+                        .chars()
+                        .take(MAX_REJECTION_REASON_CHARS)
+                        .collect(),
+                };
+                let key = StoreKey::RejectedInputs.get_key();
+                let mut records: Vec<RejectedInput> = store.get(&key, None)?.unwrap_or_default();
+                records.push(rejection);
+                let excess = records.len().saturating_sub(MAX_REJECTED_INPUTS);
+                records.drain(..excess);
+                store.set(&key, &records, None)?;
+                warn!("Rejected malformed input: {:?}", records.last().unwrap());
+                Ok(None)
+            }
+        }
     }
 
     /// Reports nonfatal step failures without preventing independent work from running.
@@ -1714,7 +1790,15 @@ impl BitVMX {
     }
 
     fn handle_api_message(&mut self, msg: String, from: Identifier) -> Result<(), BitVMXError> {
-        let decoded: IncomingBitVMXApiMessages = serde_json::from_str(&msg)?;
+        let Some(decoded) = Self::accept_decoded_input(
+            &self.store,
+            RejectedInputSource::Api,
+            &from,
+            &msg,
+            serde_json::from_str::<IncomingBitVMXApiMessages>(&msg),
+        )? else {
+            return Ok(());
+        };
         debug!("< {:?}", decoded);
 
         match decoded {
@@ -2099,6 +2183,129 @@ mod transaction_tests {
     use super::*;
     use crate::test_utils::TestStorageDir;
     use storage_backend::error::StorageError;
+
+    #[test]
+    fn malformed_input_is_consumed_and_the_next_input_can_commit() {
+        let dir = TestStorageDir::new("reject-malformed-input");
+        let store = dir.storage();
+        let sender = Identifier::new("11".repeat(32), 1);
+        let valid = serde_json::to_string(&IncomingBitVMXApiMessages::Ping(Uuid::new_v4()))
+            .unwrap();
+        store.set("bad-input", "not JSON", None).unwrap();
+        store.set("next-input", &valid, None).unwrap();
+
+        for key in ["bad-input", "next-input"] {
+            BitVMX::run_transaction(&store, || {
+                let payload: String = store.get(key, None)?.unwrap();
+                store.remove(key, None)?;
+                if BitVMX::accept_decoded_input(
+                    &store,
+                    RejectedInputSource::Api,
+                    &sender,
+                    &payload,
+                    serde_json::from_str::<IncomingBitVMXApiMessages>(&payload),
+                )?
+                .is_some()
+                {
+                    store.set("handled", true, None)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        assert_eq!(store.get::<_, String>("bad-input", None).unwrap(), None);
+        assert_eq!(store.get::<_, String>("next-input", None).unwrap(), None);
+        assert_eq!(store.get::<_, bool>("handled", None).unwrap(), Some(true));
+        let records: Vec<RejectedInput> = store
+            .get(StoreKey::RejectedInputs.get_key(), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(matches!(records[0].source, RejectedInputSource::Api));
+        assert_eq!(records[0].sender, sender);
+        assert_eq!(
+            records[0].payload_hash,
+            sha256::Hash::hash(b"not JSON").to_string()
+        );
+    }
+
+    #[test]
+    fn rejection_storage_error_restores_the_input() {
+        let dir = TestStorageDir::new("reject-storage-error");
+        let store = dir.storage();
+        let sender = Identifier::new("11".repeat(32), 1);
+        store.set("input", "bad", None).unwrap();
+        // An unreadable diagnostics record must not turn rejection into silent loss.
+        store.set(StoreKey::RejectedInputs.get_key(), true, None).unwrap();
+        let result = BitVMX::run_transaction(&store, || {
+            store.remove("input", None)?;
+            BitVMX::accept_decoded_input(
+                &store,
+                RejectedInputSource::DeadLetterContext,
+                &sender,
+                "bad",
+                Context::from_string("bad"),
+            )
+        });
+        assert!(matches!(result, Err(BitVMXError::StorageError(_))));
+        assert_eq!(store.get::<_, String>("input", None).unwrap(), Some("bad".into()));
+    }
+
+    #[test]
+    fn rejection_and_input_consumption_roll_back_together() {
+        let dir = TestStorageDir::new("reject-rollback");
+        let store = dir.storage();
+        let sender = Identifier::new("11".repeat(32), 1);
+        store.set("input", "[]", None).unwrap();
+        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
+            store.remove("input", None)?;
+            assert!(BitVMX::accept_decoded_input(
+                &store,
+                RejectedInputSource::Comms,
+                &sender,
+                "[]",
+                deserialize_msg("[]".into(), 1024),
+            )?
+            .is_none());
+            Err(BitVMXError::StorageError(StorageError::WriteError))
+        });
+        assert!(result.is_err());
+        assert_eq!(store.get::<_, String>("input", None).unwrap(), Some("[]".into()));
+        assert!(store
+            .get::<_, Vec<RejectedInput>>(StoreKey::RejectedInputs.get_key(), None)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn rejection_diagnostics_are_bounded() {
+        let dir = TestStorageDir::new("reject-bounded");
+        let store = dir.storage();
+        let sender = Identifier::new("11".repeat(32), 1);
+        BitVMX::run_transaction(&store, || {
+            for index in 0..=MAX_REJECTED_INPUTS {
+                BitVMX::accept_decoded_input::<(), _>(
+                    &store,
+                    RejectedInputSource::Api,
+                    &sender,
+                    &index.to_string(),
+                    Err("é".repeat(MAX_REJECTION_REASON_CHARS + 1)),
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        let records: Vec<RejectedInput> = store
+            .get(StoreKey::RejectedInputs.get_key(), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(records.len(), MAX_REJECTED_INPUTS);
+        assert_eq!(records[0].payload_hash, sha256::Hash::hash(b"1").to_string());
+        assert!(records
+            .iter()
+            .all(|record| record.reason.chars().count() == MAX_REJECTION_REASON_CHARS));
+    }
 
     #[test]
     fn nonfatal_step_reports_after_rollback_and_allows_independent_work() {
