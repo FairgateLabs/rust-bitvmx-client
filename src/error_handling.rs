@@ -163,7 +163,10 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
             }
         }
 
-        if let Some(BitVMXError::PoisonedLockError(_)) = error.downcast_ref::<BitVMXError>() {
+        if let Some(
+            BitVMXError::PoisonedLockError(_) | BitVMXError::TransactionRollbackError(_),
+        ) = error.downcast_ref::<BitVMXError>()
+        {
             return Severity::Fatal;
         }
 

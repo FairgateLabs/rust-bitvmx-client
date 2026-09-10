@@ -50,6 +50,9 @@ pub enum BitVMXError {
     #[error("Poisoned lock error: {0}")]
     PoisonedLockError(String),
 
+    #[error("Failed to roll back transaction: {0}")]
+    TransactionRollbackError(#[source] StorageError),
+
     #[error("Problem creating directory {0}: {1}")]
     DirectoryCreationError(String, std::io::Error),
 
