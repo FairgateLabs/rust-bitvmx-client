@@ -95,14 +95,14 @@ impl Reporter {
         context: Option<&str>,
         kind: ErrorReportKind,
         broker_node: &BrokerNode,
-    ) {
+    ) -> Result<(), BitVMXError> {
         let (scope, dest) = context.map_or((ErrorScope::Node, None), resolve_scope);
-
-        send_error_report(
-            broker_node,
+        let message = OutgoingBitVMXApiMessages::Error(ErrorReport::new(scope, kind, None));
+        broker_node.send_service(
             dest.as_ref().unwrap_or(&self.l2_identifier),
-            ErrorReport::new(scope, kind, None),
-        );
+            message.to_string()?,
+        )?;
+        Ok(())
     }
 
     /// Reports that the node is stopping on a non-fatal error

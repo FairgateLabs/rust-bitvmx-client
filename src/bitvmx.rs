@@ -661,235 +661,246 @@ impl BitVMX {
     }
 
     fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
-        self.program_context.bitcoin_coordinator.tick()?;
-        self.wallet.tick()?;
+        let store = self.store.clone();
+        let (ready, monitor_news, coordinator_news) = Self::run_transaction(&store, || {
+            self.program_context.bitcoin_coordinator.tick()?;
+            self.wallet.tick()?;
+            if !self.program_context.bitcoin_coordinator.is_ready()? {
+                return Ok((false, Vec::new(), Vec::new()));
+            }
+            if !self.chain_synced {
+                return Ok((true, Vec::new(), Vec::new()));
+            }
 
-        if !self.program_context.bitcoin_coordinator.is_ready()? {
+            let news = self.program_context.bitcoin_coordinator.get_news()?;
+            Ok((true, news.monitor_news, news.coordinator_news))
+        })?;
+
+        self.reporter
+            .rpc_recovered(&self.program_context.broker_channel);
+        if !ready {
             return Ok(true);
         }
-
         if !self.chain_synced {
             info!("Sync complete, starting normal operation");
             self.chain_synced = true;
-            // Finish catch-up before processing queued news on the next tick.
             return Ok(true);
         }
 
-        let news = self.program_context.bitcoin_coordinator.get_news()?;
-
-        if news.monitor_news.is_empty() && news.coordinator_news.is_empty() {
-            return Ok(false);
+        let had_monitor_news = !monitor_news.is_empty();
+        for news in monitor_news {
+            self.run_step("monitor news", |this| {
+                Self::run_transaction(&store, || this.process_monitor_news(news))
+            })?;
         }
+        let had_coordinator_news = !coordinator_news.is_empty();
+        // Unacknowledged items remain in coordinator storage for the next fetch.
+        for news in coordinator_news {
+            self.run_step("coordinator news", |this| {
+                Self::run_transaction(&store, || this.process_coordinator_news(news))
+            })?;
+        }
+        Ok(had_monitor_news || had_coordinator_news)
+    }
 
-        for monitor_news in news.monitor_news {
-            let ack_news: AckNews;
-
-            match monitor_news {
-                MonitorNews::Transaction(n) => {
-                    self.handle_news(n.tx_id, n.status, n.context.clone(), None)?;
-                    ack_news = AckNews::Monitor(AckMonitorNews::Transaction(n.tx_id, n.context));
-                    //TODO: Handle reorg case with n.resent_due_to_reorg
-                }
-                MonitorNews::SpendingUTXOTransaction(
-                    tx_id,
-                    output_index,
-                    tx_status,
-                    context_data,
-                ) => {
-                    self.handle_news(tx_id, tx_status, context_data.clone(), Some(output_index))?;
-                    ack_news = AckNews::Monitor(AckMonitorNews::SpendingUTXOTransaction(
+    fn process_monitor_news(&mut self, news: MonitorNews) -> Result<(), BitVMXError> {
+        let ack_news = match news {
+            MonitorNews::Transaction(n) => {
+                self.handle_news(n.tx_id, n.status, n.context.clone(), None)?;
+                //TODO: Handle reorg case with n.resent_due_to_reorg
+                AckMonitorNews::Transaction(n.tx_id, n.context)
+            }
+            MonitorNews::SpendingUTXOTransaction(
+                tx_id,
+                output_index,
+                tx_status,
+                context_data,
+            ) => {
+                self.handle_news(tx_id, tx_status, context_data.clone(), Some(output_index))?;
+                AckMonitorNews::SpendingUTXOTransaction(tx_id, output_index, context_data)
+            }
+            MonitorNews::OutputPatternTransaction(tx_id, tx_status, tag) => {
+                if tag == RSK_PEGIN_TAG {
+                    let legacy = OutgoingBitVMXApiMessages::PeginTransactionFound(
                         tx_id,
-                        output_index,
-                        context_data,
-                    ));
-                }
-                MonitorNews::OutputPatternTransaction(tx_id, tx_status, tag) => {
-                    if tag == RSK_PEGIN_TAG {
-                        let legacy = OutgoingBitVMXApiMessages::PeginTransactionFound(
-                            tx_id,
-                            tx_status.clone(),
-                        );
-                        let data = serde_json::to_string(&legacy)?;
-                        self.program_context
-                            .broker_channel
-                            .send_service(&self.config.components.l2, data)?;
-                    }
-                    let outgoing = OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
-                        tx_id,
-                        tx_status,
-                        tag.clone(),
+                        tx_status.clone(),
                     );
-                    let data = serde_json::to_string(&outgoing)?;
+                    let data = serde_json::to_string(&legacy)?;
                     self.program_context
                         .broker_channel
                         .send_service(&self.config.components.l2, data)?;
-                    ack_news =
-                        AckNews::Monitor(AckMonitorNews::OutputPatternTransaction(tx_id, tag));
                 }
-                MonitorNews::NewBlock(block_height, block_hash) => {
-                    debug!("New block: {} {}", block_height, block_hash);
-                    ack_news = AckNews::Monitor(AckMonitorNews::NewBlock);
-
-                    if self.send_new_block_news(&self.program_context) {
-                        let data = serde_json::to_string(&OutgoingBitVMXApiMessages::NewBlock(
-                            block_hash,
-                            block_height,
-                        ))?;
-                        self.program_context
-                            .broker_channel
-                            .send_service(&self.config.components.l2, data)?;
-                    }
-                }
+                let outgoing = OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
+                    tx_id,
+                    tx_status,
+                    tag.clone(),
+                );
+                let data = serde_json::to_string(&outgoing)?;
+                self.program_context
+                    .broker_channel
+                    .send_service(&self.config.components.l2, data)?;
+                AckMonitorNews::OutputPatternTransaction(tx_id, tag)
             }
+            MonitorNews::NewBlock(block_height, block_hash) => {
+                debug!("New block: {} {}", block_height, block_hash);
+                if self.send_new_block_news(&self.program_context) {
+                    let data = serde_json::to_string(&OutgoingBitVMXApiMessages::NewBlock(
+                        block_hash,
+                        block_height,
+                    ))?;
+                    self.program_context
+                        .broker_channel
+                        .send_service(&self.config.components.l2, data)?;
+                }
+                AckMonitorNews::NewBlock
+            }
+        };
 
-            self.program_context
-                .bitcoin_coordinator
-                .ack_news(ack_news)?;
+        self.program_context
+            .bitcoin_coordinator
+            .ack_news(AckNews::Monitor(ack_news))?;
+        Ok(())
+    }
+
+    fn process_coordinator_news(
+        &mut self,
+        coordinator_news: CoordinatorNews,
+    ) -> Result<(), BitVMXError> {
+        match coordinator_news.clone() {
+            CoordinatorNews::InsufficientFunds {
+                available,
+                required,
+            } => {
+                info!(
+                    "Insufficient funds for transaction. Available: {}, Required: {}",
+                    available, required
+                );
+                // No txid or context, so the program cannot be identified.
+                self.reporter.coordinator_news(
+                    None,
+                    ErrorReportKind::InsufficientFunds {
+                        available,
+                        required,
+                    },
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            CoordinatorNews::DispatchError { txid, context } => {
+                error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
+                if let Some(wallet_tx) = self.wallet.get_wallet_tx(txid)? {
+                    self.wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
+                }
+                self.reporter.coordinator_news(
+                    Some(&context),
+                    ErrorReportKind::TransactionDispatchFailed { txid },
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            CoordinatorNews::SpeedupDispatchError { txid, context } => {
+                error!("Speedup dispatch error: {:?} {:?}", txid, context);
+                self.reporter.coordinator_news(
+                    Some(&context),
+                    ErrorReportKind::SpeedupDispatchFailed { txid },
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            CoordinatorNews::TransactionStuckInMempool { txid, context } => {
+                warn!("Transaction stuck in mempool: {:?} {:?}", txid, context);
+                self.reporter.coordinator_news(
+                    Some(&context),
+                    ErrorReportKind::TransactionStuckInMempool { txid },
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            CoordinatorNews::MaxFeeRateReached {
+                txid,
+                effective_fee_rate,
+                context,
+            } => {
+                warn!(
+                    "Speedup for {:?} reached the fee rate cap at {} sat/vB. No further boosts",
+                    txid, effective_fee_rate
+                );
+                self.reporter.coordinator_news(
+                    Some(&context),
+                    ErrorReportKind::MaxFeeRateReached {
+                        txid,
+                        effective_fee_rate,
+                    },
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            CoordinatorNews::EstimateFeerateTooHigh {
+                estimated_fee_rate,
+                max_fee_rate,
+            } => {
+                warn!(
+                    "Estimated fee rate {} exceeds the configured maximum {}",
+                    estimated_fee_rate, max_fee_rate
+                );
+                self.reporter.coordinator_news(
+                    None,
+                    ErrorReportKind::FeeRateTooHigh {
+                        estimated: estimated_fee_rate,
+                        max: max_fee_rate,
+                    },
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            CoordinatorNews::FundingNotAvailable => {
+                error!("No funding UTXO is available");
+                self.reporter.coordinator_news(
+                    None,
+                    ErrorReportKind::FundingNotAvailable,
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            CoordinatorNews::InvalidFundingUtxo {
+                amount,
+                min_required,
+            } => {
+                error!(
+                    "Funding UTXO of {} is below the {} minimum",
+                    amount, min_required
+                );
+                self.reporter.coordinator_news(
+                    None,
+                    ErrorReportKind::InvalidFundingUtxo {
+                        amount,
+                        min_required,
+                    },
+                    &self.program_context.broker_channel,
+                )?;
+            }
+            // Not reported: our own invariant broke, which is not L2's problem.
+            CoordinatorNews::InvalidStateTransition { txid, from, to } => {
+                error!(
+                    "Invalid state transition for {:?}: {:?} -> {:?}",
+                    txid, from, to
+                );
+            }
+            // Not reported: bookkeeping after the tx already finalized or failed.
+            CoordinatorNews::TransactionEvicted { txid, context } => {
+                debug!(
+                    "Transaction evicted from tracking: {:?} {:?}",
+                    txid, context
+                );
+            }
+            // Not reported: the caller asked for something invalid.
+            CoordinatorNews::InvalidCancel { txid, reason } => {
+                warn!("Cancel rejected for {:?}: {}", txid, reason);
+            }
+            // Not reported: the coordinator's own store has no row for this txid, which
+            // is internal bookkeeping and not a statement about the chain.
+            CoordinatorNews::TxNotFound { txid } => {
+                error!("Coordinator has no record of transaction {:?}", txid);
+            }
         }
 
-        for coordinator_news in news.coordinator_news {
-            match coordinator_news.clone() {
-                CoordinatorNews::InsufficientFunds {
-                    available,
-                    required,
-                } => {
-                    info!(
-                        "Insufficient funds for transaction. Available: {}, Required: {}",
-                        available, required
-                    );
-                    // No txid or context, so the program cannot be identified.
-                    self.reporter.coordinator_news(
-                        None,
-                        ErrorReportKind::InsufficientFunds {
-                            available,
-                            required,
-                        },
-                        &self.program_context.broker_channel,
-                    );
-                }
-                CoordinatorNews::DispatchError { txid, context } => {
-                    error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
-                    match self.wallet.get_wallet_tx(txid) {
-                        Ok(Some(wallet_tx)) => {
-                            self.wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            error!("Error fetching transaction from wallet: {:?}", e);
-                        }
-                    }
-                    self.reporter.coordinator_news(
-                        Some(&context),
-                        ErrorReportKind::TransactionDispatchFailed { txid },
-                        &self.program_context.broker_channel,
-                    );
-                }
-                CoordinatorNews::SpeedupDispatchError { txid, context } => {
-                    error!("Speedup dispatch error: {:?} {:?}", txid, context);
-                    self.reporter.coordinator_news(
-                        Some(&context),
-                        ErrorReportKind::SpeedupDispatchFailed { txid },
-                        &self.program_context.broker_channel,
-                    );
-                }
-                CoordinatorNews::TransactionStuckInMempool { txid, context } => {
-                    warn!("Transaction stuck in mempool: {:?} {:?}", txid, context);
-                    self.reporter.coordinator_news(
-                        Some(&context),
-                        ErrorReportKind::TransactionStuckInMempool { txid },
-                        &self.program_context.broker_channel,
-                    );
-                }
-                CoordinatorNews::MaxFeeRateReached {
-                    txid,
-                    effective_fee_rate,
-                    context,
-                } => {
-                    warn!(
-                        "Speedup for {:?} reached the fee rate cap at {} sat/vB. No further boosts",
-                        txid, effective_fee_rate
-                    );
-                    self.reporter.coordinator_news(
-                        Some(&context),
-                        ErrorReportKind::MaxFeeRateReached {
-                            txid,
-                            effective_fee_rate,
-                        },
-                        &self.program_context.broker_channel,
-                    );
-                }
-                CoordinatorNews::EstimateFeerateTooHigh {
-                    estimated_fee_rate,
-                    max_fee_rate,
-                } => {
-                    warn!(
-                        "Estimated fee rate {} exceeds the configured maximum {}",
-                        estimated_fee_rate, max_fee_rate
-                    );
-                    self.reporter.coordinator_news(
-                        None,
-                        ErrorReportKind::FeeRateTooHigh {
-                            estimated: estimated_fee_rate,
-                            max: max_fee_rate,
-                        },
-                        &self.program_context.broker_channel,
-                    );
-                }
-                CoordinatorNews::FundingNotAvailable => {
-                    error!("No funding UTXO is available");
-                    self.reporter.coordinator_news(
-                        None,
-                        ErrorReportKind::FundingNotAvailable,
-                        &self.program_context.broker_channel,
-                    );
-                }
-                CoordinatorNews::InvalidFundingUtxo {
-                    amount,
-                    min_required,
-                } => {
-                    error!(
-                        "Funding UTXO of {} is below the {} minimum",
-                        amount, min_required
-                    );
-                    self.reporter.coordinator_news(
-                        None,
-                        ErrorReportKind::InvalidFundingUtxo {
-                            amount,
-                            min_required,
-                        },
-                        &self.program_context.broker_channel,
-                    );
-                }
-                // Not reported: our own invariant broke, which is not L2's problem.
-                CoordinatorNews::InvalidStateTransition { txid, from, to } => {
-                    error!(
-                        "Invalid state transition for {:?}: {:?} -> {:?}",
-                        txid, from, to
-                    );
-                }
-                // Not reported: bookkeeping after the tx already finalized or failed.
-                CoordinatorNews::TransactionEvicted { txid, context } => {
-                    debug!(
-                        "Transaction evicted from tracking: {:?} {:?}",
-                        txid, context
-                    );
-                }
-                // Not reported: the caller asked for something invalid.
-                CoordinatorNews::InvalidCancel { txid, reason } => {
-                    warn!("Cancel rejected for {:?}: {}", txid, reason);
-                }
-                // Not reported: the coordinator's own store has no row for this txid, which
-                // is internal bookkeeping and not a statement about the chain.
-                CoordinatorNews::TxNotFound { txid } => {
-                    error!("Coordinator has no record of transaction {:?}", txid);
-                }
-            }
-
-            self.program_context
-                .bitcoin_coordinator
-                .ack_news(AckNews::Coordinator(coordinator_news))?;
-        }
-        Ok(true)
+        self.program_context
+            .bitcoin_coordinator
+            .ack_news(AckNews::Coordinator(coordinator_news))?;
+        Ok(())
     }
 
     fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
@@ -1219,7 +1230,7 @@ impl BitVMX {
             })?;
         }
 
-        // Each step commits independently; news uses a batch transaction.
+        // Each step commits independently.
         let store = self.store.clone();
 
         const WARN_THRESHOLD: Duration = Duration::from_secs(10);
@@ -1299,14 +1310,10 @@ impl BitVMX {
         Ok(TickOutcome::Operating)
     }
 
-    /// Owns the coordinator/news transaction; do not wrap in a global transaction.
+    /// Owns the coordinator and news transactions; requires no active global transaction.
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<(), BitVMXError> {
         if self.coordinator_throttle.should_call() {
-            // Commit coordinator updates and news acknowledgements together.
-            let store = self.store.clone();
-            let had_work = Self::run_transaction(&store, || self.process_bitcoin_updates())?;
-            self.reporter
-                .rpc_recovered(&self.program_context.broker_channel);
+            let had_work = self.process_bitcoin_updates()?;
             self.coordinator_throttle.record(had_work);
             return Ok(());
         }
@@ -2183,6 +2190,31 @@ mod transaction_tests {
     use super::*;
     use crate::test_utils::TestStorageDir;
     use storage_backend::error::StorageError;
+
+    #[test]
+    fn news_handler_and_acknowledgement_commit_independently_per_item() {
+        let dir = TestStorageDir::new("news-independent-transactions");
+        let store = dir.storage();
+        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
+            store.set("handler-first", true, None)?;
+            store.set("ack-first", true, None)?;
+            Err(BitVMXError::InvalidMessageFormat)
+        });
+        assert!(result.is_err());
+        BitVMX::run_transaction(&store, || {
+            store.set("handler-second", true, None)?;
+            store.set("ack-second", true, None)?;
+            Ok(())
+        })
+        .unwrap();
+
+        drop(store);
+        let store = dir.storage();
+        assert_eq!(store.get::<_, bool>("handler-first", None).unwrap(), None);
+        assert_eq!(store.get::<_, bool>("ack-first", None).unwrap(), None);
+        assert_eq!(store.get::<_, bool>("handler-second", None).unwrap(), Some(true));
+        assert_eq!(store.get::<_, bool>("ack-second", None).unwrap(), Some(true));
+    }
 
     #[test]
     fn malformed_input_is_consumed_and_the_next_input_can_commit() {
