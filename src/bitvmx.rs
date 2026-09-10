@@ -471,19 +471,14 @@ impl BitVMX {
                     program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
                 if is_verification_msg {
-                    match SignatureVerifier::handle_verification_messages(
+                    SignatureVerifier::handle_verification_messages(
                         &self.program_context,
                         &program_id,
                         &msg_type,
                         &data,
                         &peer_address,
-                    ) {
-                        Ok(_) => MessageDisposition::Processed,
-                        Err(e) => {
-                            error!("Error handling verification message: {:?}", e);
-                            MessageDisposition::RetryLater
-                        }
-                    }
+                    )?;
+                    MessageDisposition::Processed
                 } else {
                     self.process_program_message(
                         &program_id,
