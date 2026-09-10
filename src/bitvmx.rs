@@ -465,38 +465,43 @@ impl BitVMX {
                 return Ok(());
             }
         }
-        let disposition = if let Ok(mut program) = self.load_program(&program_id) {
-            let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+        let disposition = match self.load_program(&program_id) {
+            Ok(mut program) => {
+                let peer_address =
+                    program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
-            if is_verification_msg {
-                match SignatureVerifier::handle_verification_messages(
-                    &self.program_context,
-                    &program_id,
-                    &msg_type,
-                    &data,
-                    &peer_address,
-                ) {
-                    Ok(_) => MessageDisposition::Processed,
-                    Err(e) => {
-                        error!("Error handling verification message: {:?}", e);
-                        MessageDisposition::RetryLater
+                if is_verification_msg {
+                    match SignatureVerifier::handle_verification_messages(
+                        &self.program_context,
+                        &program_id,
+                        &msg_type,
+                        &data,
+                        &peer_address,
+                    ) {
+                        Ok(_) => MessageDisposition::Processed,
+                        Err(e) => {
+                            error!("Error handling verification message: {:?}", e);
+                            MessageDisposition::RetryLater
+                        }
                     }
+                } else {
+                    self.process_program_message(
+                        &program_id,
+                        msg_type,
+                        data,
+                        peer_address,
+                        &mut program,
+                        timestamp,
+                        signature,
+                        version,
+                    )?
                 }
-            } else {
-                self.process_program_message(
-                    &program_id,
-                    msg_type,
-                    data,
-                    peer_address,
-                    &mut program,
-                    timestamp,
-                    signature,
-                    version,
-                )?
             }
-        } else {
-            debug!("Program {} not found", program_id);
-            MessageDisposition::RetryLater
+            Err(BitVMXError::ProgramNotFound(_)) => {
+                debug!("Program {} not found", program_id);
+                MessageDisposition::RetryLater
+            }
+            Err(err) => return Err(err),
         };
 
         if disposition == MessageDisposition::RetryLater {
@@ -627,16 +632,20 @@ impl BitVMX {
 
         match &context {
             Context::ProgramId(program_id) => {
-                if let Ok(program) = self.load_program(program_id) {
-                    program.notify_news(
-                        tx_id,
-                        vout,
-                        tx_status,
-                        context_data,
-                        &self.program_context,
-                    )?;
-                } else {
-                    warn!("handle_news: Program {} not found", program_id);
+                match self.load_program(program_id) {
+                    Ok(program) => {
+                        program.notify_news(
+                            tx_id,
+                            vout,
+                            tx_status,
+                            context_data,
+                            &self.program_context,
+                        )?;
+                    }
+                    Err(BitVMXError::ProgramNotFound(_)) => {
+                        warn!("handle_news: Program {} not found", program_id);
+                    }
+                    Err(err) => return Err(err),
                 }
             }
             Context::RequestId(request_id, from) => {
@@ -1951,13 +1960,14 @@ impl BitVMX {
                             )
                         }
                     },
-                    Err(err) => {
+                    Err(err @ BitVMXError::ProgramNotFound(_)) => {
                         error!("Program not found: {:?}. Error: {}", id, err);
                         OutgoingBitVMXApiMessages::NotFound(
                             id,
                             format!("Program not found: {}", name),
                         )
                     }
+                    Err(err) => return Err(err),
                 };
 
                 self.reply(from, response)?;
@@ -2136,10 +2146,11 @@ impl BitVMX {
                             .visualize(GraphOptions::EdgeArrows)?;
                         OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str)
                     }
-                    Err(e) => {
+                    Err(e @ BitVMXError::ProgramNotFound(_)) => {
                         warn!("Failed to load protocol: {:?}", e);
                         OutgoingBitVMXApiMessages::ProtocolVisualization(id, String::default())
                     }
+                    Err(err) => return Err(err),
                 };
                 self.reply(from, message)?;
             }
