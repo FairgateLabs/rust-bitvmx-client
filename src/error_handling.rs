@@ -106,13 +106,13 @@ impl Reporter {
     }
 
     /// Reports that the node is stopping on a non-fatal error
-    pub(crate) fn stopping(&self, error: &BitVMXError, broker_node: &BrokerNode) {
+    pub(crate) fn non_fatal(&self, error: &BitVMXError, broker_node: &BrokerNode) {
         send_error_report(
             broker_node,
             &self.l2_identifier,
             ErrorReport::new(
                 ErrorScope::Node,
-                ErrorReportKind::NodeStopping,
+                ErrorReportKind::NonFatal,
                 Some(error.to_string()),
             ),
         );

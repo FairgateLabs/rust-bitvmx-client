@@ -1,6 +1,6 @@
 use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
-use crate::error_handling::{classify, is_fatal, Reporter, Severity};
+use crate::error_handling::{classify, Reporter, Severity};
 use crate::ping_helper::PingHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::program::{is_active_program, Program};
@@ -987,26 +987,40 @@ impl BitVMX {
                 error!("  Caused by: {err}");
                 source = std::error::Error::source(err);
             }
-            if is_fatal(e) {
-                self.reporter.fatal(e, &self.program_context.broker_channel);
-            } else {
-                // Preserve the existing application-error policy: coordinator effects and
-                // partially processed inputs still need their own recovery boundaries.
-                // Transport failures have already rolled back their own transaction.
-                if application_transaction_active {
-                    if let Err(commit) = self.store.commit_global_transaction() {
-                        error!("Could not commit a failed tick: {:?}", commit);
-                        let commit = BitVMXError::from(commit);
-                        self.reporter
-                            .fatal(&commit, &self.program_context.broker_channel);
-                        return Err(commit);
-                    }
+
+            // decide type of error to send
+            let should_stop = match classify(e) {
+                Severity::Fatal => {
+                    self.reporter.fatal(e, &self.program_context.broker_channel);
+                    true
                 }
-                self.reporter
-                    .stopping(e, &self.program_context.broker_channel);
-                //TODO: keep ticking instead of stopping, once we know a partially
-                //applied tick is safe to carry on from.
-                return Ok(TickOutcome::Stopping);
+                Severity::BitcoinNodeUnreachable => {
+                    self.reporter
+                        .rpc_unavailable(e, &self.program_context.broker_channel);
+                    false
+                }
+                Severity::Other => {
+                    self.reporter
+                        .non_fatal(e, &self.program_context.broker_channel);
+                    false
+                }
+            };
+
+            // if there is an active transaction, then rollback
+            if application_transaction_active {
+                if let Err(err) = self.store.rollback_global_transaction() {
+                    error!("Could not rollback a failed tick: {:?}", err);
+                    let err = BitVMXError::from(err);
+                    self.reporter
+                        .fatal(&err, &self.program_context.broker_channel);
+                    //double error will shutdown
+                    return Err(err);
+                }
+            }
+
+            if !should_stop {
+                // rolledback the error, continue processing
+                return Ok(TickOutcome::Operating);
             }
         }
 
