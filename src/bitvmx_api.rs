@@ -566,10 +566,7 @@ impl BitVMX {
                 debug!("Getting funding balance uuid: {:?}", id);
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
-                    self.program_context.broker_channel.send_service(
-                        &from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
-                    )?;
+                    self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
                     return Ok(());
                 }
                 let balance = self.wallet.balance();
@@ -585,10 +582,7 @@ impl BitVMX {
                 info!("Sending funds to {:?}", destination);
                 if !self.wallet.is_ready {
                     warn!("Wallet is not ready, to send funds uuid: {:?}", id);
-                    self.program_context.broker_channel.send_service(
-                        &from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::WalletNotReady(id))?,
-                    )?;
+                    self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
                     return Ok(());
                 }
                 // Use the fee_rate parameter passed in the message
