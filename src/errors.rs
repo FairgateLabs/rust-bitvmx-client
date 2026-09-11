@@ -175,9 +175,6 @@ pub enum BitVMXError {
     #[error("Program {0} is not ready to run. Please install it first.")]
     ProgramNotReady(Uuid),
 
-    #[error("Cannot find program with id {0}")]
-    ProgramNotFound(Uuid),
-
     #[error("Cannot find protocol with name {0}")]
     ProtocolNotFound(String),
 
@@ -429,9 +426,6 @@ pub enum ProgramError {
 
     #[error("Error loading Program: {0}")]
     LoadError(#[from] StorageError),
-
-    #[error("Program not found in storage. Program id: {0}")]
-    ProgramNotFound(Uuid),
 
     #[error("Storage unavailable")]
     StorageUnavailable,

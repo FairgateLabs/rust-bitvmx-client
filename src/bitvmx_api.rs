@@ -1,5 +1,6 @@
 use super::{BitVMX, Context, RejectedInputSource, StoreKey};
 use crate::comms_allow_list;
+use crate::error_handling::{classify, send_error_report, Severity};
 use crate::errors::BitVMXError;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
@@ -7,8 +8,8 @@ use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramStatus,
-    PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+    ErrorReport, ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
+    ProgramStatus, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -39,7 +40,7 @@ impl BitVMX {
         Ok(())
     }
 
-    fn setup_internal(
+    fn setup(
         &mut self,
         id: Uuid,
         program_type: String,
@@ -326,16 +327,6 @@ impl BitVMX {
         Ok(())
     }
 
-    fn setup(
-        &mut self,
-        id: Uuid,
-        program_type: String,
-        peer_address: Vec<CommsAddress>,
-        leader: u16,
-    ) -> Result<(), BitVMXError> {
-        self.setup_internal(id, program_type, peer_address, leader)
-    }
-
     fn get_transaction(
         &mut self,
         from: Identifier,
@@ -381,9 +372,32 @@ impl BitVMX {
         Ok(())
     }
 
-    fn dispatch_transaction_name(&mut self, id: Uuid, name: &str) -> Result<(), BitVMXError> {
-        self.load_program(&id)?
-            .dispatch_transaction_name(name, &mut self.program_context)?;
+    fn load_program_or_reply(
+        &self,
+        from: &Identifier,
+        id: Uuid,
+    ) -> Result<Option<Program>, BitVMXError> {
+        let program = self.load_program(&id)?;
+        if program.is_none() {
+            warn!("Program {} not found", id);
+            self.reply(
+                from.clone(),
+                OutgoingBitVMXApiMessages::NotFound(id, format!("Program not found: {id}")),
+            )?;
+        }
+        Ok(program)
+    }
+
+    fn dispatch_transaction_name(
+        &mut self,
+        from: Identifier,
+        id: Uuid,
+        name: &str,
+    ) -> Result<(), BitVMXError> {
+        let Some(mut program) = self.load_program_or_reply(&from, id)? else {
+            return Ok(());
+        };
+        program.dispatch_transaction_name(name, &mut self.program_context)?;
         Ok(())
     }
 
@@ -416,6 +430,55 @@ impl BitVMX {
         Ok(())
     }
 
+    fn api_request_id(message: &IncomingBitVMXApiMessages) -> Option<Uuid> {
+        use IncomingBitVMXApiMessages::*;
+
+        match message {
+            Ping(id)
+            | SetVar(id, ..)
+            | SetWitness(id, ..)
+            | GetVar(id, ..)
+            | GetWitness(id, ..)
+            | GetCommInfo(id)
+            | GetTransaction(id, ..)
+            | GetTransactionInfoByName(id, ..)
+            | GetHashedMessage(id, ..)
+            | Setup(id, ..)
+            | SubscribeToTransaction(id, ..)
+            | SubscribeToSpendingUTXO(id, ..)
+            | DispatchTransaction(id, ..)
+            | DispatchTransactionName(id, ..)
+            | SetupKey(id, ..)
+            | GetAggregatedPubkey(id)
+            | GetKeyPair(id)
+            | GetPubKey(id, ..)
+            | GetEvenPubKey(id)
+            | SignMessage(id, ..)
+            | GenerateZKP(id, ..)
+            | ProofReady(id)
+            | GetZKPExecutionResult(id)
+            | Encrypt(id, ..)
+            | Decrypt(id, ..)
+            | Backup(id, ..)
+            | GetFundingAddress(id)
+            | GetFundingBalance(id)
+            | SendFunds(id, ..)
+            | GetProtocolVisualization(id)
+            | ListAllowList(id)
+            | AddToAllowList(id, ..)
+            | RemoveFromAllowList(id, ..)
+            | SetAllowAll(id, ..) => Some(*id),
+            SetFundingUtxo(_)
+            | SubscribeToOutputPattern(..)
+            | SubscribeToRskPegin(..)
+            | GetSPVProof(_)
+            | Shutdown() => None,
+            #[cfg(feature = "testpanic")]
+            Test(_) => None,
+        }
+    }
+
+    #[rustfmt::skip]
     pub(super) fn handle_api_message(
         &mut self,
         msg: String,
@@ -433,12 +496,15 @@ impl BitVMX {
         };
         debug!("< {:?}", decoded);
 
+        let request_id = Self::api_request_id(&decoded);
+        let reply_to = from.clone();
+        let result = (|| -> Result<(), BitVMXError> {
         match decoded {
             IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
-                let hashed = self
-                    .load_program(&id)?
-                    .protocol
-                    .get_hashed_message(&name, vout, leaf)?;
+                let Some(mut program) = self.load_program_or_reply(&from, id)? else {
+                    return Ok(());
+                };
+                let hashed = program.protocol.get_hashed_message(&name, vout, leaf)?;
                 self.reply(
                     from,
                     OutgoingBitVMXApiMessages::HashedMessage(id, name, vout, leaf, hashed),
@@ -562,28 +628,21 @@ impl BitVMX {
                 self.get_transaction(from, id, txid)?
             }
             IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                let response = match self.load_program(&id) {
-                    Ok(prog) => match prog.get_transaction_by_name(&name, &self.program_context) {
-                        Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
-                        Err(err) => {
-                            error!(
-                                "Transaction not found: {} in program {:?}. Error: {}",
-                                name, id, err
-                            );
-                            OutgoingBitVMXApiMessages::NotFound(
-                                id,
-                                format!("Transaction not found: {}", name),
-                            )
-                        }
-                    },
-                    Err(err @ BitVMXError::ProgramNotFound(_)) => {
-                        error!("Program not found: {:?}. Error: {}", id, err);
+                let Some(program) = self.load_program_or_reply(&from, id)? else {
+                    return Ok(());
+                };
+                let response = match program.get_transaction_by_name(&name, &self.program_context) {
+                    Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
+                    Err(err) => {
+                        error!(
+                            "Transaction not found: {} in program {:?}. Error: {}",
+                            name, id, err
+                        );
                         OutgoingBitVMXApiMessages::NotFound(
                             id,
-                            format!("Program not found: {}", name),
+                            format!("Transaction not found: {}", name),
                         )
                     }
-                    Err(err) => return Err(err),
                 };
 
                 self.reply(from, response)?;
@@ -617,7 +676,7 @@ impl BitVMX {
             IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
 
             IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
-                self.dispatch_transaction_name(id, &tx)?
+                self.dispatch_transaction_name(from, id, &tx)?
             }
             IncomingBitVMXApiMessages::DispatchTransaction(
                 id,
@@ -646,7 +705,7 @@ impl BitVMX {
                     .globals
                     .get_var(&id, "final_aggregated_key")?
                     .and_then(|v| v.pubkey().ok())
-                    .ok_or(BitVMXError::ProgramNotFound(id))?;
+                    .ok_or(BitVMXError::KeysNotFound(id))?;
                 let pair = self
                     .program_context
                     .key_manager
@@ -669,7 +728,7 @@ impl BitVMX {
                         .globals
                         .get_var(&id, "final_aggregated_key")?
                         .and_then(|v| v.pubkey().ok())
-                        .ok_or(BitVMXError::ProgramNotFound(id))?;
+                        .ok_or(BitVMXError::KeysNotFound(id))?;
                     let pubkey = self
                         .program_context
                         .key_manager
@@ -754,21 +813,17 @@ impl BitVMX {
                 self.reply(from, message)?;
             }
             IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
-                let message = match self.load_program(&id) {
-                    Ok(program) => {
-                        let protocol_str = program
-                            .protocol
-                            .load_protocol()?
-                            .visualize(GraphOptions::EdgeArrows)?;
-                        OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str)
-                    }
-                    Err(e @ BitVMXError::ProgramNotFound(_)) => {
-                        warn!("Failed to load protocol: {:?}", e);
-                        OutgoingBitVMXApiMessages::ProtocolVisualization(id, String::default())
-                    }
-                    Err(err) => return Err(err),
+                let Some(program) = self.load_program_or_reply(&from, id)? else {
+                    return Ok(());
                 };
-                self.reply(from, message)?;
+                let protocol_str = program
+                    .protocol
+                    .load_protocol()?
+                    .visualize(GraphOptions::EdgeArrows)?;
+                self.reply(
+                    from,
+                    OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str),
+                )?;
             }
             IncomingBitVMXApiMessages::ListAllowList(id) => {
                 let allow_list = self.program_context.comms.get_allow_list();
@@ -805,6 +860,31 @@ impl BitVMX {
                     use storage_backend::error::StorageError as KVStorageError;
                     return Err(BitVMXError::from(KVStorageError::WriteError));
                 }
+            }
+        }
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            error!(
+                "Failed to handle API message from {}: {:?}",
+                reply_to, error
+            );
+
+            let (kind, fatal) = match classify(&error) {
+                Severity::Fatal => (ErrorReportKind::Fatal, true),
+                Severity::BitcoinNodeUnreachable => (ErrorReportKind::BitcoinRpcUnavailable, false),
+                Severity::Other => (ErrorReportKind::NonFatal, false),
+            };
+            let scope = request_id.map_or(ErrorScope::Node, ErrorScope::Request);
+            send_error_report(
+                &self.program_context.broker_channel,
+                &reply_to,
+                ErrorReport::new(scope, kind, Some(error.to_string())),
+            );
+
+            if fatal {
+                return Err(error);
             }
         }
 

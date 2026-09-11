@@ -257,9 +257,8 @@ impl BitVMX {
         self.store.clone()
     }
 
-    pub fn load_program(&self, program_id: &Uuid) -> Result<Program, BitVMXError> {
-        let program = Program::load(self.store.clone(), program_id)?;
-        Ok(program)
+    pub fn load_program(&self, program_id: &Uuid) -> Result<Option<Program>, BitVMXError> {
+        Program::load(self.store.clone(), program_id)
     }
 
     /// Reports a setup failure for a message the node knows it has lost. Unlike the errors
@@ -271,18 +270,16 @@ impl BitVMX {
         peer: Option<PubkHash>,
         reason: SetupFailureReason,
     ) -> Result<(), BitVMXError> {
-        match self.load_program(program_id) {
-            Ok(mut program) => program.fail_setup(peer, reason, &mut self.program_context),
-            // No local program means no setup to fail, and nobody waiting on one. Any other
-            // load failure is raised: swallowing it would drop the report and stall silently.
-            Err(BitVMXError::ProgramNotFound(_)) => {
+        match self.load_program(program_id)? {
+            Some(mut program) => program.fail_setup(peer, reason, &mut self.program_context),
+            // No local program means no setup to fail, and nobody waiting on one.
+            None => {
                 debug!(
                     "BitVMX::fail_program_setup() - Program {} not found, nothing to fail",
                     program_id
                 );
                 Ok(())
             }
-            Err(e) => Err(e),
         }
     }
 
@@ -459,8 +456,8 @@ impl BitVMX {
                 return Ok(());
             }
         }
-        let disposition = match self.load_program(&program_id) {
-            Ok(mut program) => {
+        let disposition = match self.load_program(&program_id)? {
+            Some(mut program) => {
                 if program.is_failed() {
                     return Ok(());
                 }
@@ -489,11 +486,10 @@ impl BitVMX {
                     )?
                 }
             }
-            Err(BitVMXError::ProgramNotFound(_)) => {
+            None => {
                 debug!("Program {} not found", program_id);
                 MessageDisposition::RetryLater
             }
-            Err(err) => return Err(err),
         };
 
         if disposition == MessageDisposition::RetryLater {
@@ -624,8 +620,8 @@ impl BitVMX {
         );
 
         match &context {
-            Context::ProgramId(program_id) => match self.load_program(program_id) {
-                Ok(program) => {
+            Context::ProgramId(program_id) => match self.load_program(program_id)? {
+                Some(program) => {
                     program.notify_news(
                         tx_id,
                         vout,
@@ -634,10 +630,9 @@ impl BitVMX {
                         &self.program_context,
                     )?;
                 }
-                Err(BitVMXError::ProgramNotFound(_)) => {
+                None => {
                     warn!("handle_news: Program {} not found", program_id);
                 }
-                Err(err) => return Err(err),
             },
             Context::RequestId(request_id, from) => {
                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
@@ -989,12 +984,16 @@ impl BitVMX {
                 }
             };
 
-            self.load_program(&program_id)?.receive_dispatcher_result(
-                parsed,
-                context,
-                dispatcher,
-                &mut self.program_context,
-            )?;
+            if let Some(mut program) = self.load_program(&program_id)? {
+                program.receive_dispatcher_result(
+                    parsed,
+                    context,
+                    dispatcher,
+                    &mut self.program_context,
+                )?;
+            } else {
+                warn!("Program {} not found for dispatcher result", program_id);
+            }
         }
         Ok(())
     }
@@ -1146,11 +1145,19 @@ impl BitVMX {
             }) => {
                 let store = self.store.clone();
                 Self::run_transaction(&store, || {
-                    self.load_program(&program_id)?.fail_setup(
-                        peer,
-                        SetupFailureReason::StepError(source.to_string()),
-                        &mut self.program_context,
-                    )
+                    if let Some(mut program) = self.load_program(&program_id)? {
+                        program.fail_setup(
+                            peer,
+                            SetupFailureReason::StepError(source.to_string()),
+                            &mut self.program_context,
+                        )?;
+                    } else {
+                        warn!(
+                            "Program {} not found while recording setup failure",
+                            program_id
+                        );
+                    }
+                    Ok(())
                 })?;
                 Ok(None)
             }
@@ -1357,7 +1364,10 @@ impl BitVMX {
                         if !is_active_program(&this.store, &program_id)? {
                             return Ok(false);
                         }
-                        let mut program = this.load_program(&program_id)?;
+                        let Some(mut program) = this.load_program(&program_id)? else {
+                            warn!("Active program {} not found", program_id);
+                            return Ok(false);
+                        };
                         program.tick(&mut this.program_context)?;
                         Ok(true)
                     })

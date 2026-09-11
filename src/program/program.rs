@@ -224,11 +224,13 @@ impl Program {
         Ok(())
     }
 
-    /// Loads a Program from storage
-    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, BitVMXError> {
-        let mut program: Program = storage
-            .get(&Self::key_program(program_id), None)?
-            .ok_or(BitVMXError::ProgramNotFound(*program_id))?;
+    /// Loads a program from storage, returning `None` when it does not exist.
+    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Option<Self>, BitVMXError> {
+        let Some(mut program): Option<Program> =
+            storage.get(&Self::key_program(program_id), None)?
+        else {
+            return Ok(None);
+        };
 
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage.clone());
@@ -257,7 +259,7 @@ impl Program {
             engine.restore_state(saved_state.clone())?;
         }
 
-        Ok(program)
+        Ok(Some(program))
     }
 
     /// Saves the program to storage
@@ -864,7 +866,7 @@ mod tests {
         program.state = ProgramState::Ready;
         program.save().unwrap();
 
-        let loaded = Program::load(storage, &program_id).unwrap();
+        let loaded = Program::load(storage, &program_id).unwrap().unwrap();
 
         assert_eq!(loaded.program_id, program_id);
         assert_eq!(loaded.state, ProgramState::Ready);
@@ -896,13 +898,10 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_program_and_storage_are_reported_explicitly() {
+    fn test_missing_program_and_storage_are_handled_explicitly() {
         let dir = TestStorageDir::new("program-missing");
         let missing_id = Uuid::new_v4();
-        assert!(matches!(
-            Program::load(dir.storage(), &missing_id),
-            Err(BitVMXError::ProgramNotFound(id)) if id == missing_id
-        ));
+        assert!(Program::load(dir.storage(), &missing_id).unwrap().is_none());
 
         let storage = dir.storage();
         let mut program = test_program(storage, Uuid::new_v4());
@@ -979,7 +978,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = Program::load(storage, &program_id).unwrap();
+        let loaded = Program::load(storage, &program_id).unwrap().unwrap();
         assert_eq!(loaded.program_id, program_id);
         assert_eq!(loaded.protocol_id(), program_id);
         assert_eq!(loaded.my_idx, 0);
@@ -1016,7 +1015,9 @@ mod tests {
                 .current_step_state,
             StepState::AllParticipantsCompleted
         );
-        let after_generation = Program::load(storage.clone(), &program_id).unwrap();
+        let after_generation = Program::load(storage.clone(), &program_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(after_generation.state, ProgramState::SettingUp);
         assert_eq!(
             after_generation
@@ -1040,7 +1041,7 @@ mod tests {
             .is_ok());
         assert!(env.coordinator_mock().monitored().is_empty());
 
-        let completed = Program::load(storage, &program_id).unwrap();
+        let completed = Program::load(storage, &program_id).unwrap().unwrap();
         assert_eq!(completed.state, ProgramState::Ready);
         assert!(completed.setup_engine.as_ref().unwrap().is_complete());
 
@@ -1074,7 +1075,10 @@ mod tests {
         assert_eq!(classify(&error), Severity::BitcoinNodeUnreachable);
         assert_eq!(program.state, ProgramState::SettingUp);
         assert_eq!(
-            Program::load(storage, &program.program_id).unwrap().state,
+            Program::load(storage, &program.program_id)
+                .unwrap()
+                .unwrap()
+                .state,
             ProgramState::SettingUp
         );
         assert!(env.l2_messages().unwrap().is_empty());
@@ -1132,7 +1136,10 @@ mod tests {
         record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
         assert_eq!(
-            Program::load(storage.clone(), &program_id).unwrap().state,
+            Program::load(storage.clone(), &program_id)
+                .unwrap()
+                .unwrap()
+                .state,
             ProgramState::Failed
         );
         assert!(!is_active_program(&storage, &program_id).unwrap());
