@@ -476,7 +476,6 @@ impl BitVMX {
         }
     }
 
-    #[rustfmt::skip]
     pub(super) fn handle_api_message(
         &mut self,
         msg: String,
@@ -497,223 +496,204 @@ impl BitVMX {
         let request_id = Self::api_request_id(&decoded);
         let reply_to = from.clone();
         let result = (|| -> Result<(), BitVMXError> {
-        match decoded {
-            IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
-                let Some(mut program) = self.load_program_or_reply(&from, id)? else {
-                    return Ok(());
-                };
-                let hashed = program.protocol.get_hashed_message(&name, vout, leaf)?;
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::HashedMessage(id, name, vout, leaf, hashed),
-                )?;
-            }
-            IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
-                let comm_info = OutgoingBitVMXApiMessages::CommInfo(
-                    uuid,
-                    CommsAddress {
-                        address: self.program_context.comms.get_address(),
-                        pubkey_hash: self.program_context.comms.get_pubk_hash()?,
-                    },
-                );
-                self.reply(from, comm_info)?;
-            }
-            IncomingBitVMXApiMessages::Ping(uuid) => {
-                self.ping(from, uuid)?;
-            }
-            IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
-                debug!("Setting variable {}: {:?}", key, value);
-                self.program_context.globals.set_var(&uuid, &key, value)?;
-            }
-            IncomingBitVMXApiMessages::SetWitness(uuid, key, value) => {
-                debug!("Setting witness {}: {:?}", key, value);
-                self.program_context
-                    .witness
-                    .set_witness(&uuid, &key, value)?;
-            }
-            IncomingBitVMXApiMessages::SetFundingUtxo(utxo) => {
-                info!("Setting funding utxo {:?}", utxo);
-                self.program_context.bitcoin_coordinator.add_funding(utxo)?;
-            }
-            IncomingBitVMXApiMessages::GetFundingAddress(id) => {
-                debug!("Getting funding address uuid: {:?}", id);
-                let address = match self.wallet.receive_address() {
-                    Ok(address) => address,
-                    Err(e) => {
-                        error!("Error getting funding address uuid: {:?}: {:?}", id, e);
-                        self.program_context.broker_channel.send_service(
-                            &from,
-                            serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
-                                id,
-                                e.to_string(),
-                            ))?,
-                        )?;
+            match decoded {
+                IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
+                    let Some(mut program) = self.load_program_or_reply(&from, id)? else {
                         return Ok(());
-                    }
-                };
-
-                self.program_context.broker_channel.send_service(
-                    &from,
-                    serde_json::to_string(&OutgoingBitVMXApiMessages::FundingAddress(
-                        id,
-                        address.into_unchecked(),
-                    ))?,
-                )?;
-            }
-            IncomingBitVMXApiMessages::GetFundingBalance(id) => {
-                debug!("Getting funding balance uuid: {:?}", id);
-                if !self.wallet.is_ready {
-                    warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
-                    self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
-                    return Ok(());
+                    };
+                    let hashed = program.protocol.get_hashed_message(&name, vout, leaf)?;
+                    self.reply(
+                        from,
+                        OutgoingBitVMXApiMessages::HashedMessage(id, name, vout, leaf, hashed),
+                    )?;
                 }
-                let balance = self.wallet.balance();
-                self.program_context.broker_channel.send_service(
-                    &from,
-                    serde_json::to_string(&OutgoingBitVMXApiMessages::FundingBalance(
-                        id,
-                        balance.trusted_spendable().to_sat(),
-                    ))?,
-                )?;
-            }
-            IncomingBitVMXApiMessages::SendFunds(id, destination, fee_rate) => {
-                info!("Sending funds to {:?}", destination);
-                if !self.wallet.is_ready {
-                    warn!("Wallet is not ready, to send funds uuid: {:?}", id);
-                    self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
-                    return Ok(());
+                IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
+                    let comm_info = OutgoingBitVMXApiMessages::CommInfo(
+                        uuid,
+                        CommsAddress {
+                            address: self.program_context.comms.get_address(),
+                            pubkey_hash: self.program_context.comms.get_pubk_hash()?,
+                        },
+                    );
+                    self.reply(from, comm_info)?;
                 }
-                // Use the fee_rate parameter passed in the message
-                let tx = match self.wallet.create_tx(destination.clone(), fee_rate) {
-                    Ok(tx) => tx,
-                    Err(e) => {
-                        error!("Failed sending funds to {:?}. Error: {:?}", destination, e);
-                        self.program_context.broker_channel.send_service(
-                            &from.clone(),
-                            serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
-                                id,
-                                e.to_string(),
-                            ))?,
-                        )?;
-                        return Ok(());
-                    }
-                };
+                IncomingBitVMXApiMessages::Ping(uuid) => {
+                    self.ping(from, uuid)?;
+                }
+                IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
+                    debug!("Setting variable {}: {:?}", key, value);
+                    self.program_context.globals.set_var(&uuid, &key, value)?;
+                }
+                IncomingBitVMXApiMessages::SetWitness(uuid, key, value) => {
+                    debug!("Setting witness {}: {:?}", key, value);
+                    self.program_context
+                        .witness
+                        .set_witness(&uuid, &key, value)?;
+                }
+                IncomingBitVMXApiMessages::SetFundingUtxo(utxo) => {
+                    info!("Setting funding utxo {:?}", utxo);
+                    self.program_context.bitcoin_coordinator.add_funding(utxo)?;
+                }
+                IncomingBitVMXApiMessages::GetFundingAddress(id) => {
+                    debug!("Getting funding address uuid: {:?}", id);
+                    let address = match self.wallet.receive_address() {
+                        Ok(address) => address,
+                        Err(e) => {
+                            error!("Error getting funding address uuid: {:?}: {:?}", id, e);
+                            self.program_context.broker_channel.send_service(
+                                &from,
+                                serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
+                                    id,
+                                    e.to_string(),
+                                ))?,
+                            )?;
+                            return Ok(());
+                        }
+                    };
 
-                let txid = tx.compute_txid();
-                //TODO: Is this confirmation threshold of 1 appropriate here? What about stuck_in_mempool_blocks?
-                self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1), None)?;
-                self.wallet.update_with_tx(&tx)?;
-
-                self.program_context.broker_channel.send_service(
-                    &from,
-                    serde_json::to_string(&OutgoingBitVMXApiMessages::FundsSent(id, txid))?,
-                )?;
-            }
-
-            IncomingBitVMXApiMessages::GetVar(uuid, key) => {
-                self.get_var(from, uuid, &key)?;
-            }
-            IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
-                self.get_witness(from, uuid, &key)?;
-            }
-            IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
-                self.get_transaction(from, id, txid)?
-            }
-            IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                let Some(program) = self.load_program_or_reply(&from, id)? else {
-                    return Ok(());
-                };
-                let response = match program.get_transaction_by_name(&name, &self.program_context) {
-                    Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
-                    Err(err) => {
-                        error!(
-                            "Transaction not found: {} in program {:?}. Error: {}",
-                            name, id, err
-                        );
-                        OutgoingBitVMXApiMessages::NotFound(
+                    self.program_context.broker_channel.send_service(
+                        &from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::FundingAddress(
                             id,
-                            format!("Transaction not found: {}", name),
-                        )
+                            address.into_unchecked(),
+                        ))?,
+                    )?;
+                }
+                IncomingBitVMXApiMessages::GetFundingBalance(id) => {
+                    debug!("Getting funding balance uuid: {:?}", id);
+                    if !self.wallet.is_ready {
+                        warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
+                        self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
+                        return Ok(());
                     }
-                };
+                    let balance = self.wallet.balance();
+                    self.program_context.broker_channel.send_service(
+                        &from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::FundingBalance(
+                            id,
+                            balance.trusted_spendable().to_sat(),
+                        ))?,
+                    )?;
+                }
+                IncomingBitVMXApiMessages::SendFunds(id, destination, fee_rate) => {
+                    info!("Sending funds to {:?}", destination);
+                    if !self.wallet.is_ready {
+                        warn!("Wallet is not ready, to send funds uuid: {:?}", id);
+                        self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
+                        return Ok(());
+                    }
+                    // Use the fee_rate parameter passed in the message
+                    let tx = match self.wallet.create_tx(destination.clone(), fee_rate) {
+                        Ok(tx) => tx,
+                        Err(e) => {
+                            error!("Failed sending funds to {:?}. Error: {:?}", destination, e);
+                            self.program_context.broker_channel.send_service(
+                                &from.clone(),
+                                serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
+                                    id,
+                                    e.to_string(),
+                                ))?,
+                            )?;
+                            return Ok(());
+                        }
+                    };
 
-                self.reply(from, response)?;
-            }
-            IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
-                self.setup(id, program_type, participants, leader)?
-            }
-            IncomingBitVMXApiMessages::SubscribeToTransaction(
-                uuid,
-                txid,
-                confirmation_threshold,
-            ) => self.subscribe_to_tx(from, uuid, txid, confirmation_threshold)?,
-            IncomingBitVMXApiMessages::SubscribeToSpendingUTXO(
-                uuid,
-                txid,
-                vout,
-                confirmation_threshold,
-            ) => self.subscribe_to_spending_utxo(from, uuid, txid, vout, confirmation_threshold)?,
-            IncomingBitVMXApiMessages::SubscribeToOutputPattern(filter, confirmation_threshold) => {
-                self.subscribe_to_output_pattern(filter, confirmation_threshold)?
-            }
-            IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => self
-                .subscribe_to_output_pattern(
-                    bitcoin_coordinator::OutputPatternFilter {
-                        output_index: 1,
-                        tag: RSK_PEGIN_TAG.to_vec(),
-                        max_outputs: None,
-                    },
+                    let txid = tx.compute_txid();
+                    //TODO: Is this confirmation threshold of 1 appropriate here? What about stuck_in_mempool_blocks?
+                    self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1), None)?;
+                    self.wallet.update_with_tx(&tx)?;
+
+                    self.program_context.broker_channel.send_service(
+                        &from,
+                        serde_json::to_string(&OutgoingBitVMXApiMessages::FundsSent(id, txid))?,
+                    )?;
+                }
+
+                IncomingBitVMXApiMessages::GetVar(uuid, key) => {
+                    self.get_var(from, uuid, &key)?;
+                }
+                IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
+                    self.get_witness(from, uuid, &key)?;
+                }
+                IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
+                    self.get_transaction(from, id, txid)?
+                }
+                IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
+                    let Some(program) = self.load_program_or_reply(&from, id)? else {
+                        return Ok(());
+                    };
+                    let response =
+                        match program.get_transaction_by_name(&name, &self.program_context) {
+                            Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
+                            Err(err) => {
+                                error!(
+                                    "Transaction not found: {} in program {:?}. Error: {}",
+                                    name, id, err
+                                );
+                                OutgoingBitVMXApiMessages::NotFound(
+                                    id,
+                                    format!("Transaction not found: {}", name),
+                                )
+                            }
+                        };
+
+                    self.reply(from, response)?;
+                }
+                IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
+                    self.setup(id, program_type, participants, leader)?
+                }
+                IncomingBitVMXApiMessages::SubscribeToTransaction(
+                    uuid,
+                    txid,
                     confirmation_threshold,
-                )?,
-            IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
+                ) => self.subscribe_to_tx(from, uuid, txid, confirmation_threshold)?,
+                IncomingBitVMXApiMessages::SubscribeToSpendingUTXO(
+                    uuid,
+                    txid,
+                    vout,
+                    confirmation_threshold,
+                ) => {
+                    self.subscribe_to_spending_utxo(from, uuid, txid, vout, confirmation_threshold)?
+                }
+                IncomingBitVMXApiMessages::SubscribeToOutputPattern(
+                    filter,
+                    confirmation_threshold,
+                ) => self.subscribe_to_output_pattern(filter, confirmation_threshold)?,
+                IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => self
+                    .subscribe_to_output_pattern(
+                        bitcoin_coordinator::OutputPatternFilter {
+                            output_index: 1,
+                            tag: RSK_PEGIN_TAG.to_vec(),
+                            max_outputs: None,
+                        },
+                        confirmation_threshold,
+                    )?,
+                IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
 
-            IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
-                self.dispatch_transaction_name(from, id, &tx)?
-            }
-            IncomingBitVMXApiMessages::DispatchTransaction(
-                id,
-                tx,
-                confirmation_threshold,
-                stuck_in_mempool_blocks,
-            ) => {
-                self.dispatch_transaction(
-                    from,
+                IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
+                    self.dispatch_transaction_name(from, id, &tx)?
+                }
+                IncomingBitVMXApiMessages::DispatchTransaction(
                     id,
                     tx,
                     confirmation_threshold,
                     stuck_in_mempool_blocks,
-                )?;
-            }
-            IncomingBitVMXApiMessages::SetupKey(
-                id,
-                participants,
-                participants_keys,
-                leader_idx,
-            ) => self.setup_key(id, participants, participants_keys, leader_idx)?,
-            IncomingBitVMXApiMessages::GetKeyPair(id) => {
-                // Get aggregated key from globals (set by AggregatedKeyProtocol)
-                let aggregated = self
-                    .program_context
-                    .globals
-                    .get_var(&id, "final_aggregated_key")?
-                    .and_then(|v| v.pubkey().ok())
-                    .ok_or(BitVMXError::KeysNotFound(id))?;
-                let pair = self
-                    .program_context
-                    .key_manager
-                    .get_key_pair_for_too_insecure(&aggregated)?;
-                self.reply(from, OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1))?;
-                //RETURN PK
-                //TODO: Revisit this as it might be insecure
-            }
-            IncomingBitVMXApiMessages::GetPubKey(id, new) => {
-                if new {
-                    let public = self
-                        .program_context
-                        .key_manager
-                        .next_keypair(BitcoinKeyType::P2tr)?;
-                    self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
-                } else {
+                ) => {
+                    self.dispatch_transaction(
+                        from,
+                        id,
+                        tx,
+                        confirmation_threshold,
+                        stuck_in_mempool_blocks,
+                    )?;
+                }
+                IncomingBitVMXApiMessages::SetupKey(
+                    id,
+                    participants,
+                    participants_keys,
+                    leader_idx,
+                ) => self.setup_key(id, participants, participants_keys, leader_idx)?,
+                IncomingBitVMXApiMessages::GetKeyPair(id) => {
                     // Get aggregated key from globals (set by AggregatedKeyProtocol)
                     let aggregated = self
                         .program_context
@@ -721,148 +701,170 @@ impl BitVMX {
                         .get_var(&id, "final_aggregated_key")?
                         .and_then(|v| v.pubkey().ok())
                         .ok_or(BitVMXError::KeysNotFound(id))?;
-                    let pubkey = self
+                    let pair = self
                         .program_context
                         .key_manager
-                        .get_my_public_key(&aggregated)?;
-                    self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, pubkey))?;
+                        .get_key_pair_for_too_insecure(&aggregated)?;
+                    self.reply(from, OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1))?;
+                    //RETURN PK
+                    //TODO: Revisit this as it might be insecure
                 }
-            }
-            IncomingBitVMXApiMessages::GetEvenPubKey(id) => {
-                let public = self
-                    .program_context
-                    .key_manager
-                    .next_keypair_adjusted(BitcoinKeyType::P2tr)?;
-                self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
-            }
-            IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
-                // Create message from the payload
-                let message = Message::from_digest_slice(&payload)
-                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-                // Sign the message with the provided public key
-                let recoverable_signature = self
-                    .program_context
-                    .key_manager
-                    .sign_ecdsa_recoverable_message(&message, &public_key)?;
-
-                let (recovery_id, compact) = recoverable_signature.serialize_compact();
-                let (r_bytes, s_bytes) = compact.split_at(32);
-
-                // Convert to fixed-size arrays
-                // Convert to fixed-size arrays
-                let signature_r: [u8; 32] = r_bytes
-                    .try_into()
-                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                let signature_s: [u8; 32] = s_bytes
-                    .try_into()
-                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::SignedMessage(
-                        id,
-                        signature_r,
-                        signature_s,
-                        recovery_id.to_i32() as u8,
-                    ),
-                )?;
-            }
-            IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
-                self.get_aggregated_pubkey(from, id)?
-            }
-            IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
-                self.generate_zkp(from, id, input, elf_file_path)?
-            }
-            IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(from, id)?,
-            IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
-                self.get_zkp_execution_result(from, id)?
-            }
-            IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
-                let encrypted = self
-                    .program_context
-                    .key_manager
-                    .encrypt_rsa_message(&message, &pub_key)?;
-                self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
-            }
-            IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
-                let decrypted = self
-                    .program_context
-                    .key_manager
-                    .decrypt_rsa_message(&message, &pub_key)?;
-                self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
-            }
-            IncomingBitVMXApiMessages::Backup(id, backup_path, dek_path, password) => {
-                let message = match self.store.backup(&backup_path, &dek_path, password) {
-                    Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
-                        id,
-                        true,
-                        "Backup successful".to_string(),
-                    ),
-                    Err(e) => OutgoingBitVMXApiMessages::BackupResult(id, false, e.to_string()),
-                };
-
-                self.reply(from, message)?;
-            }
-            IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
-                let Some(program) = self.load_program_or_reply(&from, id)? else {
-                    return Ok(());
-                };
-                let protocol_str = program
-                    .protocol
-                    .load_protocol()
-                    .and_then(|op| op.visualize(GraphOptions::EdgeArrows));
-                let reply_msg =match protocol_str {
-                    Ok(s) => OutgoingBitVMXApiMessages::ProtocolVisualization(id, s),
-                    Err(e) => {
-                        error!("Error visualizing protocol: {}", e);
-                        let err_str= format!("Error visualizing protocol: {}", e);
-                        OutgoingBitVMXApiMessages::NotFound(id, err_str)
+                IncomingBitVMXApiMessages::GetPubKey(id, new) => {
+                    if new {
+                        let public = self
+                            .program_context
+                            .key_manager
+                            .next_keypair(BitcoinKeyType::P2tr)?;
+                        self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
+                    } else {
+                        // Get aggregated key from globals (set by AggregatedKeyProtocol)
+                        let aggregated = self
+                            .program_context
+                            .globals
+                            .get_var(&id, "final_aggregated_key")?
+                            .and_then(|v| v.pubkey().ok())
+                            .ok_or(BitVMXError::KeysNotFound(id))?;
+                        let pubkey = self
+                            .program_context
+                            .key_manager
+                            .get_my_public_key(&aggregated)?;
+                        self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, pubkey))?;
                     }
-                };
+                }
+                IncomingBitVMXApiMessages::GetEvenPubKey(id) => {
+                    let public = self
+                        .program_context
+                        .key_manager
+                        .next_keypair_adjusted(BitcoinKeyType::P2tr)?;
+                    self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
+                }
+                IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
+                    // Create message from the payload
+                    let message = Message::from_digest_slice(&payload)
+                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
 
-                self.reply(
-                    from,
-                    reply_msg,
-                )?;
-            }
-            IncomingBitVMXApiMessages::ListAllowList(id) => {
-                let allow_list = self.program_context.comms.get_allow_list();
-                let (entries, allow_all) = comms_allow_list::snapshot(&allow_list)?;
-                self.reply(
-                    from,
-                    OutgoingBitVMXApiMessages::AllowListEntries(id, entries, allow_all),
-                )?;
-            }
-            IncomingBitVMXApiMessages::AddToAllowList(id, pubk_hash, addr) => {
-                info!("Allowing comms peer {} from {:?}", pubk_hash, addr);
-                self.mutate_allow_list(id, from, |allow_list| {
-                    allow_list.add_entry(pubk_hash.clone(), addr)
-                })?;
-            }
-            IncomingBitVMXApiMessages::RemoveFromAllowList(id, pubk_hash) => {
-                info!("Removing comms peer {}", pubk_hash);
-                self.mutate_allow_list(id, from, |allow_list| allow_list.remove(&pubk_hash))?;
-            }
-            IncomingBitVMXApiMessages::SetAllowAll(id, allow_all) => {
-                info!("Setting comms allow_all to {}", allow_all);
-                self.mutate_allow_list(id, from, |allow_list| allow_list.set_allow_all(allow_all))?;
-            }
-            IncomingBitVMXApiMessages::Shutdown() => {
-                info!("Shutdown message received. Initiating shutdown...");
-                self.shutdown()?;
-            }
-            #[cfg(feature = "testpanic")]
-            IncomingBitVMXApiMessages::Test(s) => {
-                if s == "panic" {
-                    panic!("test-induced panic");
+                    // Sign the message with the provided public key
+                    let recoverable_signature = self
+                        .program_context
+                        .key_manager
+                        .sign_ecdsa_recoverable_message(&message, &public_key)?;
+
+                    let (recovery_id, compact) = recoverable_signature.serialize_compact();
+                    let (r_bytes, s_bytes) = compact.split_at(32);
+
+                    // Convert to fixed-size arrays
+                    // Convert to fixed-size arrays
+                    let signature_r: [u8; 32] = r_bytes
+                        .try_into()
+                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                    let signature_s: [u8; 32] = s_bytes
+                        .try_into()
+                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+
+                    self.reply(
+                        from,
+                        OutgoingBitVMXApiMessages::SignedMessage(
+                            id,
+                            signature_r,
+                            signature_s,
+                            recovery_id.to_i32() as u8,
+                        ),
+                    )?;
                 }
-                if s == "fatal" {
-                    use storage_backend::error::StorageError as KVStorageError;
-                    return Err(BitVMXError::from(KVStorageError::WriteError));
+                IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
+                    self.get_aggregated_pubkey(from, id)?
+                }
+                IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
+                    self.generate_zkp(from, id, input, elf_file_path)?
+                }
+                IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(from, id)?,
+                IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
+                    self.get_zkp_execution_result(from, id)?
+                }
+                IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
+                    let encrypted = self
+                        .program_context
+                        .key_manager
+                        .encrypt_rsa_message(&message, &pub_key)?;
+                    self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
+                }
+                IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
+                    let decrypted = self
+                        .program_context
+                        .key_manager
+                        .decrypt_rsa_message(&message, &pub_key)?;
+                    self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
+                }
+                IncomingBitVMXApiMessages::Backup(id, backup_path, dek_path, password) => {
+                    let message = match self.store.backup(&backup_path, &dek_path, password) {
+                        Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
+                            id,
+                            true,
+                            "Backup successful".to_string(),
+                        ),
+                        Err(e) => OutgoingBitVMXApiMessages::BackupResult(id, false, e.to_string()),
+                    };
+
+                    self.reply(from, message)?;
+                }
+                IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
+                    let Some(program) = self.load_program_or_reply(&from, id)? else {
+                        return Ok(());
+                    };
+                    let protocol_str = program
+                        .protocol
+                        .load_protocol()
+                        .and_then(|op| op.visualize(GraphOptions::EdgeArrows));
+                    let reply_msg = match protocol_str {
+                        Ok(s) => OutgoingBitVMXApiMessages::ProtocolVisualization(id, s),
+                        Err(e) => {
+                            error!("Error visualizing protocol: {}", e);
+                            let err_str = format!("Error visualizing protocol: {}", e);
+                            OutgoingBitVMXApiMessages::NotFound(id, err_str)
+                        }
+                    };
+
+                    self.reply(from, reply_msg)?;
+                }
+                IncomingBitVMXApiMessages::ListAllowList(id) => {
+                    let allow_list = self.program_context.comms.get_allow_list();
+                    let (entries, allow_all) = comms_allow_list::snapshot(&allow_list)?;
+                    self.reply(
+                        from,
+                        OutgoingBitVMXApiMessages::AllowListEntries(id, entries, allow_all),
+                    )?;
+                }
+                IncomingBitVMXApiMessages::AddToAllowList(id, pubk_hash, addr) => {
+                    info!("Allowing comms peer {} from {:?}", pubk_hash, addr);
+                    self.mutate_allow_list(id, from, |allow_list| {
+                        allow_list.add_entry(pubk_hash.clone(), addr)
+                    })?;
+                }
+                IncomingBitVMXApiMessages::RemoveFromAllowList(id, pubk_hash) => {
+                    info!("Removing comms peer {}", pubk_hash);
+                    self.mutate_allow_list(id, from, |allow_list| allow_list.remove(&pubk_hash))?;
+                }
+                IncomingBitVMXApiMessages::SetAllowAll(id, allow_all) => {
+                    info!("Setting comms allow_all to {}", allow_all);
+                    self.mutate_allow_list(id, from, |allow_list| {
+                        allow_list.set_allow_all(allow_all)
+                    })?;
+                }
+                IncomingBitVMXApiMessages::Shutdown() => {
+                    info!("Shutdown message received. Initiating shutdown...");
+                    self.shutdown()?;
+                }
+                #[cfg(feature = "testpanic")]
+                IncomingBitVMXApiMessages::Test(s) => {
+                    if s == "panic" {
+                        panic!("test-induced panic");
+                    }
+                    if s == "fatal" {
+                        use storage_backend::error::StorageError as KVStorageError;
+                        return Err(BitVMXError::from(KVStorageError::WriteError));
+                    }
                 }
             }
-        }
             Ok(())
         })();
 

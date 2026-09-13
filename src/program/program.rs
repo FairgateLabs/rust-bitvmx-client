@@ -820,13 +820,18 @@ mod tests {
             program_id,
             peer,
             source,
-        } = error else {
+        } = error
+        else {
             panic!("expected setup failure request, got {error:?}");
         };
         assert_eq!(program_id, program.program_id);
         assert_ne!(program.state, ProgramState::Failed);
         program
-            .fail_setup(peer, SetupFailureReason::StepError(source.to_string()), &mut env.context)
+            .fail_setup(
+                peer,
+                SetupFailureReason::StepError(source.to_string()),
+                &mut env.context,
+            )
             .unwrap();
     }
 
