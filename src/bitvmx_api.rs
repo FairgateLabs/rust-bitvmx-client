@@ -810,11 +810,20 @@ impl BitVMX {
                 };
                 let protocol_str = program
                     .protocol
-                    .load_protocol()?
-                    .visualize(GraphOptions::EdgeArrows)?;
+                    .load_protocol()
+                    .and_then(|op| op.visualize(GraphOptions::EdgeArrows));
+                let reply_msg =match protocol_str {
+                    Ok(s) => OutgoingBitVMXApiMessages::ProtocolVisualization(id, s),
+                    Err(e) => {
+                        error!("Error visualizing protocol: {}", e);
+                        let err_str= format!("Error visualizing protocol: {}", e);
+                        OutgoingBitVMXApiMessages::NotFound(id, err_str)
+                    }
+                };
+
                 self.reply(
                     from,
-                    OutgoingBitVMXApiMessages::ProtocolVisualization(id, protocol_str),
+                    reply_msg,
                 )?;
             }
             IncomingBitVMXApiMessages::ListAllowList(id) => {
