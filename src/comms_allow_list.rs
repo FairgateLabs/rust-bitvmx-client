@@ -14,7 +14,7 @@ use std::{
 use bitvmx_broker::identification::{allow_list::AllowList, identifier::PubkHash};
 use serde::{Deserialize, Serialize};
 use storage_backend::storage::{KeyValueStore, Storage};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::errors::BitVMXError;
 
@@ -60,29 +60,26 @@ pub fn snapshot(
 /// A failed write leaves the in-memory change in place: a peer we are willing
 /// to talk to should not be blocked because the disk is unavailable. The
 /// caller is told so it can warn that the change will not survive a restart.
-pub fn mutate<F>(
+pub fn mutate<F, R>(
     store: &Rc<Storage>,
     allow_list: &Arc<Mutex<AllowList>>,
     change: F,
-) -> Result<bool, BitVMXError>
+    reply: R,
+) -> Result<(), BitVMXError>
 where
-    F: FnOnce(&mut AllowList),
+    F: Fn(&mut AllowList),
+    R: FnOnce(bool) -> Result<(), BitVMXError>,
 {
     let mut guard = allow_list
         .lock()
         .map_err(|e| BitVMXError::PoisonedLockError(e.to_string()))?;
+
+    let mut stage = guard.clone();
+    change(&mut stage);
+    save(store, &stage)?;
+    reply(true)?;
     change(&mut guard);
-    match save(store, &guard) {
-        Ok(()) => Ok(true),
-        Err(e) => {
-            warn!(
-                "Comms allow list changed but could not be saved: {}. \
-                 The change is in effect but will be lost on restart.",
-                e
-            );
-            Ok(false)
-        }
-    }
+    Ok(())
 }
 
 /// Build the comms allow list, preferring the persisted one over `yaml_path`.
@@ -140,6 +137,24 @@ mod tests {
 
     fn addr(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    /// Run a successful mutation while preserving the old helper's convenient
+    /// return value for tests that assert what the API reply reports.
+    fn mutate<F>(
+        store: &Rc<Storage>,
+        allow_list: &Arc<Mutex<AllowList>>,
+        change: F,
+    ) -> Result<bool, BitVMXError>
+    where
+        F: Fn(&mut AllowList),
+    {
+        let mut reply_value = false;
+        super::mutate(store, allow_list, change, |persisted| {
+            reply_value = persisted;
+            Ok(())
+        })?;
+        Ok(reply_value)
     }
 
     #[test]
@@ -401,6 +416,82 @@ mod tests {
         assert_eq!(
             load(&store).unwrap().unwrap().entries,
             vec![("peer".to_string(), None)],
+        );
+    }
+
+    #[test]
+    fn mutate_persists_and_replies_before_applying_the_live_change() {
+        use std::cell::Cell;
+
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+        let change_calls = Cell::new(0);
+
+        super::mutate(
+            &store,
+            &allow_list,
+            |al| {
+                change_calls.set(change_calls.get() + 1);
+                al.add_entry("peer".to_string(), None);
+            },
+            |persisted| {
+                assert!(persisted);
+                assert_eq!(
+                    change_calls.get(),
+                    1,
+                    "the live application comes after the reply"
+                );
+                assert_eq!(
+                    load(&store).unwrap().unwrap().entries,
+                    vec![("peer".to_string(), None)],
+                    "the staged change must be durable before the reply",
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(change_calls.get(), 2);
+        assert!(allow_list
+            .lock()
+            .unwrap()
+            .is_allowed(&"peer".to_string(), addr("10.0.0.1")));
+    }
+
+    #[test]
+    fn a_failed_reply_does_not_publish_the_live_change() {
+        use std::cell::Cell;
+
+        let dir = test_storage_dir();
+        let store = dir.storage();
+        let allow_list = AllowList::new();
+        let change_calls = Cell::new(0);
+
+        let result = super::mutate(
+            &store,
+            &allow_list,
+            |al| {
+                change_calls.set(change_calls.get() + 1);
+                al.add_entry("peer".to_string(), None);
+            },
+            |_| Err(BitVMXError::InvalidMessageFormat),
+        );
+
+        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
+        assert_eq!(
+            change_calls.get(),
+            1,
+            "the live application must be skipped"
+        );
+        assert!(!allow_list
+            .lock()
+            .unwrap()
+            .is_allowed(&"peer".to_string(), addr("10.0.0.1")));
+        assert_eq!(
+            load(&store).unwrap().unwrap().entries,
+            vec![("peer".to_string(), None)],
+            "persistence happens before the reply is attempted",
         );
     }
 

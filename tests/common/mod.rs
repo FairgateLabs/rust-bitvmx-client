@@ -223,6 +223,7 @@ pub fn init_bitvmx_with_config(
 }
 
 pub fn tick(instance: &mut BitVMX) -> Result<()> {
+    instance.process_broker_queues()?;
     instance.process_api_messages()?;
     instance.process_comms_messages()?;
     instance.process_programs()?;

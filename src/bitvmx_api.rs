@@ -77,21 +77,19 @@ impl BitVMX {
         Ok(programs.iter().any(|p| p.program_id == *program_id))
     }
 
-    /// send replies via the broker channel
-    //TODO: the change itself cannot fail, but a poisoned allow list lock makes
-    //this return Err before replying, so the caller waiting on `id` gets
-    //nothing back at all. Same for the ListAllowList arm. Should we reply with
-    //an error instead?
+    /// Persist an allow-list change, reply, and only then apply it in memory.
     fn mutate_allow_list<F>(&self, id: Uuid, from: Identifier, change: F) -> Result<(), BitVMXError>
     where
-        F: FnOnce(&mut AllowList),
+        F: Fn(&mut AllowList),
     {
         let allow_list = self.program_context.comms.get_allow_list();
-        let persisted = comms_allow_list::mutate(&self.store, &allow_list, change)?;
-        self.reply(
-            from,
-            OutgoingBitVMXApiMessages::AllowListUpdated(id, persisted),
-        )
+        comms_allow_list::mutate(&self.store, &allow_list, change, |persisted| {
+            self.reply(
+                from,
+                OutgoingBitVMXApiMessages::AllowListUpdated(id, persisted),
+            )
+        })?;
+        Ok(())
     }
 
     fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError> {
@@ -830,7 +828,7 @@ impl BitVMX {
             IncomingBitVMXApiMessages::AddToAllowList(id, pubk_hash, addr) => {
                 info!("Allowing comms peer {} from {:?}", pubk_hash, addr);
                 self.mutate_allow_list(id, from, |allow_list| {
-                    allow_list.add_entry(pubk_hash, addr)
+                    allow_list.add_entry(pubk_hash.clone(), addr)
                 })?;
             }
             IncomingBitVMXApiMessages::RemoveFromAllowList(id, pubk_hash) => {

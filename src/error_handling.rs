@@ -162,9 +162,8 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
             }
         }
 
-        if let Some(
-            BitVMXError::PoisonedLockError(_) | BitVMXError::TransactionRollbackError(_),
-        ) = error.downcast_ref::<BitVMXError>()
+        if let Some(BitVMXError::PoisonedLockError(_) | BitVMXError::TransactionRollbackError(_)) =
+            error.downcast_ref::<BitVMXError>()
         {
             return Severity::Fatal;
         }
@@ -235,7 +234,7 @@ mod tests {
 
     #[test]
     fn fallible_error_report_reaches_l2() {
-        let mut env = crate::test_utils::TestProgramContextEnv::new("fallible-report").unwrap();
+        let env = crate::test_utils::TestProgramContextEnv::new("fallible-report").unwrap();
         try_send_error_report(
             &env.context.broker_channel,
             &env.context.components_config.l2,
@@ -254,15 +253,13 @@ mod tests {
 
     #[test]
     fn fallible_error_report_propagates_send_failure() {
-        let mut env = crate::test_utils::TestProgramContextEnv::new("fallible-report-error").unwrap();
+        let env = crate::test_utils::TestProgramContextEnv::new("fallible-report-error").unwrap();
         let invalid_dest = Identifier::new(String::new(), 1);
-        let report = || ErrorReport::new(ErrorScope::Node, ErrorReportKind::FundingNotAvailable, None);
-        assert!(try_send_error_report(
-            &env.context.broker_channel,
-            &invalid_dest,
-            report(),
-        )
-        .is_err());
+        let report =
+            || ErrorReport::new(ErrorScope::Node, ErrorReportKind::FundingNotAvailable, None);
+        assert!(
+            try_send_error_report(&env.context.broker_channel, &invalid_dest, report(),).is_err()
+        );
         // Best-effort reporting remains safe for paths that cannot propagate failures.
         send_error_report(&env.context.broker_channel, &invalid_dest, report());
         assert!(env.l2_messages().unwrap().is_empty());

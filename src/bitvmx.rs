@@ -148,6 +148,8 @@ impl BitVMX {
 
         let comms_allow_list = comms_allow_list::build(&store, &config.comms.allow_list)?;
 
+        info!("Comms allow list built successfully");
+
         let comms = BrokerNode::new_peers(
             "comms",
             config.comms.address,
@@ -158,6 +160,8 @@ impl BitVMX {
             config.broker.settings.clone(),
         )?;
 
+        info!("Comms broker node initialized successfully");
+
         let wallet = Wallet::from_derive_keypair(
             config.bitcoin.clone(),
             config.wallet.clone(),
@@ -167,12 +171,15 @@ impl BitVMX {
             Some(WALLET_CHANGE_INDEX),
         )?;
 
+        info!("Wallet initialized successfully");
+
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
             &config.bitcoin,
             store.clone(),
             key_manager.clone(),
             config.coordinator_settings.clone(),
         )?;
+        info!("Bitcoin coordinator initialized successfully");
 
         //Also the broker could be run independently if needed
         let broker_channel = BrokerNode::new_services_with_paths(
@@ -186,6 +193,7 @@ impl BitVMX {
             config.components.bitvmx.clone(),
             config.broker.settings.clone(),
         )?;
+        info!("Broker services initialized successfully");
 
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 
@@ -203,15 +211,21 @@ impl BitVMX {
             leader_broadcast_helper,
         );
 
+        info!("Program context initialized successfully");
+
         let ping_helper = PingHelper::new(config.job_dispatcher_ping.clone())?;
+        info!("Ping helper initialized successfully");
 
         let message_queue = MessageQueue::new(
             store.clone(),
             RetryPolicy::new(&config.broker.settings.broker_node_config)?,
         );
+        info!("Message queue initialized successfully");
 
         let coordinator_throttle = Throttle::new(config.coordinator_throttle.clone());
         let bitvmx_throttle = Throttle::new(config.bitvmx_throttle.clone());
+
+        info!("Coordinator and BitVMX throttle initialized successfully");
 
         let reporter = Reporter::new(config.components.l2.clone());
         Ok(Self {
@@ -1238,21 +1252,7 @@ impl BitVMX {
 
         let process_application = self.bitvmx_throttle.should_call();
         if process_application {
-            // Deliver committed outgoing work before processing application messages.
-            // Rollback cannot undo delivery, so transport retries may send duplicates.
-            self.run_step("comms transport", |this| {
-                Self::run_transaction(&this.store, || {
-                    this.program_context.comms.tick().map_err(BitVMXError::from)
-                })
-            })?;
-            self.run_step("service transport", |this| {
-                Self::run_transaction(&this.store, || {
-                    this.program_context
-                        .broker_channel
-                        .tick()
-                        .map_err(BitVMXError::from)
-                })
-            })?;
+            self.process_broker_queues()?;
         }
 
         // Each step commits independently.
@@ -1336,6 +1336,25 @@ impl BitVMX {
         })?;
 
         Ok(TickOutcome::Operating)
+    }
+
+    pub fn process_broker_queues(&mut self) -> Result<bool, BitVMXError> {
+        // Deliver committed outgoing work before processing application messages.
+        // Rollback cannot undo delivery, so transport retries may send duplicates.
+        self.run_step("comms transport", |this| {
+            Self::run_transaction(&this.store, || {
+                this.program_context.comms.tick().map_err(BitVMXError::from)
+            })
+        })?;
+        self.run_step("service transport", |this| {
+            Self::run_transaction(&this.store, || {
+                this.program_context
+                    .broker_channel
+                    .tick()
+                    .map_err(BitVMXError::from)
+            })
+        })?;
+        Ok(true)
     }
 
     /// Owns the coordinator and news transactions; requires no active global transaction.
