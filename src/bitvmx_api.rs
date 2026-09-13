@@ -785,15 +785,33 @@ impl BitVMX {
                     let encrypted = self
                         .program_context
                         .key_manager
-                        .encrypt_rsa_message(&message, &pub_key)?;
-                    self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
+                        .encrypt_rsa_message(&message, &pub_key);
+                    match encrypted {
+                        Ok(e) => {
+                            self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, e))?;
+                        }
+                        Err(e) => {
+                            error!("Error encrypting message: {}", e);
+                            let err_str = format!("Error encrypting message: {}", e);
+                            self.reply(from, OutgoingBitVMXApiMessages::NotFound(id, err_str))?;
+                        }
+                    };
                 }
                 IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
                     let decrypted = self
                         .program_context
                         .key_manager
-                        .decrypt_rsa_message(&message, &pub_key)?;
-                    self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
+                        .decrypt_rsa_message(&message, &pub_key);
+                    match decrypted {
+                        Ok(d) => {
+                            self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, d))?;
+                        }
+                        Err(e) => {
+                            error!("Error decrypting message: {}", e);
+                            let err_str = format!("Error decrypting message: {}", e);
+                            self.reply(from, OutgoingBitVMXApiMessages::NotFound(id, err_str))?;
+                        }
+                    };
                 }
                 IncomingBitVMXApiMessages::Backup(id, backup_path, dek_path, password) => {
                     let message = match self.store.backup(&backup_path, &dek_path, password) {
