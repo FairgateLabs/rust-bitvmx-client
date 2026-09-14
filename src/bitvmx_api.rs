@@ -42,14 +42,19 @@ impl BitVMX {
 
     fn setup(
         &mut self,
+        from: Identifier,
         id: Uuid,
         program_type: String,
         peer_address: Vec<CommsAddress>,
         leader: u16,
     ) -> Result<(), BitVMXError> {
         if self.program_exists(&id)? {
-            warn!("Program already exists");
-            return Err(BitVMXError::ProgramAlreadyExists(id));
+            warn!("Program {id} already exists ");
+            self.reply(
+                from,
+                OutgoingBitVMXApiMessages::ApiError(id, "Program already exists".to_string()),
+            )?;
+            return Ok(());
         }
 
         info!("Setting up program: {:?} type {}", id, program_type);
@@ -126,30 +131,54 @@ impl BitVMX {
 
     fn setup_key(
         &mut self,
+        from: Identifier,
         id: Uuid,
         participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
     ) -> Result<(), BitVMXError> {
+        match self.setup_key_inner(id, participants, participants_keys, leader_idx) {
+            Err(e) => Err(e),
+            Ok(Some(msg)) => {
+                self.reply(from, msg)?;
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+        }
+    }
+
+    fn setup_key_inner(
+        &mut self,
+        id: Uuid,
+        participants: Vec<CommsAddress>,
+        participants_keys: Option<Vec<PublicKey>>,
+        leader_idx: u16,
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
         info!("Setting up key for program: {:?}", id);
 
         // Check if program already exists BEFORE storing any data
         if self.program_exists(&id)? {
-            warn!("Program {} already exists", id);
-            return Err(BitVMXError::ProgramAlreadyExists(id));
+            return Ok(Some(OutgoingBitVMXApiMessages::ApiError(
+                id,
+                "Program already exists".to_string(),
+            )));
         }
 
         // Check if participants vector is empty or leader_idx is out of bounds
         if participants.is_empty() {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Ok(Some(OutgoingBitVMXApiMessages::ApiError(
+                id,
+                "Participants list cannot be empty".to_string(),
+            )));
         }
 
         if leader_idx as usize >= participants.len() {
-            return Err(BitVMXError::InvalidMessageFormat);
+            return Ok(Some(OutgoingBitVMXApiMessages::ApiError(
+                id,
+                "Leader index is out of bounds".to_string(),
+            )));
         }
 
-        //TODO: in reality I should avoid exchanging public keys and just generate the aggregated directly
-        // Save optional keys
         let optional_keys = serde_json::to_string(&participants_keys)?;
 
         self.program_context.globals.set_var(
@@ -172,7 +201,7 @@ impl BitVMX {
         self.add_new_program(&id)?;
 
         info!("Key setup finished for program: {:?}", id);
-        Ok(())
+        Ok(None)
     }
 
     fn get_aggregated_pubkey(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
@@ -643,7 +672,7 @@ impl BitVMX {
                     self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
-                    self.setup(id, program_type, participants, leader)?
+                    self.setup(from, id, program_type, participants, leader)?
                 }
                 IncomingBitVMXApiMessages::SubscribeToTransaction(
                     uuid,
@@ -695,7 +724,7 @@ impl BitVMX {
                     participants,
                     participants_keys,
                     leader_idx,
-                ) => self.setup_key(id, participants, participants_keys, leader_idx)?,
+                ) => self.setup_key(from, id, participants, participants_keys, leader_idx)?,
                 IncomingBitVMXApiMessages::GetKeyPair(id) => {
                     // Get aggregated key from globals (set by AggregatedKeyProtocol)
                     let aggregated = self

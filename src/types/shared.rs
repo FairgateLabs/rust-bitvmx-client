@@ -312,6 +312,7 @@ pub enum OutgoingBitVMXApiMessages {
     // A mutation was applied. `false` means it could not be persisted and will
     // not survive a restart.
     AllowListUpdated(Uuid, bool),
+    ApiError(Uuid, String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -476,6 +477,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::NewBlock(_, _) => "NewBlock".to_string(),
             OutgoingBitVMXApiMessages::AllowListEntries(_, _, _) => "AllowListEntries".to_string(),
             OutgoingBitVMXApiMessages::AllowListUpdated(_, _) => "AllowListUpdated".to_string(),
+            OutgoingBitVMXApiMessages::ApiError(_, _) => "ApiError".to_string(),
         }
     }
 }
