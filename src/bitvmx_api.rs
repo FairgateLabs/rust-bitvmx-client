@@ -240,6 +240,9 @@ impl BitVMX {
                 if status_str == "OK" {
                     info!("Getting ZKP execution result for job: {}", id);
                     let seal: Vec<u8> =
+                        // Retrieve the ZKP proof (seal) from the store
+                        // if it's not available, return an error because the ZKP data is inconsistent
+                        // as the proof should have been generated successfully if the status is "OK"
                         match self.store.get(&StoreKey::ZKPProof(id).get_key(), None)? {
                             Some(seal) => seal,
                             None => return Err(BitVMXError::InconsistentZKPData(id)),
