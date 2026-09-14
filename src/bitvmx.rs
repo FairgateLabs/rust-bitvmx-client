@@ -1397,10 +1397,8 @@ impl BitVMX {
     }
 
     fn get_programs(&self) -> Result<Vec<ProgramStatus>, BitVMXError> {
-        let programs_ids: Option<Vec<ProgramStatus>> = self
-            .store
-            .get(StoreKey::Programs.get_key(), None)
-            .map_err(BitVMXError::StorageError)?;
+        let programs_ids: Option<Vec<ProgramStatus>> =
+            self.store.get(StoreKey::Programs.get_key(), None)?;
 
         Ok(programs_ids.unwrap_or_default())
     }
