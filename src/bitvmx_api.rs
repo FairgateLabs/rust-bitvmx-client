@@ -104,9 +104,8 @@ impl BitVMX {
         Ok(())
     }
 
-    fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError> {
-        self.reply(from, OutgoingBitVMXApiMessages::Pong(uuid))?;
-        Ok(uuid)
+    fn ping(uuid: Uuid) -> OutgoingBitVMXApiMessages {
+        OutgoingBitVMXApiMessages::Pong(uuid)
     }
 
     fn get_funding_address(&mut self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
@@ -761,7 +760,7 @@ impl BitVMX {
         }
     }
 
-    fn get_spv_proof(&mut self, from: Identifier, txid: Txid) -> Result<(), BitVMXError> {
+    fn get_spv_proof(&mut self, txid: Txid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         let tx_info = self
             .program_context
             .bitcoin_coordinator
@@ -771,23 +770,21 @@ impl BitVMX {
             Ok(utx) => match utx.block_info {
                 Some(block_info) => {
                     let proof = get_spv_proof(txid, block_info)?;
-                    self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))?;
+                    Ok(OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))
                 }
                 None => {
                     warn!("Missing block info for txid {}", txid);
-                    self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, None))?;
+                    Ok(OutgoingBitVMXApiMessages::SPVProof(txid, None))
                 }
             },
-            Err(e) => {
+            Err(error) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",
-                    txid, e
+                    txid, error
                 );
-                self.reply(from, OutgoingBitVMXApiMessages::SPVProof(txid, None))?;
+                Ok(OutgoingBitVMXApiMessages::SPVProof(txid, None))
             }
         }
-
-        Ok(())
     }
 
     fn api_request_id(message: &IncomingBitVMXApiMessages) -> Option<Uuid> {
@@ -874,7 +871,7 @@ impl BitVMX {
                     self.reply(from, comm_info)?;
                 }
                 IncomingBitVMXApiMessages::Ping(uuid) => {
-                    self.ping(from, uuid)?;
+                    self.reply(from, Self::ping(uuid))?;
                 }
                 IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
                     debug!("Setting variable {}: {:?}", key, value);
@@ -950,7 +947,10 @@ impl BitVMX {
                         },
                         confirmation_threshold,
                     )?,
-                IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
+                IncomingBitVMXApiMessages::GetSPVProof(txid) => {
+                    let response = self.get_spv_proof(txid)?;
+                    self.reply(from, response)?;
+                }
 
                 IncomingBitVMXApiMessages::DispatchTransactionName(id, name) => {
                     if let Some(response) = self.dispatch_transaction_name(id, &name)? {
