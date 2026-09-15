@@ -108,31 +108,28 @@ impl BitVMX {
         Ok(uuid)
     }
 
-    fn get_var(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError> {
+    fn get_var(&mut self, id: Uuid, key: &str) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         info!("Getting variable {}", key);
         let value = self.program_context.globals.get_var(&id, key)?;
 
-        let response = match value {
+        Ok(match value {
             Some(var) => OutgoingBitVMXApiMessages::Variable(id, key.to_string(), var),
             None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
-        };
-
-        self.reply(from, response)?;
-        Ok(())
+        })
     }
 
-    fn get_witness(&mut self, from: Identifier, id: Uuid, key: &str) -> Result<(), BitVMXError> {
+    fn get_witness(
+        &mut self,
+        id: Uuid,
+        key: &str,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         info!("Getting witness {}", key);
         let value = self.program_context.witness.get_witness(&id, key)?;
 
-        // Create response based on whether we found a value
-        let response = match value {
+        Ok(match value {
             Some(witness) => OutgoingBitVMXApiMessages::Witness(id, key.to_string(), witness),
             None => OutgoingBitVMXApiMessages::NotFound(id, key.to_string()),
-        };
-
-        self.reply(from, response)?;
-        Ok(())
+        })
     }
 
     fn setup_key(
@@ -391,32 +388,33 @@ impl BitVMX {
         })
     }
 
-    fn get_aggregated_pubkey(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
+    fn get_aggregated_pubkey(
+        &mut self,
+        id: Uuid,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         info!("Getting aggregated pubkey for program: {:?}", id);
 
         // Read from globals (protocol-based approach via AggregatedKeyProtocol)
-        let response = if let Some(key_var) = self
-            .program_context
-            .globals
-            .get_var(&id, "final_aggregated_key")?
-        {
-            match key_var.pubkey() {
-                Ok(aggregated_pubkey) => {
-                    info!("Found aggregated pubkey in globals for program: {:?}", id);
-                    OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey)
+        Ok(
+            if let Some(key_var) = self
+                .program_context
+                .globals
+                .get_var(&id, "final_aggregated_key")?
+            {
+                match key_var.pubkey() {
+                    Ok(aggregated_pubkey) => {
+                        info!("Found aggregated pubkey in globals for program: {:?}", id);
+                        OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey)
+                    }
+                    Err(e) => {
+                        warn!("Failed to read aggregated key from globals: {}", e);
+                        OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to read aggregated key from globals: {}", e);
-                    OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
-                }
-            }
-        } else {
-            OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
-        };
-
-        self.reply(from, response)?;
-
-        Ok(())
+            } else {
+                OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
+            },
+        )
     }
 
     fn generate_zkp(
@@ -445,7 +443,10 @@ impl BitVMX {
         Ok(())
     }
 
-    fn get_zkp_execution_result(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
+    fn get_zkp_execution_result(
+        &mut self,
+        id: Uuid,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         // Check if the proof is ready
         info!("Checking if {} ZKP job is ready", id);
         let status_key = StoreKey::ZKPStatus(id).get_key();
@@ -479,9 +480,7 @@ impl BitVMX {
             None => OutgoingBitVMXApiMessages::ProofNotReady(id),
         };
 
-        self.reply(from, response)?;
-
-        Ok(())
+        Ok(response)
     }
 
     fn subscribe_to_tx(
@@ -546,24 +545,23 @@ impl BitVMX {
 
     fn get_transaction(
         &mut self,
-        from: Identifier,
         id: Uuid,
         txid: Txid,
-    ) -> Result<(), BitVMXError> {
-        let response = match self
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        match self
             .program_context
             .bitcoin_coordinator
             .get_transaction(txid)
         {
-            Ok(tx_status) => OutgoingBitVMXApiMessages::Transaction(id, tx_status, None),
-            Err(e) => {
-                info!("Transaction not found: {:?}. Error: {}", txid, e);
-                OutgoingBitVMXApiMessages::NotFound(id, txid.to_string())
-            }
-        };
-
-        self.reply(from, response)?;
-        Ok(())
+            Ok(tx_status) => Ok(OutgoingBitVMXApiMessages::Transaction(id, tx_status, None)),
+            Err(error) => match classify(&error) {
+                Severity::Fatal | Severity::BitcoinNodeUnreachable => Err(error.into()),
+                Severity::Other => {
+                    info!("Transaction not found: {:?}. Error: {}", txid, error);
+                    Ok(OutgoingBitVMXApiMessages::NotFound(id, txid.to_string()))
+                }
+            },
+        }
     }
 
     fn dispatch_transaction(
@@ -900,14 +898,17 @@ impl BitVMX {
                     )?;
                 }
 
-                IncomingBitVMXApiMessages::GetVar(uuid, key) => {
-                    self.get_var(from, uuid, &key)?;
+                IncomingBitVMXApiMessages::GetVar(id, key) => {
+                    let response = self.get_var(id, &key)?;
+                    self.reply(from, response)?;
                 }
-                IncomingBitVMXApiMessages::GetWitness(uuid, key) => {
-                    self.get_witness(from, uuid, &key)?;
+                IncomingBitVMXApiMessages::GetWitness(id, key) => {
+                    let response = self.get_witness(id, &key)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
-                    self.get_transaction(from, id, txid)?
+                    let response = self.get_transaction(id, txid)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
                     let response = self.get_transaction_info_by_name(id, name)?;
@@ -994,14 +995,16 @@ impl BitVMX {
                     self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
-                    self.get_aggregated_pubkey(from, id)?
+                    let response = self.get_aggregated_pubkey(id)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
                     self.generate_zkp(from, id, input, elf_file_path)?
                 }
                 IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(from, id)?,
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
-                    self.get_zkp_execution_result(from, id)?
+                    let response = self.get_zkp_execution_result(id)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
                     let response = self.encrypt_message(id, message, public_key)?;
