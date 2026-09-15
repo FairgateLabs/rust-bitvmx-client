@@ -18,6 +18,7 @@ use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
+use bitvmx_wallet::wallet::Destination;
 use key_manager::{errors::KeyManagerError, key_type::BitcoinKeyType};
 use protocol_builder::graph::graph::GraphOptions;
 use storage_backend::storage::KeyValueStore;
@@ -106,6 +107,72 @@ impl BitVMX {
     fn ping(&mut self, from: Identifier, uuid: Uuid) -> Result<Uuid, BitVMXError> {
         self.reply(from, OutgoingBitVMXApiMessages::Pong(uuid))?;
         Ok(uuid)
+    }
+
+    fn get_funding_address(&mut self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        debug!("Getting funding address uuid: {:?}", id);
+        match self.wallet.receive_address() {
+            Ok(address) => Ok(OutgoingBitVMXApiMessages::FundingAddress(
+                id,
+                address.into_unchecked(),
+            )),
+            Err(error) => {
+                error!("Error getting funding address uuid: {:?}: {:?}", id, error);
+                Ok(OutgoingBitVMXApiMessages::WalletError(
+                    id,
+                    error.to_string(),
+                ))
+            }
+        }
+    }
+
+    fn get_funding_balance(&self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        debug!("Getting funding balance uuid: {:?}", id);
+        if !self.wallet.is_ready {
+            warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
+            return Ok(OutgoingBitVMXApiMessages::WalletNotReady(id));
+        }
+
+        let balance = self.wallet.balance();
+        Ok(OutgoingBitVMXApiMessages::FundingBalance(
+            id,
+            balance.trusted_spendable().to_sat(),
+        ))
+    }
+
+    fn send_funds(
+        &mut self,
+        from: Identifier,
+        id: Uuid,
+        destination: Destination,
+        fee_rate: Option<u64>,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        info!("Sending funds to {:?}", destination);
+        if !self.wallet.is_ready {
+            warn!("Wallet is not ready, to send funds uuid: {:?}", id);
+            return Ok(OutgoingBitVMXApiMessages::WalletNotReady(id));
+        }
+
+        let transaction = match self.wallet.create_tx(destination.clone(), fee_rate) {
+            Ok(transaction) => transaction,
+            Err(error) => {
+                error!(
+                    "Failed sending funds to {:?}. Error: {:?}",
+                    destination, error
+                );
+                return Ok(OutgoingBitVMXApiMessages::WalletError(
+                    id,
+                    error.to_string(),
+                ));
+            }
+        };
+
+        let txid = transaction.compute_txid();
+        // TODO: Is this confirmation threshold of 1 appropriate here? What about stuck_in_mempool_blocks?
+        self.dispatch_transaction(from, id, transaction.clone(), Some(1), None)?;
+        self.wallet.update_with_tx(&transaction)?;
+
+        Ok(OutgoingBitVMXApiMessages::FundsSent(id, txid))
     }
 
     fn get_var(&mut self, id: Uuid, key: &str) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
@@ -824,78 +891,16 @@ impl BitVMX {
                     self.program_context.bitcoin_coordinator.add_funding(utxo)?;
                 }
                 IncomingBitVMXApiMessages::GetFundingAddress(id) => {
-                    debug!("Getting funding address uuid: {:?}", id);
-                    let address = match self.wallet.receive_address() {
-                        Ok(address) => address,
-                        Err(e) => {
-                            error!("Error getting funding address uuid: {:?}: {:?}", id, e);
-                            self.program_context.broker_channel.send_service(
-                                &from,
-                                serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
-                                    id,
-                                    e.to_string(),
-                                ))?,
-                            )?;
-                            return Ok(());
-                        }
-                    };
-
-                    self.program_context.broker_channel.send_service(
-                        &from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::FundingAddress(
-                            id,
-                            address.into_unchecked(),
-                        ))?,
-                    )?;
+                    let response = self.get_funding_address(id)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetFundingBalance(id) => {
-                    debug!("Getting funding balance uuid: {:?}", id);
-                    if !self.wallet.is_ready {
-                        warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
-                        self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
-                        return Ok(());
-                    }
-                    let balance = self.wallet.balance();
-                    self.program_context.broker_channel.send_service(
-                        &from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::FundingBalance(
-                            id,
-                            balance.trusted_spendable().to_sat(),
-                        ))?,
-                    )?;
+                    let response = self.get_funding_balance(id)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::SendFunds(id, destination, fee_rate) => {
-                    info!("Sending funds to {:?}", destination);
-                    if !self.wallet.is_ready {
-                        warn!("Wallet is not ready, to send funds uuid: {:?}", id);
-                        self.reply(from, OutgoingBitVMXApiMessages::WalletNotReady(id))?;
-                        return Ok(());
-                    }
-                    // Use the fee_rate parameter passed in the message
-                    let tx = match self.wallet.create_tx(destination.clone(), fee_rate) {
-                        Ok(tx) => tx,
-                        Err(e) => {
-                            error!("Failed sending funds to {:?}. Error: {:?}", destination, e);
-                            self.program_context.broker_channel.send_service(
-                                &from.clone(),
-                                serde_json::to_string(&OutgoingBitVMXApiMessages::WalletError(
-                                    id,
-                                    e.to_string(),
-                                ))?,
-                            )?;
-                            return Ok(());
-                        }
-                    };
-
-                    let txid = tx.compute_txid();
-                    //TODO: Is this confirmation threshold of 1 appropriate here? What about stuck_in_mempool_blocks?
-                    self.dispatch_transaction(from.clone(), id, tx.clone(), Some(1), None)?;
-                    self.wallet.update_with_tx(&tx)?;
-
-                    self.program_context.broker_channel.send_service(
-                        &from,
-                        serde_json::to_string(&OutgoingBitVMXApiMessages::FundsSent(id, txid))?,
-                    )?;
+                    let response = self.send_funds(from.clone(), id, destination, fee_rate)?;
+                    self.reply(from, response)?;
                 }
 
                 IncomingBitVMXApiMessages::GetVar(id, key) => {
