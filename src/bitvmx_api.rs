@@ -1,6 +1,6 @@
 use super::{BitVMX, Context, RejectedInputSource, StoreKey};
 use crate::comms_allow_list;
-use crate::error_handling::{classify, send_error_report, Severity};
+use crate::error_handling::{classify, is_fatal, send_error_report, Severity};
 use crate::errors::BitVMXError;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
@@ -42,39 +42,36 @@ impl BitVMX {
 
     fn setup(
         &mut self,
-        from: Identifier,
         id: Uuid,
         program_type: String,
         peer_address: Vec<CommsAddress>,
         leader: u16,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
         if self.program_exists(&id)? {
-            warn!("Program {id} already exists ");
-            self.reply(
-                from,
-                OutgoingBitVMXApiMessages::ApiError(id, "Program already exists".to_string()),
-            )?;
-            return Ok(());
+            return Ok(Some(Self::api_error(
+                id,
+                "Program already exists".to_string(),
+            )));
         }
 
         info!("Setting up program: {:?} type {}", id, program_type);
 
-        let program = Program::new(
+        if let Err(error) = Program::new(
             id,
             &program_type,
             peer_address,
             leader as usize,
             &mut self.program_context,
             self.store.clone(),
-        );
+        ) {
+            if is_fatal(&error) {
+                return Err(error);
+            }
 
-        if program.is_err() {
-            error!("Failed to set up program: {:?}", program.err());
-            self.reply(
-                from,
-                OutgoingBitVMXApiMessages::ApiError(id, "Failed to set up program".to_string()),
-            )?;
-            return Ok(());
+            return Ok(Some(Self::api_error(
+                id,
+                format!("Failed to set up program: {error}"),
+            )));
         }
 
         self.add_new_program(&id)?;
@@ -83,7 +80,7 @@ impl BitVMX {
             self.program_context.comms.get_pubk_hash(),
         );
 
-        Ok(())
+        Ok(None)
     }
 
     fn program_exists(&self, program_id: &Uuid) -> Result<bool, BitVMXError> {
@@ -140,24 +137,6 @@ impl BitVMX {
 
     fn setup_key(
         &mut self,
-        from: Identifier,
-        id: Uuid,
-        participants: Vec<CommsAddress>,
-        participants_keys: Option<Vec<PublicKey>>,
-        leader_idx: u16,
-    ) -> Result<(), BitVMXError> {
-        match self.setup_key_inner(id, participants, participants_keys, leader_idx) {
-            Err(e) => Err(e),
-            Ok(Some(msg)) => {
-                self.reply(from, msg)?;
-                Ok(())
-            }
-            Ok(None) => Ok(()),
-        }
-    }
-
-    fn setup_key_inner(
-        &mut self,
         id: Uuid,
         participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
@@ -197,20 +176,21 @@ impl BitVMX {
         )?;
 
         // Use Program with AggregatedKeyProtocol for key aggregation
-        let program = Program::new(
+        if let Err(error) = Program::new(
             id,
             PROGRAM_TYPE_AGGREGATED_KEY,
             participants,
             leader_idx as usize,
             &mut self.program_context,
             self.store.clone(),
-        );
+        ) {
+            if is_fatal(&error) {
+                return Err(error);
+            }
 
-        if program.is_err() {
-            error!("Failed to set up program: {:?}", program.err());
-            return Ok(Some(OutgoingBitVMXApiMessages::ApiError(
+            return Ok(Some(Self::api_error(
                 id,
-                "Failed to set up program".to_string(),
+                format!("Failed to set up program: {error}"),
             )));
         }
         // Add the program to the programs list
@@ -934,7 +914,9 @@ impl BitVMX {
                     self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
-                    self.setup(from, id, program_type, participants, leader)?
+                    if let Some(response) = self.setup(id, program_type, participants, leader)? {
+                        self.reply(from, response)?;
+                    }
                 }
                 IncomingBitVMXApiMessages::SubscribeToTransaction(
                     uuid,
@@ -988,7 +970,13 @@ impl BitVMX {
                     participants,
                     participants_keys,
                     leader_idx,
-                ) => self.setup_key(from, id, participants, participants_keys, leader_idx)?,
+                ) => {
+                    if let Some(response) =
+                        self.setup_key(id, participants, participants_keys, leader_idx)?
+                    {
+                        self.reply(from, response)?;
+                    }
+                }
                 IncomingBitVMXApiMessages::GetKeyPair(id) => {
                     let response = self.get_key_pair(id)?;
                     self.reply(from, response)?;
