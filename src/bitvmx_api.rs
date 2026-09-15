@@ -204,6 +204,53 @@ impl BitVMX {
         Ok(None)
     }
 
+    fn sign_message(
+        &mut self,
+        from: Identifier,
+        id: Uuid,
+        payload: Vec<u8>,
+        public_key: PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let response = (|| -> Result<OutgoingBitVMXApiMessages, String> {
+            let message = Message::from_digest_slice(&payload).map_err(|error| {
+                format!(
+                    "Failed to sign message: invalid payload; expected a 32-byte digest: {error}"
+                )
+            })?;
+
+            let signature = self
+                .program_context
+                .key_manager
+                .sign_ecdsa_recoverable_message(&message, &public_key)
+                .map_err(|error| {
+                    format!("Failed to sign message with public key {public_key}: {error}")
+                })?;
+
+            let (recovery_id, compact) = signature.serialize_compact();
+            let (r_bytes, s_bytes) = compact.split_at(32);
+            let signature_r = r_bytes
+                .try_into()
+                .map_err(|error| format!("Failed to serialize signature R value: {error}"))?;
+            let signature_s = s_bytes
+                .try_into()
+                .map_err(|error| format!("Failed to serialize signature S value: {error}"))?;
+
+            Ok(OutgoingBitVMXApiMessages::SignedMessage(
+                id,
+                signature_r,
+                signature_s,
+                recovery_id.to_i32() as u8,
+            ))
+        })()
+        .unwrap_or_else(|message| {
+            error!("{message}");
+            OutgoingBitVMXApiMessages::ApiError(id, message)
+        });
+
+        self.reply(from, response)?;
+        Ok(())
+    }
+
     fn get_aggregated_pubkey(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
         info!("Getting aggregated pubkey for program: {:?}", id);
 
@@ -771,37 +818,7 @@ impl BitVMX {
                     self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
                 }
                 IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
-                    // Create message from the payload
-                    let message = Message::from_digest_slice(&payload)
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-                    // Sign the message with the provided public key
-                    let recoverable_signature = self
-                        .program_context
-                        .key_manager
-                        .sign_ecdsa_recoverable_message(&message, &public_key)?;
-
-                    let (recovery_id, compact) = recoverable_signature.serialize_compact();
-                    let (r_bytes, s_bytes) = compact.split_at(32);
-
-                    // Convert to fixed-size arrays
-                    // Convert to fixed-size arrays
-                    let signature_r: [u8; 32] = r_bytes
-                        .try_into()
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-                    let signature_s: [u8; 32] = s_bytes
-                        .try_into()
-                        .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-
-                    self.reply(
-                        from,
-                        OutgoingBitVMXApiMessages::SignedMessage(
-                            id,
-                            signature_r,
-                            signature_s,
-                            recovery_id.to_i32() as u8,
-                        ),
-                    )?;
+                    self.sign_message(from, id, payload, public_key)?;
                 }
                 IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                     self.get_aggregated_pubkey(from, id)?
