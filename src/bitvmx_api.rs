@@ -18,7 +18,7 @@ use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
-use key_manager::key_type::BitcoinKeyType;
+use key_manager::{errors::KeyManagerError, key_type::BitcoinKeyType};
 use protocol_builder::graph::graph::GraphOptions;
 use storage_backend::storage::KeyValueStore;
 use tracing::{debug, error, info, warn};
@@ -220,51 +220,195 @@ impl BitVMX {
         Ok(None)
     }
 
+    fn api_error(id: Uuid, message: String) -> OutgoingBitVMXApiMessages {
+        error!("{message}");
+        OutgoingBitVMXApiMessages::ApiError(id, message)
+    }
+
+    fn key_manager_response<T, F>(
+        id: Uuid,
+        result: Result<T, KeyManagerError>,
+        error_context: &str,
+        success: F,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError>
+    where
+        F: FnOnce(T) -> OutgoingBitVMXApiMessages,
+    {
+        match result {
+            Ok(value) => Ok(success(value)),
+            Err(error) if error.is_storage_error() => Err(error.into()),
+            Err(error) => Ok(Self::api_error(id, format!("{error_context}: {error}"))),
+        }
+    }
+
+    fn get_key_pair(&mut self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let Some(aggregated) = self
+            .program_context
+            .globals
+            .get_var(&id, "final_aggregated_key")?
+        else {
+            return Ok(Self::api_error(
+                id,
+                format!("Aggregated key not found for id: {id}"),
+            ));
+        };
+
+        let aggregated = match aggregated.pubkey() {
+            Ok(public_key) => public_key,
+            Err(error) => {
+                return Ok(Self::api_error(
+                    id,
+                    format!("Failed to get public key from aggregated key: {error}"),
+                ));
+            }
+        };
+
+        let result = self
+            .program_context
+            .key_manager
+            .get_key_pair_for_too_insecure(&aggregated);
+        Self::key_manager_response(
+            id,
+            result,
+            "Failed to get key pair for aggregated key",
+            |pair| OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1),
+        )
+    }
+
+    fn get_pub_key(
+        &mut self,
+        id: Uuid,
+        new: bool,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let response = if new {
+            let result = self
+                .program_context
+                .key_manager
+                .next_keypair(BitcoinKeyType::P2tr);
+            Self::key_manager_response(id, result, "Failed to generate public key", |public| {
+                OutgoingBitVMXApiMessages::PubKey(id, public)
+            })?
+        } else {
+            let Some(aggregated) = self
+                .program_context
+                .globals
+                .get_var(&id, "final_aggregated_key")?
+            else {
+                return Ok(Self::api_error(
+                    id,
+                    format!("Aggregated key not found for id: {id}"),
+                ));
+            };
+
+            let aggregated = match aggregated.pubkey() {
+                Ok(public_key) => public_key,
+                Err(error) => {
+                    return Ok(Self::api_error(
+                        id,
+                        format!("Failed to get public key from aggregated key: {error}"),
+                    ));
+                }
+            };
+
+            let result = self
+                .program_context
+                .key_manager
+                .get_my_public_key(&aggregated);
+            Self::key_manager_response(
+                id,
+                result,
+                "Failed to get participant public key",
+                |public| OutgoingBitVMXApiMessages::PubKey(id, public),
+            )?
+        };
+
+        Ok(response)
+    }
+
+    fn get_even_pub_key(&mut self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let result = self
+            .program_context
+            .key_manager
+            .next_keypair_adjusted(BitcoinKeyType::P2tr);
+        Self::key_manager_response(
+            id,
+            result,
+            "Failed to generate adjusted public key",
+            |public| OutgoingBitVMXApiMessages::PubKey(id, public),
+        )
+    }
+
     fn sign_message(
         &mut self,
-        from: Identifier,
         id: Uuid,
         payload: Vec<u8>,
         public_key: PublicKey,
-    ) -> Result<(), BitVMXError> {
-        let response = (|| -> Result<OutgoingBitVMXApiMessages, String> {
-            let message = Message::from_digest_slice(&payload).map_err(|error| {
-                format!(
-                    "Failed to sign message: invalid payload; expected a 32-byte digest: {error}"
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let message = match Message::from_digest_slice(&payload) {
+            Ok(message) => message,
+            Err(error) => {
+                return Ok(Self::api_error(
+                    id,
+                    format!(
+                        "Failed to sign message: invalid payload; expected a 32-byte digest: {error}"
+                    ),
+                ));
+            }
+        };
+
+        let result = self
+            .program_context
+            .key_manager
+            .sign_ecdsa_recoverable_message(&message, &public_key);
+        Self::key_manager_response(
+            id,
+            result,
+            &format!("Failed to sign message with public key {public_key}"),
+            |signature| {
+                let (recovery_id, compact) = signature.serialize_compact();
+                let mut signature_r = [0; 32];
+                let mut signature_s = [0; 32];
+                signature_r.copy_from_slice(&compact[..32]);
+                signature_s.copy_from_slice(&compact[32..]);
+
+                OutgoingBitVMXApiMessages::SignedMessage(
+                    id,
+                    signature_r,
+                    signature_s,
+                    recovery_id.to_i32() as u8,
                 )
-            })?;
+            },
+        )
+    }
 
-            let signature = self
-                .program_context
-                .key_manager
-                .sign_ecdsa_recoverable_message(&message, &public_key)
-                .map_err(|error| {
-                    format!("Failed to sign message with public key {public_key}: {error}")
-                })?;
+    fn encrypt_message(
+        &mut self,
+        id: Uuid,
+        message: Vec<u8>,
+        public_key: String,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let result = self
+            .program_context
+            .key_manager
+            .encrypt_rsa_message(&message, &public_key);
+        Self::key_manager_response(id, result, "Failed to encrypt message", |encrypted| {
+            OutgoingBitVMXApiMessages::Encrypted(id, encrypted)
+        })
+    }
 
-            let (recovery_id, compact) = signature.serialize_compact();
-            let (r_bytes, s_bytes) = compact.split_at(32);
-            let signature_r = r_bytes
-                .try_into()
-                .map_err(|error| format!("Failed to serialize signature R value: {error}"))?;
-            let signature_s = s_bytes
-                .try_into()
-                .map_err(|error| format!("Failed to serialize signature S value: {error}"))?;
-
-            Ok(OutgoingBitVMXApiMessages::SignedMessage(
-                id,
-                signature_r,
-                signature_s,
-                recovery_id.to_i32() as u8,
-            ))
-        })()
-        .unwrap_or_else(|message| {
-            error!("{message}");
-            OutgoingBitVMXApiMessages::ApiError(id, message)
-        });
-
-        self.reply(from, response)?;
-        Ok(())
+    fn decrypt_message(
+        &mut self,
+        id: Uuid,
+        message: Vec<u8>,
+        public_key: String,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let result = self
+            .program_context
+            .key_manager
+            .decrypt_rsa_message(&message, &public_key);
+        Self::key_manager_response(id, result, "Failed to decrypt message", |decrypted| {
+            OutgoingBitVMXApiMessages::Decrypted(id, decrypted)
+        })
     }
 
     fn get_aggregated_pubkey(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
@@ -805,86 +949,20 @@ impl BitVMX {
                     leader_idx,
                 ) => self.setup_key(from, id, participants, participants_keys, leader_idx)?,
                 IncomingBitVMXApiMessages::GetKeyPair(id) => {
-                    // Get aggregated key from globals (set by AggregatedKeyProtocol)
-
-                    let result = 'handle: {
-                        let Some(aggregated) = self
-                            .program_context
-                            .globals
-                            .get_var(&id, "final_aggregated_key")?
-                        else {
-                            break 'handle OutgoingBitVMXApiMessages::ApiError(
-                                id,
-                                format!("Aggregated key not found for id: {id}"),
-                            );
-                        };
-
-                        let aggregated = match aggregated.pubkey() {
-                            Ok(pubkey) => pubkey,
-                            Err(err) => {
-                                break 'handle OutgoingBitVMXApiMessages::ApiError(
-                                    id,
-                                    format!("Failed to get pub key for aggregated key: {err:#?}"),
-                                );
-                            }
-                        };
-
-                        let pair = match self
-                            .program_context
-                            .key_manager
-                            .get_key_pair_for_too_insecure(&aggregated)
-                        {
-                            Ok(pair) => pair,
-                            Err(err) => {
-                                if err.is_storage_error() {
-                                    Err(err)?
-                                } else {
-                                    break 'handle OutgoingBitVMXApiMessages::ApiError(
-                                        id,
-                                        format!(
-                                            "Failed to get key pair for aggregated key: {err:#?}"
-                                        ),
-                                    );
-                                }
-                            }
-                        };
-
-                        OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1)
-                    };
-
-                    self.reply(from, result)?;
+                    let response = self.get_key_pair(id)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetPubKey(id, new) => {
-                    if new {
-                        let public = self
-                            .program_context
-                            .key_manager
-                            .next_keypair(BitcoinKeyType::P2tr)?;
-                        self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
-                    } else {
-                        // Get aggregated key from globals (set by AggregatedKeyProtocol)
-                        let aggregated = self
-                            .program_context
-                            .globals
-                            .get_var(&id, "final_aggregated_key")?
-                            .and_then(|v| v.pubkey().ok())
-                            .ok_or(BitVMXError::KeysNotFound(id))?;
-                        let pubkey = self
-                            .program_context
-                            .key_manager
-                            .get_my_public_key(&aggregated)?;
-                        self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, pubkey))?;
-                    }
+                    let response = self.get_pub_key(id, new)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetEvenPubKey(id) => {
-                    let public = self
-                        .program_context
-                        .key_manager
-                        .next_keypair_adjusted(BitcoinKeyType::P2tr)?;
-                    self.reply(from, OutgoingBitVMXApiMessages::PubKey(id, public))?;
+                    let response = self.get_even_pub_key(id)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
-                    self.sign_message(from, id, payload, public_key)?;
+                    let response = self.sign_message(id, payload, public_key)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                     self.get_aggregated_pubkey(from, id)?
@@ -896,37 +974,13 @@ impl BitVMX {
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                     self.get_zkp_execution_result(from, id)?
                 }
-                IncomingBitVMXApiMessages::Encrypt(id, message, pub_key) => {
-                    let encrypted = self
-                        .program_context
-                        .key_manager
-                        .encrypt_rsa_message(&message, &pub_key);
-                    match encrypted {
-                        Ok(e) => {
-                            self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, e))?;
-                        }
-                        Err(e) => {
-                            error!("Error encrypting message: {}", e);
-                            let err_str = format!("Error encrypting message: {}", e);
-                            self.reply(from, OutgoingBitVMXApiMessages::NotFound(id, err_str))?;
-                        }
-                    };
+                IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
+                    let response = self.encrypt_message(id, message, public_key)?;
+                    self.reply(from, response)?;
                 }
-                IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
-                    let decrypted = self
-                        .program_context
-                        .key_manager
-                        .decrypt_rsa_message(&message, &pub_key);
-                    match decrypted {
-                        Ok(d) => {
-                            self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, d))?;
-                        }
-                        Err(e) => {
-                            error!("Error decrypting message: {}", e);
-                            let err_str = format!("Error decrypting message: {}", e);
-                            self.reply(from, OutgoingBitVMXApiMessages::NotFound(id, err_str))?;
-                        }
-                    };
+                IncomingBitVMXApiMessages::Decrypt(id, message, public_key) => {
+                    let response = self.decrypt_message(id, message, public_key)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::Backup(id, backup_path, dek_path, password) => {
                     let message = match self.store.backup(&backup_path, &dek_path, password) {
