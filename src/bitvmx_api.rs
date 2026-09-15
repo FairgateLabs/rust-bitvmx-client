@@ -59,14 +59,23 @@ impl BitVMX {
 
         info!("Setting up program: {:?} type {}", id, program_type);
 
-        Program::new(
+        let program = Program::new(
             id,
             &program_type,
             peer_address,
             leader as usize,
             &mut self.program_context,
             self.store.clone(),
-        )?;
+        );
+
+        if program.is_err() {
+            error!("Failed to set up program: {:?}", program.err());
+            self.reply(
+                from,
+                OutgoingBitVMXApiMessages::ApiError(id, "Failed to set up program".to_string()),
+            )?;
+            return Ok(());
+        }
 
         self.add_new_program(&id)?;
         info!(
@@ -188,15 +197,22 @@ impl BitVMX {
         )?;
 
         // Use Program with AggregatedKeyProtocol for key aggregation
-        Program::new(
+        let program = Program::new(
             id,
             PROGRAM_TYPE_AGGREGATED_KEY,
             participants,
             leader_idx as usize,
             &mut self.program_context,
             self.store.clone(),
-        )?;
+        );
 
+        if program.is_err() {
+            error!("Failed to set up program: {:?}", program.err());
+            return Ok(Some(OutgoingBitVMXApiMessages::ApiError(
+                id,
+                "Failed to set up program".to_string(),
+            )));
+        }
         // Add the program to the programs list
         self.add_new_program(&id)?;
 
@@ -580,11 +596,27 @@ impl BitVMX {
                     let Some(mut program) = self.load_program_or_reply(&from, id)? else {
                         return Ok(());
                     };
-                    let hashed = program.protocol.get_hashed_message(&name, vout, leaf)?;
-                    self.reply(
-                        from,
-                        OutgoingBitVMXApiMessages::HashedMessage(id, name, vout, leaf, hashed),
-                    )?;
+                    let hashed = program.protocol.get_hashed_message(&name, vout, leaf);
+                    // reply hashed message or reply api error
+                    match hashed {
+                        Ok(hashed) => {
+                            self.reply(
+                                from.clone(),
+                                OutgoingBitVMXApiMessages::HashedMessage(
+                                    id, name, vout, leaf, hashed,
+                                ),
+                            )?;
+                        }
+                        Err(e) => {
+                            self.reply(
+                                from.clone(),
+                                OutgoingBitVMXApiMessages::ApiError(
+                                    id,
+                                    format!("Failed to get hashed message: {}", e),
+                                ),
+                            )?;
+                        }
+                    }
                 }
                 IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
                     let comm_info = OutgoingBitVMXApiMessages::CommInfo(
@@ -774,19 +806,47 @@ impl BitVMX {
                 ) => self.setup_key(from, id, participants, participants_keys, leader_idx)?,
                 IncomingBitVMXApiMessages::GetKeyPair(id) => {
                     // Get aggregated key from globals (set by AggregatedKeyProtocol)
-                    let aggregated = self
-                        .program_context
-                        .globals
-                        .get_var(&id, "final_aggregated_key")?
-                        .and_then(|v| v.pubkey().ok())
-                        .ok_or(BitVMXError::KeysNotFound(id))?;
-                    let pair = self
-                        .program_context
-                        .key_manager
-                        .get_key_pair_for_too_insecure(&aggregated)?;
-                    self.reply(from, OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1))?;
-                    //RETURN PK
-                    //TODO: Revisit this as it might be insecure
+
+                    let result = 'handle: {
+                        let Some(aggregated) = self
+                            .program_context
+                            .globals
+                            .get_var(&id, "final_aggregated_key")?
+                        else {
+                            break 'handle OutgoingBitVMXApiMessages::ApiError(
+                                id,
+                                format!("Aggregated key not found for id: {id}"),
+                            );
+                        };
+
+                        let aggregated = match aggregated.pubkey() {
+                            Ok(pubkey) => pubkey,
+                            Err(err) => {
+                                break 'handle OutgoingBitVMXApiMessages::ApiError(
+                                    id,
+                                    format!("Failed to get pub key for aggregated key: {err:#?}"),
+                                );
+                            }
+                        };
+
+                        let pair = match self
+                            .program_context
+                            .key_manager
+                            .get_key_pair_for_too_insecure(&aggregated)
+                        {
+                            Ok(pair) => pair,
+                            Err(err) => {
+                                break 'handle OutgoingBitVMXApiMessages::ApiError(
+                                    id,
+                                    format!("Failed to get key pair for aggregated key: {err:#?}"),
+                                );
+                            }
+                        };
+
+                        OutgoingBitVMXApiMessages::KeyPair(id, pair.0, pair.1)
+                    };
+
+                    self.reply(from, result)?;
                 }
                 IncomingBitVMXApiMessages::GetPubKey(id, new) => {
                     if new {
