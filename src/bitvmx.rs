@@ -260,7 +260,7 @@ impl BitVMX {
     }
 
     pub fn pubkey_hash(&self) -> Result<String, BitVMXError> {
-        Ok(self.program_context.comms.get_pubk_hash()?)
+        Ok(self.program_context.comms.get_pubk_hash())
     }
 
     pub fn get_components_config(&self) -> &ComponentsConfig {
@@ -346,7 +346,7 @@ impl BitVMX {
             msg_type, program_id, peer_address.pubkey_hash
         );
 
-        let my_pubkey_hash = self.program_context.comms.get_pubk_hash()?;
+        let my_pubkey_hash = self.program_context.comms.get_pubk_hash();
         let participants: Vec<_> = program
             .participants
             .iter()

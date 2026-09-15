@@ -467,7 +467,7 @@ mod tests {
         )?;
 
         let (sender, raw) = env.receive_one()?;
-        assert_eq!(sender.pubkey_hash, env.context.comms.get_pubk_hash()?);
+        assert_eq!(sender.pubkey_hash, env.context.comms.get_pubk_hash());
 
         let (version, msg_type, received_program_id, data, timestamp, signature) =
             deserialize_msg(raw, 200000)?;

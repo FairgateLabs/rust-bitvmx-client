@@ -95,7 +95,7 @@ impl OperatorVerificationStore {
         program_id: &Uuid,
         peers: &[CommsAddress],
     ) -> Result<(), BitVMXError> {
-        let my_pubkey_hash = comms.get_pubk_hash()?;
+        let my_pubkey_hash = comms.get_pubk_hash();
         let peer_hashes: Vec<PubkHash> = peers
             .iter()
             .filter(|peer| peer.pubkey_hash != my_pubkey_hash)
@@ -314,7 +314,7 @@ impl SignatureVerifier {
         }
 
         // Retrieve verification key from shared ProgramContext
-        let my_pubkey_hash = comms.get_pubk_hash()?;
+        let my_pubkey_hash = comms.get_pubk_hash();
         let verification_key = Self::get_verification_key(
             msg_type,
             data,
@@ -862,7 +862,7 @@ mod tests {
     fn verify_and_get_key_accepts_valid_and_rejects_tampered() -> Result<(), BitVMXError> {
         let env = TestProgramContextEnv::new("sigver-vgk-sig")?;
         let program_id = Uuid::new_v4();
-        let my_hash = env.context.comms.get_pubk_hash()?;
+        let my_hash = env.context.comms.get_pubk_hash();
         let data = json!({ "payload": "value" });
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -131,7 +131,7 @@ pub fn main() -> Result<()> {
 
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
-    let pubk_hash = cert.get_pubk_hash()?;
+    let pubk_hash = cert.get_pubk_hash();
     let identifier = Identifier::new(pubk_hash, 2);
     lockservice(broker_channel, identifier)?;
 

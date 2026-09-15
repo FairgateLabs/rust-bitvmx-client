@@ -564,7 +564,7 @@ impl SetupEngine {
 
             // Create OriginalMessage
             let original_msg = OriginalMessage {
-                sender_pubkey_hash: context.comms.get_pubk_hash()?,
+                sender_pubkey_hash: context.comms.get_pubk_hash(),
                 msg_type,
                 data: data_value,
                 original_timestamp: timestamp,
@@ -705,7 +705,7 @@ impl SetupEngine {
                 );
 
             // Get non-leader participants
-            let my_pubkey_hash = context.comms.get_pubk_hash()?;
+            let my_pubkey_hash = context.comms.get_pubk_hash();
             let non_leaders = get_non_leader_participants(participants, &my_pubkey_hash);
 
             // Broadcast to all non-leaders

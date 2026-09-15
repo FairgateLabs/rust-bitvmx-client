@@ -59,7 +59,7 @@ impl BrokerConfig {
     }
     pub fn get_pubk_hash(&self) -> Result<PubkHash, ConfigError> {
         let cert = Cert::new_with_privk(settings::decrypt_or_read_file(&self.priv_key)?.as_str())?;
-        Ok(cert.get_pubk_hash()?)
+        Ok(cert.get_pubk_hash())
     }
 }
 

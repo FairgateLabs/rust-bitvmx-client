@@ -177,7 +177,7 @@ impl Program {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let my_pubkey_hash = context.comms.get_pubk_hash()?;
+        let my_pubkey_hash = context.comms.get_pubk_hash();
 
         let my_idx = peers
             .iter()

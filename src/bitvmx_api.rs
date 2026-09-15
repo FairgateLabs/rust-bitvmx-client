@@ -71,7 +71,7 @@ impl BitVMX {
         self.add_new_program(&id)?;
         info!(
             "Program Setup Finished {}",
-            self.program_context.comms.get_pubk_hash()?,
+            self.program_context.comms.get_pubk_hash(),
         );
 
         Ok(())
@@ -591,7 +591,7 @@ impl BitVMX {
                         uuid,
                         CommsAddress {
                             address: self.program_context.comms.get_address(),
-                            pubkey_hash: self.program_context.comms.get_pubk_hash()?,
+                            pubkey_hash: self.program_context.comms.get_pubk_hash(),
                         },
                     );
                     self.reply(from, comm_info)?;

@@ -494,7 +494,7 @@ impl TestProgramContextEnv {
     /// Comms address of peer `index` (its real address and pubkey hash).
     pub fn peer_address(&self, index: usize) -> Result<CommsAddress, BitVMXError> {
         let peer = &self.peers[index];
-        Ok(CommsAddress::new(peer.get_address(), peer.get_pubk_hash()?))
+        Ok(CommsAddress::new(peer.get_address(), peer.get_pubk_hash()))
     }
 
     /// Comms address of the context's own channel. Messages sent here are
@@ -502,7 +502,7 @@ impl TestProgramContextEnv {
     pub fn self_address(&self) -> Result<CommsAddress, BitVMXError> {
         Ok(CommsAddress::new(
             self.context.comms.get_address(),
-            self.context.comms.get_pubk_hash()?,
+            self.context.comms.get_pubk_hash(),
         ))
     }
 

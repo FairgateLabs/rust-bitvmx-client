@@ -53,7 +53,7 @@ impl RawPeer {
             config.broker.settings.clone(),
         )?;
 
-        let address = CommsAddress::new(node.get_address(), node.get_pubk_hash()?);
+        let address = CommsAddress::new(node.get_address(), node.get_pubk_hash());
         info!("Raw peer listening as {:?}", address);
         Ok(Self { node, address })
     }

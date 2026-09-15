@@ -800,7 +800,7 @@ mod tests {
 
         // Each peer receives a Broadcasted envelope from the leader that
         // excludes its own contribution and carries the other peer's message
-        let leader_hash = env.context.comms.get_pubk_hash().unwrap();
+        let leader_hash = env.context.comms.get_pubk_hash();
         for (index, own, other) in [(0, &peer0, &peer1), (1, &peer1, &peer0)] {
             let (sender, raw) = env.receive_via_peer(index).unwrap();
             assert_eq!(sender.pubkey_hash, leader_hash);
@@ -900,7 +900,7 @@ mod tests {
         )
         .unwrap();
         OriginalMessage {
-            sender_pubkey_hash: env.context.comms.get_pubk_hash().unwrap(),
+            sender_pubkey_hash: env.context.comms.get_pubk_hash(),
             msg_type: CommsMessageType::Keys,
             data,
             original_timestamp: timestamp,
