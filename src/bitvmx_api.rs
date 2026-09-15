@@ -1,6 +1,6 @@
 use super::{BitVMX, Context, RejectedInputSource, StoreKey};
 use crate::comms_allow_list;
-use crate::error_handling::{classify, is_fatal, send_error_report, Severity};
+use crate::error_handling::{classify, is_fatal, Severity};
 use crate::errors::BitVMXError;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
@@ -8,8 +8,8 @@ use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::types::{
-    ErrorReport, ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
-    ProgramStatus, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramStatus,
+    PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -787,54 +787,6 @@ impl BitVMX {
         }
     }
 
-    fn api_request_id(message: &IncomingBitVMXApiMessages) -> Option<Uuid> {
-        use IncomingBitVMXApiMessages::*;
-
-        match message {
-            Ping(id)
-            | SetVar(id, ..)
-            | SetWitness(id, ..)
-            | GetVar(id, ..)
-            | GetWitness(id, ..)
-            | GetCommInfo(id)
-            | GetTransaction(id, ..)
-            | GetTransactionInfoByName(id, ..)
-            | GetHashedMessage(id, ..)
-            | Setup(id, ..)
-            | SubscribeToTransaction(id, ..)
-            | SubscribeToSpendingUTXO(id, ..)
-            | DispatchTransaction(id, ..)
-            | DispatchTransactionName(id, ..)
-            | SetupKey(id, ..)
-            | GetAggregatedPubkey(id)
-            | GetKeyPair(id)
-            | GetPubKey(id, ..)
-            | GetEvenPubKey(id)
-            | SignMessage(id, ..)
-            | GenerateZKP(id, ..)
-            | ProofReady(id)
-            | GetZKPExecutionResult(id)
-            | Encrypt(id, ..)
-            | Decrypt(id, ..)
-            | Backup(id, ..)
-            | GetFundingAddress(id)
-            | GetFundingBalance(id)
-            | SendFunds(id, ..)
-            | GetProtocolVisualization(id)
-            | ListAllowList(id)
-            | AddToAllowList(id, ..)
-            | RemoveFromAllowList(id, ..)
-            | SetAllowAll(id, ..) => Some(*id),
-            SetFundingUtxo(_)
-            | SubscribeToOutputPattern(..)
-            | SubscribeToRskPegin(..)
-            | GetSPVProof(_)
-            | Shutdown() => None,
-            #[cfg(feature = "testpanic")]
-            Test(_) => None,
-        }
-    }
-
     pub(super) fn handle_api_message(
         &mut self,
         msg: String,
@@ -852,7 +804,6 @@ impl BitVMX {
         };
         debug!("< {:?}", decoded);
 
-        let request_id = Self::api_request_id(&decoded);
         let reply_to = from.clone();
         let result = (|| -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
             match decoded {
@@ -1052,35 +1003,10 @@ impl BitVMX {
             }
         })();
 
-        let result = match result {
-            Ok(Some(response)) => self.reply(reply_to.clone(), response),
+        match result {
+            Ok(Some(response)) => self.reply(reply_to, response),
             Ok(None) => Ok(()),
             Err(error) => Err(error),
-        };
-
-        if let Err(error) = result {
-            error!(
-                "Failed to handle API message from {}: {:?}",
-                reply_to, error
-            );
-
-            let (kind, fatal) = match classify(&error) {
-                Severity::Fatal => (ErrorReportKind::Fatal, true),
-                Severity::BitcoinNodeUnreachable => (ErrorReportKind::BitcoinRpcUnavailable, false),
-                Severity::Other => (ErrorReportKind::NonFatal, false),
-            };
-            let scope = request_id.map_or(ErrorScope::Node, ErrorScope::Request);
-            send_error_report(
-                &self.program_context.broker_channel,
-                &reply_to,
-                ErrorReport::new(scope, kind, Some(error.to_string())),
-            );
-
-            if fatal {
-                return Err(error);
-            }
         }
-
-        Ok(())
     }
 }
