@@ -609,33 +609,111 @@ impl BitVMX {
         Ok(())
     }
 
-    fn load_program_or_reply(
+    fn load_program_or_not_found(
         &self,
-        from: &Identifier,
         id: Uuid,
-    ) -> Result<Option<Program>, BitVMXError> {
-        let program = self.load_program(&id)?;
-        if program.is_none() {
-            warn!("Program {} not found", id);
-            self.reply(
-                from.clone(),
-                OutgoingBitVMXApiMessages::NotFound(id, format!("Program not found: {id}")),
-            )?;
+    ) -> Result<Result<Program, OutgoingBitVMXApiMessages>, BitVMXError> {
+        match self.load_program(&id)? {
+            Some(program) => Ok(Ok(program)),
+            None => {
+                warn!("Program {} not found", id);
+                Ok(Err(OutgoingBitVMXApiMessages::NotFound(
+                    id,
+                    format!("Program not found: {id}"),
+                )))
+            }
         }
-        Ok(program)
+    }
+
+    fn get_hashed_message(
+        &mut self,
+        id: Uuid,
+        name: String,
+        vout: u32,
+        leaf: u32,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let mut program = match self.load_program_or_not_found(id)? {
+            Ok(program) => program,
+            Err(response) => return Ok(response),
+        };
+
+        match program.protocol.get_hashed_message(&name, vout, leaf) {
+            Ok(hashed) => Ok(OutgoingBitVMXApiMessages::HashedMessage(
+                id, name, vout, leaf, hashed,
+            )),
+            Err(error) => Ok(Self::api_error(
+                id,
+                format!("Failed to get hashed message: {error}"),
+            )),
+        }
+    }
+
+    fn get_transaction_info_by_name(
+        &self,
+        id: Uuid,
+        name: String,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let program = match self.load_program_or_not_found(id)? {
+            Ok(program) => program,
+            Err(response) => return Ok(response),
+        };
+
+        match program.get_transaction_by_name(&name, &self.program_context) {
+            Ok(transaction) => Ok(OutgoingBitVMXApiMessages::TransactionInfo(
+                id,
+                name,
+                transaction,
+            )),
+            Err(error) => {
+                error!(
+                    "Transaction not found: {} in program {:?}. Error: {}",
+                    name, id, error
+                );
+                Ok(OutgoingBitVMXApiMessages::NotFound(
+                    id,
+                    format!("Transaction not found: {name}"),
+                ))
+            }
+        }
     }
 
     fn dispatch_transaction_name(
         &mut self,
-        from: Identifier,
         id: Uuid,
         name: &str,
-    ) -> Result<(), BitVMXError> {
-        let Some(mut program) = self.load_program_or_reply(&from, id)? else {
-            return Ok(());
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
+        let mut program = match self.load_program_or_not_found(id)? {
+            Ok(program) => program,
+            Err(response) => return Ok(Some(response)),
         };
+
         program.dispatch_transaction_name(name, &mut self.program_context)?;
-        Ok(())
+        Ok(None)
+    }
+
+    fn get_protocol_visualization(
+        &self,
+        id: Uuid,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        let program = match self.load_program_or_not_found(id)? {
+            Ok(program) => program,
+            Err(response) => return Ok(response),
+        };
+
+        match program
+            .protocol
+            .load_protocol()
+            .and_then(|protocol| protocol.visualize(GraphOptions::EdgeArrows))
+        {
+            Ok(visualization) => Ok(OutgoingBitVMXApiMessages::ProtocolVisualization(
+                id,
+                visualization,
+            )),
+            Err(error) => Ok(Self::api_error(
+                id,
+                format!("Error visualizing protocol: {error}"),
+            )),
+        }
     }
 
     fn get_spv_proof(&mut self, from: Identifier, txid: Txid) -> Result<(), BitVMXError> {
@@ -737,30 +815,8 @@ impl BitVMX {
         let result = (|| -> Result<(), BitVMXError> {
             match decoded {
                 IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
-                    let Some(mut program) = self.load_program_or_reply(&from, id)? else {
-                        return Ok(());
-                    };
-                    let hashed = program.protocol.get_hashed_message(&name, vout, leaf);
-                    // reply hashed message or reply api error
-                    match hashed {
-                        Ok(hashed) => {
-                            self.reply(
-                                from.clone(),
-                                OutgoingBitVMXApiMessages::HashedMessage(
-                                    id, name, vout, leaf, hashed,
-                                ),
-                            )?;
-                        }
-                        Err(e) => {
-                            self.reply(
-                                from.clone(),
-                                OutgoingBitVMXApiMessages::ApiError(
-                                    id,
-                                    format!("Failed to get hashed message: {}", e),
-                                ),
-                            )?;
-                        }
-                    }
+                    let response = self.get_hashed_message(id, name, vout, leaf)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
                     let comm_info = OutgoingBitVMXApiMessages::CommInfo(
@@ -874,24 +930,7 @@ impl BitVMX {
                     self.get_transaction(from, id, txid)?
                 }
                 IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                    let Some(program) = self.load_program_or_reply(&from, id)? else {
-                        return Ok(());
-                    };
-                    let response =
-                        match program.get_transaction_by_name(&name, &self.program_context) {
-                            Ok(tx) => OutgoingBitVMXApiMessages::TransactionInfo(id, name, tx),
-                            Err(err) => {
-                                error!(
-                                    "Transaction not found: {} in program {:?}. Error: {}",
-                                    name, id, err
-                                );
-                                OutgoingBitVMXApiMessages::NotFound(
-                                    id,
-                                    format!("Transaction not found: {}", name),
-                                )
-                            }
-                        };
-
+                    let response = self.get_transaction_info_by_name(id, name)?;
                     self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
@@ -925,8 +964,10 @@ impl BitVMX {
                     )?,
                 IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(from, txid)?,
 
-                IncomingBitVMXApiMessages::DispatchTransactionName(id, tx) => {
-                    self.dispatch_transaction_name(from, id, &tx)?
+                IncomingBitVMXApiMessages::DispatchTransactionName(id, name) => {
+                    if let Some(response) = self.dispatch_transaction_name(id, &name)? {
+                        self.reply(from, response)?;
+                    }
                 }
                 IncomingBitVMXApiMessages::DispatchTransaction(
                     id,
@@ -995,23 +1036,8 @@ impl BitVMX {
                     self.reply(from, message)?;
                 }
                 IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
-                    let Some(program) = self.load_program_or_reply(&from, id)? else {
-                        return Ok(());
-                    };
-                    let protocol_str = program
-                        .protocol
-                        .load_protocol()
-                        .and_then(|op| op.visualize(GraphOptions::EdgeArrows));
-                    let reply_msg = match protocol_str {
-                        Ok(s) => OutgoingBitVMXApiMessages::ProtocolVisualization(id, s),
-                        Err(e) => {
-                            error!("Error visualizing protocol: {}", e);
-                            let err_str = format!("Error visualizing protocol: {}", e);
-                            OutgoingBitVMXApiMessages::NotFound(id, err_str)
-                        }
-                    };
-
-                    self.reply(from, reply_msg)?;
+                    let response = self.get_protocol_visualization(id)?;
+                    self.reply(from, response)?;
                 }
                 IncomingBitVMXApiMessages::ListAllowList(id) => {
                     let allow_list = self.program_context.comms.get_allow_list();
