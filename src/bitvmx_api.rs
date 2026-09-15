@@ -854,108 +854,96 @@ impl BitVMX {
 
         let request_id = Self::api_request_id(&decoded);
         let reply_to = from.clone();
-        let result = (|| -> Result<(), BitVMXError> {
+        let result = (|| -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
             match decoded {
                 IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
-                    let response = self.get_hashed_message(id, name, vout, leaf)?;
-                    self.reply(from, response)?;
+                    self.get_hashed_message(id, name, vout, leaf).map(Some)
                 }
-                IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
-                    let comm_info = OutgoingBitVMXApiMessages::CommInfo(
-                        uuid,
+                IncomingBitVMXApiMessages::GetCommInfo(id) => {
+                    Ok(Some(OutgoingBitVMXApiMessages::CommInfo(
+                        id,
                         CommsAddress {
                             address: self.program_context.comms.get_address(),
                             pubkey_hash: self.program_context.comms.get_pubk_hash(),
                         },
-                    );
-                    self.reply(from, comm_info)?;
+                    )))
                 }
-                IncomingBitVMXApiMessages::Ping(uuid) => {
-                    self.reply(from, Self::ping(uuid))?;
-                }
-                IncomingBitVMXApiMessages::SetVar(uuid, key, value) => {
+                IncomingBitVMXApiMessages::Ping(id) => Ok(Some(Self::ping(id))),
+                IncomingBitVMXApiMessages::SetVar(id, key, value) => {
                     debug!("Setting variable {}: {:?}", key, value);
-                    self.program_context.globals.set_var(&uuid, &key, value)?;
+                    self.program_context.globals.set_var(&id, &key, value)?;
+                    Ok(None)
                 }
-                IncomingBitVMXApiMessages::SetWitness(uuid, key, value) => {
+                IncomingBitVMXApiMessages::SetWitness(id, key, value) => {
                     debug!("Setting witness {}: {:?}", key, value);
-                    self.program_context
-                        .witness
-                        .set_witness(&uuid, &key, value)?;
+                    self.program_context.witness.set_witness(&id, &key, value)?;
+                    Ok(None)
                 }
                 IncomingBitVMXApiMessages::SetFundingUtxo(utxo) => {
                     info!("Setting funding utxo {:?}", utxo);
                     self.program_context.bitcoin_coordinator.add_funding(utxo)?;
+                    Ok(None)
                 }
                 IncomingBitVMXApiMessages::GetFundingAddress(id) => {
-                    let response = self.get_funding_address(id)?;
-                    self.reply(from, response)?;
+                    self.get_funding_address(id).map(Some)
                 }
                 IncomingBitVMXApiMessages::GetFundingBalance(id) => {
-                    let response = self.get_funding_balance(id)?;
-                    self.reply(from, response)?;
+                    self.get_funding_balance(id).map(Some)
                 }
-                IncomingBitVMXApiMessages::SendFunds(id, destination, fee_rate) => {
-                    let response = self.send_funds(from.clone(), id, destination, fee_rate)?;
-                    self.reply(from, response)?;
-                }
-
-                IncomingBitVMXApiMessages::GetVar(id, key) => {
-                    let response = self.get_var(id, &key)?;
-                    self.reply(from, response)?;
-                }
+                IncomingBitVMXApiMessages::SendFunds(id, destination, fee_rate) => self
+                    .send_funds(from.clone(), id, destination, fee_rate)
+                    .map(Some),
+                IncomingBitVMXApiMessages::GetVar(id, key) => self.get_var(id, &key).map(Some),
                 IncomingBitVMXApiMessages::GetWitness(id, key) => {
-                    let response = self.get_witness(id, &key)?;
-                    self.reply(from, response)?;
+                    self.get_witness(id, &key).map(Some)
                 }
                 IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
-                    let response = self.get_transaction(id, txid)?;
-                    self.reply(from, response)?;
+                    self.get_transaction(id, txid).map(Some)
                 }
                 IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
-                    let response = self.get_transaction_info_by_name(id, name)?;
-                    self.reply(from, response)?;
+                    self.get_transaction_info_by_name(id, name).map(Some)
                 }
                 IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
-                    if let Some(response) = self.setup(id, program_type, participants, leader)? {
-                        self.reply(from, response)?;
-                    }
+                    self.setup(id, program_type, participants, leader)
                 }
                 IncomingBitVMXApiMessages::SubscribeToTransaction(
-                    uuid,
+                    id,
                     txid,
                     confirmation_threshold,
-                ) => self.subscribe_to_tx(from, uuid, txid, confirmation_threshold)?,
+                ) => {
+                    self.subscribe_to_tx(from, id, txid, confirmation_threshold)?;
+                    Ok(None)
+                }
                 IncomingBitVMXApiMessages::SubscribeToSpendingUTXO(
-                    uuid,
+                    id,
                     txid,
                     vout,
                     confirmation_threshold,
                 ) => {
-                    self.subscribe_to_spending_utxo(from, uuid, txid, vout, confirmation_threshold)?
+                    self.subscribe_to_spending_utxo(from, id, txid, vout, confirmation_threshold)?;
+                    Ok(None)
                 }
                 IncomingBitVMXApiMessages::SubscribeToOutputPattern(
                     filter,
                     confirmation_threshold,
-                ) => self.subscribe_to_output_pattern(filter, confirmation_threshold)?,
-                IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => self
-                    .subscribe_to_output_pattern(
+                ) => {
+                    self.subscribe_to_output_pattern(filter, confirmation_threshold)?;
+                    Ok(None)
+                }
+                IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
+                    self.subscribe_to_output_pattern(
                         bitcoin_coordinator::OutputPatternFilter {
                             output_index: 1,
                             tag: RSK_PEGIN_TAG.to_vec(),
                             max_outputs: None,
                         },
                         confirmation_threshold,
-                    )?,
-                IncomingBitVMXApiMessages::GetSPVProof(txid) => {
-                    let response = self.get_spv_proof(txid)?;
-                    self.reply(from, response)?;
+                    )?;
+                    Ok(None)
                 }
-
+                IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(txid).map(Some),
                 IncomingBitVMXApiMessages::DispatchTransactionName(id, name) => {
-                    if let Some(response) = self.dispatch_transaction_name(id, &name)? {
-                        self.reply(from, response)?;
-                    }
+                    self.dispatch_transaction_name(id, &name)
                 }
                 IncomingBitVMXApiMessages::DispatchTransaction(
                     id,
@@ -970,98 +958,85 @@ impl BitVMX {
                         confirmation_threshold,
                         stuck_in_mempool_blocks,
                     )?;
+                    Ok(None)
                 }
                 IncomingBitVMXApiMessages::SetupKey(
                     id,
                     participants,
                     participants_keys,
                     leader_idx,
-                ) => {
-                    if let Some(response) =
-                        self.setup_key(id, participants, participants_keys, leader_idx)?
-                    {
-                        self.reply(from, response)?;
-                    }
-                }
-                IncomingBitVMXApiMessages::GetKeyPair(id) => {
-                    let response = self.get_key_pair(id)?;
-                    self.reply(from, response)?;
-                }
+                ) => self.setup_key(id, participants, participants_keys, leader_idx),
+                IncomingBitVMXApiMessages::GetKeyPair(id) => self.get_key_pair(id).map(Some),
                 IncomingBitVMXApiMessages::GetPubKey(id, new) => {
-                    let response = self.get_pub_key(id, new)?;
-                    self.reply(from, response)?;
+                    self.get_pub_key(id, new).map(Some)
                 }
-                IncomingBitVMXApiMessages::GetEvenPubKey(id) => {
-                    let response = self.get_even_pub_key(id)?;
-                    self.reply(from, response)?;
-                }
+                IncomingBitVMXApiMessages::GetEvenPubKey(id) => self.get_even_pub_key(id).map(Some),
                 IncomingBitVMXApiMessages::SignMessage(id, payload, public_key) => {
-                    let response = self.sign_message(id, payload, public_key)?;
-                    self.reply(from, response)?;
+                    self.sign_message(id, payload, public_key).map(Some)
                 }
                 IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
-                    let response = self.get_aggregated_pubkey(id)?;
-                    self.reply(from, response)?;
+                    self.get_aggregated_pubkey(id).map(Some)
                 }
                 IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
-                    self.generate_zkp(from, id, input, elf_file_path)?
+                    self.generate_zkp(from, id, input, elf_file_path)?;
+                    Ok(None)
                 }
-                IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(from, id)?,
+                IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(id).map(Some),
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
-                    let response = self.get_zkp_execution_result(id)?;
-                    self.reply(from, response)?;
+                    self.get_zkp_execution_result(id).map(Some)
                 }
                 IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
-                    let response = self.encrypt_message(id, message, public_key)?;
-                    self.reply(from, response)?;
+                    self.encrypt_message(id, message, public_key).map(Some)
                 }
                 IncomingBitVMXApiMessages::Decrypt(id, message, public_key) => {
-                    let response = self.decrypt_message(id, message, public_key)?;
-                    self.reply(from, response)?;
+                    self.decrypt_message(id, message, public_key).map(Some)
                 }
                 IncomingBitVMXApiMessages::Backup(id, backup_path, dek_path, password) => {
-                    let message = match self.store.backup(&backup_path, &dek_path, password) {
+                    let response = match self.store.backup(&backup_path, &dek_path, password) {
                         Ok(_) => OutgoingBitVMXApiMessages::BackupResult(
                             id,
                             true,
                             "Backup successful".to_string(),
                         ),
-                        Err(e) => OutgoingBitVMXApiMessages::BackupResult(id, false, e.to_string()),
+                        Err(error) => {
+                            OutgoingBitVMXApiMessages::BackupResult(id, false, error.to_string())
+                        }
                     };
-
-                    self.reply(from, message)?;
+                    Ok(Some(response))
                 }
                 IncomingBitVMXApiMessages::GetProtocolVisualization(id) => {
-                    let response = self.get_protocol_visualization(id)?;
-                    self.reply(from, response)?;
+                    self.get_protocol_visualization(id).map(Some)
                 }
                 IncomingBitVMXApiMessages::ListAllowList(id) => {
                     let allow_list = self.program_context.comms.get_allow_list();
                     let (entries, allow_all) = comms_allow_list::snapshot(&allow_list)?;
-                    self.reply(
-                        from,
-                        OutgoingBitVMXApiMessages::AllowListEntries(id, entries, allow_all),
-                    )?;
+                    Ok(Some(OutgoingBitVMXApiMessages::AllowListEntries(
+                        id, entries, allow_all,
+                    )))
                 }
                 IncomingBitVMXApiMessages::AddToAllowList(id, pubk_hash, addr) => {
                     info!("Allowing comms peer {} from {:?}", pubk_hash, addr);
                     self.mutate_allow_list(id, from, |allow_list| {
                         allow_list.add_entry(pubk_hash.clone(), addr)
                     })?;
+                    Ok(None)
                 }
                 IncomingBitVMXApiMessages::RemoveFromAllowList(id, pubk_hash) => {
                     info!("Removing comms peer {}", pubk_hash);
                     self.mutate_allow_list(id, from, |allow_list| allow_list.remove(&pubk_hash))?;
+                    Ok(None)
                 }
                 IncomingBitVMXApiMessages::SetAllowAll(id, allow_all) => {
                     info!("Setting comms allow_all to {}", allow_all);
                     self.mutate_allow_list(id, from, |allow_list| {
                         allow_list.set_allow_all(allow_all)
                     })?;
+                    Ok(None)
                 }
                 IncomingBitVMXApiMessages::Shutdown() => {
                     info!("Shutdown message received. Initiating shutdown...");
                     self.shutdown()?;
+                    Ok(None)
                 }
                 #[cfg(feature = "testpanic")]
                 IncomingBitVMXApiMessages::Test(s) => {
@@ -1072,10 +1047,16 @@ impl BitVMX {
                         use storage_backend::error::StorageError as KVStorageError;
                         return Err(BitVMXError::from(KVStorageError::WriteError));
                     }
+                    Ok(None)
                 }
             }
-            Ok(())
         })();
+
+        let result = match result {
+            Ok(Some(response)) => self.reply(reply_to.clone(), response),
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
 
         if let Err(error) = result {
             error!(

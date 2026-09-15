@@ -963,7 +963,8 @@ impl BitVMX {
                     BitVMXError::InvalidMessageFormat
                 })?;
 
-            self.proof_ready(from, id)?;
+            let response = self.proof_ready(id)?;
+            self.reply(from, response)?;
         }
         Ok(())
     }
@@ -1429,7 +1430,7 @@ impl BitVMX {
             .unwrap_or(false)
     }
 
-    fn proof_ready(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
+    fn proof_ready(&mut self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         info!("Checking if proof is ready for job: {}", id);
 
         // Get the status from storage
@@ -1447,9 +1448,7 @@ impl BitVMX {
             None => OutgoingBitVMXApiMessages::ProofNotReady(id),
         };
 
-        self.reply(from, response)?;
-
-        Ok(())
+        Ok(response)
     }
 }
 
