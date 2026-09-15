@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Changed
 
+- Resolve challenge transaction IDs directly from the protocol graph without collecting signatures.
 - Store `PacketSettings` directly in each `Committee`, including peg-in, peg-out, and reject peg-in confirmation counts.
 - Read Union protocol confirmation and timelock settings from the committee instead of global `UnionSettings`.
 - Update `ACCEPT_PEGIN_TX`:
