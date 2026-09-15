@@ -836,10 +836,16 @@ impl BitVMX {
                         {
                             Ok(pair) => pair,
                             Err(err) => {
-                                break 'handle OutgoingBitVMXApiMessages::ApiError(
-                                    id,
-                                    format!("Failed to get key pair for aggregated key: {err:#?}"),
-                                );
+                                if err.is_storage_error() {
+                                    Err(err)?
+                                } else {
+                                    break 'handle OutgoingBitVMXApiMessages::ApiError(
+                                        id,
+                                        format!(
+                                            "Failed to get key pair for aggregated key: {err:#?}"
+                                        ),
+                                    );
+                                }
                             }
                         };
 
