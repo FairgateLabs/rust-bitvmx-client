@@ -783,7 +783,7 @@ mod tests {
     use crate::{
         program::variables::VariableTypes,
         test_utils::{TestProgramContextEnv, TestStorageDir},
-        types::PROGRAM_TYPE_AGGREGATED_KEY,
+        types::{FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY},
     };
     use bitcoin::{absolute::LockTime, transaction::Version};
 
@@ -1040,7 +1040,7 @@ mod tests {
         assert!(env
             .context
             .globals
-            .get_var_or_err(&program_id, "final_aggregated_key")
+            .get_var_or_err(&program_id, FINAL_AGGREGATED_KEY)
             .unwrap()
             .pubkey()
             .is_ok());

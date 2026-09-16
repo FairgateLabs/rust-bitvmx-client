@@ -134,7 +134,7 @@ This table shows the mapping between request messages and their expected respons
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
 | `SetupKey(uuid, addresses, operator_key, funding_key)` | N/A | Setup keys (no direct response) |
-| `GetAggregatedPubkey(uuid)` | `AggregatedPubkey(uuid, aggregated_pubkey)` or `AggregatedPubkeyNotReady(uuid)` | Get aggregated public key |
+| `GetAggregatedPubkey(uuid)` | `AggregatedPubkey(uuid, aggregated_pubkey)`, `AggregatedPubkeyNotReady(uuid)`, or `ApiError(uuid, error)` | Get aggregated public key; returns `ApiError` when the stored value is not a public key |
 | `GetKeyPair(uuid)` | `KeyPair(uuid, private_key, public_key)` | Generate key pair |
 | `GetPubKey(uuid, new_key)` | `PubKey(uuid, pub_key)` | Get public key |
 | `SignMessage(uuid, payload_to_sign, public_key_to_use)` | `SignedMessage(uuid, signature_r, signature_s, recovery_id)` | Sign a message |

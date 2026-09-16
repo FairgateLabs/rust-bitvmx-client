@@ -135,6 +135,7 @@ The following behavior has been standardized:
 - wallet API logic is isolated in dedicated functions that return outgoing messages;
 - variable, witness, transaction, aggregated-key, ZKP-result, ping, and SPV handlers return outgoing messages;
 - `GetZKPExecutionResult` returns a terminal `ApiError` when a successful status has no proof or journal, while storage access errors still propagate;
+- `GetAggregatedPubkey` reserves `AggregatedPubkeyNotReady` for an absent value and returns `ApiError` when the stored value cannot be resolved as a public key;
 - `GetTransaction` preserves the coordinator's typed `TransactionStatus::NotFound` response and propagates all coordinator errors;
 - `GetSPVProof` propagates coordinator errors; missing block information and typed `SPVError` proof-construction failures are logged and returned as an empty proof;
 - every incoming match arm now returns `Result<Option<OutgoingBitVMXApiMessages>, BitVMXError>`;
@@ -168,18 +169,7 @@ Recommended direction:
 - return `WalletError` for request/business failures such as invalid destinations or insufficient funds;
 - propagate wallet storage and system failures.
 
-### 2. Malformed aggregated keys appear not ready
-
-`GetAggregatedPubkey` returns `AggregatedPubkeyNotReady` when the stored variable exists but cannot be decoded as a public key.
-
-This can cause clients to poll forever for data that is corrupt rather than pending.
-
-Recommended direction:
-
-- reserve `AggregatedPubkeyNotReady` for an absent value;
-- propagate corrupt persisted data or return a terminal `ApiError`, depending on whether corruption should stop the node.
-
-### 3. Permanent unhandled errors can block retries
+### 2. Permanent unhandled errors can block retries
 
 All remaining `Err` values now propagate and roll back the incoming message. This is necessary for transient system failures, but a permanent request error that was not converted into an outgoing response can be retried forever and block later messages.
 
@@ -280,12 +270,11 @@ This avoids duplicate reports while preserving the original error source chain f
 ## Recommended next steps
 
 1. Add wallet error classification and propagate wallet storage failures.
-2. Decide whether malformed aggregated-key data is fatal corruption or a terminal API failure.
-3. Audit every remaining `Err` path to ensure permanent request errors cannot poison the retry queue.
-4. Audit in-memory mutations and any dependency calls that may bypass the shared transactional storage.
-5. Verify idempotency of broker consumers because transport delivery is at least once.
-6. Update the README API response table for all newly documented `ApiError` outcomes.
-7. Add tests covering:
+2. Audit every remaining `Err` path to ensure permanent request errors cannot poison the retry queue.
+3. Audit in-memory mutations and any dependency calls that may bypass the shared transactional storage.
+4. Verify idempotency of broker consumers because transport delivery is at least once.
+5. Update the README API response table for all newly documented `ApiError` outcomes.
+6. Add tests covering:
    - request errors atomically consuming the input and enqueuing the response;
    - storage failures rolling back both the incoming request and outgoing response;
    - Bitcoin RPC unavailability rolling back for retry;

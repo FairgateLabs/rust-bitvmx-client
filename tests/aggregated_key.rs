@@ -3,7 +3,7 @@
 use anyhow::Result;
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel,
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel, FINAL_AGGREGATED_KEY,
 };
 use common::{config_trace, get_all, init_bitvmx, prepare_bitcoin_guarded, send_all};
 use tracing::info;
@@ -108,7 +108,7 @@ pub fn test_aggregated_key() -> Result<()> {
     // under the variable name "final_aggregated_key"
     // IMPORTANT: Use aggregation_id so GetVar knows which program's globals to query
     let get_key_command =
-        IncomingBitVMXApiMessages::GetVar(aggregation_id, "final_aggregated_key".to_string())
+        IncomingBitVMXApiMessages::GetVar(aggregation_id, FINAL_AGGREGATED_KEY.to_string())
             .to_string()?;
 
     // Query the aggregated key from all participants
@@ -125,7 +125,7 @@ pub fn test_aggregated_key() -> Result<()> {
             );
 
             assert_eq!(
-                key_name, "final_aggregated_key",
+                key_name, FINAL_AGGREGATED_KEY,
                 "Variable name should be 'final_aggregated_key'"
             );
 
@@ -261,14 +261,14 @@ pub fn test_aggregated_single_participant() -> Result<()> {
 
     // Query the stored key from globals
     let get_key_command =
-        IncomingBitVMXApiMessages::GetVar(aggregation_id, "final_aggregated_key".to_string())
+        IncomingBitVMXApiMessages::GetVar(aggregation_id, FINAL_AGGREGATED_KEY.to_string())
             .to_string()?;
 
     send_all(&id_channel_pairs, &get_key_command)?;
     let key_responses = get_all(&channels, &mut instances, false)?;
 
     if let Some((_, key_name, key_value)) = key_responses[0].variable() {
-        assert_eq!(key_name, "final_aggregated_key");
+        assert_eq!(key_name, FINAL_AGGREGATED_KEY);
         if let VariableTypes::PubKey(key) = key_value {
             assert_eq!(
                 aggregated_pub_key.to_string(),

@@ -8,7 +8,7 @@ use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramStatus,
+    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramStatus, FINAL_AGGREGATED_KEY,
     PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
 };
 use bitcoin::secp256k1::Message;
@@ -288,7 +288,7 @@ impl BitVMX {
         let Some(aggregated) = self
             .program_context
             .globals
-            .get_var(&id, "final_aggregated_key")?
+            .get_var(&id, FINAL_AGGREGATED_KEY)?
         else {
             return Ok(Self::api_error(
                 id,
@@ -335,7 +335,7 @@ impl BitVMX {
             let Some(aggregated) = self
                 .program_context
                 .globals
-                .get_var(&id, "final_aggregated_key")?
+                .get_var(&id, FINAL_AGGREGATED_KEY)?
             else {
                 return Ok(Self::api_error(
                     id,
@@ -465,17 +465,19 @@ impl BitVMX {
             if let Some(key_var) = self
                 .program_context
                 .globals
-                .get_var(&id, "final_aggregated_key")?
+                .get_var(&id, FINAL_AGGREGATED_KEY)?
             {
                 match key_var.pubkey() {
                     Ok(aggregated_pubkey) => {
                         info!("Found aggregated pubkey in globals for program: {:?}", id);
                         OutgoingBitVMXApiMessages::AggregatedPubkey(id, aggregated_pubkey)
                     }
-                    Err(e) => {
-                        warn!("Failed to read aggregated key from globals: {}", e);
-                        OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)
-                    }
+                    Err(error) => Self::api_error(
+                        id,
+                        format!(
+                            "Failed to resolve aggregated public key for program {id}: {error}"
+                        ),
+                    ),
                 }
             } else {
                 OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(id)

@@ -23,7 +23,7 @@ use crate::{
         setup::steps::SetupStepName,
         variables::VariableTypes,
     },
-    types::{OutgoingBitVMXApiMessages, ProgramContext},
+    types::{OutgoingBitVMXApiMessages, ProgramContext, FINAL_AGGREGATED_KEY},
 };
 
 /// AggregatedKeyProtocol - Manages aggregated key generation
@@ -108,7 +108,7 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         // Store the aggregated key in globals for easy retrieval
         context.globals.set_var(
             &self.ctx.id,
-            "final_aggregated_key",
+            FINAL_AGGREGATED_KEY,
             VariableTypes::PubKey(*aggregated_key),
         )?;
 
@@ -242,7 +242,7 @@ mod tests {
         assert!(!env
             .context
             .globals
-            .contains_var(&id, "final_aggregated_key")
+            .contains_var(&id, FINAL_AGGREGATED_KEY)
             .unwrap());
     }
 
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(
             env.context
                 .globals
-                .get_var_or_err(&id, "final_aggregated_key")
+                .get_var_or_err(&id, FINAL_AGGREGATED_KEY)
                 .unwrap()
                 .pubkey()
                 .unwrap(),

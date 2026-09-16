@@ -303,7 +303,9 @@ mod tests {
 
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use crate::types::{PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION};
+    use crate::types::{
+        FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION,
+    };
     use std::collections::HashSet;
 
     fn protocol(name: &str, id: Uuid, storage: Rc<Storage>) -> ProtocolType {
@@ -400,7 +402,7 @@ mod tests {
         assert_eq!(
             env.context
                 .globals
-                .get_var(&id, "final_aggregated_key")
+                .get_var(&id, FINAL_AGGREGATED_KEY)
                 .unwrap()
                 .unwrap()
                 .pubkey()
