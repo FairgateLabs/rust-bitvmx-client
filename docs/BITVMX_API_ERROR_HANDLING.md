@@ -173,7 +173,59 @@ Recommended direction:
 
 All remaining `Err` values now propagate and roll back the incoming message. This is necessary for transient system failures, but a permanent request error that was not converted into an outgoing response can be retried forever and block later messages.
 
+API processing receives one message inside a transaction with `check_receive(Some(1))`. If its handler returns `Err`, rollback restores that message at the front of the incoming queue. An error classified as `Severity::Other` is reported as non-fatal and processing continues on a later tick, which selects the same message again. There is currently no terminal retry count or API dead-letter step on this path, so one deterministic failure can indefinitely prevent later API messages from being processed.
+
 Therefore every expected validation and business failure must be explicitly converted into a terminal response. `Err` should mean that retrying later may succeed, or that the node must stop.
+
+#### Confirmed request-controlled risks
+
+**Invalid confirmation thresholds.** The following requests pass their optional confirmation threshold to the transaction monitor and propagate its errors directly:
+
+- `SubscribeToTransaction`;
+- `SubscribeToSpendingUTXO`;
+- `SubscribeToOutputPattern`;
+- `SubscribeToRskPegin`;
+- `DispatchTransaction`.
+
+The monitor deterministically returns `MonitorError::InvalidConfirmationTrigger` when the requested value is greater than or equal to its configured `max_monitoring_confirmations`. This is request validation, but it currently reaches the API boundary as `BitVMXError::BitcoinCoordinatorError` and is classified as `Severity::Other`. Retrying the unchanged request cannot succeed, so it can block the queue forever. This error should become `ApiError(id, message)` or a more specific terminal response; storage and monitor infrastructure errors from the same calls must continue to propagate.
+
+**Unknown transaction names during dispatch.** `DispatchTransactionName` calls `Program::dispatch_transaction_name` and propagates every failure. An unknown or inapplicable name can produce `BitVMXError::InvalidTransactionName`, `ProtocolBuilderError::MissingTransaction`, or a related permanent protocol lookup error. Unlike `GetTransactionInfoByName`, this path does not convert the lookup failure into `NotFound` or `ApiError`, so an invalid name can poison the queue.
+
+A named transaction may also be temporarily unavailable while its protocol is still being constructed. The handler must distinguish that retryable state from a name that can never exist for the program. At minimum, explicit invalid/missing-name variants should produce a terminal response while storage and system errors propagate. If protocol readiness is intentionally asynchronous, the API should expose that state explicitly rather than relying on an unbounded retry of the request.
+
+#### Persistent local-state risks
+
+Storage and key-manager errors should propagate, but propagation alone is insufficient when the condition cannot recover. `error_handling::classify` currently treats only `StorageError::WriteError`, `ReadError`, and `CommitError` as fatal. Persistent variants such as `ConversionError`, `SerializationError`, `FailedToDecryptData`, and invariant-breaking `NotFound` values remain `Severity::Other`. A request that repeatedly reads corrupt or incompatible program, variable, witness, proof, or monitor data can therefore remain at the head of the queue indefinitely.
+
+Program loading has the same issue. `load_program_or_not_found` handles only a clean `Ok(None)` as `NotFound`; deserialization failures and setup-engine state restoration failures propagate. That is correct for avoiding a misleading business response, but persistent corruption must be classified as fatal or moved to an explicit terminal/dead-letter path rather than retried forever.
+
+Key-manager API operations deliberately propagate errors for which `KeyManagerError::is_storage_error()` is true. Persistent key-store corruption has the same retry risk. In addition, `KeyManagerError::ReadError(StorageError)` must remain visible to the general source-chain classifier; if the wrapped storage error is not exposed as an error source, a fatal read failure may be misclassified as `Severity::Other`.
+
+#### Persistent environment and configuration risks
+
+Only Bitcoin JSON-RPC transport errors are currently classified as `BitcoinNodeUnreachable`. Other RPC failures are `Severity::Other`. A stable node rejection or configuration problem, such as an unavailable required RPC capability or incompatible node settings, can therefore repeatedly roll back requests including `GetTransaction`, `GetSPVProof`, and transaction dispatch. Bitcoin errors need a typed distinction between a terminal request rejection, a retryable outage, and a fatal node misconfiguration.
+
+`SendFunds` also has propagated failures after transaction creation, notably coordinator registration and `wallet.update_with_tx`. Persistent wallet database, clock, or wallet-state failures can retry indefinitely and may occur after in-memory wallet mutation. This overlaps the deferred wallet-classification work above and requires both error classification and an idempotency review.
+
+#### Related inverse risk: catching too broadly
+
+Avoiding retry poisoning does not mean converting every error into a successful API response. Some handlers currently catch broad error types after loading a program:
+
+- `get_hashed_message`;
+- `get_transaction_info_by_name`;
+- `get_protocol_visualization`;
+- `setup` and `setup_key` for errors considered merely non-fatal.
+
+A business lookup or validation error should become a terminal response, but a nested storage or system failure must still propagate. Broad `Err(error) => ApiError(...)` or `NotFound(...)` branches can consume infrastructure failures and prevent rollback. Typed error inspection should be used in both directions: terminalize only permanent request failures, and propagate retryable or fatal infrastructure failures.
+
+#### Recommended fixes and tests
+
+1. Convert `MonitorError::InvalidConfirmationTrigger` into a terminal response carrying the request UUID.
+2. Convert explicit invalid/missing transaction-name errors from `DispatchTransactionName` into `NotFound` or `ApiError`, while preserving propagation for storage and system errors.
+3. Classify persistent storage corruption and invariant failures as fatal, or introduce a bounded retry and dead-letter mechanism that records and removes the blocking API input.
+4. Classify non-transport Bitcoin RPC failures as terminal request rejection, retryable outage, or fatal node misconfiguration.
+5. Add tests proving that an invalid confirmation threshold and an unknown transaction name atomically consume their input, enqueue their response, and do not block the next request.
+6. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
 
 ## Transaction and delivery behavior
 
