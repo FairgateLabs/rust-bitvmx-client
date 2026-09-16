@@ -755,24 +755,21 @@ impl BitVMX {
         let tx_info = self
             .program_context
             .bitcoin_coordinator
-            .get_transaction(txid);
+            .get_transaction(txid)?;
 
-        match tx_info {
-            Ok(utx) => match utx.block_info {
-                Some(block_info) => {
-                    let proof = get_spv_proof(txid, block_info)?;
-                    Ok(OutgoingBitVMXApiMessages::SPVProof(txid, Some(proof)))
-                }
-                None => {
-                    warn!("Missing block info for txid {}", txid);
-                    Ok(OutgoingBitVMXApiMessages::SPVProof(txid, None))
-                }
-            },
-            Err(error) => {
-                warn!(
-                    "Failed to retrieve transaction info for txid {}: {:?}",
-                    txid, error
-                );
+        match tx_info.block_info {
+            Some(block_info) => {
+                let proof = match get_spv_proof(txid, block_info) {
+                    Ok(proof) => Some(proof),
+                    Err(error) => {
+                        warn!("Failed to build SPV proof for txid {}: {}", txid, error);
+                        None
+                    }
+                };
+                Ok(OutgoingBitVMXApiMessages::SPVProof(txid, proof))
+            }
+            None => {
+                warn!("Missing block info for txid {}", txid);
                 Ok(OutgoingBitVMXApiMessages::SPVProof(txid, None))
             }
         }

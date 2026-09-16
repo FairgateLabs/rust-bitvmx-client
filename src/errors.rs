@@ -208,8 +208,8 @@ pub enum BitVMXError {
     #[error("Invalid witness: {0:?}")]
     InvalidWitness(Witness),
 
-    #[error("Invalid merkle tree")]
-    InvalidMerkleTree,
+    #[error("SPV proof error: {0}")]
+    SPVError(#[from] crate::spv_proof::SPVError),
 
     #[error("Script not found for program id {0}")]
     ScriptNotFound(Uuid),
@@ -279,9 +279,6 @@ pub enum BitVMXError {
 
     #[error("Invalid transaction status {0}")]
     InvalidTransactionStatus(String),
-
-    #[error("Transaction not found in block")]
-    TransactionNotFoundInBlock,
 
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,

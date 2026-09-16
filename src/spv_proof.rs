@@ -1,7 +1,6 @@
 //! Shared with `rust-bitvmx-client-types` — this file is copied verbatim on release.
 //! Node-only code does not belong here; put it in the sibling `mod.rs`.
 
-use crate::errors::BitVMXError;
 use bitcoin::hashes::{sha256d, Hash, HashEngine};
 use bitcoin::hex::Case;
 use bitcoin::hex::DisplayHex;
@@ -9,7 +8,17 @@ use bitcoin::Transaction;
 use bitcoin::Txid;
 use bitcoin_coordinator::FullBlock;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tracing::debug;
+
+#[derive(Debug, Error)]
+pub enum SPVError {
+    #[error("transaction {0} was not found in the block")]
+    TransactionNotFoundInBlock(Txid),
+
+    #[error("the merkle tree is invalid")]
+    InvalidMerkleTree,
+}
 
 #[derive(Debug)]
 pub struct MerkleBranch {
@@ -25,7 +34,7 @@ pub struct BtcTxSPVProof {
     pub merkle_branch_hashes: Vec<[u8; 32]>,
 }
 
-pub fn get_spv_proof(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVProof, BitVMXError> {
+pub fn get_spv_proof(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVProof, SPVError> {
     // Get block transactions and find our tx index
     let (tx, tx_index) = block_info
         .txs
@@ -38,7 +47,7 @@ pub fn get_spv_proof(txid: Txid, block_info: FullBlock) -> Result<BtcTxSPVProof,
                 None
             }
         })
-        .ok_or_else(|| BitVMXError::TransactionNotFoundInBlock)?;
+        .ok_or(SPVError::TransactionNotFoundInBlock(txid))?;
 
     // Build the complete merkle tree with hashes in bitcoin endianes
     let merkle_tree = build_merkle_tree_store(&block_info.txs, false);
@@ -161,7 +170,7 @@ fn build_merkle_branch(
     merkle_tree: &Vec<Option<[u8; 32]>>,
     tx_count: u32,
     tx_index: u32,
-) -> Result<MerkleBranch, BitVMXError> {
+) -> Result<MerkleBranch, SPVError> {
     let mut hashes = Vec::new();
     let mut path = 0;
     let mut path_index = 0;
@@ -185,7 +194,7 @@ fn build_merkle_branch(
 
         let hash = clean_merkle_tree
             .get((level_offset + target_offset) as usize)
-            .ok_or_else(|| BitVMXError::InvalidMerkleTree)?;
+            .ok_or(SPVError::InvalidMerkleTree)?;
         hashes.push(to_swapped_bytes32(hash));
 
         level_offset += level_size;
@@ -197,15 +206,12 @@ fn build_merkle_branch(
     Ok(MerkleBranch { hashes, path })
 }
 
-fn get_merkle_tree_root_hex(merkle_tree: &Vec<Option<[u8; 32]>>) -> Result<String, BitVMXError> {
-    let last = merkle_tree
-        .last()
-        .ok_or_else(|| BitVMXError::InvalidMerkleTree)?;
-    Ok(to_swapped_bytes32(
-        last.as_ref()
-            .ok_or_else(|| BitVMXError::InvalidMerkleTree)?,
+fn get_merkle_tree_root_hex(merkle_tree: &Vec<Option<[u8; 32]>>) -> Result<String, SPVError> {
+    let last = merkle_tree.last().ok_or(SPVError::InvalidMerkleTree)?;
+    Ok(
+        to_swapped_bytes32(last.as_ref().ok_or(SPVError::InvalidMerkleTree)?)
+            .to_hex_string(Case::Lower),
     )
-    .to_hex_string(Case::Lower))
 }
 
 #[cfg(test)]
@@ -493,7 +499,7 @@ mod tests {
         let err = get_spv_proof(missing_txid, block_100000(block_100000_txs())).unwrap_err();
 
         assert!(
-            matches!(err, BitVMXError::TransactionNotFoundInBlock),
+            matches!(err, SPVError::TransactionNotFoundInBlock(id) if id == missing_txid),
             "Expected TransactionNotFoundInBlock, got {:?}",
             err
         );
