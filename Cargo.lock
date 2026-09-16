@@ -274,9 +274,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.18.0"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce2b2dcc879c3bae0d371e77c99f2238400ef24ec001394befa67b6e543add9e"
+checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -284,9 +284,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.44.0"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09fae7be8bb3174e05c6afdb34199e6dc0c7c04ba9fa237b1967adfbde27483"
+checksum = "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27"
 dependencies = [
  "cc",
  "cmake",
@@ -480,7 +480,7 @@ dependencies = [
  "bitcoin-io",
  "bitcoin-units",
  "bitcoin_hashes 0.14.101",
- "hex-conservative 0.2.2",
+ "hex-conservative 0.2.3",
  "hex_lit",
  "secp256k1 0.29.1",
  "serde",
@@ -500,7 +500,7 @@ dependencies = [
 [[package]]
 name = "bitcoin-coordinator"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-bitcoin?tag=v0.8.5#d86c33460a1010045641ff91729d973cb73b2e50"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-bitcoin?tag=v0.8.5#ce6cce32eeb53f7cfc4f8111e5ea801072cb03db"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.102",
@@ -527,7 +527,7 @@ dependencies = [
 [[package]]
 name = "bitcoin-indexer"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitcoin-indexer.git?tag=v0.8.5#3e666cc3c1d99c09b208aebd6b55333d974aa331"
+source = "git+https://github.com/FairgateLabs/rust-bitcoin-indexer.git?tag=v0.8.5#a2acae3e60eb0bca3a4aec128fa700377f8e885f"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.102",
@@ -598,7 +598,7 @@ dependencies = [
 [[package]]
 name = "bitcoin-script-riscv"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/BitVMX-CPU?tag=v0.8.5#d51405d6cc548b6e0226298534f7267b7601ba99"
+source = "git+https://github.com/FairgateLabs/BitVMX-CPU?tag=v0.8.5#77a899e872f8f9cb957870be6204b4deef8647de"
 dependencies = [
  "bitcoin 0.32.102",
  "bitcoin-script",
@@ -638,7 +638,7 @@ dependencies = [
  "clap",
  "console_error_panic_hook",
  "getrandom 0.2.17",
- "hex-conservative 0.2.2",
+ "hex-conservative 0.2.3",
  "lazy_static",
  "serde",
  "serde-wasm-bindgen",
@@ -669,7 +669,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2"
 dependencies = [
  "bitcoin-io",
- "hex-conservative 0.2.2",
+ "hex-conservative 0.2.3",
  "serde",
 ]
 
@@ -700,7 +700,7 @@ dependencies = [
 [[package]]
 name = "bitcoind"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitcoind.git?tag=v0.8.5#1a0661cb7a35f47c5eca116b107601bd5fd6c6fd"
+source = "git+https://github.com/FairgateLabs/rust-bitcoind.git?tag=v0.8.5#2f86355516f539c242caec5545361c061ded78d7"
 dependencies = [
  "bitvmx-bitcoin-rpc",
  "bollard",
@@ -723,7 +723,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-bitcoin-rpc"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git?tag=v0.8.5#b2debc2a316f1789802ba3382169e751cdcde4dc"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git?tag=v0.8.5#2b45ad1861a8348f02fe26721df812dc45ca6370"
 dependencies = [
  "bitcoin 0.32.102",
  "bitcoincore-rpc",
@@ -739,14 +739,14 @@ dependencies = [
 [[package]]
 name = "bitvmx-broker"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-broker.git?tag=v0.8.5#ab489939c3659d6f7465b0151c3061e51d1fe770"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-broker.git?tag=v0.8.5#d395c0af9bba8600461d6cddff723bebc2207972"
 dependencies = [
  "anyhow",
  "bitvmx-settings",
  "clap",
  "futures",
  "hex",
- "pem 4.0.0",
+ "pem",
  "rcgen",
  "ring",
  "rsa",
@@ -823,7 +823,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-cpu-definitions"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/BitVMX-CPU?tag=v0.8.5#d51405d6cc548b6e0226298534f7267b7601ba99"
+source = "git+https://github.com/FairgateLabs/BitVMX-CPU?tag=v0.8.5#77a899e872f8f9cb957870be6204b4deef8647de"
 dependencies = [
  "blake3",
  "config",
@@ -838,7 +838,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-dispatcher-utils"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher?tag=v0.8.5#f6f991383e0cb47909dba366dc92cea5d63741de"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher?tag=v0.8.5#ae0b898b534844c1b8151ade19628264a6151622"
 dependencies = [
  "bitvmx-broker",
  "serde",
@@ -849,7 +849,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-job-dispatcher"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher?tag=v0.8.5#f6f991383e0cb47909dba366dc92cea5d63741de"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher?tag=v0.8.5#ae0b898b534844c1b8151ade19628264a6151622"
 dependencies = [
  "anyhow",
  "bitvmx-broker",
@@ -869,7 +869,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-job-dispatcher-types"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher?tag=v0.8.5#f6f991383e0cb47909dba366dc92cea5d63741de"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher?tag=v0.8.5#ae0b898b534844c1b8151ade19628264a6151622"
 dependencies = [
  "bitvmx-cpu-definitions",
  "bitvmx-job-dispatcher",
@@ -884,7 +884,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-key-manager"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-key-manager.git?tag=v0.8.5#f81d566d063177d37f4aee38ca3e79781facfa0c"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-key-manager.git?tag=v0.8.5#7152c6fb76e905a6c3d35ed475aca451d05b00df"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -916,7 +916,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-protocol-builder"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git?tag=v0.8.5#f2116df9f44e53f65897ae41e2b33b4eb670f0fe"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git?tag=v0.8.5#2a8adb4f89bbcf8f7607ebf361ad06f2b4402757"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.102",
@@ -946,7 +946,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-settings"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-settings.git?tag=v0.8.5#b42d1237355e1a3924c63f6f22783676cd7a0c60"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-settings.git?tag=v0.8.5#67ff0344aec591222599d901ea3b85be45f97949"
 dependencies = [
  "age",
  "clap",
@@ -962,7 +962,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-transaction-monitor"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-transaction-monitor.git?tag=v0.8.5#df585aa66bc0dd4bd634c4958a0465aeb662c4c8"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-transaction-monitor.git?tag=v0.8.5#c38dfc62cd70e3897f100bcffbb740843fb614ef"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.102",
@@ -983,7 +983,7 @@ dependencies = [
 [[package]]
 name = "bitvmx-wallet"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-wallet.git?tag=v0.8.5#a7692fe99746114ad18e001350327528cd705967"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-wallet.git?tag=v0.8.5#8cc4596e4b55db7c457c2ab25b3004a8247e0e4e"
 dependencies = [
  "anyhow",
  "bdk_bitcoind_rpc",
@@ -1832,7 +1832,7 @@ dependencies = [
 [[package]]
 name = "emulator"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/BitVMX-CPU?tag=v0.8.5#d51405d6cc548b6e0226298534f7267b7601ba99"
+source = "git+https://github.com/FairgateLabs/BitVMX-CPU?tag=v0.8.5#77a899e872f8f9cb957870be6204b4deef8647de"
 dependencies = [
  "bitcoin-script-riscv",
  "bitvmx-cpu-definitions",
@@ -2333,9 +2333,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hex-conservative"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fda06d18ac606267c40c04e41b9947729bf8b9efe74bd4e82b61a5f26a510b9f"
+checksum = "db3fef046dca3ca91ee1408a8c1b80ab777e80a4d308d1bf4e7adb3fcb047e08"
 dependencies = [
  "arrayvec",
 ]
@@ -2492,9 +2492,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.11.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d22053281f852e11534f5198498373cbb59295120a20771d90f7ed1897490a72"
+checksum = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2777,9 +2777,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.14.0"
+version = "2.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
+checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
@@ -3473,16 +3473,6 @@ dependencies = [
 
 [[package]]
 name = "pem"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
-dependencies = [
- "base64 0.22.1",
- "serde_core",
-]
-
-[[package]]
-name = "pem"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d354a98a3d1251555de99e8fdd8afda05573c31b82f59063a7b0a29b5527f120"
@@ -3750,9 +3740,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro-error-attr3"
-version = "3.1.0"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0084e6206a967a2dad822180626b2f6b07a3b379325e8f1ec0438e33a469ba7"
+checksum = "9e564d14133360e1ae169ffde5da25881b5fa47261665b8e5713c212c27799da"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3760,9 +3750,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro-error3"
-version = "3.1.0"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cf066225f2373bc711684792b69bdeac0356019b007e721090c24d92d5d5a50"
+checksum = "8f0d4471b3436c22106b21913b1dda531558918ae9b7ec55d58aa84b43552233"
 dependencies = [
  "proc-macro-error-attr3",
  "proc-macro2",
@@ -3964,11 +3954,11 @@ dependencies = [
 
 [[package]]
 name = "rcgen"
-version = "0.14.9"
+version = "0.14.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "091e7a8e7d86e6feb87a27ce8e2cba29d49eff9507afeebefab7eeb2ca667fb4"
+checksum = "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
 dependencies = [
- "pem 3.0.6",
+ "pem",
  "ring",
  "rustls-pki-types",
  "time",
@@ -4148,7 +4138,7 @@ dependencies = [
 [[package]]
 name = "rust-bitvmx-storage-backend"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.5#36bbd5187d812037e7474074aaf093b2344cabd3"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.5#9e2ec0a9eb5b03224fc5447dddb8b02b0ab03ecb"
 dependencies = [
  "age",
  "clap",
@@ -4234,9 +4224,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -4789,9 +4779,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.15.2"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
 
 [[package]]
 name = "socket2"
@@ -5469,9 +5459,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.25.0"
+version = "1.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f053576934f05a761a402421fbbe3d425d9366f75f978806a037b3ca481abecc"
+checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -6067,7 +6057,7 @@ dependencies = [
 [[package]]
 name = "zk-result"
 version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git?tag=v0.8.5#fff3618965f45279fa10d9c7e3329c6e26e6a77b"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git?tag=v0.8.5#c26304d42bcfbf817159769fd352004cbbba6afb"
 dependencies = [
  "serde",
  "serde_json",
