@@ -1,6 +1,6 @@
 use super::{BitVMX, Context, RejectedInputSource, StoreKey};
 use crate::comms_allow_list;
-use crate::error_handling::{classify, is_fatal, Severity};
+use crate::error_handling::is_fatal;
 use crate::errors::BitVMXError;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
@@ -614,20 +614,11 @@ impl BitVMX {
         id: Uuid,
         txid: Txid,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        match self
+        let tx_status = self
             .program_context
             .bitcoin_coordinator
-            .get_transaction(txid)
-        {
-            Ok(tx_status) => Ok(OutgoingBitVMXApiMessages::Transaction(id, tx_status, None)),
-            Err(error) => match classify(&error) {
-                Severity::Fatal | Severity::BitcoinNodeUnreachable => Err(error.into()),
-                Severity::Other => {
-                    info!("Transaction not found: {:?}. Error: {}", txid, error);
-                    Ok(OutgoingBitVMXApiMessages::NotFound(id, txid.to_string()))
-                }
-            },
-        }
+            .get_transaction(txid)?;
+        Ok(OutgoingBitVMXApiMessages::Transaction(id, tx_status, None))
     }
 
     fn dispatch_transaction(

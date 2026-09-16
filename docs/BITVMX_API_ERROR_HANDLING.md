@@ -134,25 +134,14 @@ The following behavior has been standardized:
 - handlers that load programs return `NotFound` without sending it internally;
 - wallet API logic is isolated in dedicated functions that return outgoing messages;
 - variable, witness, transaction, aggregated-key, ZKP-result, ping, and SPV handlers return outgoing messages;
+- `GetTransaction` preserves the coordinator's typed `TransactionStatus::NotFound` response and propagates all coordinator errors;
 - every incoming match arm now returns `Result<Option<OutgoingBitVMXApiMessages>, BitVMXError>`;
 - the dispatcher performs one normal API reply after the match;
 - local request error-report classification was removed from the dispatcher so operation errors propagate to the transaction boundary.
 
 ## Remaining issues
 
-### 1. `GetTransaction` reclassifies coordinator errors
-
-`get_transaction` currently propagates fatal and Bitcoin-node-unreachable errors but converts every `Severity::Other` coordinator error into `NotFound`.
-
-This is too broad. `NotFound` should only be returned when the coordinator exposes a specific, typed transaction-not-found condition. An unknown coordinator error may represent an internal or transient system failure and should propagate.
-
-Recommended direction:
-
-- match a concrete not-found variant if one exists;
-- return `NotFound` only for that variant;
-- propagate all other coordinator errors.
-
-### 2. `GetSPVProof` hides coordinator failures
+### 1. `GetSPVProof` hides coordinator failures
 
 `get_spv_proof` currently returns `SPVProof(txid, None)` for every error returned while retrieving transaction information.
 
@@ -168,7 +157,7 @@ The request now carries a UUID, so a terminal request-level failure can use the 
 `ApiError(Uuid, String)` shape. Coordinator and Bitcoin RPC availability failures should still
 propagate rather than being converted into an API response.
 
-### 3. `Backup` may hide storage failures
+### 2. `Backup` may hide storage failures
 
 The backup match currently converts every failure into `BackupResult(id, false, error)`.
 
@@ -179,7 +168,7 @@ Recommended direction:
 - identify typed user/configuration backup errors and return `BackupResult(false, ...)` for them;
 - propagate fatal storage and system errors.
 
-### 4. Wallet error classification is deferred
+### 3. Wallet error classification is deferred
 
 Wallet calls have been moved into dedicated handlers, but wallet errors have intentionally not yet been classified.
 
@@ -196,7 +185,7 @@ Recommended direction:
 - return `WalletError` for request/business failures such as invalid destinations or insufficient funds;
 - propagate wallet storage and system failures.
 
-### 5. Inconsistent ZKP data can retry indefinitely
+### 4. Inconsistent ZKP data can retry indefinitely
 
 `GetZKPExecutionResult` propagates `InconsistentZKPData` when status says that generation succeeded but the proof or journal is missing.
 
@@ -207,7 +196,7 @@ Recommended direction:
 - classify inconsistent persisted state as fatal if it indicates corruption; or
 - return a terminal `ProofGenerationError`/`ApiError` if the node can safely continue.
 
-### 6. Malformed aggregated keys appear not ready
+### 5. Malformed aggregated keys appear not ready
 
 `GetAggregatedPubkey` returns `AggregatedPubkeyNotReady` when the stored variable exists but cannot be decoded as a public key.
 
@@ -218,7 +207,7 @@ Recommended direction:
 - reserve `AggregatedPubkeyNotReady` for an absent value;
 - propagate corrupt persisted data or return a terminal `ApiError`, depending on whether corruption should stop the node.
 
-### 7. Permanent unhandled errors can block retries
+### 6. Permanent unhandled errors can block retries
 
 All remaining `Err` values now propagate and roll back the incoming message. This is necessary for transient system failures, but a permanent request error that was not converted into an outgoing response can be retried forever and block later messages.
 
@@ -318,16 +307,15 @@ This avoids duplicate reports while preserving the original error source chain f
 
 ## Recommended next steps
 
-1. Fix `GetTransaction` so only typed not-found errors become `NotFound`.
-2. Fix `GetSPVProof` so coordinator/RPC failures propagate.
-3. Separate terminal backup request errors from storage/system failures.
-4. Add wallet error classification and propagate wallet storage failures.
-5. Decide whether inconsistent ZKP and malformed aggregated-key data are fatal corruption or terminal API failures.
-6. Audit every remaining `Err` path to ensure permanent request errors cannot poison the retry queue.
-7. Audit in-memory mutations and any dependency calls that may bypass the shared transactional storage.
-8. Verify idempotency of broker consumers because transport delivery is at least once.
-9. Update the README API response table for all newly documented `ApiError` outcomes.
-10. Add tests covering:
+1. Fix `GetSPVProof` so coordinator/RPC failures propagate.
+2. Separate terminal backup request errors from storage/system failures.
+3. Add wallet error classification and propagate wallet storage failures.
+4. Decide whether inconsistent ZKP and malformed aggregated-key data are fatal corruption or terminal API failures.
+5. Audit every remaining `Err` path to ensure permanent request errors cannot poison the retry queue.
+6. Audit in-memory mutations and any dependency calls that may bypass the shared transactional storage.
+7. Verify idempotency of broker consumers because transport delivery is at least once.
+8. Update the README API response table for all newly documented `ApiError` outcomes.
+9. Add tests covering:
    - request errors atomically consuming the input and enqueuing the response;
    - storage failures rolling back both the incoming request and outgoing response;
    - Bitcoin RPC unavailability rolling back for retry;
