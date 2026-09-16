@@ -791,6 +791,7 @@ dependencies = [
  "bitvmx-key-manager",
  "bitvmx-protocol-builder",
  "bitvmx-settings",
+ "bitvmx-transaction-monitor",
  "bitvmx-wallet",
  "chrono",
  "clap",

@@ -13,11 +13,12 @@ use crate::types::{
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::TypesToMonitor;
+use bitcoin_coordinator::{errors::BitcoinCoordinatorError, TypesToMonitor};
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
+use bitvmx_transaction_monitor::errors::MonitorError;
 use bitvmx_wallet::wallet::Destination;
 use key_manager::{errors::KeyManagerError, key_type::BitcoinKeyType};
 use protocol_builder::graph::graph::GraphOptions;
@@ -564,26 +565,43 @@ impl BitVMX {
         Ok(response)
     }
 
+    fn subscription_response(
+        id: Uuid,
+        result: Result<(), BitcoinCoordinatorError>,
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
+        match result {
+            Ok(()) => Ok(None),
+            Err(BitcoinCoordinatorError::MonitorError(
+                error @ MonitorError::InvalidConfirmationTrigger(_, _),
+            )) => Ok(Some(Self::api_error(
+                id,
+                format!("Failed to subscribe: {error}"),
+            ))),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     fn subscribe_to_tx(
         &mut self,
         from: Identifier,
         id: Uuid,
         txid: Txid,
         confirmation_threshold: Option<u32>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
         info!(
             "Subscribing to transaction: {:?} from: {} id: {}",
             txid, from, id
         );
-        self.program_context
-            .bitcoin_coordinator
-            .monitor(TypesToMonitor::Transactions(
-                vec![txid],
-                Context::RequestId(id, from).to_string()?,
-                confirmation_threshold,
-            ))?;
+        let result =
+            self.program_context
+                .bitcoin_coordinator
+                .monitor(TypesToMonitor::Transactions(
+                    vec![txid],
+                    Context::RequestId(id, from).to_string()?,
+                    confirmation_threshold,
+                ));
 
-        Ok(())
+        Self::subscription_response(id, result)
     }
 
     fn subscribe_to_spending_utxo(
@@ -593,35 +611,37 @@ impl BitVMX {
         txid: Txid,
         vout: u32,
         confirmation_threshold: Option<u32>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
         info!(
             "Subscribing to spending of UTXO: {:?}:{} from: {} id: {}",
             txid, vout, from, id
         );
-        self.program_context.bitcoin_coordinator.monitor(
+        let result = self.program_context.bitcoin_coordinator.monitor(
             TypesToMonitor::SpendingUTXOTransaction(
                 txid,
                 vout,
                 Context::RequestId(id, from).to_string()?,
                 confirmation_threshold,
             ),
-        )?;
+        );
 
-        Ok(())
+        Self::subscription_response(id, result)
     }
 
     fn subscribe_to_output_pattern(
         &mut self,
+        id: Uuid,
         filter: bitcoin_coordinator::OutputPatternFilter,
         confirmation_threshold: Option<u32>,
-    ) -> Result<(), BitVMXError> {
-        self.program_context
-            .bitcoin_coordinator
-            .monitor(TypesToMonitor::OutputPattern(
-                filter,
-                confirmation_threshold,
-            ))?;
-        Ok(())
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
+        let result =
+            self.program_context
+                .bitcoin_coordinator
+                .monitor(TypesToMonitor::OutputPattern(
+                    filter,
+                    confirmation_threshold,
+                ));
+        Self::subscription_response(id, result)
     }
 
     fn get_transaction(
@@ -864,38 +884,28 @@ impl BitVMX {
                     id,
                     txid,
                     confirmation_threshold,
-                ) => {
-                    self.subscribe_to_tx(from, id, txid, confirmation_threshold)?;
-                    Ok(None)
-                }
+                ) => self.subscribe_to_tx(from, id, txid, confirmation_threshold),
                 IncomingBitVMXApiMessages::SubscribeToSpendingUTXO(
                     id,
                     txid,
                     vout,
                     confirmation_threshold,
-                ) => {
-                    self.subscribe_to_spending_utxo(from, id, txid, vout, confirmation_threshold)?;
-                    Ok(None)
-                }
+                ) => self.subscribe_to_spending_utxo(from, id, txid, vout, confirmation_threshold),
                 IncomingBitVMXApiMessages::SubscribeToOutputPattern(
-                    _id,
+                    id,
                     filter,
                     confirmation_threshold,
-                ) => {
-                    self.subscribe_to_output_pattern(filter, confirmation_threshold)?;
-                    Ok(None)
-                }
-                IncomingBitVMXApiMessages::SubscribeToRskPegin(_id, confirmation_threshold) => {
-                    self.subscribe_to_output_pattern(
+                ) => self.subscribe_to_output_pattern(id, filter, confirmation_threshold),
+                IncomingBitVMXApiMessages::SubscribeToRskPegin(id, confirmation_threshold) => self
+                    .subscribe_to_output_pattern(
+                        id,
                         bitcoin_coordinator::OutputPatternFilter {
                             output_index: 1,
                             tag: RSK_PEGIN_TAG.to_vec(),
                             max_outputs: None,
                         },
                         confirmation_threshold,
-                    )?;
-                    Ok(None)
-                }
+                    ),
                 IncomingBitVMXApiMessages::GetSPVProof(_id, txid) => {
                     self.get_spv_proof(txid).map(Some)
                 }
@@ -1014,5 +1024,52 @@ impl BitVMX {
             Ok(None) => Ok(()),
             Err(error) => Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_subscription_confirmation_threshold_is_an_api_error() {
+        let id = Uuid::new_v4();
+        let error =
+            BitcoinCoordinatorError::MonitorError(MonitorError::InvalidConfirmationTrigger(10, 10));
+
+        let response = BitVMX::subscription_response(id, Err(error))
+            .unwrap()
+            .expect("terminal API response");
+
+        match response {
+            OutgoingBitVMXApiMessages::ApiError(response_id, message) => {
+                assert_eq!(response_id, id);
+                assert_eq!(
+                    message,
+                    "Failed to subscribe: Invalid confirmation trigger: requested 10, max allowed 10"
+                );
+            }
+            other => panic!("expected ApiError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subscription_infrastructure_errors_propagate() {
+        let id = Uuid::new_v4();
+        let error = BitcoinCoordinatorError::Internal("coordinator unavailable".to_string());
+
+        assert!(matches!(
+            BitVMX::subscription_response(id, Err(error)),
+            Err(BitVMXError::BitcoinCoordinatorError(
+                BitcoinCoordinatorError::Internal(message)
+            )) if message == "coordinator unavailable"
+        ));
+    }
+
+    #[test]
+    fn successful_subscription_has_no_immediate_response() {
+        assert!(BitVMX::subscription_response(Uuid::new_v4(), Ok(()))
+            .unwrap()
+            .is_none());
     }
 }

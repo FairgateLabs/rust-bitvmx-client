@@ -139,6 +139,7 @@ The following behavior has been standardized:
 - `GetTransaction` preserves the coordinator's typed `TransactionStatus::NotFound` response and propagates all coordinator errors;
 - `GetSPVProof` propagates coordinator errors; missing block information and typed `SPVError` proof-construction failures are logged and returned as an empty proof;
 - every incoming match arm now returns `Result<Option<OutgoingBitVMXApiMessages>, BitVMXError>`;
+- subscription handlers convert `MonitorError::InvalidConfirmationTrigger` into `ApiError` through a shared response helper while propagating other coordinator errors;
 - the dispatcher performs one normal API reply after the match;
 - local request error-report classification was removed from the dispatcher so operation errors propagate to the transaction boundary.
 
@@ -179,15 +180,18 @@ Therefore every expected validation and business failure must be explicitly conv
 
 #### Confirmed request-controlled risks
 
-**Invalid confirmation thresholds.** The following requests pass their optional confirmation threshold to the transaction monitor and propagate its errors directly:
+**Invalid confirmation thresholds.** The monitor deterministically returns `MonitorError::InvalidConfirmationTrigger` when a requested value is greater than or equal to its configured `max_monitoring_confirmations`.
+
+The subscription requests now pass their monitor result through `subscription_response`:
 
 - `SubscribeToTransaction`;
 - `SubscribeToSpendingUTXO`;
 - `SubscribeToOutputPattern`;
-- `SubscribeToRskPegin`;
-- `DispatchTransaction`.
+- `SubscribeToRskPegin`.
 
-The monitor deterministically returns `MonitorError::InvalidConfirmationTrigger` when the requested value is greater than or equal to its configured `max_monitoring_confirmations`. This is request validation, but it currently reaches the API boundary as `BitVMXError::BitcoinCoordinatorError` and is classified as `Severity::Other`. Retrying the unchanged request cannot succeed, so it can block the queue forever. This error should become `ApiError(id, message)` or a more specific terminal response; storage and monitor infrastructure errors from the same calls must continue to propagate.
+The helper converts only `InvalidConfirmationTrigger` into `ApiError(id, message)`. A successful subscription still has no immediate response, and all other coordinator errors continue to propagate. This prevents invalid subscription input from poisoning the queue without concealing storage or monitor infrastructure failures.
+
+`DispatchTransaction` also accepts a confirmation threshold and still propagates this validation error directly. It remains a deterministic queue-blocking risk and needs equivalent typed handling appropriate to transaction dispatch.
 
 **Unknown transaction names during dispatch.** `DispatchTransactionName` calls `Program::dispatch_transaction_name` and propagates every failure. An unknown or inapplicable name can produce `BitVMXError::InvalidTransactionName`, `ProtocolBuilderError::MissingTransaction`, or a related permanent protocol lookup error. Unlike `GetTransactionInfoByName`, this path does not convert the lookup failure into `NotFound` or `ApiError`, so an invalid name can poison the queue.
 
@@ -220,12 +224,13 @@ A business lookup or validation error should become a terminal response, but a n
 
 #### Recommended fixes and tests
 
-1. Convert `MonitorError::InvalidConfirmationTrigger` into a terminal response carrying the request UUID.
+1. Apply typed terminal handling to `DispatchTransaction` when its confirmation threshold produces `MonitorError::InvalidConfirmationTrigger`.
 2. Convert explicit invalid/missing transaction-name errors from `DispatchTransactionName` into `NotFound` or `ApiError`, while preserving propagation for storage and system errors.
 3. Classify persistent storage corruption and invariant failures as fatal, or introduce a bounded retry and dead-letter mechanism that records and removes the blocking API input.
 4. Classify non-transport Bitcoin RPC failures as terminal request rejection, retryable outage, or fatal node misconfiguration.
-5. Add tests proving that an invalid confirmation threshold and an unknown transaction name atomically consume their input, enqueue their response, and do not block the next request.
-6. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
+5. Add an API transaction test proving that an invalid subscription threshold atomically consumes its input, enqueues its response, and does not block the next request; the shared response helper's classification is already covered by unit tests.
+6. Add the equivalent queue-progression test for an unknown transaction name.
+7. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
 
 ## Transaction and delivery behavior
 
