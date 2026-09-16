@@ -1,5 +1,5 @@
 # ----------- Build Stage -----------
-FROM rust:1.90.0-bullseye AS builder
+FROM rust:1.98.0-trixie AS builder
 
 # Install build dependencies
 RUN apt-get update && \
@@ -33,7 +33,7 @@ RUN chmod +x ./run.sh
 RUN cargo build --release
 
 # ----------- Runtime Stage -----------
-FROM debian:bullseye-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 # Install only minimal runtime dependencies
 RUN apt-get update && \
