@@ -389,16 +389,15 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 );
                 let dispute_protocol =
                     self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
-                let (challenge, _) = dispute_protocol.get_transaction_by_name(
-                    &indexed_name(CHALLENGE_TX, request.slot_index),
-                    context,
-                )?;
+                let challenge_txid = dispute_protocol
+                    .get_transaction_id_by_name(&indexed_name(CHALLENGE_TX, request.slot_index))?;
+
                 send_dispute_tx_notification(
                     context,
                     self.ctx.id,
                     self.ctx.my_idx,
                     tx_id,
-                    challenge.compute_txid(),
+                    challenge_txid,
                     request.committee_id,
                     request.slot_index,
                     DisputeTxType::OperatorWon,

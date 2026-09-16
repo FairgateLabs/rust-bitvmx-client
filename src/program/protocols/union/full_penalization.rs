@@ -188,20 +188,20 @@ impl ProtocolHandler for FullPenalizationProtocol {
             let (_, op_index, slot_index) = extract_triple_index(&tx_name)?;
             let data = self.full_penalization_data(program_context)?;
             let committee = self.committee(program_context, data.committee_id)?;
+
             let dispute_protocol_id =
                 get_dispute_core_pid(data.committee_id, &committee.members[op_index].take_key);
             let dispute_protocol =
                 self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
-            let (challenge, _) = dispute_protocol.get_transaction_by_name(
-                &indexed_name(CHALLENGE_TX, slot_index),
-                program_context,
-            )?;
+            let challenge_txid = dispute_protocol
+                .get_transaction_id_by_name(&indexed_name(CHALLENGE_TX, slot_index))?;
+
             send_dispute_tx_notification(
                 program_context,
                 self.ctx.id,
                 self.ctx.my_idx,
                 tx_id,
-                challenge.compute_txid(),
+                challenge_txid,
                 data.committee_id,
                 slot_index,
                 DisputeTxType::StopOperatorWon,
