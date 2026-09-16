@@ -54,12 +54,11 @@ pub fn snapshot(
     Ok((guard.entries(), guard.is_allow_all()))
 }
 
-/// Apply `change` to the allow list and persist the result, reporting whether
-/// the write succeeded.
+/// Apply `change` to a staged allow list, persist it, report success, and only
+/// then publish the same change to the live list.
 ///
-/// A failed write leaves the in-memory change in place: a peer we are willing
-/// to talk to should not be blocked because the disk is unavailable. The
-/// caller is told so it can warn that the change will not survive a restart.
+/// A failed write or response leaves the live list unchanged. `change` is
+/// invoked twice, so it must be deterministic and free of external side effects.
 pub fn mutate<F, R>(
     store: &Rc<Storage>,
     allow_list: &Arc<Mutex<AllowList>>,
