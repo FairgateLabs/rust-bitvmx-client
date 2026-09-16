@@ -152,7 +152,7 @@ This table shows the mapping between request messages and their expected respons
 |---|---|---|
 | `GenerateZKP(uuid, payload_to_sign, name)` | `ProofReady(uuid)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` | Generate zero-knowledge proof |
 | `ProofReady(uuid)` | `ProofReady(uuid)` | Check if proof is ready |
-| `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, zkp_result, zkp_proof)` | Get ZKP execution result |
+| `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, zkp_result, zkp_proof)` or `ApiError(uuid, error)` | Get ZKP execution result; returns `ApiError` when a successful job is missing its proof or journal |
 
 ### Special Cases
 

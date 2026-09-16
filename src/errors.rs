@@ -196,9 +196,6 @@ pub enum BitVMXError {
     #[error("Execution error: {0}")]
     ExecutionError(#[from] emulator::ExecutionResult),
 
-    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
-    InconsistentZKPData(Uuid),
-
     /* =========================
      * Witness / Merkle / Scripts
      * ========================= */

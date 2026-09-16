@@ -522,22 +522,35 @@ impl BitVMX {
             Some(status_str) => {
                 if status_str == "OK" {
                     info!("Getting ZKP execution result for job: {}", id);
-                    let seal: Vec<u8> =
-                        // Retrieve the ZKP proof (seal) from the store
-                        // if it's not available, return an error because the ZKP data is inconsistent
-                        // as the proof should have been generated successfully if the status is "OK"
-                        match self.store.get(&StoreKey::ZKPProof(id).get_key(), None)? {
-                            Some(seal) => seal,
-                            None => return Err(BitVMXError::InconsistentZKPData(id)),
-                        };
+                    let seal: Vec<u8> = match self
+                        .store
+                        .get(&StoreKey::ZKPProof(id).get_key(), None)?
+                    {
+                        Some(seal) => seal,
+                        None => {
+                            return Ok(Self::api_error(
+                                    id,
+                                    format!(
+                                        "Inconsistent ZKP data for job {id}: status is OK but the proof is missing"
+                                    ),
+                                ));
+                        }
+                    };
 
-                    let journal: Vec<u8> =
-                        match self.store.get(&StoreKey::ZKPJournal(id).get_key(), None)? {
-                            Some(journal) => journal,
-                            None => {
-                                return Err(BitVMXError::InconsistentZKPData(id));
-                            }
-                        };
+                    let journal: Vec<u8> = match self
+                        .store
+                        .get(&StoreKey::ZKPJournal(id).get_key(), None)?
+                    {
+                        Some(journal) => journal,
+                        None => {
+                            return Ok(Self::api_error(
+                                    id,
+                                    format!(
+                                        "Inconsistent ZKP data for job {id}: status is OK but the journal is missing"
+                                    ),
+                                ));
+                        }
+                    };
                     OutgoingBitVMXApiMessages::ZKPResult(id, seal, journal)
                 } else {
                     OutgoingBitVMXApiMessages::ProofGenerationError(id, status_str)

@@ -134,6 +134,7 @@ The following behavior has been standardized:
 - handlers that load programs return `NotFound` without sending it internally;
 - wallet API logic is isolated in dedicated functions that return outgoing messages;
 - variable, witness, transaction, aggregated-key, ZKP-result, ping, and SPV handlers return outgoing messages;
+- `GetZKPExecutionResult` returns a terminal `ApiError` when a successful status has no proof or journal, while storage access errors still propagate;
 - `GetTransaction` preserves the coordinator's typed `TransactionStatus::NotFound` response and propagates all coordinator errors;
 - `GetSPVProof` propagates coordinator errors; missing block information and typed `SPVError` proof-construction failures are logged and returned as an empty proof;
 - every incoming match arm now returns `Result<Option<OutgoingBitVMXApiMessages>, BitVMXError>`;
@@ -167,18 +168,7 @@ Recommended direction:
 - return `WalletError` for request/business failures such as invalid destinations or insufficient funds;
 - propagate wallet storage and system failures.
 
-### 2. Inconsistent ZKP data can retry indefinitely
-
-`GetZKPExecutionResult` propagates `InconsistentZKPData` when status says that generation succeeded but the proof or journal is missing.
-
-Because this may represent permanent corruption rather than a transient resource failure, blindly retrying can keep the same request at the front of the queue indefinitely.
-
-Recommended direction:
-
-- classify inconsistent persisted state as fatal if it indicates corruption; or
-- return a terminal `ProofGenerationError`/`ApiError` if the node can safely continue.
-
-### 3. Malformed aggregated keys appear not ready
+### 2. Malformed aggregated keys appear not ready
 
 `GetAggregatedPubkey` returns `AggregatedPubkeyNotReady` when the stored variable exists but cannot be decoded as a public key.
 
@@ -189,7 +179,7 @@ Recommended direction:
 - reserve `AggregatedPubkeyNotReady` for an absent value;
 - propagate corrupt persisted data or return a terminal `ApiError`, depending on whether corruption should stop the node.
 
-### 4. Permanent unhandled errors can block retries
+### 3. Permanent unhandled errors can block retries
 
 All remaining `Err` values now propagate and roll back the incoming message. This is necessary for transient system failures, but a permanent request error that was not converted into an outgoing response can be retried forever and block later messages.
 
@@ -290,7 +280,7 @@ This avoids duplicate reports while preserving the original error source chain f
 ## Recommended next steps
 
 1. Add wallet error classification and propagate wallet storage failures.
-2. Decide whether inconsistent ZKP and malformed aggregated-key data are fatal corruption or terminal API failures.
+2. Decide whether malformed aggregated-key data is fatal corruption or a terminal API failure.
 3. Audit every remaining `Err` path to ensure permanent request errors cannot poison the retry queue.
 4. Audit in-memory mutations and any dependency calls that may bypass the shared transactional storage.
 5. Verify idempotency of broker consumers because transport delivery is at least once.
