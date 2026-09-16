@@ -140,6 +140,7 @@ The following behavior has been standardized:
 - `GetSPVProof` propagates coordinator errors; missing block information and typed `SPVError` proof-construction failures are logged and returned as an empty proof;
 - every incoming match arm now returns `Result<Option<OutgoingBitVMXApiMessages>, BitVMXError>`;
 - subscription handlers convert `MonitorError::InvalidConfirmationTrigger` into `ApiError` through a shared response helper while propagating other coordinator errors;
+- transaction dispatch handlers use a shared response helper to convert invalid confirmation thresholds and explicit missing/invalid transaction names into `ApiError`, while propagating other errors;
 - the dispatcher performs one normal API reply after the match;
 - local request error-report classification was removed from the dispatcher so operation errors propagate to the transaction boundary.
 
@@ -191,11 +192,15 @@ The subscription requests now pass their monitor result through `subscription_re
 
 The helper converts only `InvalidConfirmationTrigger` into `ApiError(id, message)`. A successful subscription still has no immediate response, and all other coordinator errors continue to propagate. This prevents invalid subscription input from poisoning the queue without concealing storage or monitor infrastructure failures.
 
-`DispatchTransaction` also accepts a confirmation threshold and still propagates this validation error directly. It remains a deterministic queue-blocking risk and needs equivalent typed handling appropriate to transaction dispatch.
+`DispatchTransaction` now applies the same concept through `dispatch_response`: `InvalidConfirmationTrigger` becomes `ApiError`, while every other coordinator error propagates.
 
-**Unknown transaction names during dispatch.** `DispatchTransactionName` calls `Program::dispatch_transaction_name` and propagates every failure. An unknown or inapplicable name can produce `BitVMXError::InvalidTransactionName`, `ProtocolBuilderError::MissingTransaction`, or a related permanent protocol lookup error. Unlike `GetTransactionInfoByName`, this path does not convert the lookup failure into `NotFound` or `ApiError`, so an invalid name can poison the queue.
+**Unknown transaction names during dispatch.** `DispatchTransactionName` also passes its result through `dispatch_response`. The helper converts the explicit permanent lookup variants into `ApiError`:
 
-A named transaction may also be temporarily unavailable while its protocol is still being constructed. The handler must distinguish that retryable state from a name that can never exist for the program. At minimum, explicit invalid/missing-name variants should produce a terminal response while storage and system errors propagate. If protocol readiness is intentionally asynchronous, the API should expose that state explicitly rather than relying on an unbounded retry of the request.
+- `BitVMXError::InvalidTransactionName`;
+- `ProtocolBuilderError::MissingTransaction`;
+- `ProtocolBuilderError::GraphBuildingError(GraphError::MissingTransaction)`.
+
+Other protocol, storage, and coordinator errors continue to propagate. A missing protocol or a transaction that has not yet been constructed is not broadly classified as an invalid name, because that state may be temporary while setup is still progressing. If protocol readiness is intentionally asynchronous, the API should eventually expose that state explicitly rather than relying on an unbounded retry.
 
 #### Persistent local-state risks
 
@@ -224,13 +229,11 @@ A business lookup or validation error should become a terminal response, but a n
 
 #### Recommended fixes and tests
 
-1. Apply typed terminal handling to `DispatchTransaction` when its confirmation threshold produces `MonitorError::InvalidConfirmationTrigger`.
-2. Convert explicit invalid/missing transaction-name errors from `DispatchTransactionName` into `NotFound` or `ApiError`, while preserving propagation for storage and system errors.
-3. Classify persistent storage corruption and invariant failures as fatal, or introduce a bounded retry and dead-letter mechanism that records and removes the blocking API input.
-4. Classify non-transport Bitcoin RPC failures as terminal request rejection, retryable outage, or fatal node misconfiguration.
-5. Add an API transaction test proving that an invalid subscription threshold atomically consumes its input, enqueues its response, and does not block the next request; the shared response helper's classification is already covered by unit tests.
-6. Add the equivalent queue-progression test for an unknown transaction name.
-7. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
+1. Classify persistent storage corruption and invariant failures as fatal, or introduce a bounded retry and dead-letter mechanism that records and removes the blocking API input.
+2. Classify non-transport Bitcoin RPC failures as terminal request rejection, retryable outage, or fatal node misconfiguration.
+3. Add API transaction tests proving that invalid subscription and dispatch thresholds atomically consume their input, enqueue their response, and do not block the next request; the shared response helpers' classifications are already covered by unit tests.
+4. Add the equivalent queue-progression test for an unknown transaction name.
+5. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
 
 ## Transaction and delivery behavior
 

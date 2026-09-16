@@ -21,7 +21,10 @@ use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_transaction_monitor::errors::MonitorError;
 use bitvmx_wallet::wallet::Destination;
 use key_manager::{errors::KeyManagerError, key_type::BitcoinKeyType};
-use protocol_builder::graph::graph::GraphOptions;
+use protocol_builder::{
+    errors::{GraphError, ProtocolBuilderError},
+    graph::graph::GraphOptions,
+};
 use storage_backend::storage::KeyValueStore;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -747,6 +750,44 @@ impl BitVMX {
         }
     }
 
+    fn dispatch_response(
+        id: Uuid,
+        result: Result<(), BitVMXError>,
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
+        match result {
+            Ok(()) => Ok(None),
+            Err(
+                error @ BitVMXError::BitcoinCoordinatorError(
+                    BitcoinCoordinatorError::MonitorError(
+                        MonitorError::InvalidConfirmationTrigger(_, _),
+                    ),
+                ),
+            ) => Ok(Some(Self::api_error(
+                id,
+                format!("Failed to dispatch transaction: {error}"),
+            ))),
+            Err(BitVMXError::InvalidTransactionName(name)) => Ok(Some(Self::api_error(
+                id,
+                format!("Failed to dispatch transaction: transaction not found: {name}"),
+            ))),
+            Err(BitVMXError::ProtocolBuilderError(
+                ProtocolBuilderError::MissingTransaction(name, protocol),
+            )) => Ok(Some(Self::api_error(
+                id,
+                format!(
+                    "Failed to dispatch transaction: transaction {name} not found in protocol {protocol}"
+                ),
+            ))),
+            Err(BitVMXError::ProtocolBuilderError(
+                ProtocolBuilderError::GraphBuildingError(GraphError::MissingTransaction(name)),
+            )) => Ok(Some(Self::api_error(
+                id,
+                format!("Failed to dispatch transaction: transaction not found: {name}"),
+            ))),
+            Err(error) => Err(error),
+        }
+    }
+
     fn dispatch_transaction_name(
         &mut self,
         id: Uuid,
@@ -757,8 +798,8 @@ impl BitVMX {
             Err(response) => return Ok(Some(response)),
         };
 
-        program.dispatch_transaction_name(name, &mut self.program_context)?;
-        Ok(None)
+        let result = program.dispatch_transaction_name(name, &mut self.program_context);
+        Self::dispatch_response(id, result)
     }
 
     fn get_protocol_visualization(
@@ -918,14 +959,14 @@ impl BitVMX {
                     confirmation_threshold,
                     stuck_in_mempool_blocks,
                 ) => {
-                    self.dispatch_transaction(
+                    let result = self.dispatch_transaction(
                         from,
                         id,
                         tx,
                         confirmation_threshold,
                         stuck_in_mempool_blocks,
-                    )?;
-                    Ok(None)
+                    );
+                    Self::dispatch_response(id, result)
                 }
                 IncomingBitVMXApiMessages::SetupKey(
                     id,
@@ -1071,5 +1112,63 @@ mod tests {
         assert!(BitVMX::subscription_response(Uuid::new_v4(), Ok(()))
             .unwrap()
             .is_none());
+    }
+
+    fn expect_dispatch_api_error(error: BitVMXError) -> String {
+        let response = BitVMX::dispatch_response(Uuid::new_v4(), Err(error))
+            .unwrap()
+            .expect("terminal API response");
+        match response {
+            OutgoingBitVMXApiMessages::ApiError(_, message) => message,
+            other => panic!("expected ApiError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_dispatch_confirmation_threshold_is_an_api_error() {
+        let error = BitVMXError::BitcoinCoordinatorError(BitcoinCoordinatorError::MonitorError(
+            MonitorError::InvalidConfirmationTrigger(10, 10),
+        ));
+
+        assert_eq!(
+            expect_dispatch_api_error(error),
+            "Failed to dispatch transaction: Failed to use Bitcoin Coordinator: Monitor Error: Invalid confirmation trigger: requested 10, max allowed 10"
+        );
+    }
+
+    #[test]
+    fn invalid_dispatch_transaction_name_is_an_api_error() {
+        let message =
+            expect_dispatch_api_error(BitVMXError::InvalidTransactionName("unknown".to_string()));
+        assert_eq!(
+            message,
+            "Failed to dispatch transaction: transaction not found: unknown"
+        );
+    }
+
+    #[test]
+    fn missing_protocol_transaction_is_an_api_error() {
+        let error = BitVMXError::ProtocolBuilderError(ProtocolBuilderError::GraphBuildingError(
+            GraphError::MissingTransaction("unknown".to_string()),
+        ));
+
+        assert_eq!(
+            expect_dispatch_api_error(error),
+            "Failed to dispatch transaction: transaction not found: unknown"
+        );
+    }
+
+    #[test]
+    fn dispatch_infrastructure_errors_propagate() {
+        let error = BitVMXError::BitcoinCoordinatorError(BitcoinCoordinatorError::Internal(
+            "coordinator unavailable".to_string(),
+        ));
+
+        assert!(matches!(
+            BitVMX::dispatch_response(Uuid::new_v4(), Err(error)),
+            Err(BitVMXError::BitcoinCoordinatorError(
+                BitcoinCoordinatorError::Internal(message)
+            )) if message == "coordinator unavailable"
+        ));
     }
 }
