@@ -830,7 +830,7 @@ impl BitVMX {
                     self.program_context.witness.set_witness(&id, &key, value)?;
                     Ok(None)
                 }
-                IncomingBitVMXApiMessages::SetFundingUtxo(utxo) => {
+                IncomingBitVMXApiMessages::SetFundingUtxo(_id, utxo) => {
                     info!("Setting funding utxo {:?}", utxo);
                     self.program_context.bitcoin_coordinator.add_funding(utxo)?;
                     Ok(None)
@@ -875,13 +875,14 @@ impl BitVMX {
                     Ok(None)
                 }
                 IncomingBitVMXApiMessages::SubscribeToOutputPattern(
+                    _id,
                     filter,
                     confirmation_threshold,
                 ) => {
                     self.subscribe_to_output_pattern(filter, confirmation_threshold)?;
                     Ok(None)
                 }
-                IncomingBitVMXApiMessages::SubscribeToRskPegin(confirmation_threshold) => {
+                IncomingBitVMXApiMessages::SubscribeToRskPegin(_id, confirmation_threshold) => {
                     self.subscribe_to_output_pattern(
                         bitcoin_coordinator::OutputPatternFilter {
                             output_index: 1,
@@ -892,7 +893,9 @@ impl BitVMX {
                     )?;
                     Ok(None)
                 }
-                IncomingBitVMXApiMessages::GetSPVProof(txid) => self.get_spv_proof(txid).map(Some),
+                IncomingBitVMXApiMessages::GetSPVProof(_id, txid) => {
+                    self.get_spv_proof(txid).map(Some)
+                }
                 IncomingBitVMXApiMessages::DispatchTransactionName(id, name) => {
                     self.dispatch_transaction_name(id, &name)
                 }
@@ -984,7 +987,7 @@ impl BitVMX {
                     })?;
                     Ok(None)
                 }
-                IncomingBitVMXApiMessages::Shutdown() => {
+                IncomingBitVMXApiMessages::Shutdown(_id) => {
                     info!("Shutdown message received. Initiating shutdown...");
                     self.shutdown()?;
                     Ok(None)

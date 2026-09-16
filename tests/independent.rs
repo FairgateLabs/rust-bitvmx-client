@@ -149,12 +149,14 @@ pub fn test_all_aux(
     info!("Wait for the fund for operator 1 speedups");
 
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount, &funding_key_0);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
     helper.id_channel_pairs[0]
         .channel
         .send(&helper.id_channel_pairs[0].id, command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount, &funding_key_1);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_1).to_string()?;
     helper.id_channel_pairs[1]
         .channel
         .send(&helper.id_channel_pairs[1].id, command)?;

@@ -104,7 +104,7 @@ This table shows the mapping between request messages and their expected respons
 | `GetTransactionInfoByName(uuid, name)` | `TransactionInfo(uuid, name, transaction)` | Get transaction by name |
 | `DispatchTransaction(uuid, transaction)` | `Transaction(uuid, transaction_status, name)` | Dispatch a transaction |
 | `DispatchTransactionName(uuid, name)` | `Transaction(uuid, transaction_status, name)` | Dispatch transaction by name |
-| `GetSPVProof(txid)` | `SPVProof(txid, spv_proof)` | Get SPV proof for transaction |
+| `GetSPVProof(uuid, txid)` | `SPVProof(txid, spv_proof)` | Get SPV proof for transaction |
 
 #### Subscriptions
 
@@ -112,13 +112,14 @@ This table shows the mapping between request messages and their expected respons
 |---|---|---|
 | `SubscribeToTransaction(uuid, txid)` | `Transaction(uuid, transaction_status, name)` | Subscribe to transaction updates |
 | `SubscribeToSpendingUTXO(uuid, txid, vout, confirmation_threshold)` | `SpendingUTXOTransactionFound(uuid, txid, vout, transaction_status)` | Track a UTXO and notify when it is spent |
-| `SubscribeToRskPegin()` | `PeginTransactionFound(txid, transaction_status)` | Subscribe to RSK pegin transactions |
+| `SubscribeToOutputPattern(uuid, filter, confirmation_threshold)` | `OutputPatternTransactionFound(txid, transaction_status, tag)` | Subscribe to matching transaction outputs |
+| `SubscribeToRskPegin(uuid, confirmation_threshold)` | `PeginTransactionFound(txid, transaction_status)` | Subscribe to RSK pegin transactions |
 
 #### Speed up
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `SetFundingUtxo(utxo)` | N/A | Set funding UTXO (no direct response) |
+| `SetFundingUtxo(uuid, utxo)` | N/A | Set funding UTXO (no direct response) |
 
 #### Wallet Operations
 
@@ -161,8 +162,8 @@ This table shows the mapping between request messages and their expected respons
 
 #### Subscription Messages
 
-- `SubscribeToRskPegin()` is a subscription message that doesn't have direct request/response pairs
-- It generates events when relevant transactions are found
+- `SubscribeToOutputPattern(uuid, ...)` and `SubscribeToRskPegin(uuid, ...)` have no direct response; they generate events when relevant transactions are found
+- `Shutdown(uuid)` requests a node shutdown and has no direct response
 
 #### Error Handling
 

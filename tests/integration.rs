@@ -83,10 +83,12 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
     let fund_txid_1 = fund_tx_1.compute_txid();
 
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, 10_000_000, &funding_key_0);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
     channels[0].send(&identifiers[0], command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, 10_000_000, &funding_key_1);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_1).to_string()?;
     channels[1].send(&identifiers[1], command)?;
 
     let participants = vec![prover_address.clone(), verifier_address.clone()];

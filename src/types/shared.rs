@@ -124,7 +124,7 @@ pub enum IncomingBitVMXApiMessages {
     Ping(Uuid),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
-    SetFundingUtxo(Utxo),
+    SetFundingUtxo(Uuid, Utxo),
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
     GetCommInfo(Uuid),
@@ -134,9 +134,9 @@ pub enum IncomingBitVMXApiMessages {
     Setup(ProgramId, String, Vec<CommsAddress>, u16),
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
     SubscribeToSpendingUTXO(Uuid, Txid, u32, Option<u32>), // id, txid, vout, confirmation_threshold
-    SubscribeToOutputPattern(OutputPatternFilter, Option<u32>),
-    SubscribeToRskPegin(Option<u32>),
-    GetSPVProof(Txid),
+    SubscribeToOutputPattern(Uuid, OutputPatternFilter, Option<u32>),
+    SubscribeToRskPegin(Uuid, Option<u32>),
+    GetSPVProof(Uuid, Txid),
     DispatchTransaction(Uuid, Transaction, Option<u32>, Option<u32>), // id, transaction, confirmation_threshold, stuck_in_mempool_blocks
     DispatchTransactionName(Uuid, String),
     SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
@@ -162,7 +162,7 @@ pub enum IncomingBitVMXApiMessages {
     AddToAllowList(Uuid, PubkHash, Option<IpAddr>), // An absent address matches any source IP.
     RemoveFromAllowList(Uuid, PubkHash),
     SetAllowAll(Uuid, bool), // Blanket accept-everyone. Independent of the entries above.
-    Shutdown(),
+    Shutdown(Uuid),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {

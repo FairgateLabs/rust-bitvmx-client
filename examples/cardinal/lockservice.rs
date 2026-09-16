@@ -507,7 +507,8 @@ pub fn set_speedup_funding(
     wallet.mine(1)?;
 
     let funds_utxo_0 = Utxo::new(funds.compute_txid(), 0, amount, pub_key);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
     id_channel_pair.channel.send(&id_channel_pair.id, command)?;
     Ok(())
 }
