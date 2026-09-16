@@ -478,8 +478,10 @@ impl TestProgramContextEnv {
     }
 
     /// Messages the client has sent to the configured L2 component, oldest first.
-    /// Reads without acking, so repeated calls return the full history.
+    /// Flushes queued service messages first, then reads without acking, so repeated calls
+    /// return the full history.
     pub fn l2_messages(&self) -> Result<Vec<OutgoingBitVMXApiMessages>, BitVMXError> {
+        self.context.broker_channel.tick()?;
         let l2 = self
             .context
             .broker_channel
