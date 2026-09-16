@@ -1198,7 +1198,7 @@ impl FullPenalizationProtocol {
                     continue;
                 }
                 debug!(
-                    "Creating watchtower disabler for watchtower {} with member {}",
+                    "Creating WT_INIT_CHALLENGE_TX for watchtower {} with member {}",
                     wt_index, op_index
                 );
 
