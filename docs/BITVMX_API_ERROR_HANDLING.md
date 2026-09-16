@@ -180,60 +180,34 @@ API processing receives one message inside a transaction with `check_receive(Som
 
 Therefore every expected validation and business failure must be explicitly converted into a terminal response. `Err` should mean that retrying later may succeed, or that the node must stop.
 
-#### Confirmed request-controlled risks
-
-**Invalid confirmation thresholds.** The monitor deterministically returns `MonitorError::InvalidConfirmationTrigger` when a requested value is greater than or equal to its configured `max_monitoring_confirmations`.
-
-The subscription requests now pass their monitor result through `subscription_response`:
-
-- `SubscribeToTransaction`;
-- `SubscribeToSpendingUTXO`;
-- `SubscribeToOutputPattern`;
-- `SubscribeToRskPegin`.
-
-The helper converts only `InvalidConfirmationTrigger` into `ApiError(id, message)`. A successful subscription still has no immediate response, and all other coordinator errors continue to propagate. This prevents invalid subscription input from poisoning the queue without concealing storage or monitor infrastructure failures.
-
-`DispatchTransaction` now applies the same concept through `dispatch_response`: `InvalidConfirmationTrigger` becomes `ApiError`, while every other coordinator error propagates.
-
-**Unknown transaction names during dispatch.** `DispatchTransactionName` also passes its result through `dispatch_response`. The helper converts the explicit permanent lookup variants into `ApiError`:
-
-- `BitVMXError::InvalidTransactionName`;
-- `ProtocolBuilderError::MissingTransaction`;
-- `ProtocolBuilderError::GraphBuildingError(GraphError::MissingTransaction)`.
-
-Other protocol, storage, and coordinator errors continue to propagate. A missing protocol or a transaction that has not yet been constructed is not broadly classified as an invalid name, because that state may be temporary while setup is still progressing. If protocol readiness is intentionally asynchronous, the API should eventually expose that state explicitly rather than relying on an unbounded retry.
-
-#### Persistent local-state risks
+#### Persistent local-state failures
 
 Storage and key-manager errors should propagate, but propagation alone is insufficient when the condition cannot recover. `error_handling::classify` currently treats only `StorageError::WriteError`, `ReadError`, and `CommitError` as fatal. Persistent variants such as `ConversionError`, `SerializationError`, `FailedToDecryptData`, and invariant-breaking `NotFound` values remain `Severity::Other`. A request that repeatedly reads corrupt or incompatible program, variable, witness, proof, or monitor data can therefore remain at the head of the queue indefinitely.
 
-Program loading has the same issue. `load_program_or_not_found` handles only a clean `Ok(None)` as `NotFound`; deserialization failures and setup-engine state restoration failures propagate. That is correct for avoiding a misleading business response, but persistent corruption must be classified as fatal or moved to an explicit terminal/dead-letter path rather than retried forever.
+Program loading has the same issue. `load_program_or_not_found` handles only a clean `Ok(None)` as `NotFound`; deserialization failures and setup-engine state restoration failures propagate. Persistent corruption must be classified as fatal or moved to an explicit terminal/dead-letter path rather than retried forever.
 
-Key-manager API operations deliberately propagate errors for which `KeyManagerError::is_storage_error()` is true. Persistent key-store corruption has the same retry risk. In addition, `KeyManagerError::ReadError(StorageError)` must remain visible to the general source-chain classifier; if the wrapped storage error is not exposed as an error source, a fatal read failure may be misclassified as `Severity::Other`.
+Persistent key-store corruption has the same retry risk. `KeyManagerError::ReadError(StorageError)` must remain visible to the source-chain classifier; otherwise a fatal read failure may be misclassified as `Severity::Other`.
 
-#### Persistent environment and configuration risks
+#### Ambiguous retryable states
+
+`DispatchTransactionName` leaves a missing protocol or a transaction that has not yet been constructed as a propagated error because the state may be temporary while setup progresses. If the program can never reach the requested state, however, the request can still retry indefinitely. Protocol readiness should be exposed explicitly or governed by a bounded retry policy.
+
+`setup` and `setup_key` also need more precise classification. Every `Severity::Other` error from `Program::new` becomes a terminal `ApiError`, including any infrastructure condition not recognized as fatal. A setup-specific classifier should explicitly enumerate terminal validation errors and propagate retryable infrastructure failures.
+
+Setup ordering also needs review. `Program::new` may stage verification-key requests before a later construction failure, and `setup_key` stores `optional_keys` before calling `Program::new`. Converting that later failure into `ApiError` commits the staged changes with the response.
+
+#### Persistent environment and configuration failures
 
 Only Bitcoin JSON-RPC transport errors are currently classified as `BitcoinNodeUnreachable`. Other RPC failures are `Severity::Other`. A stable node rejection or configuration problem, such as an unavailable required RPC capability or incompatible node settings, can therefore repeatedly roll back requests including `GetTransaction`, `GetSPVProof`, and transaction dispatch. Bitcoin errors need a typed distinction between a terminal request rejection, a retryable outage, and a fatal node misconfiguration.
 
-`SendFunds` also has propagated failures after transaction creation, notably coordinator registration and `wallet.update_with_tx`. Persistent wallet database, clock, or wallet-state failures can retry indefinitely and may occur after in-memory wallet mutation. This overlaps the deferred wallet-classification work above and requires both error classification and an idempotency review.
-
-#### Related inverse risk: catching too broadly
-
-Avoiding retry poisoning does not mean converting every error into a successful API response. `get_hashed_message`, `get_transaction_info_by_name`, and `get_protocol_visualization` retain their existing `ApiError` or `NotFound` responses for non-fatal lookup/rendering failures, but now propagate errors for which `is_fatal` is true. Protocol visualization first converts its `ProtocolBuilderError` into `BitVMXError` so the shared source-chain classifier can inspect nested storage failures.
-
-`setup` and `setup_key` need additional care because `Program::new` combines request validation with initialization work. They already propagate errors classified as fatal and convert other construction errors into `ApiError`. This makes malformed participant lists, invalid leader selection, an unknown protocol type, or a local operator missing from the participant list terminal request failures rather than retry poison. It also ensures fatal storage and broker failures roll the request back.
-
-The remaining limitation is that `is_fatal` is broader than a typed request-error match in one direction and narrower in the other: every `Severity::Other` construction failure becomes a terminal response, even if it represents an infrastructure condition that should be retried. In addition, `Program::new` may stage verification-key requests before a later protocol-construction failure, and `setup_key` stores `optional_keys` before calling `Program::new`; converting the later failure into `ApiError` commits those staged changes with the response. A future setup-specific classifier should explicitly enumerate terminal validation errors, propagate infrastructure failures, and review the ordering of staged setup side effects.
-
-A business lookup or validation error should become a terminal response, but a nested storage or system failure must still propagate. Typed error inspection should be used in both directions: terminalize only permanent request failures, and propagate retryable or fatal infrastructure failures.
-
 #### Recommended fixes and tests
 
-1. Classify persistent storage corruption and invariant failures as fatal, or introduce a bounded retry and dead-letter mechanism that records and removes the blocking API input.
-2. Classify non-transport Bitcoin RPC failures as terminal request rejection, retryable outage, or fatal node misconfiguration.
-3. Add API transaction tests proving that invalid subscription and dispatch thresholds atomically consume their input, enqueue their response, and do not block the next request; the shared response helpers' classifications are already covered by unit tests.
-4. Add the equivalent queue-progression test for an unknown transaction name.
-5. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
+1. Classify persistent storage corruption and invariant failures as fatal, or introduce a bounded retry and dead-letter mechanism; ensure nested key-manager storage errors remain visible to that classification.
+2. Define an explicit readiness response or bounded retry policy for named transactions that have not yet been constructed.
+3. Add a setup-specific error classifier and review the ordering of setup's staged writes and verification-key requests.
+4. Classify non-transport Bitcoin RPC failures as terminal request rejection, retryable outage, or fatal node misconfiguration.
+5. Add API transaction tests proving that invalid subscription and dispatch thresholds, and unknown transaction names, consume their input, enqueue their response, and do not block the next request.
+6. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
 
 ## Transaction and delivery behavior
 
