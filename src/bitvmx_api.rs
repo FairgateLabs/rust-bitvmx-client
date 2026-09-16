@@ -714,6 +714,7 @@ impl BitVMX {
             Ok(hashed) => Ok(OutgoingBitVMXApiMessages::HashedMessage(
                 id, name, vout, leaf, hashed,
             )),
+            Err(error) if is_fatal(&error) => Err(error),
             Err(error) => Ok(Self::api_error(
                 id,
                 format!("Failed to get hashed message: {error}"),
@@ -737,6 +738,7 @@ impl BitVMX {
                 name,
                 transaction,
             )),
+            Err(error) if is_fatal(&error) => Err(error),
             Err(error) => {
                 error!(
                     "Transaction not found: {} in program {:?}. Error: {}",
@@ -820,10 +822,16 @@ impl BitVMX {
                 id,
                 visualization,
             )),
-            Err(error) => Ok(Self::api_error(
-                id,
-                format!("Error visualizing protocol: {error}"),
-            )),
+            Err(error) => {
+                let error = BitVMXError::from(error);
+                if is_fatal(&error) {
+                    return Err(error);
+                }
+                Ok(Self::api_error(
+                    id,
+                    format!("Error visualizing protocol: {error}"),
+                ))
+            }
         }
     }
 

@@ -131,6 +131,7 @@ The following behavior has been standardized:
 - signing, encryption, and decryption request failures return `ApiError`;
 - setup handlers return optional outgoing messages;
 - fatal setup errors propagate;
+- hashed-message lookup, named-transaction lookup, and protocol visualization propagate fatal errors while retaining their existing terminal responses for non-fatal failures;
 - handlers that load programs return `NotFound` without sending it internally;
 - wallet API logic is isolated in dedicated functions that return outgoing messages;
 - variable, witness, transaction, aggregated-key, ZKP-result, ping, and SPV handlers return outgoing messages;
@@ -218,14 +219,13 @@ Only Bitcoin JSON-RPC transport errors are currently classified as `BitcoinNodeU
 
 #### Related inverse risk: catching too broadly
 
-Avoiding retry poisoning does not mean converting every error into a successful API response. Some handlers currently catch broad error types after loading a program:
+Avoiding retry poisoning does not mean converting every error into a successful API response. `get_hashed_message`, `get_transaction_info_by_name`, and `get_protocol_visualization` retain their existing `ApiError` or `NotFound` responses for non-fatal lookup/rendering failures, but now propagate errors for which `is_fatal` is true. Protocol visualization first converts its `ProtocolBuilderError` into `BitVMXError` so the shared source-chain classifier can inspect nested storage failures.
 
-- `get_hashed_message`;
-- `get_transaction_info_by_name`;
-- `get_protocol_visualization`;
-- `setup` and `setup_key` for errors considered merely non-fatal.
+`setup` and `setup_key` need additional care because `Program::new` combines request validation with initialization work. They already propagate errors classified as fatal and convert other construction errors into `ApiError`. This makes malformed participant lists, invalid leader selection, an unknown protocol type, or a local operator missing from the participant list terminal request failures rather than retry poison. It also ensures fatal storage and broker failures roll the request back.
 
-A business lookup or validation error should become a terminal response, but a nested storage or system failure must still propagate. Broad `Err(error) => ApiError(...)` or `NotFound(...)` branches can consume infrastructure failures and prevent rollback. Typed error inspection should be used in both directions: terminalize only permanent request failures, and propagate retryable or fatal infrastructure failures.
+The remaining limitation is that `is_fatal` is broader than a typed request-error match in one direction and narrower in the other: every `Severity::Other` construction failure becomes a terminal response, even if it represents an infrastructure condition that should be retried. In addition, `Program::new` may stage verification-key requests before a later protocol-construction failure, and `setup_key` stores `optional_keys` before calling `Program::new`; converting the later failure into `ApiError` commits those staged changes with the response. A future setup-specific classifier should explicitly enumerate terminal validation errors, propagate infrastructure failures, and review the ordering of staged setup side effects.
+
+A business lookup or validation error should become a terminal response, but a nested storage or system failure must still propagate. Typed error inspection should be used in both directions: terminalize only permanent request failures, and propagate retryable or fatal infrastructure failures.
 
 #### Recommended fixes and tests
 
