@@ -1106,9 +1106,39 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{BitcoinCoordinatorMock, TestBitVMXEnv};
+    use bitcoin::{absolute::LockTime, transaction::Version, Amount, ScriptBuf, TxOut};
     use bitcoin_coordinator::coordinator::BitcoinCoordinator;
 
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
+    type MockBitVMX = super::BitVMX<BitcoinCoordinatorMock>;
+
+    fn dummy_transaction() -> Transaction {
+        Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![TxOut {
+                value: Amount::ZERO,
+                script_pubkey: ScriptBuf::new(),
+            }],
+        }
+    }
+
+    fn api_replies(bitvmx: &mut MockBitVMX) -> Vec<OutgoingBitVMXApiMessages> {
+        bitvmx.program_context.broker_channel.tick().unwrap();
+        let channel = bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(bitvmx.config.components.l2.clone())
+            .unwrap();
+        channel
+            .get_all()
+            .unwrap()
+            .into_iter()
+            .map(|message| OutgoingBitVMXApiMessages::from_string(&message.msg).unwrap())
+            .collect()
+    }
 
     #[test]
     fn invalid_subscription_confirmation_threshold_is_an_api_error() {
@@ -1208,5 +1238,125 @@ mod tests {
                 BitcoinCoordinatorError::Internal(message)
             )) if message == "coordinator unavailable"
         ));
+    }
+
+    #[test]
+    fn dispatcher_turns_mocked_invalid_subscription_into_a_reply() {
+        let mut env = TestBitVMXEnv::new("api-invalid-subscription").unwrap();
+        let id = Uuid::new_v4();
+        let txid = dummy_transaction().compute_txid();
+        env.coordinator_mock()
+            .fail_next_monitor(BitcoinCoordinatorError::MonitorError(
+                MonitorError::InvalidConfirmationTrigger(5, 3),
+            ));
+        let sender = env.bitvmx.config.components.l2.clone();
+        let request = IncomingBitVMXApiMessages::SubscribeToTransaction(id, txid, Some(5));
+
+        env.bitvmx
+            .handle_api_message(request.to_string().unwrap(), sender)
+            .unwrap();
+
+        assert!(matches!(
+            api_replies(&mut env.bitvmx).as_slice(),
+            [OutgoingBitVMXApiMessages::ApiError(response_id, message)]
+                if *response_id == id && message.contains("Failed to subscribe")
+        ));
+    }
+
+    #[test]
+    fn mocked_subscription_infrastructure_failure_propagates_without_a_reply() {
+        let mut env = TestBitVMXEnv::new("api-subscription-outage").unwrap();
+        let id = Uuid::new_v4();
+        env.coordinator_mock()
+            .fail_next_monitor(BitcoinCoordinatorError::Internal(
+                "coordinator unavailable".to_string(),
+            ));
+        let sender = env.bitvmx.config.components.l2.clone();
+        let request = IncomingBitVMXApiMessages::SubscribeToTransaction(
+            id,
+            dummy_transaction().compute_txid(),
+            Some(1),
+        );
+
+        assert!(matches!(
+            env.bitvmx
+                .handle_api_message(request.to_string().unwrap(), sender),
+            Err(BitVMXError::BitcoinCoordinatorError(
+                BitcoinCoordinatorError::Internal(message)
+            )) if message == "coordinator unavailable"
+        ));
+        assert!(api_replies(&mut env.bitvmx).is_empty());
+    }
+
+    #[test]
+    fn dispatcher_turns_mocked_invalid_dispatch_into_a_reply() {
+        let mut env = TestBitVMXEnv::new("api-invalid-dispatch").unwrap();
+        let id = Uuid::new_v4();
+        env.coordinator_mock()
+            .fail_next_dispatch(BitcoinCoordinatorError::MonitorError(
+                MonitorError::InvalidConfirmationTrigger(5, 3),
+            ));
+        let sender = env.bitvmx.config.components.l2.clone();
+        let request =
+            IncomingBitVMXApiMessages::DispatchTransaction(id, dummy_transaction(), Some(5), None);
+
+        env.bitvmx
+            .handle_api_message(request.to_string().unwrap(), sender)
+            .unwrap();
+
+        assert!(matches!(
+            api_replies(&mut env.bitvmx).as_slice(),
+            [OutgoingBitVMXApiMessages::ApiError(response_id, message)]
+                if *response_id == id && message.contains("Failed to dispatch transaction")
+        ));
+        assert!(env.coordinator_mock().dispatched().is_empty());
+    }
+
+    #[test]
+    fn successful_dispatch_is_forwarded_to_the_mock_without_a_reply() {
+        let mut env = TestBitVMXEnv::new("api-dispatch-success").unwrap();
+        let id = Uuid::new_v4();
+        let transaction = dummy_transaction();
+        let sender = env.bitvmx.config.components.l2.clone();
+        let request = IncomingBitVMXApiMessages::DispatchTransaction(
+            id,
+            transaction.clone(),
+            Some(2),
+            Some(7),
+        );
+
+        env.bitvmx
+            .handle_api_message(request.to_string().unwrap(), sender)
+            .unwrap();
+
+        let dispatched = env.coordinator_mock().dispatched();
+        assert_eq!(dispatched.len(), 1);
+        assert_eq!(dispatched[0].tx, transaction);
+        assert_eq!(dispatched[0].confirmation_trigger, Some(2));
+        assert_eq!(dispatched[0].stuck_in_mempool_blocks, Some(7));
+        assert!(api_replies(&mut env.bitvmx).is_empty());
+    }
+
+    #[test]
+    fn mocked_transaction_query_failure_propagates() {
+        let mut env = TestBitVMXEnv::new("api-transaction-outage").unwrap();
+        env.coordinator_mock()
+            .fail_next_get_transaction(BitcoinCoordinatorError::Internal(
+                "bitcoin RPC unavailable".to_string(),
+            ));
+        let sender = env.bitvmx.config.components.l2.clone();
+        let request = IncomingBitVMXApiMessages::GetTransaction(
+            Uuid::new_v4(),
+            dummy_transaction().compute_txid(),
+        );
+
+        assert!(matches!(
+            env.bitvmx
+                .handle_api_message(request.to_string().unwrap(), sender),
+            Err(BitVMXError::BitcoinCoordinatorError(
+                BitcoinCoordinatorError::Internal(message)
+            )) if message == "bitcoin RPC unavailable"
+        ));
+        assert!(api_replies(&mut env.bitvmx).is_empty());
     }
 }

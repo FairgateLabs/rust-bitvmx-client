@@ -239,6 +239,9 @@ pub struct BitcoinCoordinatorMock {
     acked: RefCell<Vec<AckNews>>,
     transactions: RefCell<HashMap<Txid, TransactionStatus>>,
     news: RefCell<News>,
+    next_monitor_error: RefCell<Option<BitcoinCoordinatorError>>,
+    next_dispatch_error: RefCell<Option<BitcoinCoordinatorError>>,
+    next_transaction_error: RefCell<Option<BitcoinCoordinatorError>>,
 }
 
 impl BitcoinCoordinatorMock {
@@ -256,6 +259,9 @@ impl BitcoinCoordinatorMock {
                 monitor_news: Vec::new(),
                 coordinator_news: Vec::new(),
             }),
+            next_monitor_error: RefCell::new(None),
+            next_dispatch_error: RefCell::new(None),
+            next_transaction_error: RefCell::new(None),
         }
     }
 
@@ -273,6 +279,21 @@ impl BitcoinCoordinatorMock {
     /// Stage the news returned by `get_news` (defaults to empty news).
     pub fn set_news(&self, news: News) {
         *self.news.borrow_mut() = news;
+    }
+
+    /// Make the next monitor registration fail.
+    pub fn fail_next_monitor(&self, error: BitcoinCoordinatorError) {
+        *self.next_monitor_error.borrow_mut() = Some(error);
+    }
+
+    /// Make the next transaction dispatch fail.
+    pub fn fail_next_dispatch(&self, error: BitcoinCoordinatorError) {
+        *self.next_dispatch_error.borrow_mut() = Some(error);
+    }
+
+    /// Make the next transaction query fail.
+    pub fn fail_next_get_transaction(&self, error: BitcoinCoordinatorError) {
+        *self.next_transaction_error.borrow_mut() = Some(error);
     }
 
     pub fn tick_count(&self) -> u32 {
@@ -318,6 +339,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
         confirmation_trigger: Option<u32>,
         stuck_in_mempool_blocks: Option<u32>,
     ) -> Result<(), BitcoinCoordinatorError> {
+        if let Some(error) = self.next_dispatch_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.dispatched.borrow_mut().push(MockDispatch {
             tx,
             speedup_data: None,
@@ -337,6 +361,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
         target_block_height: Option<u32>,
         confirmation_trigger: Option<u32>,
     ) -> Result<(), BitcoinCoordinatorError> {
+        if let Some(error) = self.next_dispatch_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.dispatched.borrow_mut().push(MockDispatch {
             tx,
             speedup_data: Some(speedup_data),
@@ -385,6 +412,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
     }
 
     fn get_transaction(&self, txid: Txid) -> Result<TransactionStatus, BitcoinCoordinatorError> {
+        if let Some(error) = self.next_transaction_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.transactions
             .borrow()
             .get(&txid)
@@ -407,6 +437,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
     }
 
     fn monitor(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError> {
+        if let Some(error) = self.next_monitor_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.monitored.borrow_mut().push(data);
         Ok(())
     }
