@@ -88,13 +88,13 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `Setup(uuid, program_type, participants, leader_idx)` | `SetupCompleted(uuid)` | Setup the program |
+| `Setup(uuid, program_type, participants, leader_idx)` | `SetupCompleted(uuid)` or `ApiError(uuid, error)` | Setup the program; returns `ApiError` for duplicate identifiers and non-fatal setup failures |
 | `SetVar(uuid, key, value)` | `Variable(uuid, key, value)` | Set a variable in the program |
 | `GetVar(uuid, key)` | `Variable(uuid, key, value)` or `NotFound(uuid, key)` | Get variable value |
 | `SetWitness(uuid, address, witness)` | `Witness(uuid, key, witness)` | Set witness data |
 | `GetWitness(uuid, address)` | `Witness(uuid, key, witness)` or `NotFound(uuid, key)` | Get witness data |
-| `GetHashedMessage(uuid, name, vout, leaf)` | `HashedMessage(uuid, name, vout, leaf, _)` | Get hashed message |
-| `GetProtocolVisualization(uuid)` | `ProtocolVisualization(uuid, visualization)` | Get protocol visualization |
+| `GetHashedMessage(uuid, name, vout, leaf)` | `HashedMessage(uuid, name, vout, leaf, _)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get hashed message; returns `NotFound` when the program is absent and `ApiError` for non-fatal lookup failures |
+| `GetProtocolVisualization(uuid)` | `ProtocolVisualization(uuid, visualization)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get protocol visualization; returns `NotFound` when the program is absent and `ApiError` for non-fatal visualization failures |
 
 #### Transaction Management
 
@@ -102,18 +102,18 @@ This table shows the mapping between request messages and their expected respons
 |---|---|---|
 | `GetTransaction(uuid, txid)` | `Transaction(uuid, transaction_status, name)` | Get transaction details |
 | `GetTransactionInfoByName(uuid, name)` | `TransactionInfo(uuid, name, transaction)` | Get transaction by name |
-| `DispatchTransaction(uuid, transaction)` | `Transaction(uuid, transaction_status, name)` | Dispatch a transaction |
-| `DispatchTransactionName(uuid, name)` | `Transaction(uuid, transaction_status, name)` | Dispatch transaction by name |
+| `DispatchTransaction(uuid, transaction, confirmation_threshold, stuck_in_mempool_blocks)` | `Transaction(uuid, transaction_status, name)` or `ApiError(uuid, error)` | Dispatch a transaction; returns `ApiError` for an invalid confirmation threshold |
+| `DispatchTransactionName(uuid, name)` | `Transaction(uuid, transaction_status, name)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Dispatch transaction by name; returns `NotFound` when the program is absent and `ApiError` for an invalid or missing transaction name |
 | `GetSPVProof(uuid, txid)` | `SPVProof(txid, spv_proof)` | Get SPV proof for transaction |
 
 #### Subscriptions
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `SubscribeToTransaction(uuid, txid)` | `Transaction(uuid, transaction_status, name)` | Subscribe to transaction updates |
-| `SubscribeToSpendingUTXO(uuid, txid, vout, confirmation_threshold)` | `SpendingUTXOTransactionFound(uuid, txid, vout, transaction_status)` | Track a UTXO and notify when it is spent |
-| `SubscribeToOutputPattern(uuid, filter, confirmation_threshold)` | `OutputPatternTransactionFound(txid, transaction_status, tag)` | Subscribe to matching transaction outputs |
-| `SubscribeToRskPegin(uuid, confirmation_threshold)` | `PeginTransactionFound(txid, transaction_status)` | Subscribe to RSK pegin transactions |
+| `SubscribeToTransaction(uuid, txid, confirmation_threshold)` | `Transaction(uuid, transaction_status, name)` or `ApiError(uuid, error)` | Subscribe to transaction updates; returns `ApiError` for an invalid confirmation threshold |
+| `SubscribeToSpendingUTXO(uuid, txid, vout, confirmation_threshold)` | `SpendingUTXOTransactionFound(uuid, txid, vout, transaction_status)` or `ApiError(uuid, error)` | Track a UTXO and notify when it is spent; returns `ApiError` for an invalid confirmation threshold |
+| `SubscribeToOutputPattern(uuid, filter, confirmation_threshold)` | `OutputPatternTransactionFound(txid, transaction_status, tag)` or `ApiError(uuid, error)` | Subscribe to matching transaction outputs; returns `ApiError` for an invalid confirmation threshold |
+| `SubscribeToRskPegin(uuid, confirmation_threshold)` | `PeginTransactionFound(txid, transaction_status)` or `ApiError(uuid, error)` | Subscribe to RSK pegin transactions; returns `ApiError` for an invalid confirmation threshold |
 
 #### Speed up
 
@@ -133,18 +133,19 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `SetupKey(uuid, addresses, operator_key, funding_key)` | N/A | Setup keys (no direct response) |
+| `SetupKey(uuid, addresses, operator_keys, leader_idx)` | `ApiError(uuid, error)` on failure; otherwise N/A | Setup keys; returns `ApiError` for invalid participants, duplicate identifiers, or other non-fatal setup failures, and has no direct success response |
 | `GetAggregatedPubkey(uuid)` | `AggregatedPubkey(uuid, aggregated_pubkey)`, `AggregatedPubkeyNotReady(uuid)`, or `ApiError(uuid, error)` | Get aggregated public key; returns `ApiError` when the stored value is not a public key |
-| `GetKeyPair(uuid)` | `KeyPair(uuid, private_key, public_key)` | Generate key pair |
-| `GetPubKey(uuid, new_key)` | `PubKey(uuid, pub_key)` | Get public key |
-| `SignMessage(uuid, payload_to_sign, public_key_to_use)` | `SignedMessage(uuid, signature_r, signature_s, recovery_id)` | Sign a message |
+| `GetKeyPair(uuid)` | `KeyPair(uuid, private_key, public_key)` or `ApiError(uuid, error)` | Generate key pair; returns `ApiError` when the aggregated key is missing or invalid, or for a non-storage key-manager failure |
+| `GetPubKey(uuid, new_key)` | `PubKey(uuid, pub_key)` or `ApiError(uuid, error)` | Get public key; returns `ApiError` when an existing aggregated key is missing or invalid, or for a non-storage key-manager failure |
+| `GetEvenPubKey(uuid)` | `PubKey(uuid, pub_key)` or `ApiError(uuid, error)` | Generate an adjusted public key; returns `ApiError` for a non-storage key-manager failure |
+| `SignMessage(uuid, payload_to_sign, public_key_to_use)` | `SignedMessage(uuid, signature_r, signature_s, recovery_id)` or `ApiError(uuid, error)` | Sign a message; returns `ApiError` for an invalid payload or a non-storage key-manager failure |
 
 #### Encryption
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `Encrypt(uuid, payload_to_encrypt, public_key_to_use)` | `Encrypted(uuid, encrypted_message)` | Encrypt a message |
-| `Decrypt(uuid, payload_to_decrypt)` | `Decrypted(uuid, decrypted_message)` | Decrypt a message |
+| `Encrypt(uuid, payload_to_encrypt, public_key_to_use)` | `Encrypted(uuid, encrypted_message)` or `ApiError(uuid, error)` | Encrypt a message; returns `ApiError` for a non-storage key-manager failure |
+| `Decrypt(uuid, payload_to_decrypt, public_key_to_use)` | `Decrypted(uuid, decrypted_message)` or `ApiError(uuid, error)` | Decrypt a message; returns `ApiError` for a non-storage key-manager failure |
 
 #### Zero-Knowledge Proofs
 
@@ -162,16 +163,17 @@ This table shows the mapping between request messages and their expected respons
 
 #### Subscription Messages
 
-- `SubscribeToOutputPattern(uuid, ...)` and `SubscribeToRskPegin(uuid, ...)` have no direct response; they generate events when relevant transactions are found
+- Successful subscription requests have no direct response; they generate events when relevant transactions are found. An invalid confirmation threshold produces an immediate `ApiError(uuid, error)` response.
 - `Shutdown(uuid)` requests a node shutdown and has no direct response
 
 #### Error Handling
 
 Errors come in two shapes.
 
-**Reply-style** errors answer a request and carry its UUID: `NotFound`, `WalletNotReady`,
-`WalletError`, `ProofGenerationError`. The UUID ensures that responses are matched to the correct
-request even in error cases. These appear in the tables above.
+**Reply-style** errors answer a request and carry its UUID: `ApiError`, `NotFound`,
+`WalletNotReady`, `WalletError`, and `ProofGenerationError`. `ApiError` represents request validation
+or business-state failures that do not have a more specific response type. The UUID ensures that
+responses are matched to the correct request even in error cases. These appear in the tables above.
 
 **Push-style** errors are unprompted — the client detected something and is telling you. There is
 exactly one such message, and because it answers no request it appears in no table:
