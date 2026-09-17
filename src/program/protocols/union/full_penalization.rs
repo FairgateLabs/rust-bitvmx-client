@@ -43,18 +43,18 @@ use crate::{
                 dispute_core_claim_gate::CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
                 types::{
                     ClaimInitUtxos, Committee, DisputeTxType, FullPenalizationData, PacketSettings,
-                    PenalizedMember, CHALLENGE_TX, CLAIM_INIT_TX, CLAIM_INIT_UTXOS,
-                    DISPUTE_AGGREGATED_KEY, DUST_VALUE, INPUT_NOT_REVEALED_ENABLER,
-                    INPUT_NOT_REVEALED_TX, OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER,
-                    OP_CLAIM_GATE_SUCCESS, OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
-                    OP_DISABLER_DIRECTORY_TX, OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX,
-                    OP_INITIAL_DEPOSIT_AMOUNT, OP_INITIAL_DEPOSIT_OUT_SCRIPT,
-                    OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID, OP_LAZY_DISABLER_TX,
-                    REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE, STOPPER_TX,
-                    STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE, WT_CLAIM_GATE_SUCCESS,
-                    WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, WT_COSIGN_DISABLER_TX,
-                    WT_DISABLER_DIRECTORY_TX, WT_DISABLER_DIRECTORY_UTXO, WT_DISABLER_TX,
-                    WT_INIT_CHALLENGE_TX, WT_INIT_CHALLENGE_UTXOS, WT_START_ENABLER_TX,
+                    PenalizedMember, CLAIM_INIT_TX, CLAIM_INIT_UTXOS, DISPUTE_AGGREGATED_KEY,
+                    DUST_VALUE, INPUT_NOT_REVEALED_ENABLER, INPUT_NOT_REVEALED_TX,
+                    OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
+                    OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
+                    OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
+                    OP_INITIAL_DEPOSIT_OUT_SCRIPT, OP_INITIAL_DEPOSIT_TX, OP_INITIAL_DEPOSIT_TXID,
+                    OP_LAZY_DISABLER_TX, REIMBURSEMENT_KICKOFF_TX, REVEAL_INPUT_TX, SPEEDUP_VALUE,
+                    STOPPER_TX, STOP_OP_WON_TX, TAKE_AGGREGATED_KEY, WT_CLAIM_GATE,
+                    WT_CLAIM_GATE_SUCCESS, WT_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO,
+                    WT_COSIGN_DISABLER_TX, WT_DISABLER_DIRECTORY_TX, WT_DISABLER_DIRECTORY_UTXO,
+                    WT_DISABLER_TX, WT_INIT_CHALLENGE_TX, WT_INIT_CHALLENGE_UTXOS,
+                    WT_START_ENABLER_TX,
                 },
             },
         },
@@ -193,15 +193,15 @@ impl ProtocolHandler for FullPenalizationProtocol {
                 get_dispute_core_pid(data.committee_id, &committee.members[op_index].take_key);
             let dispute_protocol =
                 self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
-            let challenge_txid = dispute_protocol
-                .get_transaction_id_by_name(&indexed_name(CHALLENGE_TX, slot_index))?;
+            let kickoff_txid = dispute_protocol
+                .get_transaction_id_by_name(&indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index))?;
 
             send_dispute_tx_notification(
                 program_context,
                 self.ctx.id,
                 self.ctx.my_idx,
                 tx_id,
-                challenge_txid,
+                kickoff_txid,
                 data.committee_id,
                 slot_index,
                 DisputeTxType::StopOperatorWon,

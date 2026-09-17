@@ -328,8 +328,8 @@ pub enum DisputeTxType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisputeTxNotification {
     pub txid: Txid,
-    pub challenge_txid: Txid,
-    pub accept_pegin_txid: Txid,
+    pub kickoff_txid: Txid,
+    pub accept_pegin_txid: Option<Txid>,
     pub committee_id: Uuid,
     pub slot_index: usize,
     pub spv_proof: Option<BtcTxSPVProof>,
@@ -366,14 +366,14 @@ mod dispute_notification_tests {
                 "0101010101010101010101010101010101010101010101010101010101010101",
             )
             .unwrap(),
-            challenge_txid: Txid::from_str(
+            kickoff_txid: Txid::from_str(
                 "0202020202020202020202020202020202020202020202020202020202020202",
             )
             .unwrap(),
-            accept_pegin_txid: Txid::from_str(
-                "0303030303030303030303030303030303030303030303030303030303030303",
-            )
-            .unwrap(),
+            accept_pegin_txid: Some(
+                Txid::from_str("0303030303030303030303030303030303030303030303030303030303030303")
+                    .unwrap(),
+            ),
             committee_id: Uuid::new_v4(),
             slot_index: 4,
             spv_proof: None,
@@ -384,7 +384,7 @@ mod dispute_notification_tests {
         let decoded: DisputeTxNotification = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded.txid, notification.txid);
-        assert_eq!(decoded.challenge_txid, notification.challenge_txid);
+        assert_eq!(decoded.kickoff_txid, notification.kickoff_txid);
         assert_eq!(decoded.accept_pegin_txid, notification.accept_pegin_txid);
         assert_eq!(decoded.tx_type, DisputeTxType::InputRevealed);
     }

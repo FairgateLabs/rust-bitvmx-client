@@ -610,11 +610,12 @@ impl ProtocolHandler for DisputeCoreProtocol {
             )?;
         } else if tx_name.starts_with(CHALLENGE_TX) {
             let slot_index = extract_index(&tx_name, CHALLENGE_TX)?;
+            let kickoff_txid = self.kickoff_txid(slot_index)?;
 
             self.send_dispute_spv_notification(
                 program_context,
                 tx_id,
-                tx_id,
+                kickoff_txid,
                 slot_index,
                 DisputeTxType::Challenge,
             )?;
@@ -622,11 +623,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
             self.handle_challenge_tx(program_context, slot_index, &tx_status)?;
         } else if tx_name.starts_with(REVEAL_INPUT_TX) {
             let slot_index = extract_index(&tx_name, REVEAL_INPUT_TX)?;
-            let challenge_txid = self.challenge_txid(slot_index)?;
+            let kickoff_txid = self.kickoff_txid(slot_index)?;
             self.send_dispute_spv_notification(
                 program_context,
                 tx_id,
-                challenge_txid,
+                kickoff_txid,
                 slot_index,
                 DisputeTxType::InputRevealed,
             )?;
@@ -639,11 +640,11 @@ impl ProtocolHandler for DisputeCoreProtocol {
             }
         } else if tx_name.starts_with(INPUT_NOT_REVEALED_TX) {
             let slot_index = extract_index(&tx_name, INPUT_NOT_REVEALED_TX)?;
-            let challenge_txid = self.challenge_txid(slot_index)?;
+            let kickoff_txid = self.kickoff_txid(slot_index)?;
             self.send_dispute_spv_notification(
                 program_context,
                 tx_id,
-                challenge_txid,
+                kickoff_txid,
                 slot_index,
                 DisputeTxType::InputNotRevealed,
             )?;
@@ -3345,15 +3346,15 @@ impl DisputeCoreProtocol {
         Ok(())
     }
 
-    fn challenge_txid(&self, slot_index: usize) -> Result<Txid, BitVMXError> {
-        Ok(self.get_transaction_id_by_name(&indexed_name(CHALLENGE_TX, slot_index))?)
+    fn kickoff_txid(&self, slot_index: usize) -> Result<Txid, BitVMXError> {
+        Ok(self.get_transaction_id_by_name(&indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index))?)
     }
 
     fn send_dispute_spv_notification<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
         txid: Txid,
-        challenge_txid: Txid,
+        kickoff_txid: Txid,
         slot_index: usize,
         tx_type: DisputeTxType,
     ) -> Result<(), BitVMXError> {
@@ -3362,7 +3363,7 @@ impl DisputeCoreProtocol {
             self.ctx.id,
             self.ctx.my_idx,
             txid,
-            challenge_txid,
+            kickoff_txid,
             self.dispute_core_data(context)?.committee_id,
             slot_index,
             tx_type,

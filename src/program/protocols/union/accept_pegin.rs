@@ -2,7 +2,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
 use crate::{
-    errors::BitVMXError, 
+    errors::BitVMXError,
     program::{
         participant::{ParticipantKeyDeclaration, ParticipantKeys, ParticipantRole, PublicKeyType},
         protocols::{
@@ -16,10 +16,10 @@ use crate::{
                 types::{
                     Committee, DisputeTxType, PacketSettings, PegInAccepted, PegInRequest,
                     UnionSPVNotification, UnionTxType, ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX,
-                    CHALLENGE_TX, DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER,
-                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY,
-                    SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
+                    DUST_VALUE, LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX,
+                    OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE, REIMBURSEMENT_KICKOFF_TX,
+                    REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY, SPEEDUP_VALUE,
+                    TAKE_AGGREGATED_KEY,
                 },
             },
         },
@@ -389,15 +389,17 @@ impl ProtocolHandler for AcceptPegInProtocol {
                 );
                 let dispute_protocol =
                     self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
-                let challenge_txid = dispute_protocol
-                    .get_transaction_id_by_name(&indexed_name(CHALLENGE_TX, request.slot_index))?;
+                let kickoff_txid = dispute_protocol.get_transaction_id_by_name(&indexed_name(
+                    REIMBURSEMENT_KICKOFF_TX,
+                    request.slot_index,
+                ))?;
 
                 send_dispute_tx_notification(
                     context,
                     self.ctx.id,
                     self.ctx.my_idx,
                     tx_id,
-                    challenge_txid,
+                    kickoff_txid,
                     request.committee_id,
                     request.slot_index,
                     DisputeTxType::OperatorWon,

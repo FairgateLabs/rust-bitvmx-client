@@ -50,7 +50,7 @@ pub fn send_dispute_tx_notification<BC: BitcoinCoordinatorApi>(
     program_id: Uuid,
     member_index: usize,
     txid: Txid,
-    challenge_txid: Txid,
+    kickoff_txid: Txid,
     committee_id: Uuid,
     slot_index: usize,
     tx_type: DisputeTxType,
@@ -68,10 +68,19 @@ pub fn send_dispute_tx_notification<BC: BitcoinCoordinatorApi>(
             None
         }
     };
+    let accept_pegin_txid = match get_accept_pegin_txid(context, committee_id, slot_index) {
+        Ok(accept_pegin_txid) => Some(accept_pegin_txid),
+        Err(error) => {
+            warn!(
+                "Failed to retrieve accept pegin txid for committee {committee_id}, slot {slot_index}: {error:?}"
+            );
+            None
+        }
+    };
     let notification = DisputeTxNotification {
         txid,
-        challenge_txid,
-        accept_pegin_txid: get_accept_pegin_txid(context, committee_id, slot_index)?,
+        kickoff_txid,
+        accept_pegin_txid,
         committee_id,
         slot_index,
         spv_proof: proof,
