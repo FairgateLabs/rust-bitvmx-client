@@ -33,7 +33,8 @@ use crate::{
                     double_indexed_name, extract_double_index, extract_triple_index,
                     get_dispute_core_pid, get_initial_deposit_output_type,
                     get_op_disabler_directory_output_value, indexed_name, save_penalized_member,
-                    triple_indexed_name, InputSigningInfo, WinternitzData,
+                    send_dispute_tx_notification, triple_indexed_name, InputSigningInfo,
+                    WinternitzData,
                 },
                 dispute_core::{
                     CHALLENGE_KEY, OP_INITIAL_DEPOSIT_TX_DISABLER_LEAF,
@@ -41,7 +42,7 @@ use crate::{
                 },
                 dispute_core_claim_gate::CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
                 types::{
-                    ClaimInitUtxos, Committee, FullPenalizationData, PacketSettings,
+                    ClaimInitUtxos, Committee, DisputeTxType, FullPenalizationData, PacketSettings,
                     PenalizedMember, CLAIM_INIT_TX, CLAIM_INIT_UTXOS, DISPUTE_AGGREGATED_KEY,
                     DUST_VALUE, INPUT_NOT_REVEALED_ENABLER, INPUT_NOT_REVEALED_TX,
                     OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
@@ -183,6 +184,28 @@ impl ProtocolHandler for FullPenalizationProtocol {
             self.handle_wt_disabler_directory_tx(program_context, &tx_name)?;
         } else if tx_name.starts_with(STOPPER_TX) {
             self.handle_stopper_tx(program_context, &tx_name)?;
+        } else if tx_name.starts_with(STOP_OP_WON_TX) {
+            let (_, op_index, slot_index) = extract_triple_index(&tx_name)?;
+            let data = self.full_penalization_data(program_context)?;
+            let committee = self.committee(program_context, data.committee_id)?;
+
+            let dispute_protocol_id =
+                get_dispute_core_pid(data.committee_id, &committee.members[op_index].take_key);
+            let dispute_protocol =
+                self.load_protocol_by_name(PROGRAM_TYPE_DISPUTE_CORE, dispute_protocol_id)?;
+            let kickoff_txid = dispute_protocol
+                .get_transaction_id_by_name(&indexed_name(REIMBURSEMENT_KICKOFF_TX, slot_index))?;
+
+            send_dispute_tx_notification(
+                program_context,
+                self.ctx.id,
+                self.ctx.my_idx,
+                tx_id,
+                kickoff_txid,
+                data.committee_id,
+                slot_index,
+                DisputeTxType::StopOperatorWon,
+            )?;
         }
 
         Ok(())
