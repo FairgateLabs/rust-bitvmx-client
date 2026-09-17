@@ -1106,6 +1106,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::program::variables::WitnessTypes;
     use crate::test_utils::{BitcoinCoordinatorMock, TestBitVMXEnv};
     use bitcoin::{absolute::LockTime, transaction::Version, Amount, ScriptBuf, TxOut};
     use bitcoin_coordinator::coordinator::BitcoinCoordinator;
@@ -1123,6 +1124,14 @@ mod tests {
                 script_pubkey: ScriptBuf::new(),
             }],
         }
+    }
+
+    fn send_api(
+        bitvmx: &mut MockBitVMX,
+        request: IncomingBitVMXApiMessages,
+    ) -> Result<(), BitVMXError> {
+        let sender = bitvmx.config.components.l2.clone();
+        bitvmx.handle_api_message(request.to_string()?, sender)
     }
 
     fn api_replies(bitvmx: &mut MockBitVMX) -> Vec<OutgoingBitVMXApiMessages> {
@@ -1237,6 +1246,330 @@ mod tests {
             Err(BitVMXError::BitcoinCoordinatorError(
                 BitcoinCoordinatorError::Internal(message)
             )) if message == "coordinator unavailable"
+        ));
+    }
+
+    #[test]
+    fn basic_dispatcher_requests_round_trip_state_and_replies() {
+        let mut env = TestBitVMXEnv::new("api-basic-requests").unwrap();
+        let id = Uuid::new_v4();
+        let variable = VariableTypes::String("value".to_string());
+        let witness = WitnessTypes::Secret(vec![1, 2, 3]);
+
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::SetVar(id, "var".to_string(), variable),
+        )
+        .unwrap();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::SetWitness(id, "witness".to_string(), witness),
+        )
+        .unwrap();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::GetVar(id, "var".to_string()),
+        )
+        .unwrap();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::GetWitness(id, "witness".to_string()),
+        )
+        .unwrap();
+        let ping_id = Uuid::new_v4();
+        send_api(&mut env.bitvmx, IncomingBitVMXApiMessages::Ping(ping_id)).unwrap();
+        let comm_id = Uuid::new_v4();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::GetCommInfo(comm_id),
+        )
+        .unwrap();
+
+        let replies = api_replies(&mut env.bitvmx);
+        assert_eq!(replies.len(), 4);
+        assert!(
+            matches!(&replies[0], OutgoingBitVMXApiMessages::Variable(response_id, key, VariableTypes::String(value)) if *response_id == id && key == "var" && value == "value")
+        );
+        assert!(
+            matches!(&replies[1], OutgoingBitVMXApiMessages::Witness(response_id, key, WitnessTypes::Secret(value)) if *response_id == id && key == "witness" && value == &vec![1, 2, 3])
+        );
+        assert!(
+            matches!(&replies[2], OutgoingBitVMXApiMessages::Pong(response_id) if *response_id == ping_id)
+        );
+        assert!(
+            matches!(&replies[3], OutgoingBitVMXApiMessages::CommInfo(response_id, _) if *response_id == comm_id)
+        );
+    }
+
+    #[test]
+    fn missing_values_and_wallet_return_terminal_responses() {
+        let mut env = TestBitVMXEnv::new("api-missing-values").unwrap();
+        let id = Uuid::new_v4();
+
+        for request in [
+            IncomingBitVMXApiMessages::GetVar(id, "missing-var".to_string()),
+            IncomingBitVMXApiMessages::GetWitness(id, "missing-witness".to_string()),
+            IncomingBitVMXApiMessages::GetFundingAddress(id),
+            IncomingBitVMXApiMessages::GetFundingBalance(id),
+        ] {
+            send_api(&mut env.bitvmx, request).unwrap();
+        }
+
+        let replies = api_replies(&mut env.bitvmx);
+        assert!(
+            matches!(&replies[0], OutgoingBitVMXApiMessages::NotFound(_, key) if key == "missing-var")
+        );
+        assert!(
+            matches!(&replies[1], OutgoingBitVMXApiMessages::NotFound(_, key) if key == "missing-witness")
+        );
+        assert!(
+            matches!(&replies[2], OutgoingBitVMXApiMessages::ApiError(_, message) if message == "Wallet not available")
+        );
+        assert!(
+            matches!(&replies[3], OutgoingBitVMXApiMessages::ApiError(_, message) if message == "Wallet not available")
+        );
+    }
+
+    #[test]
+    fn setup_key_validation_and_duplicate_program_are_terminal() {
+        let mut env = TestBitVMXEnv::new("api-setup-validation").unwrap();
+        let empty_id = Uuid::new_v4();
+        let leader_id = Uuid::new_v4();
+        let duplicate_id = Uuid::new_v4();
+        let participant = CommsAddress {
+            address: env.bitvmx.program_context.comms.get_address(),
+            pubkey_hash: env.bitvmx.program_context.comms.get_pubk_hash(),
+        };
+
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::SetupKey(empty_id, vec![], None, 0),
+        )
+        .unwrap();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::SetupKey(leader_id, vec![participant.clone()], None, 1),
+        )
+        .unwrap();
+        env.bitvmx.add_new_program(&duplicate_id).unwrap();
+        assert!(env.bitvmx.program_exists(&duplicate_id).unwrap());
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::SetupKey(duplicate_id, vec![participant], None, 0),
+        )
+        .unwrap();
+        assert!(matches!(
+            env.bitvmx.add_new_program(&duplicate_id),
+            Err(BitVMXError::ProgramAlreadyExists(id)) if id == duplicate_id
+        ));
+
+        let messages: Vec<_> = api_replies(&mut env.bitvmx)
+            .into_iter()
+            .map(|response| match response {
+                OutgoingBitVMXApiMessages::ApiError(_, message) => message,
+                other => panic!("expected ApiError, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "Participants list cannot be empty",
+                "Leader index is out of bounds",
+                "Program already exists",
+            ]
+        );
+    }
+
+    #[test]
+    fn zkp_result_reports_each_persisted_state() {
+        let mut env = TestBitVMXEnv::new("api-zkp-results").unwrap();
+        let id = Uuid::new_v4();
+
+        assert!(matches!(
+            env.bitvmx.get_zkp_execution_result(id).unwrap(),
+            OutgoingBitVMXApiMessages::ProofNotReady(response_id) if response_id == id
+        ));
+        env.bitvmx
+            .store
+            .set(StoreKey::ZKPStatus(id).get_key(), "FAILED", None)
+            .unwrap();
+        assert!(matches!(
+            env.bitvmx.get_zkp_execution_result(id).unwrap(),
+            OutgoingBitVMXApiMessages::ProofGenerationError(response_id, message)
+                if response_id == id && message == "FAILED"
+        ));
+        env.bitvmx
+            .store
+            .set(StoreKey::ZKPStatus(id).get_key(), "OK", None)
+            .unwrap();
+        assert!(
+            matches!(env.bitvmx.get_zkp_execution_result(id).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("proof is missing"))
+        );
+        env.bitvmx
+            .store
+            .set(StoreKey::ZKPProof(id).get_key(), vec![1_u8], None)
+            .unwrap();
+        assert!(
+            matches!(env.bitvmx.get_zkp_execution_result(id).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("journal is missing"))
+        );
+        env.bitvmx
+            .store
+            .set(StoreKey::ZKPJournal(id).get_key(), vec![2_u8], None)
+            .unwrap();
+        assert!(matches!(
+            env.bitvmx.get_zkp_execution_result(id).unwrap(),
+            OutgoingBitVMXApiMessages::ZKPResult(response_id, seal, journal)
+                if response_id == id && seal == vec![1] && journal == vec![2]
+        ));
+    }
+
+    #[test]
+    fn key_crypto_and_aggregated_key_responses_cover_success_and_validation() {
+        let mut env = TestBitVMXEnv::new("api-key-operations").unwrap();
+        let id = Uuid::new_v4();
+
+        assert!(matches!(
+            env.bitvmx.get_aggregated_pubkey(id).unwrap(),
+            OutgoingBitVMXApiMessages::AggregatedPubkeyNotReady(response_id) if response_id == id
+        ));
+        env.bitvmx
+            .program_context
+            .globals
+            .set_var(&id, FINAL_AGGREGATED_KEY, VariableTypes::Number(1))
+            .unwrap();
+        assert!(
+            matches!(env.bitvmx.get_aggregated_pubkey(id).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("Failed to resolve"))
+        );
+
+        let public_key = match env.bitvmx.get_pub_key(id, true).unwrap() {
+            OutgoingBitVMXApiMessages::PubKey(_, key) => key,
+            other => panic!("expected PubKey, got {other:?}"),
+        };
+        env.bitvmx
+            .program_context
+            .globals
+            .set_var(&id, FINAL_AGGREGATED_KEY, VariableTypes::PubKey(public_key))
+            .unwrap();
+        assert!(matches!(
+            env.bitvmx.get_aggregated_pubkey(id).unwrap(),
+            OutgoingBitVMXApiMessages::AggregatedPubkey(response_id, key)
+                if response_id == id && key == public_key
+        ));
+        assert!(
+            matches!(env.bitvmx.sign_message(id, vec![1], public_key).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("expected a 32-byte digest"))
+        );
+
+        let rsa_key = env.bitvmx.program_context.rsa_public_key.clone();
+        let encrypted = match env
+            .bitvmx
+            .encrypt_message(id, b"secret".to_vec(), rsa_key.clone())
+            .unwrap()
+        {
+            OutgoingBitVMXApiMessages::Encrypted(_, encrypted) => encrypted,
+            other => panic!("expected Encrypted, got {other:?}"),
+        };
+        assert!(matches!(
+            env.bitvmx.decrypt_message(id, encrypted, rsa_key).unwrap(),
+            OutgoingBitVMXApiMessages::Decrypted(response_id, plaintext)
+                if response_id == id && plaintext == b"secret"
+        ));
+    }
+
+    #[test]
+    fn missing_program_queries_return_not_found() {
+        let mut env = TestBitVMXEnv::new("api-missing-program").unwrap();
+        let id = Uuid::new_v4();
+
+        for request in [
+            IncomingBitVMXApiMessages::GetHashedMessage(id, "tx".to_string(), 0, 0),
+            IncomingBitVMXApiMessages::GetTransactionInfoByName(id, "tx".to_string()),
+            IncomingBitVMXApiMessages::GetProtocolVisualization(id),
+            IncomingBitVMXApiMessages::DispatchTransactionName(id, "tx".to_string()),
+        ] {
+            send_api(&mut env.bitvmx, request).unwrap();
+        }
+
+        assert!(api_replies(&mut env.bitvmx).iter().all(
+            |response| matches!(response, OutgoingBitVMXApiMessages::NotFound(response_id, _) if *response_id == id)
+        ));
+    }
+
+    #[test]
+    fn subscription_variants_are_forwarded_to_the_mock_without_replies() {
+        let mut env = TestBitVMXEnv::new("api-subscription-variants").unwrap();
+        let id = Uuid::new_v4();
+        let txid = dummy_transaction().compute_txid();
+        let filter = bitcoin_coordinator::OutputPatternFilter {
+            output_index: 2,
+            tag: vec![1, 2],
+            max_outputs: Some(3),
+        };
+
+        for request in [
+            IncomingBitVMXApiMessages::SubscribeToSpendingUTXO(id, txid, 4, Some(2)),
+            IncomingBitVMXApiMessages::SubscribeToOutputPattern(id, filter.clone(), Some(3)),
+            IncomingBitVMXApiMessages::SubscribeToRskPegin(id, Some(4)),
+        ] {
+            send_api(&mut env.bitvmx, request).unwrap();
+        }
+
+        let monitored = env.coordinator_mock().monitored();
+        assert_eq!(monitored.len(), 4); // NewBlock is registered during construction.
+        assert!(matches!(
+            &monitored[1],
+            TypesToMonitor::SpendingUTXOTransaction(monitored_txid, 4, _, Some(2))
+                if *monitored_txid == txid
+        ));
+        assert!(matches!(
+            &monitored[2],
+            TypesToMonitor::OutputPattern(monitored_filter, Some(3))
+                if monitored_filter == &filter
+        ));
+        assert!(matches!(
+            &monitored[3],
+            TypesToMonitor::OutputPattern(monitored_filter, Some(4))
+                if monitored_filter.output_index == 1 && monitored_filter.tag == RSK_PEGIN_TAG
+        ));
+        assert!(api_replies(&mut env.bitvmx).is_empty());
+    }
+
+    #[test]
+    fn transaction_and_spv_queries_use_the_staged_coordinator_status() {
+        let mut env = TestBitVMXEnv::new("api-transaction-status").unwrap();
+        let id = Uuid::new_v4();
+        let txid = dummy_transaction().compute_txid();
+        let status: bitcoin_coordinator::TransactionStatus =
+            serde_json::from_value(serde_json::json!({
+                "tx": null,
+                "block_info": null,
+                "confirmations": 0,
+                "status": "NotFound",
+            }))
+            .unwrap();
+        env.coordinator_mock()
+            .set_transaction_status(txid, status.clone());
+
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::GetTransaction(id, txid),
+        )
+        .unwrap();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::GetSPVProof(id, txid),
+        )
+        .unwrap();
+
+        let replies = api_replies(&mut env.bitvmx);
+        assert!(matches!(
+            &replies[0],
+            OutgoingBitVMXApiMessages::Transaction(response_id, response_status, None)
+                if *response_id == id && response_status == &status
+        ));
+        assert!(matches!(
+            &replies[1],
+            OutgoingBitVMXApiMessages::SPVProof(response_txid, None)
+                if *response_txid == txid
         ));
     }
 
