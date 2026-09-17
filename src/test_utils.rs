@@ -22,6 +22,7 @@ use storage_backend::storage::Storage;
 use storage_backend::storage_config::StorageConfig;
 use uuid::Uuid;
 
+use crate::bitvmx::BitVMX;
 use crate::config::Config;
 use crate::errors::BitVMXError;
 use crate::leader_broadcast::LeaderBroadcastHelper;
@@ -411,6 +412,42 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
     }
 }
 
+/// Unit-test environment for the complete [`BitVMX`] runtime, backed by a
+/// [`BitcoinCoordinatorMock`] and with all persistent state isolated.
+pub struct TestBitVMXEnv {
+    pub bitvmx: BitVMX<BitcoinCoordinatorMock>,
+    _dir: TestStorageDir,
+}
+
+impl TestBitVMXEnv {
+    pub fn new(prefix: &str) -> Result<Self, BitVMXError> {
+        let dir = TestStorageDir::new(prefix);
+        fs::create_dir_all(dir.path()).map_err(|_| BitVMXError::SerializationError)?;
+
+        let mut config = Config::new(Some("config/development.yaml".to_string()))?;
+        config.storage.path = format!("{}/storage.db", dir.path());
+        config.key_storage.path = format!("{}/keys.db", dir.path());
+        config.comms.storage_path = format!("{}/comms.db", dir.path());
+        config.broker.storage.path = format!("{}/broker.db", dir.path());
+
+        static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(25100);
+        config
+            .comms
+            .address
+            .set_port(NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed));
+        config.broker.port = NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed);
+
+        Ok(Self {
+            bitvmx: BitVMX::new_mock(config)?,
+            _dir: dir,
+        })
+    }
+
+    pub fn coordinator_mock(&self) -> &BitcoinCoordinatorMock {
+        self.bitvmx.coordinator_mock()
+    }
+}
+
 /// Unit-test environment providing a full `ProgramContext` backed by the
 /// [`BitcoinCoordinatorMock`]: real comms channel, key manager, globals,
 /// witness vars and broker channel (all on the [`TestCommsEnv`] temp storage),
@@ -549,6 +586,16 @@ mod tests {
             input: vec![],
             output: vec![],
         }
+    }
+
+    #[test]
+    fn test_bitvmx_env_uses_mock_and_registers_new_blocks() {
+        let env = TestBitVMXEnv::new("bitvmx-env").unwrap();
+        assert_eq!(env.coordinator_mock().monitored().len(), 1);
+        assert!(matches!(
+            env.coordinator_mock().monitored()[0],
+            TypesToMonitor::NewBlock
+        ));
     }
 
     #[test]

@@ -41,6 +41,7 @@ use bitvmx_job_dispatcher::dispatcher_job::ResultMessage;
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
 use key_manager::create_key_manager_from_config;
+use key_manager::key_manager::KeyManager;
 use key_manager::key_type::BitcoinKeyType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -64,9 +65,9 @@ pub enum TickOutcome {
     Stopping,
 }
 
-pub struct BitVMX {
+pub struct BitVMX<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     config: Config,
-    program_context: ProgramContext,
+    program_context: ProgramContext<BC>,
     store: Rc<Storage>,
     count: u32,
     message_queue: MessageQueue,
@@ -80,7 +81,7 @@ pub struct BitVMX {
     chain_synced: bool,
 }
 
-impl Drop for BitVMX {
+impl<BC: BitcoinCoordinatorApi> Drop for BitVMX<BC> {
     fn drop(&mut self) {
         self.program_context.broker_channel.close();
         sleep(Duration::from_millis(100));
@@ -136,16 +137,42 @@ fn print_version_info() {
     info!("Git tag: {}", env!("GIT_TAG"));
 }
 
-impl BitVMX {
+impl BitVMX<BitcoinCoordinator> {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
-        Self::new_with_wallet(config, true)
+        Self::new_with_coordinator_factory(config, true, |config, store, key_manager| {
+            Ok(BitcoinCoordinator::new_with_paths(
+                &config.bitcoin,
+                store,
+                key_manager,
+                config.coordinator_settings.clone(),
+            )?)
+        })
+    }
+}
+
+#[cfg(test)]
+impl BitVMX<crate::test_utils::BitcoinCoordinatorMock> {
+    /// Builds the complete runtime without a wallet or a Bitcoin node.
+    pub(crate) fn new_mock(config: Config) -> Result<Self, BitVMXError> {
+        Self::new_with_coordinator_factory(config, false, |_, _, _| {
+            Ok(crate::test_utils::BitcoinCoordinatorMock::new())
+        })
     }
 
-    pub fn new_without_wallet(config: Config) -> Result<Self, BitVMXError> {
-        Self::new_with_wallet(config, false)
+    pub(crate) fn coordinator_mock(&self) -> &crate::test_utils::BitcoinCoordinatorMock {
+        &self.program_context.bitcoin_coordinator
     }
+}
 
-    fn new_with_wallet(config: Config, wallet_enabled: bool) -> Result<Self, BitVMXError> {
+impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
+    fn new_with_coordinator_factory<F>(
+        config: Config,
+        wallet_enabled: bool,
+        factory: F,
+    ) -> Result<Self, BitVMXError>
+    where
+        F: FnOnce(&Config, Rc<Storage>, Rc<KeyManager>) -> Result<BC, BitVMXError>,
+    {
         print_version_info();
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_manager =
@@ -186,12 +213,7 @@ impl BitVMX {
             None
         };
 
-        let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
-            &config.bitcoin,
-            store.clone(),
-            key_manager.clone(),
-            config.coordinator_settings.clone(),
-        )?;
+        let bitcoin_coordinator = factory(&config, store.clone(), key_manager.clone())?;
         info!("Bitcoin coordinator initialized successfully");
 
         //Also the broker could be run independently if needed
@@ -1441,7 +1463,7 @@ impl BitVMX {
         Ok(())
     }
 
-    fn send_new_block_news<BC: BitcoinCoordinatorApi>(&self, context: &ProgramContext<BC>) -> bool {
+    fn send_new_block_news(&self, context: &ProgramContext<BC>) -> bool {
         context
             .globals
             .get_var(&CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS)
@@ -1477,6 +1499,8 @@ impl BitVMX {
 mod transaction_tests {
     use super::*;
     use crate::test_utils::TestStorageDir;
+
+    type BitVMX = super::BitVMX<BitcoinCoordinator>;
     use crate::types::IncomingBitVMXApiMessages;
     use storage_backend::error::StorageError;
 

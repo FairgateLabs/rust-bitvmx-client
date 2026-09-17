@@ -2,6 +2,7 @@ use super::{BitVMX, Context, RejectedInputSource, StoreKey};
 use crate::comms_allow_list;
 use crate::error_handling::is_fatal;
 use crate::errors::BitVMXError;
+use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
 use crate::program::protocols::protocol_handler::ProtocolHandler;
@@ -29,7 +30,7 @@ use storage_backend::storage::KeyValueStore;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-impl BitVMX {
+impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     fn add_new_program(&self, program_id: &Uuid) -> Result<(), BitVMXError> {
         let mut programs = self.get_programs()?;
 
@@ -1105,6 +1106,9 @@ impl BitVMX {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitcoin_coordinator::coordinator::BitcoinCoordinator;
+
+    type BitVMX = super::BitVMX<BitcoinCoordinator>;
 
     #[test]
     fn invalid_subscription_confirmation_threshold_is_an_api_error() {
