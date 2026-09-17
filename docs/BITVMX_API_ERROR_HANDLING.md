@@ -23,7 +23,7 @@ Result<Option<OutgoingBitVMXApiMessages>, BitVMXError>
 The meanings are:
 
 - `Ok(Some(response))`: the request completed with an API response, including expected request-level failures such as `ApiError`;
-- `Ok(None)`: the request completed successfully but has no immediate API response;
+- `Ok(None)`: the handler completed successfully and the request has no API reply; if the surrounding transaction commits, this is the operation's terminal success path;
 - `Err(error)`: processing did not complete and the error must propagate to the transaction boundary.
 
 After the complete match, the response is sent in one place:
@@ -275,15 +275,13 @@ and `docs/CHANGELOG.md` record the new shapes.
 
 ## No-response operations
 
-Several successful operations currently return `Ok(None)`, including variable updates, witness updates, subscriptions, and transaction dispatches.
+The lack of a reply from operations such as `SetVar`, `SetWitness`, and similar state-mutating commands is intentional. These operations do not have a request- or business-level failure after valid message decoding: under normal operation they succeed and commit without an acknowledgement.
 
-This may be intentional for asynchronous operations, but clients cannot distinguish successful acceptance from a missing response. Each operation should be documented as one of:
+If such an operation encounters a storage, system, or other rollback-worthy error, it returns `Err` instead of replying. The transaction then rolls back, leaving the incoming request available for reprocessing. If the error requires the server to stop, an operator fixes the underlying problem and restarts the server; the retained request is then processed again and should complete successfully.
 
-- synchronous with a response;
-- asynchronous with a later event;
-- fire-and-forget.
+Other `Ok(None)` operations may initiate asynchronous work, such as subscriptions or transaction dispatch. Their successful return means that the action was transactionally accepted, while any eventual result is delivered through the corresponding asynchronous event. Expected validation failures still produce a terminal response, and infrastructure failures propagate for rollback and retry.
 
-If acknowledgement is required, add a specific outgoing response rather than using a generic success string.
+Consequently, clients must not wait for a success acknowledgement from an operation whose API contract specifies no response. A response should be added only if that contract is deliberately changed to require acknowledgement.
 
 ## Logging guidance
 
