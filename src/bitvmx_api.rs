@@ -114,7 +114,14 @@ impl BitVMX {
 
     fn get_funding_address(&mut self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         debug!("Getting funding address uuid: {:?}", id);
-        match self.wallet.receive_address() {
+        let Some(wallet) = self.wallet.as_mut() else {
+            return Ok(OutgoingBitVMXApiMessages::ApiError(
+                id,
+                "Wallet not available".to_string(),
+            ));
+        };
+
+        match wallet.receive_address() {
             Ok(address) => Ok(OutgoingBitVMXApiMessages::FundingAddress(
                 id,
                 address.into_unchecked(),
@@ -131,12 +138,19 @@ impl BitVMX {
 
     fn get_funding_balance(&self, id: Uuid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         debug!("Getting funding balance uuid: {:?}", id);
-        if !self.wallet.is_ready {
+        let Some(wallet) = self.wallet.as_ref() else {
+            return Ok(OutgoingBitVMXApiMessages::ApiError(
+                id,
+                "Wallet not available".to_string(),
+            ));
+        };
+
+        if !wallet.is_ready {
             warn!("Wallet is not ready, to get funding balance uuid: {:?}", id);
             return Ok(OutgoingBitVMXApiMessages::WalletNotReady(id));
         }
 
-        let balance = self.wallet.balance();
+        let balance = wallet.balance();
         Ok(OutgoingBitVMXApiMessages::FundingBalance(
             id,
             balance.trusted_spendable().to_sat(),
@@ -151,29 +165,41 @@ impl BitVMX {
         fee_rate: Option<u64>,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         info!("Sending funds to {:?}", destination);
-        if !self.wallet.is_ready {
-            warn!("Wallet is not ready, to send funds uuid: {:?}", id);
-            return Ok(OutgoingBitVMXApiMessages::WalletNotReady(id));
-        }
-
-        let transaction = match self.wallet.create_tx(destination.clone(), fee_rate) {
-            Ok(transaction) => transaction,
-            Err(error) => {
-                error!(
-                    "Failed sending funds to {:?}. Error: {:?}",
-                    destination, error
-                );
-                return Ok(OutgoingBitVMXApiMessages::WalletError(
+        let transaction = {
+            let Some(wallet) = self.wallet.as_mut() else {
+                return Ok(OutgoingBitVMXApiMessages::ApiError(
                     id,
-                    error.to_string(),
+                    "Wallet not available".to_string(),
                 ));
+            };
+
+            if !wallet.is_ready {
+                warn!("Wallet is not ready, to send funds uuid: {:?}", id);
+                return Ok(OutgoingBitVMXApiMessages::WalletNotReady(id));
+            }
+
+            match wallet.create_tx(destination.clone(), fee_rate) {
+                Ok(transaction) => transaction,
+                Err(error) => {
+                    error!(
+                        "Failed sending funds to {:?}. Error: {:?}",
+                        destination, error
+                    );
+                    return Ok(OutgoingBitVMXApiMessages::WalletError(
+                        id,
+                        error.to_string(),
+                    ));
+                }
             }
         };
 
         let txid = transaction.compute_txid();
         // TODO: Is this confirmation threshold of 1 appropriate here? What about stuck_in_mempool_blocks?
         self.dispatch_transaction(from, id, transaction.clone(), Some(1), None)?;
-        self.wallet.update_with_tx(&transaction)?;
+        self.wallet
+            .as_mut()
+            .expect("wallet availability checked above")
+            .update_with_tx(&transaction)?;
 
         Ok(OutgoingBitVMXApiMessages::FundsSent(id, txid))
     }

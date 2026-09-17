@@ -72,7 +72,7 @@ pub struct BitVMX {
     message_queue: MessageQueue,
     coordinator_throttle: Throttle,
     bitvmx_throttle: Throttle,
-    wallet: Wallet,
+    wallet: Option<Wallet>,
     ping_helper: PingHelper,
     reporter: Reporter,
     shutdown: bool,
@@ -138,6 +138,14 @@ fn print_version_info() {
 
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
+        Self::new_with_wallet(config, true)
+    }
+
+    pub fn new_without_wallet(config: Config) -> Result<Self, BitVMXError> {
+        Self::new_with_wallet(config, false)
+    }
+
+    fn new_with_wallet(config: Config, wallet_enabled: bool) -> Result<Self, BitVMXError> {
         print_version_info();
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_manager =
@@ -162,16 +170,21 @@ impl BitVMX {
 
         info!("Comms broker node initialized successfully");
 
-        let wallet = Wallet::from_derive_keypair(
-            config.bitcoin.clone(),
-            config.wallet.clone(),
-            key_manager.clone(),
-            BitcoinKeyType::P2tr,
-            WALLET_INDEX,
-            Some(WALLET_CHANGE_INDEX),
-        )?;
-
-        info!("Wallet initialized successfully");
+        let wallet = if wallet_enabled {
+            let wallet = Wallet::from_derive_keypair(
+                config.bitcoin.clone(),
+                config.wallet.clone(),
+                key_manager.clone(),
+                BitcoinKeyType::P2tr,
+                WALLET_INDEX,
+                Some(WALLET_CHANGE_INDEX),
+            )?;
+            info!("Wallet initialized successfully");
+            Some(wallet)
+        } else {
+            info!("Wallet is disabled");
+            None
+        };
 
         let bitcoin_coordinator = BitcoinCoordinator::new_with_paths(
             &config.bitcoin,
@@ -673,7 +686,9 @@ impl BitVMX {
         let store = self.store.clone();
         let (ready, monitor_news, coordinator_news) = Self::run_transaction(&store, || {
             self.program_context.bitcoin_coordinator.tick()?;
-            self.wallet.tick()?;
+            if let Some(wallet) = self.wallet.as_mut() {
+                wallet.tick()?;
+            }
             if !self.program_context.bitcoin_coordinator.is_ready()? {
                 return Ok((false, Vec::new(), Vec::new()));
             }
@@ -789,8 +804,10 @@ impl BitVMX {
             }
             CoordinatorNews::DispatchError { txid, context } => {
                 error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
-                if let Some(wallet_tx) = self.wallet.get_wallet_tx(txid)? {
-                    self.wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
+                if let Some(wallet) = self.wallet.as_mut() {
+                    if let Some(wallet_tx) = wallet.get_wallet_tx(txid)? {
+                        wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
+                    }
                 }
                 self.reporter.coordinator_news(
                     Some(&context),
@@ -1414,8 +1431,12 @@ impl BitVMX {
     }
 
     pub fn sync_wallet(&mut self) -> Result<(), BitVMXError> {
+        let Some(wallet) = self.wallet.as_mut() else {
+            return Ok(());
+        };
+
         info!("Starting wallet sync...");
-        self.wallet.sync_wallet()?;
+        wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
     }

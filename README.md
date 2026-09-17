@@ -125,9 +125,9 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `GetFundingBalance(uuid)` | `FundingBalance(uuid, balance)` or `WalletNotReady(uuid)` or `WalletError(uuid, error)` | Get funding balance |
-| `GetFundingAddress(uuid)` | `FundingAddress(uuid, address)` or `WalletNotReady(uuid)` or `WalletError(uuid, error)` | Get funding address |
-| `SendFunds(uuid, destination, fee)` | `FundsSent(uuid, txid)` or `WalletNotReady(uuid)` or `WalletError(uuid, error)` | Send funds |
+| `GetFundingBalance(uuid)` | `FundingBalance(uuid, balance)`, `WalletNotReady(uuid)`, `WalletError(uuid, error)`, or `ApiError(uuid, error)` | Get funding balance; returns `ApiError` when the wallet is unavailable |
+| `GetFundingAddress(uuid)` | `FundingAddress(uuid, address)`, `WalletError(uuid, error)`, or `ApiError(uuid, error)` | Get funding address; returns `ApiError` when the wallet is unavailable |
+| `SendFunds(uuid, destination, fee)` | `FundsSent(uuid, txid)`, `WalletNotReady(uuid)`, `WalletError(uuid, error)`, or `ApiError(uuid, error)` | Send funds; returns `ApiError` when the wallet is unavailable |
 
 #### Key Management
 
