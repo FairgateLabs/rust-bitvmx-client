@@ -155,22 +155,9 @@ A backup may be initiated manually or conditionally through the API, and failure
 
 This differs deliberately from failures affecting the client's transactional state. The backup operation reports its own failure as a terminal result and must not be treated as evidence that the primary API transaction should be retried.
 
-### 1. Wallet error classification is deferred
+### 1. Wallet handling is deferred pending redesign
 
-Wallet calls have been moved into dedicated handlers, but wallet errors have intentionally not yet been classified.
-
-Current concerns:
-
-- `receive_address` converts every error into `WalletError`;
-- `create_tx` converts every error into `WalletError`;
-- storage-backed wallet failures may therefore be consumed instead of rolled back;
-- `update_with_tx` already propagates errors.
-
-Recommended direction:
-
-- add or use typed wallet error classification;
-- return `WalletError` for request/business failures such as invalid destinations or insufficient funds;
-- propagate wallet storage and system failures.
+The current wallet integration will be removed or redesigned. Its error classification and transaction behavior are therefore intentionally excluded from the current analysis, and no incremental wallet-specific changes are recommended here.
 
 ### 2. Permanent unhandled errors can block retries
 
@@ -208,6 +195,47 @@ Only Bitcoin JSON-RPC transport errors are currently classified as `BitcoinNodeU
 4. Classify non-transport Bitcoin RPC failures as terminal request rejection, retryable outage, or fatal node misconfiguration.
 5. Add API transaction tests proving that invalid subscription and dispatch thresholds, and unknown transaction names, consume their input, enqueue their response, and do not block the next request.
 6. Add tests proving that transient coordinator/storage failures retain the input for retry, while persistent corruption stops or dead-letters according to the chosen policy.
+
+### Transaction-boundary audit
+
+The API paths and their immediate dependencies were audited for state that is not covered by the shared `Storage` global transaction.
+
+#### Confirmed transactional paths
+
+The following production paths use the same shared `Storage` and are rolled back with the incoming API message:
+
+- globals, witnesses, programs, setup-engine state, and the program list;
+- broker service and peer sends, including prover jobs and verification-key requests, because they enqueue into the broker out queue;
+- Bitcoin coordinator transaction registration, funding registration, and monitor subscriptions;
+- the transaction monitor's pending-work flag and monitor records;
+- the staged portion of allow-list changes.
+
+Coordinator dispatch only registers work for a later coordinator tick; it does not broadcast a transaction from the API transaction. Coordinator fee and transaction-status RPC calls are external reads, not writes. API subscriptions use `search_in_mempool = false`, so they do not mutate the indexer's mempool watch list outside the shared transaction.
+
+#### Wallet excluded from this analysis
+
+The current wallet owns a separate BDK SQLite connection and is not covered by the shared `Storage` transaction. Wallet behavior is intentionally excluded from this audit because the wallet integration will be removed or redesigned. Its current transaction semantics should not constrain the replacement design.
+
+#### Key-manager index consumption is accepted by design
+
+`GetPubKey(new = true)` and `GetEvenPubKey` call `KeyManager::next_keypair` or `next_keypair_adjusted`. The key manager increments and commits its derivation index in its own key-store transaction before deriving and storing the key.
+
+A response-enqueue or shared-commit failure can therefore consume an index before the API request is retried. Retrying may return a different key and leave a skipped index. This is acknowledged and accepted by design: derivation indexes may be wasted, but they must never be reused. No coordination with the client's shared transaction is required for this behavior.
+
+Read-only signing/decryption/key lookup calls and RSA encryption do not persist key-manager state. Other key-manager persistence performed by setup steps remains in the key manager's transaction domain and must preserve its own replay-safety invariants.
+
+#### Other intentional or bounded exceptions
+
+- `Backup` writes an external backup destination and cannot be rolled back. This matches its documented terminal-response exception, but a failure to enqueue that response or commit the incoming-message removal may execute the backup again on retry. Backup destinations should therefore tolerate replacement or requests should be deduplicated by UUID.
+- `Shutdown` sets the live flag and closes both broker nodes before the shared transaction commits. There is no later fallible handler action, and commit failure is fatal, so the process will not continue with rolled-back storage and closed brokers. It is nevertheless deliberately non-transactional and should remain the final operation in its handler.
+- The live allow list remains the known ordered exception: its in-memory mutation happens after persistence and response enqueue. A final commit failure can still leave live and durable values different, but commit failure is fatal and restart reloads the durable value.
+- The production coordinator and monitor are storage-backed as described above. The `BitcoinCoordinatorApi` trait itself cannot enforce that property, so alternate implementations must not perform irreversible actions from API-facing methods unless they provide equivalent idempotency.
+
+#### Recommended tests
+
+1. Add duplicate-execution tests for `Backup`.
+2. Retain the fatal-commit invariant tests for `Shutdown` and allow-list mutation.
+3. Verify that setup-step key-manager persistence preserves its documented replay-safety invariants.
 
 ## Transaction and delivery behavior
 
@@ -301,12 +329,11 @@ This avoids duplicate reports while preserving the original error source chain f
 
 ## Recommended next steps
 
-1. Add wallet error classification and propagate wallet storage failures.
-2. Audit every remaining `Err` path to ensure permanent request errors cannot poison the retry queue.
-3. Audit in-memory mutations and any dependency calls that may bypass the shared transactional storage.
-4. Verify idempotency of broker consumers because transport delivery is at least once.
-5. Update the README API response table for all newly documented `ApiError` outcomes.
-6. Add tests covering:
+1. Audit every remaining `Err` path to ensure permanent request errors cannot poison the retry queue.
+2. Treat the transaction-boundary audit as complete; wallet behavior is excluded pending redesign, and key-manager index consumption is accepted by design.
+3. Verify idempotency of broker consumers because transport delivery is at least once.
+4. Update the README API response table for all newly documented `ApiError` outcomes.
+5. Add tests covering:
    - request errors atomically consuming the input and enqueuing the response;
    - storage failures rolling back both the incoming request and outgoing response;
    - Bitcoin RPC unavailability rolling back for retry;
