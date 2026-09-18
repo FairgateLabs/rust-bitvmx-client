@@ -13,11 +13,18 @@ BitVMX operators. It focuses on:
 - the TLS identity and allow-list enforcement provided by the sibling
   `rust-bitvmx-broker` repository.
 
-The central requirement is to distinguish between:
+Peer protocol messages are meaningful only while the program is in its setup
+phase. Once setup is complete, all subsequently delivered peer protocol
+messages are stale and must be consumed without further protocol processing.
+
+During setup, the central requirement is to distinguish between:
 
 1. a message that is legitimate but cannot be processed yet;
-2. a message that can never become legitimate and must be discarded;
-3. a local or infrastructure failure that must propagate and roll back.
+2. a repeated or otherwise redundant delivery caused by the broker's
+   at-least-once semantics, which must be consumed idempotently;
+3. a non-replay peer fault that makes setup untrustworthy and must fail the
+   program setup and notify L2;
+4. a local or infrastructure failure that must propagate and roll back.
 
 This follows the same general principle as
 [`BITVMX_API_ERROR_HANDLING.md`](BITVMX_API_ERROR_HANDLING.md): expected input
@@ -124,7 +131,8 @@ A proposed disposition is:
 pub enum InboundMessageDisposition {
     Processed,
     RetryLater(RetryReason),
-    Discard(DiscardReason),
+    DiscardNoOp(NoOpReason),
+    FailSetup(PeerSetupFault),
 }
 ```
 
@@ -133,14 +141,19 @@ The meanings are:
 - `Processed`: the message was accepted and applied;
 - `RetryLater`: the unchanged message may become processable after temporary
   prerequisites arrive;
-- `Discard`: the message is permanently invalid, unauthorized, stale, or
-  redundant and must be consumed without retry;
+- `DiscardNoOp`: processing the message cannot change program state because the
+  participant contribution was already accepted, or because setup is already
+  complete or failed; it must be consumed idempotently;
+- `FailSetup`: an authenticated setup participant supplied a non-replay invalid
+  message; setup must enter its terminal failed state and L2 must be notified;
 - `Err`: local processing did not complete and the enclosing transaction must
   roll back.
 
-A first incremental implementation may add a reason-free `Discarded` variant
-to the existing `MessageDisposition`. Typed reasons are preferable because they
-make policy, logging, and tests explicit.
+A generic `Discard` is too broad for setup traffic because it would hide the
+important distinction between harmless no-op delivery and a protocol fault.
+Inputs that cannot be associated safely with a program, such as an undecodable
+outer frame, may still be dropped at the transport boundary because there is no
+trustworthy setup context to fail.
 
 ## Error categories
 
@@ -157,31 +170,64 @@ Use `RetryLater` only when waiting can make the same message processable:
 Retryable messages must use the bounded retry queue. Retry state must survive
 requeueing, and only retryable conditions should consume retry attempts.
 
-### Permanently rejected peer messages
+### Harmless repeated, redundant, and stale messages
 
-Use `Discard` when waiting cannot make the message valid:
+Use `DiscardNoOp` when processing the message cannot alter program state:
 
-- malformed outer encoding or JSON structure;
-- unsupported version or message type;
+- that participant's contribution for the relevant setup step was already
+  accepted;
+- the relevant leader envelope or embedded participant contribution was already
+  handled;
+- setup is already complete, so all peer protocol messages are stale;
+- setup is already failed, so later deliveries cannot change its terminal
+  state.
+
+The implementation does not need to prove byte-for-byte replay identity when
+that is not straightforward. If setup state already records the participant as
+completed for the relevant step and another message from that participant would
+not be applied, consume it as `DiscardNoOp`, even if its payload differs. This
+preserves idempotency without adding message hashes or replay records to
+storage.
+
+The no-op decision must happen before parsing or validating payload portions
+that are no longer relevant. It logs at debug or info level and commits
+consumption of the broker input. It must not consume retry attempts, mutate the
+program, or notify L2 of another setup failure.
+
+### Peer faults that fail setup
+
+During active setup, use `FailSetup` when an expected participant whose
+contribution is still pending submits a message that cannot become valid later:
+
+- unsupported version or message type in an otherwise attributable message;
 - malformed RSA signature encoding;
 - RSA signature mismatch;
 - malformed verification-key announcement;
 - verification-key fingerprint mismatch;
-- authenticated sender is not a participant in the program;
-- a broadcast sender is not the configured leader;
-- an embedded original sender is not a participant;
+- a participant sends a leader-only broadcast but is not the configured
+  leader;
 - invalid embedded original signature;
+- an embedded sender is not valid for the program;
 - embedded message type is not permitted;
 - malformed or cryptographically invalid setup contribution;
-- duplicate contribution;
-- stale contribution for an already completed step.
+- another authenticated participant protocol violation makes setup state
+  untrustworthy.
 
-Discarding means logging the rejection and returning success to the enclosing
-transaction so the broker input is consumed. It must not mean propagating an
-error that restores the same deterministic failure to the front of the queue.
+`FailSetup` must consume the offending event, persist the program's terminal
+failed state, and enqueue the existing setup-failure notification to L2. It
+must not propagate the peer-validation error through `run_transaction`, because
+that would replay the same deterministic failure forever.
 
-A discard may also produce a scoped peer-fault record or metric. Such
-observability must not turn the rejection into a node-level processing error.
+An authenticated sender that is not a participant should normally be rejected
+at the authorization boundary without allowing it to fail somebody else's
+program. This prevents an unrelated allow-listed peer from causing a setup
+denial of service. The rejection should be logged and consumed. If project
+policy requires reporting such attempts, use a separate security event rather
+than a program setup failure.
+
+Completely malformed outer input that cannot be associated reliably with a
+program or participant is likewise consumed at the transport boundary. There
+is no trustworthy program context to mark failed.
 
 ### Local and infrastructure failures
 
@@ -211,8 +257,11 @@ Because comms processing is transactional, propagation restores the invalid
 input. The same bad signature can then be retried indefinitely and repeatedly
 reported as a node error.
 
-Invalid signatures are authenticated peer faults and should produce `Discard`,
-not `Err`.
+During active setup, an invalid signature from an expected participant whose
+contribution is still pending should produce `FailSetup`, not `Err`. The event
+is consumed, setup is marked failed, and L2 is notified. If that participant's
+contribution was already accepted and another message cannot alter state, it is
+instead `DiscardNoOp` without requiring exact replay comparison.
 
 ### `Broadcasted` envelopes bypass normal signature verification
 
@@ -276,9 +325,8 @@ Several APIs encode different meanings as `bool`:
 - setup-step `verify_received` uses `false` for data that did not verify;
 - setup-step `can_advance` uses `false` for a temporary not-ready state.
 
-These meanings must not share one control-flow representation. In particular,
-an invalid contribution and an absent key require opposite handling: discard
-versus retry.
+These meanings must not share one control-flow representation. In particular, an invalid contribution and an absent key require opposite
+handling: fail setup versus retry.
 
 ### Broadcast processing conflates temporary and permanent failures
 
@@ -294,12 +342,16 @@ originals being silently dropped are stale relative to the current source. The
 current implementation queues such originals, and the test documentation should
 be updated.
 
-### Deterministic duplicates are retried
+### Redundant deliveries are retried
 
 Some duplicate or already-processed setup contributions return `RetryLater`.
-These messages cannot become useful by waiting. They consume retry attempts and
-may eventually trigger setup failure even though they should simply be consumed
-as duplicates.
+Once setup state records that participant's contribution as accepted, another
+message for that same participant and step cannot become useful by waiting and
+should be consumed as `DiscardNoOp`.
+
+No byte-for-byte comparison or persisted message fingerprint is required. The
+important property is that the repeated message cannot be applied or mutate the
+program.
 
 ### `InvalidMessage` is too broad
 
@@ -307,9 +359,10 @@ as duplicates.
 invalid setup contributions, corrupt persisted state, local invariant failures,
 and some lookup failures.
 
-It is therefore unsafe to classify every `InvalidMessage` globally as
-Discard. Classification must be explicit at the peer-input boundary, using
-typed outcomes or dedicated narrow errors rather than string matching.
+It is therefore unsafe to classify every `InvalidMessage` globally as a replay,
+setup fault, or infrastructure failure. Classification must be explicit at the
+peer-input boundary, using typed outcomes or dedicated narrow errors rather
+than string matching.
 
 ## Authentication outcome
 
@@ -335,6 +388,10 @@ Expected mappings are:
 - malformed signature or mismatch: `Rejected`;
 - storage or key-manager failure: `Err`.
 
+The caller maps `Rejected` to `FailSetup` only after establishing that the
+message is attributable to an expected participant in an actively setting-up
+program. This prevents unrelated allow-listed peers from failing a program.
+
 This also allows key retrieval and signature verification to be performed once
 rather than through overlapping helper calls.
 
@@ -344,27 +401,49 @@ rather than through overlapping helper calls.
 
 ### 1. Decode the outer envelope
 
-- malformed input: `Discard`;
+- completely undecodable input with no trustworthy program context: consume at
+  the transport boundary;
+- decodable program and sender context followed by malformed setup content:
+  classify after the lifecycle and participant checks, normally as
+  `FailSetup`;
 - local/system failure: `Err`.
 
-Pure decoding must happen before effectful state changes.
+Pure decoding must happen before effectful state changes. Where possible,
+decoding should preserve enough trusted envelope context to attribute a
+malformed setup payload without treating arbitrary bytes as a program fault.
 
-### 2. Load the program and resolve the authenticated sender
+### 2. Load the program and apply the lifecycle gate
 
 - program may legitimately appear later: bounded `RetryLater`;
-- sender is not a program participant: `Discard`;
+- setup complete or already failed: `DiscardNoOp` without further protocol
+  processing;
+- setup active: continue;
 - local program-state read or deserialization failure: `Err`.
+
+Then resolve the authenticated sender and check whether the message can still
+change setup state:
+
+- sender is a program participant with a pending contribution: continue;
+- sender's relevant direct contribution was already accepted: `DiscardNoOp`
+  before unnecessary payload validation;
+- sender is not a participant: consume and log as an unauthorized attempt, but
+  do not let it fail another program;
+- local lookup/storage failure: `Err`.
 
 ### 3. Authenticate the application message
 
 For messages requiring application signatures:
 
 - key absent: request the key and return `RetryLater`;
-- invalid signature: `Discard`;
+- invalid signature from an expected active-setup participant: `FailSetup`;
 - valid signature: continue;
 - storage/key-manager failure: `Err`.
 
-This stage should include `Broadcasted` envelopes.
+This stage should include `Broadcasted` envelopes. A broadcast cannot be
+classified as a no-op merely because the leader's own contribution was already
+accepted: it may carry still-pending contributions from other participants. A
+broadcast is a no-op only when setup is terminal or every relevant embedded
+contribution is already represented in setup state.
 
 ### 4. Handle verification bootstrap messages
 
@@ -381,22 +460,37 @@ but still validate program membership and payload structure.
 
 ### 5. Enforce message-specific authorization
 
-- `Broadcasted` must come from the configured leader;
-- regular setup messages must come from participants;
-- unexpected message kinds or roles are discarded.
+- `Broadcasted` from the configured leader: continue;
+- `Broadcasted` from another expected participant: `FailSetup`;
+- regular setup messages from participants: continue;
+- traffic from a non-participant: consume as an unauthorized attempt without
+  failing the program;
+- unexpected kind or role from an expected participant: `FailSetup`.
 
 ### 6. Validate and process the payload
 
 - temporary ordering/readiness issue: `RetryLater`;
-- malformed or cryptographically invalid peer contribution: `Discard`;
+- delivery that cannot change already accepted state: `DiscardNoOp`;
+- malformed or cryptographically invalid contribution from an
+  expected participant: `FailSetup`;
 - local/system failure: `Err`.
 
 ### 7. Apply the disposition centrally
 
 - `Processed`: commit;
-- `Discard`: log and commit;
+- `DiscardNoOp`: log as idempotent/stale handling and commit;
 - `RetryLater`: enqueue with preserved bounded retry state and commit;
+- `FailSetup`: persist terminal setup failure, enqueue the L2 notification, and
+  consume the offending input;
 - `Err`: roll back.
+
+The setup-failure transition and L2 notification should be transactional with
+each other. If existing setup processing has already staged mutations that must
+be rolled back before recording failure, retain the existing two-phase
+`SetupAttemptFailed` settlement pattern: roll back the failed attempt, then use
+a separate transaction to persist `ProgramState::Failed` and enqueue the L2
+notification. The restored offending input is harmless only if the failed-state
+lifecycle gate consumes it on its next delivery.
 
 ## Leader-broadcast processing
 
@@ -409,26 +503,35 @@ For each `OriginalMessage`:
 2. confirm the embedded type is allowed and agrees with the envelope type;
 3. retrieve the claimed sender's application verification key;
 4. defer if the key is missing;
-5. discard if the original signature or structure is invalid;
-6. queue or process if valid;
-7. propagate only local or infrastructure failures.
+5. consume it idempotently if that participant's relevant contribution was
+   already accepted and the message cannot alter state;
+6. fail setup if its signature, structure, or content is invalid while the
+   contribution is still pending;
+7. queue or process it if valid;
+8. propagate only local or infrastructure failures.
 
 Embedded `VerificationKey`, `VerificationKeyRequest`, and `Broadcasted` message
 types should not be accepted as normal originals.
 
 ### Independent versus atomic policy
 
-The recommended policy is to process embedded originals independently:
+The recommended policy is to process embedded originals independently only for
+successful and temporarily deferred contributions:
 
 - valid originals progress;
 - missing-key originals are deferred;
-- invalid originals are discarded.
+- repeated originals that cannot alter accepted state are consumed
+  idempotently without exact content comparison;
+- any non-replay invalid original in an active setup fails setup and triggers
+  the L2 notification.
 
-This prevents one bad contribution from blocking valid siblings.
+Valid and temporarily deferred originals may be handled independently, but a
+single invalid original makes the overall setup untrustworthy and terminal.
 
 If protocol security requires all-or-nothing acceptance, that policy must be
-explicitly documented. Even in that model, a permanently invalid broadcast
-must be consumed as `Discard`, not propagated and retried forever.
+explicitly documented. In either model, an invalid participant contribution
+must become a terminal setup failure rather than a propagated error that is
+retried forever.
 
 ### Retry accounting
 
@@ -452,6 +555,7 @@ Use an explicit result such as:
 pub enum SetupMessageOutcome {
     Accepted,
     NotReady(SetupRetryReason),
+    NoOp(NoOpReason),
     Rejected(SetupRejectReason),
 }
 ```
@@ -460,7 +564,8 @@ pub enum SetupMessageOutcome {
 
 - `Accepted`: store data and mark the participant complete;
 - `NotReady`: return `RetryLater`;
-- `Rejected`: return `Discard`;
+- `NoOp`: return `DiscardNoOp`;
+- `Rejected`: return `FailSetup`;
 - `Err`: propagate local or infrastructure failures.
 
 The setup steps requiring audit include:
@@ -472,52 +577,46 @@ The setup steps requiring audit include:
 - related aggregated-key processing.
 
 Malformed values, bad proofs, inconsistent declarations, and invalid
-cryptographic contributions are rejections. Missing earlier state and genuine
-step-order races are retryable. Storage failures and local invariant corruption
+cryptographic contributions are setup-failing rejections while the
+participant's contribution is pending. Missing earlier state and genuine
+step-order races are retryable. Messages that cannot alter already accepted
+state are harmless no-ops. Storage failures and local invariant corruption
 remain errors.
 
-A rejected peer message should not automatically become
-`SetupAttemptFailed`. Whether repeated authenticated peer faults should produce
-a separate terminal program-failure policy is a protocol decision, but it must
-not be implemented by rolling back and retrying the same invalid input.
+A rejected message attributable to an expected participant during active setup
+should use the existing setup-failure machinery and notify L2. It must not be
+implemented by repeatedly rolling back the same invalid input.
 
-## Peer-fault observability
+## Logging without persistent observability state
 
-Since the broker authenticates the immediate sender, discard logs can safely
-attribute direct faults to that fingerprint.
+No replay, rejection, peer-fault, audit, or observability records should be
+added to the database. In particular, the implementation should not persist
+message hashes merely to distinguish exact replays.
 
-A useful structure is:
+Use normal `tracing` logs for diagnostics. For embedded originals, logs should
+distinguish the authenticated forwarding leader from the claimed original
+sender and state whether rejection happened before or after original-signature
+verification.
 
-```rust
-pub struct PeerMessageFault {
-    pub authenticated_peer: PubkHash,
-    pub program_id: Option<Uuid>,
-    pub message_type: Option<CommsMessageType>,
-    pub reason: PeerMessageFaultReason,
-}
-```
-
-For embedded originals, logs should distinguish:
-
-- the authenticated forwarding leader;
-- the claimed original sender;
-- whether rejection occurred before or after original-signature verification.
-
-Peer faults may be counted or reported through a dedicated scoped mechanism.
-They should not be reported as generic node-level nonfatal errors.
+The only durable writes associated with a peer fault are protocol state that is
+already required by behavior: the terminal failed program state and the broker
+outbox entry used to notify L2. The L2 notification is a protocol action, not an
+observability record. Peer faults should not additionally generate generic
+node-level nonfatal reports.
 
 ## File-by-file implementation plan
 
 ### `src/types/mod.rs`
 
-Extend `MessageDisposition` with `Discard`, preferably with typed retry and
-discard reasons.
+Extend `MessageDisposition` with `DiscardNoOp` and `FailSetup`, with typed
+retry, no-op, and peer-fault reasons.
 
 ### `src/signature_verifier.rs`
 
 - introduce `AuthenticationOutcome`;
 - represent missing keys as a retry outcome rather than a general error;
-- represent malformed or invalid signatures as rejection outcomes;
+- represent malformed or invalid signatures as rejection outcomes which the
+  active-setup boundary maps to `FailSetup`;
 - preserve storage and key-manager failures as `Err`;
 - centralize key-request behavior;
 - integrate or remove the currently separate
@@ -531,7 +630,11 @@ discard reasons.
 - resolve the sender against program participants;
 - confirm the broadcast sender is the configured leader;
 - apply message dispositions centrally;
-- consume rejected peer input;
+- discard all peer protocol messages once setup is complete or failed;
+- consume repeated messages that cannot alter state idempotently, without
+  storing replay fingerprints;
+- turn attributable non-replay validation failures into terminal setup failure
+  and L2 notification;
 - queue only genuinely retryable messages;
 - preserve bounded retry state.
 
@@ -540,8 +643,10 @@ discard reasons.
 - return explicit per-original outcomes;
 - validate embedded senders against program participants;
 - validate embedded message types;
-- distinguish missing keys from invalid signatures;
-- discard invalid peer content without propagating it;
+- distinguish missing keys, state-level no-op deliveries, and invalid
+  signatures;
+- map invalid active-setup participant content to terminal setup failure without
+  propagating the validation error;
 - preserve storage errors as `Err`;
 - implement and document the independent or atomic policy;
 - avoid resetting retry budgets.
@@ -554,16 +659,20 @@ outcome.
 ### `src/program/setup/setup_engine.rs`
 
 - reserve retry for genuine readiness conditions;
-- discard deterministic invalid data;
-- discard duplicate and stale contributions;
-- prevent peer-validation failures from being converted into generic setup
-  transaction failures.
+- detect from setup state when another delivery for a participant cannot alter
+  the program;
+- consume those redundant deliveries and post-setup messages idempotently;
+- classify invalid pending participant contributions as terminal setup
+  failures;
+- route those failures through the existing setup-failure and L2 notification
+  mechanism rather than generic transaction errors.
 
 ### `src/message_queue.rs`
 
 - add a clear API for deferring an existing message while preserving retry
   state;
-- optionally persist retry reasons;
+- keep retry reasons in control flow and logs rather than adding observability
+  records to storage;
 - increment attempts only for retryable conditions;
 - support deduplication or throttling of verification-key requests.
 
@@ -596,34 +705,44 @@ classification still need improvement.
 
 1. A missing verification key queues the message, requests the key, and later
    permits processing.
-2. An invalid signature is consumed and is not queued.
-3. A malformed payload is consumed and is not queued.
-4. An allow-listed but non-participant sender is discarded.
+2. An invalid signature from an expected participant fails active setup,
+   notifies L2, and is not queued.
+3. A malformed attributable payload fails active setup and is not retried.
+4. An allow-listed but non-participant sender is consumed without being able to
+   fail another program.
 5. A storage failure during verification rolls back input consumption.
-6. A duplicate contribution is discarded without consuming retry attempts.
+6. Once a participant contribution is accepted, another message for that
+   participant and step is consumed without exact comparison, retry attempts,
+   mutation, or another L2 failure notification.
+7. Once setup completes, all peer protocol messages are consumed without
+   changing program state.
 
 ### Verification-key messages
 
 1. A valid announcement whose fingerprint matches the TLS-authenticated sender
    is stored.
-2. A fingerprint mismatch is discarded and not stored.
-3. A malformed announcement is discarded.
+2. A fingerprint mismatch from an expected active-setup participant fails
+   setup and is not stored.
+3. A malformed attributable announcement fails setup.
 4. A verification-key request is accepted only from a participant in the
    referenced program.
 5. A storage failure while storing a valid key propagates and rolls back.
-6. If self-signature verification is retained, an invalid self-signature is
-   discarded.
+6. If self-signature verification is retained, an invalid self-signature from
+   an expected active-setup participant fails setup.
 
 ### Broadcast messages
 
 1. A broadcast is accepted only from the configured leader.
-2. An allow-listed participant that is not the leader cannot send a broadcast.
+2. An allow-listed setup participant that is not the leader cannot send a
+   broadcast; the attempt fails setup.
 3. The outer application signature is verified if that defense-in-depth policy
    is retained.
-4. A malformed envelope is consumed.
+4. A malformed envelope attributable to the expected leader fails setup, while
+   a completely undecodable frame is consumed at the transport boundary.
 5. A missing embedded key defers the original.
-6. An invalid embedded signature is discarded.
-7. A leader cannot forge an embedded original from another participant.
+6. An invalid embedded signature fails active setup and notifies L2.
+7. A leader cannot forge an embedded original from another participant; the
+   attempt fails setup.
 8. A mixed broadcast handles valid, deferred, and invalid originals according
    to the documented policy.
 9. A queue or storage failure rolls back all staged queue changes.
@@ -633,34 +752,49 @@ classification still need improvement.
 
 Tests should verify both the handler result and storage effects:
 
-- terminal rejection removes the broker inbox item;
+- a repeated message that cannot alter accepted state removes the broker inbox
+  item without changing setup state or adding a replay record;
+- post-setup peer traffic is consumed as stale;
 - retryable input atomically removes the inbox item and adds a pending entry;
+- an attributable participant fault results in persisted terminal setup failure
+  and an L2 notification without indefinite redelivery;
+- an unrelated allow-listed peer cannot fail another program;
 - infrastructure failure leaves the inbox item available for retry;
-- rejected peer input does not generate a generic node-level error report;
+- peer faults do not generate a generic node-level error report in place of the
+  scoped setup-failure notification;
 - retry exhaustion follows the explicit setup-failure policy.
 
 ## Recommended implementation order
 
 1. Introduce explicit authentication outcomes.
-2. Add `Discard` to peer-message disposition and centralize its handling.
-3. Convert direct malformed/signature failures from `Err` to `Discard`.
-4. Enforce participant and leader authorization using the TLS-authenticated
+2. Add `DiscardNoOp` and `FailSetup` to peer-message disposition and
+   centralize their handling.
+3. Add the program lifecycle gate so peer messages are processed only during
+   setup.
+4. Convert attributable malformed/signature failures from generic `Err` into
+   terminal setup failure while pending, while redundant no-op deliveries
+   remain harmless.
+5. Enforce participant and leader authorization using the TLS-authenticated
    sender identifier.
-5. Bring the outer broadcast path under the normal authentication pipeline.
-6. Refactor embedded-original processing to distinguish verified, missing-key,
-   rejected, and system-error outcomes.
-7. Preserve retry state and deduplicate key requests.
-8. Refactor setup-step boolean verification results.
-9. Add broker-integrated and transaction-level tests.
-10. Update stale reliability documentation and test comments.
+6. Bring the outer broadcast path under the normal authentication pipeline.
+7. Refactor embedded-original processing to distinguish verified, missing-key,
+   state-level no-op, setup-failing rejection, and system-error outcomes.
+8. Preserve retry state and deduplicate key requests.
+9. Refactor setup-step boolean verification results and identify redundant
+   messages from existing setup state without persistent replay tracking.
+10. Add broker-integrated and transaction-level tests.
+11. Update stale reliability documentation and test comments.
 
 ## Core invariant
 
 The intended invariant is:
 
 > TLS and the allow list establish which permitted network peer submitted a
-> message. Program authorization determines whether that authenticated peer may
-> perform the requested action. Application validation determines whether the
-> message is legitimate. A missing temporary prerequisite causes bounded retry;
-> invalid data from an authenticated peer is consumed as a discardable peer
-> fault; and only local or infrastructure failures propagate for rollback.
+> message. Peer protocol messages are processed only during setup. A repeated
+> delivery that cannot alter accepted state is consumed idempotently without
+> persistent replay tracking, and a temporary prerequisite
+> causes bounded retry. Any other invalid contribution attributable to an
+> expected setup participant terminates setup and notifies L2 without indefinite
+> message redelivery. After setup completes or fails, all further peer protocol
+> messages are stale. Only local or infrastructure failures propagate for
+> rollback.
