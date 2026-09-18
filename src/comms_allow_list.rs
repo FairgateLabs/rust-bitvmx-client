@@ -18,7 +18,7 @@ use tracing::{info, warn};
 
 use crate::errors::BitVMXError;
 
-const STORAGE_KEY: &str = "comms/allow_list";
+const STORAGE_KEY: &str = "bitvmx/comms/allow_list";
 
 /// Snapshot of the comms allow list as configured through the API.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -55,12 +55,12 @@ pub struct Program {
 impl Program {
     /// Returns the storage key for a program.
     fn key_program(program_id: &Uuid) -> String {
-        format!("program/{program_id}")
+        format!("bitvmx/program/{program_id}")
     }
 
     /// Returns the storage key for a program's separately serialized state.
     fn key_program_state(program_id: &Uuid) -> String {
-        format!("program/{program_id}/state")
+        format!("bitvmx/program/{program_id}/state")
     }
 
     /// Sends SetupCompleted to the L2 channel.

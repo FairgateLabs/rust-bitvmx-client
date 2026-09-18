@@ -17,17 +17,17 @@ impl Globals {
     }
 
     pub fn contains_var(&self, uuid: &Uuid, key: &str) -> Result<bool, BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
+        let key = format!("bitvmx/var/{}/{}", uuid, key);
         Ok(self.storage.has_key(&key, None)?)
     }
 
     pub fn set_var(&self, uuid: &Uuid, key: &str, value: VariableTypes) -> Result<(), BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
+        let key = format!("bitvmx/var/{}/{}", uuid, key);
         Ok(self.storage.set(&key, value, None)?)
     }
 
     pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<Option<VariableTypes>, BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
+        let key = format!("bitvmx/var/{}/{}", uuid, key);
         let value: Option<VariableTypes> = self.storage.get(&key, None)?;
         Ok(value)
     }
@@ -44,7 +44,7 @@ impl Globals {
     }
 
     pub fn unset_var(&self, uuid: &Uuid, key: &str) -> Result<(), BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
+        let key = format!("bitvmx/var/{}/{}", uuid, key);
         Ok(self.storage.remove(&key, None)?)
     }
 }
@@ -64,12 +64,12 @@ impl WitnessVars {
         key: &str,
         value: WitnessTypes,
     ) -> Result<(), BitVMXError> {
-        let key = format!("{}:witness:{}", uuid, key);
+        let key = format!("bitvmx/witness/{}/{}", uuid, key);
         Ok(self.storage.set(&key, value, None)?)
     }
 
     pub fn get_witness(&self, uuid: &Uuid, key: &str) -> Result<Option<WitnessTypes>, BitVMXError> {
-        let key = format!("{}:witness:{}", uuid, key);
+        let key = format!("bitvmx/witness/{}/{}", uuid, key);
         let value = self.storage.get(&key, None)?;
         Ok(value)
     }

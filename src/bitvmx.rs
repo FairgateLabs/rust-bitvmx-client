@@ -102,7 +102,7 @@ enum StoreKey {
 impl StoreKey {
     fn get_key(&self) -> String {
         match self {
-            StoreKey::Programs => "bitvmx/programs/all".to_string(),
+            StoreKey::Programs => "bitvmx/program/list".to_string(),
             StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
             StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
             StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),

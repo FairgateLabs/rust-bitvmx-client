@@ -127,19 +127,25 @@ impl OriginalMessage {
 /// Helper function to generate storage key prefix for original messages
 /// Used to iterate over all messages for a given context and message type
 fn get_original_messages_prefix(context_id: &Uuid, msg_type: CommsMessageType) -> String {
-    format!("bitvmx/original_messages/{}/{:?}/", context_id, msg_type)
+    format!(
+        "bitvmx/original_message/{}/{}/",
+        context_id,
+        msg_type.as_str()
+    )
 }
 
 /// Helper function to generate storage key for a specific original message
-/// Format: bitvmx/original_messages/{context_id}/{msg_type}/{pub_key_hash}
+/// Format: bitvmx/original_message/{context_id}/{msg_type}/{pub_key_hash}
 fn get_original_message_key(
     context_id: &Uuid,
     msg_type: CommsMessageType,
     pub_key_hash: &PubkHash,
 ) -> String {
     format!(
-        "bitvmx/original_messages/{}/{:?}/{}",
-        context_id, msg_type, pub_key_hash
+        "bitvmx/original_message/{}/{}/{}",
+        context_id,
+        msg_type.as_str(),
+        pub_key_hash
     )
 }
 
