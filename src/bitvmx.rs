@@ -52,7 +52,10 @@ use serde_json::Value;
 use std::str::FromStr;
 use std::time::Instant;
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::{
+    key::StorageKey,
+    storage::{KeyValueStore, Storage},
+};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -100,13 +103,23 @@ enum StoreKey {
 }
 
 impl StoreKey {
-    fn get_key(&self) -> String {
+    fn get_key(&self) -> StorageKey {
+        fn zkp_key<'a>(id: &Uuid, tail: impl IntoIterator<Item = &'a str>) -> StorageKey {
+            let id_str = id.to_string();
+            StorageKey::new(
+                ["bitvmx", "zkp", id_str.as_str()]
+                    .into_iter()
+                    .map(str::to_string)
+                    .chain(tail.into_iter().map(str::to_string)),
+            )
+        }
+
         match self {
-            StoreKey::Programs => "bitvmx/program/list".to_string(),
-            StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
-            StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
-            StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
-            StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
+            StoreKey::Programs => StorageKey::new(["bitvmx", "program", "list"]),
+            StoreKey::ZKPProof(id) => zkp_key(id, ["proof"]),
+            StoreKey::ZKPStatus(id) => zkp_key(id, ["status"]),
+            StoreKey::ZKPFrom(id) => zkp_key(id, ["from"]),
+            StoreKey::ZKPJournal(id) => zkp_key(id, ["journal"]),
         }
     }
 }
@@ -1393,7 +1406,7 @@ impl BitVMX {
 
         // Get the status from storage
         let status_key = StoreKey::ZKPStatus(id).get_key();
-        let status: Option<String> = self.store.get(&status_key, None)?;
+        let status: Option<String> = self.store.get(status_key, None)?;
 
         let response = match status {
             Some(status_str) => {
@@ -1415,20 +1428,20 @@ impl BitVMX {
         // Check if the proof is ready
         info!("Checking if {} ZKP job is ready", id);
         let status_key = StoreKey::ZKPStatus(id).get_key();
-        let status: Option<String> = self.store.get(&status_key, None)?;
+        let status: Option<String> = self.store.get(status_key, None)?;
 
         let response = match status {
             Some(status_str) => {
                 if status_str == "OK" {
                     info!("Getting ZKP execution result for job: {}", id);
                     let seal: Vec<u8> =
-                        match self.store.get(&StoreKey::ZKPProof(id).get_key(), None)? {
+                        match self.store.get(StoreKey::ZKPProof(id).get_key(), None)? {
                             Some(seal) => seal,
                             None => return Err(BitVMXError::InconsistentZKPData(id)),
                         };
 
                     let journal: Vec<u8> =
-                        match self.store.get(&StoreKey::ZKPJournal(id).get_key(), None)? {
+                        match self.store.get(StoreKey::ZKPJournal(id).get_key(), None)? {
                             Some(journal) => journal,
                             None => {
                                 return Err(BitVMXError::InconsistentZKPData(id));
