@@ -806,7 +806,7 @@ mod tests {
             assert_eq!(sender.pubkey_hash, leader_hash);
 
             let (_, msg_type, received_context, data, _, _) =
-                deserialize_msg(raw, MAX_MSG_LEN_KB).unwrap();
+                deserialize_msg(&raw, MAX_MSG_LEN_KB).unwrap();
             assert_eq!(msg_type, CommsMessageType::Broadcasted);
             assert_eq!(received_context, context_id);
 
@@ -942,7 +942,7 @@ mod tests {
             .expect("verified original must be queued");
         assert_eq!(queued.identifier.pubkey_hash, sender_hash);
         let (_, msg_type, queued_program_id, data, _, _) =
-            deserialize_msg(queued.data, MAX_MSG_LEN_KB).unwrap();
+            deserialize_msg(&queued.data, MAX_MSG_LEN_KB).unwrap();
         assert_eq!(msg_type, CommsMessageType::Keys);
         assert_eq!(queued_program_id, program_id);
         assert_eq!(data, payload);

@@ -809,7 +809,7 @@ mod tests {
 
         let (_, raw) = env.receive_via_peer(0)?;
         let (_, msg_type, received_program_id, _, _, _) =
-            crate::comms_helper::deserialize_msg(raw, 200000)?;
+            crate::comms_helper::deserialize_msg(&raw, 200000)?;
         assert_eq!(msg_type, CommsMessageType::VerificationKeyRequest);
         assert_eq!(received_program_id, program_id);
         Ok(())
@@ -984,7 +984,7 @@ mod tests {
 
         let (_, raw) = env.receive_via_peer(0)?;
         let (_, msg_type, received_program_id, data, _, _) =
-            crate::comms_helper::deserialize_msg(raw, 200000)?;
+            crate::comms_helper::deserialize_msg(&raw, 200000)?;
         assert_eq!(msg_type, CommsMessageType::VerificationKey);
         assert_eq!(received_program_id, program_id);
         let announcement = VerificationKeyAnnouncement::from_value(&data)?;
@@ -1039,7 +1039,7 @@ mod tests {
         // A key request went out to the peer.
         let (_, raw) = env.receive_via_peer(0)?;
         let (_, msg_type, received_program_id, _, _, _) =
-            crate::comms_helper::deserialize_msg(raw, 200000)?;
+            crate::comms_helper::deserialize_msg(&raw, 200000)?;
         assert_eq!(msg_type, CommsMessageType::VerificationKeyRequest);
         assert_eq!(received_program_id, program_id);
         Ok(())

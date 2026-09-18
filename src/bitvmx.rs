@@ -440,13 +440,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
         let decoded = deserialize_msg(
-            msg.data.clone(),
+            &msg.data,
             self.config
                 .broker
                 .settings
                 .msg_size_config
                 .max_frame_size_kb
-                - 4, // Payload
+                - 1, // Reserve 1kb for headers
         );
         let Some((version, msg_type, program_id, data, timestamp, signature)) =
             Self::accept_decoded_input(
