@@ -427,7 +427,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 - 1, // Reserve 1kb for headers
         );
         let Some((version, msg_type, program_id, data, timestamp, signature)) =
-            Self::accept_decoded_input(decoded)
+            Self::discard_if_malformed(decoded)
         else {
             return Ok(());
         };
@@ -597,7 +597,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         for deadletter in deadletter_messages {
             match deadletter {
                 (ReceivedMessage::Msg(identifier, _msg), ctx) => {
-                    let Some(context) = Self::accept_decoded_input(Context::from_string(&ctx))
+                    let Some(context) = Self::discard_if_malformed(Context::from_string(&ctx))
                     else {
                         continue;
                     };
@@ -1101,7 +1101,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Accepts pure decoding results before handler state changes. Invalid inputs return
     /// `None`, allowing the receive transaction to commit and consume the malformed event.
     /// Do not pass results from effectful handlers: their errors require rollback.
-    fn accept_decoded_input<T, E: std::fmt::Display>(decoded: Result<T, E>) -> Option<T> {
+    fn discard_if_malformed<T, E: std::fmt::Display>(decoded: Result<T, E>) -> Option<T> {
         match decoded {
             Ok(value) => Some(value),
             Err(error) => {
@@ -1470,7 +1470,7 @@ mod transaction_tests {
             BitVMX::run_transaction(&store, || {
                 let payload: String = store.get(key, None)?.unwrap();
                 store.remove(key, None)?;
-                if BitVMX::accept_decoded_input(serde_json::from_str::<IncomingBitVMXApiMessages>(
+                if BitVMX::discard_if_malformed(serde_json::from_str::<IncomingBitVMXApiMessages>(
                     &payload,
                 ))
                 .is_some()
@@ -1494,7 +1494,7 @@ mod transaction_tests {
         store.set("input", "[]", None).unwrap();
         let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
             store.remove("input", None)?;
-            assert!(BitVMX::accept_decoded_input(deserialize_msg("[]".into(), 1024)).is_none());
+            assert!(BitVMX::discard_if_malformed(deserialize_msg("[]".into(), 1024)).is_none());
             Err(BitVMXError::StorageError(StorageError::WriteError))
         });
         assert!(result.is_err());

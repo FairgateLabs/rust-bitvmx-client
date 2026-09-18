@@ -892,7 +892,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         from: Identifier,
     ) -> Result<(), BitVMXError> {
         let Some(decoded) =
-            Self::accept_decoded_input(serde_json::from_str::<IncomingBitVMXApiMessages>(&msg))
+            Self::discard_if_malformed(serde_json::from_str::<IncomingBitVMXApiMessages>(&msg))
         else {
             return Ok(());
         };
