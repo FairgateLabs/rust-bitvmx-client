@@ -1129,7 +1129,10 @@ pub fn new_protocol_type(
     my_idx: usize,
     storage: Rc<Storage>,
 ) -> Result<ProtocolType, BitVMXError> {
-    let protocol_name = format!("{}_{}", name, id);
+    // `<entity>/<id>`, so the protocol-builder key becomes `protocol/<name>/<id>`.
+    // This string is also the musig2 session id, so key-manager session keys
+    // gain the same split.
+    let protocol_name = format!("{}/{}", name, id);
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 
     match name {
