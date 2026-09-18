@@ -1329,9 +1329,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             })?
             .unwrap_or(true);
 
-            had_work |= Self::measure_time("comms messages", || {
-                self.process_comms_messages()
-            })?;
+            had_work |= Self::measure_time("comms messages", || self.process_comms_messages())?;
 
             had_work |= Self::measure_time("API messages", || {
                 self.run_step("API messages", Self::process_api_messages)
