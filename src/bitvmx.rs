@@ -1269,6 +1269,21 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         }
     }
 
+    fn measure_time<T>(operation: &str, work: impl FnOnce() -> T) -> T {
+        const WARN_THRESHOLD: Duration = Duration::from_secs(10);
+
+        let instant = Instant::now();
+        let result = work();
+        let duration = instant.elapsed();
+        if duration > WARN_THRESHOLD {
+            warn!(
+                "Processing {operation} took {:?} which is above the threshold",
+                duration
+            );
+        }
+        result
+    }
+
     fn tick_inner(&mut self) -> Result<TickOutcome, BitVMXError> {
         debug!("Ticking BitVMX: {}", self.count);
 
@@ -1298,75 +1313,40 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         // Each step commits independently.
         let store = self.store.clone();
 
-        const WARN_THRESHOLD: Duration = Duration::from_secs(10);
-
         if process_application {
             // Failed work stays pending; do not count a failed phase as idle.
             let mut had_work = false;
 
-            let instant = Instant::now();
-            had_work |= self
-                .run_step("programs", Self::process_programs)?
-                .unwrap_or(true);
-            let duration = instant.elapsed();
-            if duration > WARN_THRESHOLD {
-                warn!(
-                    "Processing programs took {:?} which is above the threshold",
-                    duration
-                );
-            }
+            had_work |= Self::measure_time("programs", || {
+                self.run_step("programs", Self::process_programs)
+            })?
+            .unwrap_or(true);
 
-            let instant = Instant::now();
-            had_work |= self
-                .run_step("pending messages", |this| {
+            had_work |= Self::measure_time("pending messages", || {
+                self.run_step("pending messages", |this| {
                     Self::run_transaction(&store, || this.process_pending_messages())
-                })?
-                .unwrap_or(true);
-            let duration = instant.elapsed();
-            if duration > WARN_THRESHOLD {
-                warn!(
-                    "Processing pending messages took {:?} which is above the threshold",
-                    duration
-                );
-            }
+                })
+            })?
+            .unwrap_or(true);
 
-            let instant = Instant::now();
-            had_work |= self.process_comms_messages()?;
-            let duration = instant.elapsed();
-            if duration > WARN_THRESHOLD {
-                warn!(
-                    "Processing comms messages took {:?} which is above the threshold",
-                    duration
-                );
-            }
+            had_work |= Self::measure_time("comms messages", || {
+                self.process_comms_messages()
+            })?;
 
-            let instant = Instant::now();
-            had_work |= self
-                .run_step("API messages", Self::process_api_messages)?
-                .unwrap_or(true);
-            let duration = instant.elapsed();
-            if duration > WARN_THRESHOLD {
-                warn!(
-                    "Processing API messages took {:?} which is above the threshold",
-                    duration
-                );
-            }
+            had_work |= Self::measure_time("API messages", || {
+                self.run_step("API messages", Self::process_api_messages)
+            })?
+            .unwrap_or(true);
 
             self.bitvmx_throttle.record(had_work);
         }
 
-        let instant = Instant::now();
-        self.run_step(
-            "bitcoin updates",
-            Self::process_bitcoin_updates_with_throttle,
-        )?;
-        let duration = instant.elapsed();
-        if duration > WARN_THRESHOLD {
-            warn!(
-                "Processing bitcoin updates took {:?} which is above the threshold",
-                duration
-            );
-        }
+        Self::measure_time("bitcoin updates", || {
+            self.run_step(
+                "bitcoin updates",
+                Self::process_bitcoin_updates_with_throttle,
+            )
+        })?;
 
         self.run_step("dispatcher liveness", |this| {
             Self::run_transaction(&store, || {
