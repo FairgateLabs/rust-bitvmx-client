@@ -1,4 +1,4 @@
-use super::{BitVMX, Context, RejectedInputSource, StoreKey};
+use super::{BitVMX, Context, StoreKey};
 use crate::comms_allow_list;
 use crate::error_handling::is_fatal;
 use crate::errors::BitVMXError;
@@ -891,13 +891,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         msg: String,
         from: Identifier,
     ) -> Result<(), BitVMXError> {
-        let Some(decoded) = Self::accept_decoded_input(
-            &self.store,
-            RejectedInputSource::Api,
-            &from,
-            &msg,
-            serde_json::from_str::<IncomingBitVMXApiMessages>(&msg),
-        )?
+        let Some(decoded) =
+            Self::accept_decoded_input(serde_json::from_str::<IncomingBitVMXApiMessages>(&msg))
         else {
             return Ok(());
         };
