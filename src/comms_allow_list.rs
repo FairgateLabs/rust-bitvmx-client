@@ -21,8 +21,8 @@ use tracing::{info, warn};
 
 use crate::errors::BitVMXError;
 
-fn storage_key() -> StorageKey {
-    StorageKey::new(["bitvmx", "comms", "allow_list"])
+fn storage_key() -> Result<StorageKey, BitVMXError> {
+    Ok(StorageKey::new(["bitvmx", "comms", "allow_list"])?)
 }
 
 /// Snapshot of the comms allow list as configured through the API.
@@ -36,7 +36,7 @@ pub struct PersistedAllowList {
 /// The persisted list, or `None` if the API has never been used and the YAML
 /// still governs.
 fn load(store: &Rc<Storage>) -> Result<Option<PersistedAllowList>, BitVMXError> {
-    Ok(store.get(storage_key(), None)?)
+    Ok(store.get(storage_key()?, None)?)
 }
 
 /// Snapshot the live allow list and write it through.
@@ -45,7 +45,7 @@ pub fn save(store: &Rc<Storage>, allow_list: &AllowList) -> Result<(), BitVMXErr
         entries: allow_list.entries(),
         allow_all: allow_list.is_allow_all(),
     };
-    store.set(storage_key(), persisted, None)?;
+    store.set(storage_key()?, persisted, None)?;
     Ok(())
 }
 
@@ -341,7 +341,7 @@ mod tests {
         // the API removed "from-yaml" and added "from-api"
         store
             .set(
-                storage_key(),
+                storage_key().unwrap(),
                 PersistedAllowList {
                     entries: vec![("from-api".to_string(), None)],
                     allow_all: false,
@@ -448,7 +448,7 @@ mod tests {
 
         store
             .set(
-                storage_key(),
+                storage_key().unwrap(),
                 PersistedAllowList {
                     entries: vec![("known-peer".to_string(), None)],
                     allow_all: false,
@@ -479,7 +479,7 @@ mod tests {
 
         store
             .set(
-                storage_key(),
+                storage_key().unwrap(),
                 PersistedAllowList {
                     entries: vec![],
                     allow_all: true,
