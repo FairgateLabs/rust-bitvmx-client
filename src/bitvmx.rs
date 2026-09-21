@@ -19,7 +19,7 @@ use crate::{
         participant::CommsAddress,
         variables::{Globals, WitnessVars},
     },
-    signature_verifier::SignatureVerifier,
+    signature_verifier::{AuthenticationOutcome, SignatureVerifier},
     types::{
         ErrorReportKind, JobDispatcherType, MessageDisposition, OutgoingBitVMXApiMessages,
         ProgramContext, ProgramStatus, SetupFailureReason, RSK_PEGIN_TAG,
@@ -310,37 +310,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         }
     }
 
-    /// Step 1: Verifies the message signature.
-    /// Returns Ok(true) if verification succeeded, Ok(false) if the message needs to be buffered
-    /// (e.g., missing verification key), or Err if there was an error.
-    fn verify_message_signature(
-        &self,
-        identifier: &Identifier,
-        program_id: &Uuid,
-        version: &String,
-        msg_type: &CommsMessageType,
-        data: &Value,
-        timestamp: i64,
-        signature: &Vec<u8>,
-    ) -> Result<bool, BitVMXError> {
-        match SignatureVerifier::verify_and_get_key(
-            &self.program_context.comms,
-            &self.program_context.globals,
-            &self.program_context.rsa_public_key,
-            &identifier.pubkey_hash,
-            program_id,
-            msg_type,
-            data,
-            timestamp,
-            signature,
-            version,
-        ) {
-            Ok(_) => Ok(true),
-            Err(BitVMXError::MissingVerificationKey { .. }) => Ok(false),
-            Err(err) => Err(err),
-        }
-    }
-
     /// Processes a message for a Program and reports whether it was processed
     /// or should be retried later.
     fn process_program_message(
@@ -452,29 +421,45 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
         );
         if !is_verification_msg {
-            let verified = self.verify_message_signature(
-                &msg.identifier,
-                &program_id,
+            let my_pubkey_hash = self.program_context.comms.get_pubk_hash();
+            match SignatureVerifier::authenticate_message(
+                &self.program_context.globals,
+                &program_id.to_string(),
                 &version,
                 &msg_type,
                 &data,
                 timestamp,
                 &signature,
-            )?;
-            if !verified {
-                info!(
-                    "Buffering message due to missing verification key: {:?} {:?}",
-                    program_id, msg_type
-                );
-                let peer = msg.identifier.pubkey_hash.clone();
-                if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
-                    self.fail_program_setup(
-                        &program_id,
-                        Some(peer),
-                        SetupFailureReason::VerificationKeyMissing,
-                    )?;
+                &msg.identifier.pubkey_hash,
+                &self.program_context.rsa_public_key,
+                &my_pubkey_hash,
+            )? {
+                AuthenticationOutcome::Verified => {}
+                AuthenticationOutcome::MissingKey { peer } => {
+                    info!(
+                        "Buffering message due to missing verification key: {:?} {:?}",
+                        program_id, msg_type
+                    );
+                    if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
+                        self.fail_program_setup(
+                            &program_id,
+                            Some(peer),
+                            SetupFailureReason::VerificationKeyMissing,
+                        )?;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+                AuthenticationOutcome::Rejected(rejection) => {
+                    warn!(
+                        "Message authentication rejected from {} for {}: {:?}",
+                        msg.identifier.pubkey_hash, program_id, rejection
+                    );
+                    return Err(BitVMXError::InvalidSignature {
+                        peer: msg.identifier.pubkey_hash.clone(),
+                        msg_type: format!("{:?}", msg_type),
+                        program_id: program_id.to_string(),
+                    });
+                }
             }
         }
         let disposition = match self.load_program(&program_id)? {

@@ -3,7 +3,7 @@ use crate::errors::BitVMXError;
 use crate::message_queue::MessageQueue;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
-use crate::signature_verifier::SignatureVerifier;
+use crate::signature_verifier::{AuthenticationOutcome, SignatureVerifier};
 use crate::types::ProgramContext;
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use bitvmx_broker::settings::COMMS_ID;
@@ -429,21 +429,31 @@ impl LeaderBroadcastHelper {
         program_id: &Uuid,
         original_msg: &OriginalMessage,
     ) -> Result<bool, BitVMXError> {
-        match SignatureVerifier::verify_and_get_key(
-            &program_context.comms,
+        match SignatureVerifier::authenticate_message(
             &program_context.globals,
-            &program_context.rsa_public_key,
-            &original_msg.sender_pubkey_hash,
-            program_id,
+            &program_id.to_string(),
+            &original_msg.version,
             &original_msg.msg_type,
             &original_msg.data,
             original_msg.original_timestamp,
             &original_msg.original_signature,
-            &original_msg.version,
-        ) {
-            Ok(_) => Ok(true),
-            Err(BitVMXError::MissingVerificationKey { .. }) => Ok(false),
-            Err(err) => Err(err),
+            &original_msg.sender_pubkey_hash,
+            &program_context.rsa_public_key,
+            &program_context.comms.get_pubk_hash(),
+        )? {
+            AuthenticationOutcome::Verified => Ok(true),
+            AuthenticationOutcome::MissingKey { .. } => Ok(false),
+            AuthenticationOutcome::Rejected(rejection) => {
+                warn!(
+                    "Original message authentication rejected from {}: {:?}",
+                    original_msg.sender_pubkey_hash, rejection
+                );
+                Err(BitVMXError::InvalidSignature {
+                    peer: original_msg.sender_pubkey_hash.clone(),
+                    msg_type: format!("{:?}", original_msg.msg_type),
+                    program_id: program_id.to_string(),
+                })
+            }
         }
     }
 }

@@ -105,8 +105,8 @@ pub enum BitVMXError {
         program_id: String,
     },
 
-    #[error("Missing verification key for sender {peer}. Known keys: {known_count}")]
-    MissingVerificationKey { peer: String, known_count: usize },
+    #[error("Missing verification key for sender {peer}")]
+    MissingVerificationKey { peer: String },
 
     #[error("Participant key '{name}' not found (expected {expected_type})")]
     ParticipantKeyNotFound {

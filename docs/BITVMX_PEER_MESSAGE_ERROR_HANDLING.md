@@ -247,15 +247,20 @@ state changes.
 
 ## Current behavior and risks
 
-### Invalid signatures propagate
+### Invalid signatures still propagate at the caller boundary
 
-`SignatureVerifier::verify_and_get_key` currently distinguishes a missing key
-from an invalid signature through `BitVMXError` variants. `BitVMX` converts
-`MissingVerificationKey` to `Ok(false)`, but propagates `InvalidSignature`.
+`SignatureVerifier::authenticate_message` now distinguishes `Verified`,
+`MissingKey`, and `Rejected` outcomes. Missing keys are therefore no longer
+represented as general errors in the authentication path, and malformed
+signatures, signature mismatches, and message-reconstruction failures are typed
+authentication rejections.
 
-Because comms processing is transactional, propagation restores the invalid
-input. The same bad signature can then be retried indefinitely and repeatedly
-reported as a node error.
+The direct-message and embedded-original callers have been migrated to this
+API. As an intermediate state, however, they still convert `Rejected` back into
+`BitVMXError::InvalidSignature`. Because comms processing is transactional,
+propagation restores the invalid input. The same bad signature can therefore
+still be retried indefinitely and repeatedly reported as a node error until the
+`FailSetup` disposition is implemented.
 
 During active setup, an invalid signature from an expected participant whose
 contribution is still pending should produce `FailSetup`, not `Err`. The event
@@ -318,15 +323,17 @@ program and its payload is structurally valid.
 
 ### Ambiguous boolean results
 
-Several APIs encode different meanings as `bool`:
+Several APIs still encode different meanings as `bool`:
 
-- signature verification uses `false` for an invalid signature;
-- original-message verification uses `false` for a missing key;
+- the leader-broadcast adapter currently converts an embedded original's
+  `MissingKey` authentication outcome to `false`;
 - setup-step `verify_received` uses `false` for data that did not verify;
 - setup-step `can_advance` uses `false` for a temporary not-ready state.
 
-These meanings must not share one control-flow representation. In particular, an invalid contribution and an absent key require opposite
-handling: fail setup versus retry.
+Top-level signature authentication no longer uses a boolean result. The
+remaining meanings must not share one control-flow representation. In
+particular, an invalid contribution and an absent key require opposite handling:
+fail setup versus retry.
 
 ### Broadcast processing conflates temporary and permanent failures
 
@@ -337,10 +344,9 @@ Current broadcast processing:
 - rejects the whole broadcast transaction when one embedded message is invalid;
 - uses `push_new` for embedded messages, creating fresh retry state.
 
-The comments in `tests/leader_broadcast_test.rs` that describe missing-key
-originals being silently dropped are stale relative to the current source. The
-current implementation queues such originals, and the test documentation should
-be updated.
+The stale comments in `tests/leader_broadcast_test.rs` that described
+missing-key originals as silently dropped have been updated to match the current
+queueing behavior.
 
 ### Redundant deliveries are retried
 
@@ -366,8 +372,8 @@ than string matching.
 
 ## Authentication outcome
 
-Signature verification should return an explicit result instead of
-`Result<bool, BitVMXError>`:
+The first implementation step is complete. Signature authentication now returns
+an explicit result instead of `Result<bool, BitVMXError>`:
 
 ```rust
 pub enum AuthenticationOutcome {
@@ -376,24 +382,44 @@ pub enum AuthenticationOutcome {
     Rejected(AuthenticationRejection),
 }
 
+pub enum AuthenticationRejection {
+    MessageReconstruction { reason: String },
+    MalformedSignature,
+    SignatureMismatch,
+}
+
 pub fn authenticate_message(
     /* message context */
 ) -> Result<AuthenticationOutcome, BitVMXError>;
 ```
 
-Expected mappings are:
+The implemented mappings are:
 
 - key found and signature valid: `Verified`;
 - key not yet stored: `MissingKey`;
-- malformed signature or mismatch: `Rejected`;
-- storage or key-manager failure: `Err`.
+- malformed signature, signature mismatch, or message-reconstruction failure:
+  `Rejected`;
+- storage or key-manager failure: `Err`;
+- `VerificationKey` and `VerificationKeyRequest`: `Verified` as bootstrap
+  exceptions, with announcement fingerprint validation performed separately.
 
-The caller maps `Rejected` to `FailSetup` only after establishing that the
-message is attributable to an expected participant in an actively setting-up
-program. This prevents unrelated allow-listed peers from failing a program.
+`construct_message` now returns the narrow `MessageConstructionError` rather
+than `BitVMXError`. Its failures depend only on message input and cannot carry a
+storage or infrastructure error, so authentication can classify every
+construction failure as `Rejected` without matching broad `BitVMXError`
+variants. Outbound message construction converts this narrow error back to the
+corresponding `BitVMXError` where needed.
 
-This also allows key retrieval and signature verification to be performed once
-rather than through overlapping helper calls.
+`BitVMX::process_msg` and embedded-original verification call
+`SignatureVerifier::authenticate_message` directly. The previous
+`verify_and_get_key` helper and the forwarding authentication method on
+`BitVMX` have been removed. Key retrieval and signature verification therefore
+happen once in the authentication path.
+
+The remaining work is for callers to map `Rejected` to `FailSetup` only after
+establishing that the message is attributable to an expected participant in an
+actively setting-up program. This prevents unrelated allow-listed peers from
+failing a program.
 
 ## Recommended processing pipeline
 
@@ -613,16 +639,25 @@ retry, no-op, and peer-fault reasons.
 
 ### `src/signature_verifier.rs`
 
-- introduce `AuthenticationOutcome`;
-- represent missing keys as a retry outcome rather than a general error;
-- represent malformed or invalid signatures as rejection outcomes which the
-  active-setup boundary maps to `FailSetup`;
-- preserve storage and key-manager failures as `Err`;
+Completed in the first implementation step:
+
+- introduced `AuthenticationOutcome` and `AuthenticationRejection`;
+- represented missing keys as an authentication outcome rather than a general
+  error in the active authentication path;
+- represented malformed signatures, signature mismatches, and reconstruction
+  failures as rejection outcomes;
+- preserved storage and key-manager failures as `Err`;
+- removed `verify_and_get_key` and the overlapping key lookup during signature
+  verification;
+- removed the inaccurate `known_count` field;
+- documented the TLS fingerprint binding used by key announcements.
+
+Remaining:
+
+- map rejection outcomes to `FailSetup` at the authorized active-setup boundary;
 - centralize key-request behavior;
 - integrate or remove the currently separate
-  `handle_missing_verification_key` path;
-- remove or correct `known_count`, which is currently reported as zero;
-- document the TLS fingerprint binding used by key announcements.
+  `handle_missing_verification_key` path.
 
 ### `src/bitvmx.rs`
 
@@ -685,9 +720,9 @@ Control-flow outcomes should preferably remain dispositions rather than general
 
 ### `tests/leader_broadcast_test.rs`
 
-Update stale comments describing missing-key originals as silently dropped.
-The current source queues those originals, although retry accounting and error
-classification still need improvement.
+Completed: updated the stale comments that described missing-key originals as
+silently dropped. The current source queues those originals, although retry
+accounting and error classification still need improvement.
 
 ## Required tests
 
@@ -766,7 +801,9 @@ Tests should verify both the handler result and storage effects:
 
 ## Recommended implementation order
 
-1. Introduce explicit authentication outcomes.
+1. **Completed:** introduce explicit authentication outcomes. Direct and
+   embedded-original authentication use the typed outcome; callers temporarily
+   preserve the old propagated-error behavior for `Rejected` until step 4.
 2. Add `DiscardNoOp` and `FailSetup` to peer-message disposition and
    centralize their handling.
 3. Add the program lifecycle gate so peer messages are processed only during

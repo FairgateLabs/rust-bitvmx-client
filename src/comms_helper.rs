@@ -12,10 +12,35 @@ use uuid::Uuid;
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
 const CURRENT_PROTOCOL_VERSION: &str = "1.0";
 
+/// Errors produced while constructing the canonical message covered by a signature.
+/// These depend only on message input and never represent storage or infrastructure failures.
+#[derive(Debug, thiserror::Error)]
+pub enum MessageConstructionError {
+    #[error("unsupported message version: {0}")]
+    UnsupportedVersion(String),
+    #[error("unsupported message type: {0:?}")]
+    UnsupportedMessageType(CommsMessageType),
+    #[error("failed to serialize message data: {0}")]
+    Serialization(String),
+}
+
+impl From<MessageConstructionError> for BitVMXError {
+    fn from(error: MessageConstructionError) -> Self {
+        match error {
+            MessageConstructionError::UnsupportedVersion(_) => BitVMXError::InvalidMsgVersion,
+            MessageConstructionError::UnsupportedMessageType(_) => BitVMXError::InvalidMessageType,
+            MessageConstructionError::Serialization(_) => BitVMXError::SerializationError,
+        }
+    }
+}
+
 // Public function for signature verification
-pub fn serialize_with_sorted_keys_for_verification(value: &Value) -> Result<String, BitVMXError> {
+pub fn serialize_with_sorted_keys_for_verification(
+    value: &Value,
+) -> Result<String, MessageConstructionError> {
     let sorted_json = sort_json_keys(value);
-    serde_json::to_string(&sorted_json).map_err(|_| BitVMXError::SerializationError)
+    serde_json::to_string(&sorted_json)
+        .map_err(|error| MessageConstructionError::Serialization(error.to_string()))
 }
 
 // Recursively sort all keys in a JSON value
@@ -41,9 +66,12 @@ pub fn construct_message(
     msg_type: CommsMessageType,
     data: &Value,
     timestamp: i64,
-) -> Result<String, BitVMXError> {
-    let version_bytes = Version::to_bytes(version)?;
-    let msg_type_bytes = msg_type.to_bytes()?;
+) -> Result<String, MessageConstructionError> {
+    let version_bytes = Version::to_bytes(version)
+        .map_err(|_| MessageConstructionError::UnsupportedVersion(version.to_string()))?;
+    let msg_type_bytes = msg_type
+        .to_bytes()
+        .map_err(|_| MessageConstructionError::UnsupportedMessageType(msg_type))?;
     let msg_string = serialize_with_sorted_keys_for_verification(data)?;
     Ok(format!(
         "{}|{:02X}{:02X}|{:02X}{:02X}|{}|{}",

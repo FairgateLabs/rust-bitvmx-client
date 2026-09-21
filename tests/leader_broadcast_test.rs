@@ -1,12 +1,10 @@
 // Regression test for the union-bridge committee-setup stall observed in
 // testnet (operator-03 stuck at 3/4 on the take-aggregated-key step). The
-// bug is in `LeaderBroadcastHelper::process_broadcasted_message`
+// The relevant path is `LeaderBroadcastHelper::process_broadcasted_message`
 // (src/leader_broadcast.rs): when an embedded `OriginalMessage` is signed by
-// a peer whose verification key has not arrived yet, `verify_and_get_key`
-// returns `MissingVerificationKey`, the helper treats that as `Ok(false)`,
-// the loop `continue`s, and the embedded original is silently dropped, with
-// no buffering or retry path (the regular `push_back` path used for non-
-// `Broadcasted` messages is bypassed by the early return at bitvmx.rs:388).
+// a peer whose verification key has not arrived yet, authentication returns
+// `AuthenticationOutcome::MissingKey`. The helper must still queue the original
+// so the regular bounded retry path can process it after the key arrives.
 //
 // This test exercises the actual production code path: it boots a real
 // `BitVMX` instance and feeds it a hand-crafted `Broadcasted`-typed
