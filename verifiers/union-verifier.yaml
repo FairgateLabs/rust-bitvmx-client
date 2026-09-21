@@ -25,7 +25,7 @@ inputs:
 
 # input_3
 # operator id
-  - size: 36
+  - size: 32
     owner: const
 
 # input_4
@@ -39,6 +39,6 @@ inputs:
     owner: prover_prev
 
 # input_6
-# bool true + version + padding 
+# operator id parity + bool true + version + padding 
   - size: 4
     owner: const
