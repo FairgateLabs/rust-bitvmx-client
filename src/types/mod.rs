@@ -5,7 +5,10 @@ use std::rc::Rc;
 
 use crate::config::ComponentsConfig;
 use bitcoin_coordinator::coordinator::BitcoinCoordinator;
-use bitvmx_broker::{identification::identifier::Identifier, BrokerNode, RemoteChannel};
+use bitvmx_broker::{
+    identification::identifier::{Identifier, PubkHash},
+    BrokerNode, RemoteChannel,
+};
 use key_manager::key_manager::KeyManager;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -16,13 +19,66 @@ use crate::{
     program::variables::{Globals, WitnessVars},
 };
 
-/// Outcome of handling an incoming message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Outcome of handling an incoming peer message.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageDisposition {
     /// The message was processed and should not be retried.
     Processed,
-    /// The message could not be processed yet and should be queued for retry.
-    RetryLater,
+    /// A temporary prerequisite is absent, so the message should be retried.
+    RetryLater(RetryReason),
+    /// The message cannot change protocol state and should be consumed.
+    DiscardNoOp(NoOpReason),
+    /// An attributable peer fault must terminate setup without retrying the input.
+    FailSetup(PeerSetupFault),
+}
+
+/// Why processing the unchanged message may succeed later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetryReason {
+    /// The sender's application verification key has not arrived yet.
+    MissingVerificationKey { peer: PubkHash },
+    /// One or more participant verification keys needed by setup are absent.
+    MissingParticipantVerificationKeys,
+    /// The referenced program has not been installed locally yet.
+    ProgramNotInstalled,
+    /// Setup has not reached the state that can consume this message.
+    SetupNotReady,
+}
+
+/// Why consuming a message without applying it is safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoOpReason {
+    ContributionAlreadyAccepted,
+    SetupComplete,
+    SetupFailed,
+}
+
+/// A protocol violation attributable to an authenticated peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerSetupFault {
+    pub peer: PubkHash,
+    pub reason: PeerSetupFaultReason,
+}
+
+/// Peer-controlled failures that make active setup untrustworthy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PeerSetupFaultReason {
+    AuthenticationRejected,
+    MalformedMessage,
+    UnauthorizedMessage,
+    InvalidSetupContribution,
+}
+
+impl std::fmt::Display for PeerSetupFaultReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let description = match self {
+            Self::AuthenticationRejected => "message authentication was rejected",
+            Self::MalformedMessage => "message was malformed",
+            Self::UnauthorizedMessage => "message was not authorized",
+            Self::InvalidSetupContribution => "setup contribution was invalid",
+        };
+        formatter.write_str(description)
+    }
 }
 
 // The coordinator is statically dispatched: production code uses the default

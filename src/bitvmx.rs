@@ -21,8 +21,9 @@ use crate::{
     },
     signature_verifier::{AuthenticationOutcome, SignatureVerifier},
     types::{
-        ErrorReportKind, JobDispatcherType, MessageDisposition, OutgoingBitVMXApiMessages,
-        ProgramContext, ProgramStatus, SetupFailureReason, RSK_PEGIN_TAG,
+        ErrorReportKind, JobDispatcherType, MessageDisposition, NoOpReason,
+        OutgoingBitVMXApiMessages, PeerSetupFault, ProgramContext, ProgramStatus, RetryReason,
+        SetupFailureReason, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::Txid;
@@ -340,7 +341,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
                 program_id
             );
-            return Ok(MessageDisposition::RetryLater);
+            return Ok(MessageDisposition::RetryLater(
+                RetryReason::MissingParticipantVerificationKeys,
+            ));
         }
 
         // If this operator is the leader and the message type should be broadcast, store the original message
@@ -364,7 +367,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         "There is a message already stored for program {}",
                         program_id
                     );
-                    return Ok(MessageDisposition::RetryLater);
+                    return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
                 }
             }
         }
@@ -383,6 +386,56 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             data,
             &mut self.program_context,
         )
+    }
+
+    /// Applies peer-message control flow in one place so handlers only classify outcomes.
+    fn apply_message_disposition(
+        &mut self,
+        msg: QueuedMessage,
+        program_id: &Uuid,
+        msg_type: CommsMessageType,
+        disposition: MessageDisposition,
+    ) -> Result<(), BitVMXError> {
+        match disposition {
+            MessageDisposition::Processed => Ok(()),
+            MessageDisposition::DiscardNoOp(reason) => {
+                debug!(
+                    "Consuming no-op peer message {:?} for program {} from {}: {:?}",
+                    msg_type, program_id, msg.identifier.pubkey_hash, reason
+                );
+                Ok(())
+            }
+            MessageDisposition::RetryLater(reason) => {
+                info!(
+                    "Pending message to back: {:?} for program {:?} from {:?}: {:?}",
+                    msg_type, program_id, msg.identifier.pubkey_hash, reason,
+                );
+                let (peer, failure_reason) = match &reason {
+                    RetryReason::MissingVerificationKey { peer } => {
+                        (peer.clone(), SetupFailureReason::VerificationKeyMissing)
+                    }
+                    _ => (
+                        msg.identifier.pubkey_hash.clone(),
+                        SetupFailureReason::MessageLost,
+                    ),
+                };
+                if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
+                    self.fail_program_setup(program_id, Some(peer), failure_reason)?;
+                }
+                Ok(())
+            }
+            MessageDisposition::FailSetup(PeerSetupFault { peer, reason }) => {
+                warn!(
+                    "Failing setup for program {} after peer fault from {}: {}",
+                    program_id, peer, reason
+                );
+                self.fail_program_setup(
+                    program_id,
+                    Some(peer),
+                    SetupFailureReason::StepError(reason.to_string()),
+                )
+            }
+        }
     }
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
@@ -440,14 +493,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         "Buffering message due to missing verification key: {:?} {:?}",
                         program_id, msg_type
                     );
-                    if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
-                        self.fail_program_setup(
-                            &program_id,
-                            Some(peer),
-                            SetupFailureReason::VerificationKeyMissing,
-                        )?;
-                    }
-                    return Ok(());
+                    return self.apply_message_disposition(
+                        msg,
+                        &program_id,
+                        msg_type,
+                        MessageDisposition::RetryLater(RetryReason::MissingVerificationKey {
+                            peer,
+                        }),
+                    );
                 }
                 AuthenticationOutcome::Rejected(rejection) => {
                     warn!(
@@ -465,51 +518,41 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let disposition = match self.load_program(&program_id)? {
             Some(mut program) => {
                 if program.is_failed() {
-                    return Ok(());
-                }
-                let peer_address =
-                    program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
-
-                if is_verification_msg {
-                    SignatureVerifier::handle_verification_messages(
-                        &self.program_context,
-                        &program_id,
-                        &msg_type,
-                        &data,
-                        &peer_address,
-                    )?;
-                    MessageDisposition::Processed
+                    MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)
                 } else {
-                    self.process_program_message(
-                        &program_id,
-                        msg_type,
-                        data,
-                        peer_address,
-                        &mut program,
-                        timestamp,
-                        signature,
-                        version,
-                    )?
+                    let peer_address =
+                        program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+
+                    if is_verification_msg {
+                        SignatureVerifier::handle_verification_messages(
+                            &self.program_context,
+                            &program_id,
+                            &msg_type,
+                            &data,
+                            &peer_address,
+                        )?;
+                        MessageDisposition::Processed
+                    } else {
+                        self.process_program_message(
+                            &program_id,
+                            msg_type,
+                            data,
+                            peer_address,
+                            &mut program,
+                            timestamp,
+                            signature,
+                            version,
+                        )?
+                    }
                 }
             }
             None => {
                 debug!("Program {} not found", program_id);
-                MessageDisposition::RetryLater
+                MessageDisposition::RetryLater(RetryReason::ProgramNotInstalled)
             }
         };
 
-        if disposition == MessageDisposition::RetryLater {
-            // Preserve the previous false outcome by buffering for retry.
-            info!(
-                "Pending message to back: {:?} for program {:?} from: {:?}",
-                msg_type, program_id, msg.identifier.pubkey_hash,
-            );
-            let peer = msg.identifier.pubkey_hash.clone();
-            if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
-                self.fail_program_setup(&program_id, Some(peer), SetupFailureReason::MessageLost)?;
-            }
-        }
-        Ok(())
+        self.apply_message_disposition(msg, &program_id, msg_type, disposition)
     }
 
     pub fn process_pending_messages(&mut self) -> Result<bool, BitVMXError> {

@@ -8,7 +8,7 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{MessageDisposition, ProgramContext},
+    types::{MessageDisposition, NoOpReason, ProgramContext, RetryReason},
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -403,7 +403,7 @@ impl SetupEngine {
                 "SetupEngine: Already received data from participant {} for step '{}'",
                 participant_idx, step_name
             );
-            return Ok(MessageDisposition::RetryLater);
+            return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
         }
 
         debug!(
@@ -436,7 +436,7 @@ impl SetupEngine {
                 "SetupEngine: Data from participant {} for step '{}' did not verify, ignoring",
                 participant_idx, step_name
             );
-            return Ok(MessageDisposition::RetryLater);
+            return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
         }
 
         // Mark participant as completed
@@ -626,14 +626,14 @@ impl SetupEngine {
             msg_type, from
         );
 
-        // Check if setup is already complete. Preserve the existing retry
-        // behavior represented previously by Ok(false).
+        // No unchanged message can affect a completed setup, so consume stale
+        // deliveries without spending retry attempts or validating their payload.
         if self.is_complete() {
-            warn!(
-                "SetupEngine::receive_setup_data() - Setup already complete, ignoring message from {}",
+            debug!(
+                "SetupEngine::receive_setup_data() - Setup already complete, discarding stale message from {}",
                 from
             );
-            return Ok(MessageDisposition::RetryLater);
+            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete));
         }
 
         // Find the participant
@@ -659,12 +659,12 @@ impl SetupEngine {
             participants,
             context,
         )?;
-        if disposition == MessageDisposition::RetryLater {
+        if disposition != MessageDisposition::Processed {
             debug!(
-                "SetupEngine::receive_setup_data() - Data from participant {} could not be processed for step '{}'",
-                from, step_name
+                "SetupEngine::receive_setup_data() - Data from participant {} was not applied for step '{}': {:?}",
+                from, step_name, disposition
             );
-            return Ok(MessageDisposition::RetryLater);
+            return Ok(disposition);
         }
 
         let participants_completed_after = self.state.participants_completed.len();
@@ -1019,6 +1019,25 @@ mod tests {
                 .unwrap()
                 .state_changed
         );
+
+        let completed_state = engine.state().clone();
+        assert_eq!(
+            engine
+                .receive_setup_data(
+                    serde_json::json!({"stale": true}),
+                    CommsMessageType::Keys,
+                    &participants[0].pubkey_hash,
+                    &id,
+                    0,
+                    0,
+                    &participants,
+                    &protocol,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)
+        );
+        assert_eq!(engine.state(), &completed_state);
         assert!(engine.if_not_completed().is_err());
     }
 
@@ -1046,7 +1065,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::RetryLater
+            MessageDisposition::RetryLater(RetryReason::SetupNotReady)
         );
         assert_eq!(
             engine
@@ -1074,7 +1093,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::RetryLater
+            MessageDisposition::RetryLater(RetryReason::SetupNotReady)
         );
 
         engine.state_mut().mark_participant_completed(0);

@@ -18,7 +18,7 @@ use crate::{
     signature_verifier::OperatorVerificationStore,
     types::{
         ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType, MessageDisposition,
-        OutgoingBitVMXApiMessages, ProgramContext, SetupFailureReason,
+        NoOpReason, OutgoingBitVMXApiMessages, ProgramContext, RetryReason, SetupFailureReason,
     },
 };
 use bitcoin::{Transaction, Txid};
@@ -578,16 +578,15 @@ impl Program {
         from: &PubKeyHash,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
-        // Terminal: discard rather than requeue, since a retry can only exhaust and re-report.
+        // Terminal lifecycle states make all subsequent setup messages stale.
         if self.is_failed() {
             debug!("Program::receive_setup_data() - Program setup failed, discarding message");
-            return Ok(MessageDisposition::Processed);
+            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
         }
 
-        // Only handle setup data if we're in setup state
         if matches!(self.state, ProgramState::Ready) {
-            debug!("Program::receive_setup_data() - Not in SettingUp state, ignoring");
-            return Ok(MessageDisposition::RetryLater);
+            debug!("Program::receive_setup_data() - Setup complete, discarding stale message");
+            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete));
         }
 
         // Track state changes and completion status for save/log after borrow ends
@@ -605,7 +604,10 @@ impl Program {
             )?;
             (disposition, engine.state().current_step_state.clone())
         } else {
-            (MessageDisposition::RetryLater, StepState::Completed) // Preserve the previous Ok(false) behavior.
+            (
+                MessageDisposition::RetryLater(RetryReason::SetupNotReady),
+                StepState::Completed,
+            ) // Preserve the previous Ok(false) behavior.
         };
 
         // Preserve the previous behavior: save messages reported as processed.
@@ -652,7 +654,7 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
         if self.is_failed() {
-            return Ok(MessageDisposition::Processed);
+            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
         }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if self.state != ProgramState::Ready => {
@@ -1211,7 +1213,10 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
-        assert_eq!(disposition, MessageDisposition::Processed);
+        assert_eq!(
+            disposition,
+            MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)
+        );
 
         // Replayed dispatcher results and ticks cannot restart a failed setup.
         program
@@ -1259,7 +1264,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ready_program_defers_setup_data_and_ignores_replayed_setup_job() {
+    fn test_ready_program_discards_setup_data_and_ignores_replayed_setup_job() {
         let mut env = TestProgramContextEnv::new("program-ready-replays").unwrap();
         let dir = TestStorageDir::new("program-ready-replays-storage");
         let mut program = test_program(dir.storage(), Uuid::new_v4());
@@ -1274,7 +1279,10 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
-        assert_eq!(disposition, MessageDisposition::RetryLater);
+        assert_eq!(
+            disposition,
+            MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)
+        );
 
         let context = Context::SetupStep(
             program.program_id,

@@ -804,8 +804,9 @@ Tests should verify both the handler result and storage effects:
 1. **Completed:** introduce explicit authentication outcomes. Direct and
    embedded-original authentication use the typed outcome; callers temporarily
    preserve the old propagated-error behavior for `Rejected` until step 4.
-2. Add `DiscardNoOp` and `FailSetup` to peer-message disposition and
-   centralize their handling.
+2. **Completed:** added typed retry, no-op, and peer-fault reasons plus
+   `DiscardNoOp` and `FailSetup` to the peer-message disposition, and centralized
+   disposition handling in `BitVMX`.
 3. Add the program lifecycle gate so peer messages are processed only during
    setup.
 4. Convert attributable malformed/signature failures from generic `Err` into
