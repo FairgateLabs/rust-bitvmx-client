@@ -807,8 +807,9 @@ Tests should verify both the handler result and storage effects:
 2. **Completed:** added typed retry, no-op, and peer-fault reasons plus
    `DiscardNoOp` and `FailSetup` to the peer-message disposition, and centralized
    disposition handling in `BitVMX`.
-3. Add the program lifecycle gate so peer messages are processed only during
-   setup.
+3. **Completed:** added the program lifecycle gate so peer messages are processed
+   only during setup. Messages for completed or failed programs are consumed before
+   authentication, verification-key handling, or broadcast payload processing.
 4. Convert attributable malformed/signature failures from generic `Err` into
    terminal setup failure while pending, while redundant no-op deliveries
    remain harmless.

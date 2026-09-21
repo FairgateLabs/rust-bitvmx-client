@@ -89,6 +89,18 @@ impl Program {
         self.state == ProgramState::Failed
     }
 
+    /// Returns the no-op disposition for terminal setup states.
+    ///
+    /// This is used at the peer-input boundary before authentication or payload
+    /// processing so stale messages cannot mutate protocol or verification-key state.
+    pub(crate) fn peer_message_lifecycle_disposition(&self) -> Option<MessageDisposition> {
+        match self.state {
+            ProgramState::Ready => Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)),
+            ProgramState::Failed => Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)),
+            ProgramState::SettingUp | ProgramState::WaitingData => None,
+        }
+    }
+
     /// Reports an unrecoverable setup failure to the L2 channel and marks the program dead.
     /// Once the program is `Failed`, later calls do nothing.
     pub(crate) fn fail_setup<BC: BitcoinCoordinatorApi>(
@@ -1168,6 +1180,29 @@ mod tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_peer_message_lifecycle_gate_only_allows_setup_states() {
+        let dir = TestStorageDir::new("program-peer-lifecycle-gate");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+
+        assert_eq!(program.peer_message_lifecycle_disposition(), None);
+
+        program.state = ProgramState::WaitingData;
+        assert_eq!(program.peer_message_lifecycle_disposition(), None);
+
+        program.state = ProgramState::Ready;
+        assert_eq!(
+            program.peer_message_lifecycle_disposition(),
+            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete))
+        );
+
+        program.state = ProgramState::Failed;
+        assert_eq!(
+            program.peer_message_lifecycle_disposition(),
+            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed))
+        );
     }
 
     #[test]

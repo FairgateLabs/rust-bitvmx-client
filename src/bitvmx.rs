@@ -454,6 +454,23 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             return Ok(());
         };
 
+        // Load the program and apply its lifecycle gate before authentication or any
+        // message-specific handling. Once setup is terminal, all peer protocol traffic
+        // is stale, including broadcasts and verification-key bootstrap messages.
+        let Some(mut program) = self.load_program(&program_id)? else {
+            debug!("Program {} not found", program_id);
+            return self.apply_message_disposition(
+                msg,
+                &program_id,
+                msg_type,
+                MessageDisposition::RetryLater(RetryReason::ProgramNotInstalled),
+            );
+        };
+
+        if let Some(disposition) = program.peer_message_lifecycle_disposition() {
+            return self.apply_message_disposition(msg, &program_id, msg_type, disposition);
+        }
+
         // Handle Broadcasted messages specially - they contain original messages to process recursively
         if msg_type == CommsMessageType::Broadcasted {
             info!("Processing Broadcasted message...");
@@ -515,41 +532,28 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 }
             }
         }
-        let disposition = match self.load_program(&program_id)? {
-            Some(mut program) => {
-                if program.is_failed() {
-                    MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)
-                } else {
-                    let peer_address =
-                        program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
+        let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
-                    if is_verification_msg {
-                        SignatureVerifier::handle_verification_messages(
-                            &self.program_context,
-                            &program_id,
-                            &msg_type,
-                            &data,
-                            &peer_address,
-                        )?;
-                        MessageDisposition::Processed
-                    } else {
-                        self.process_program_message(
-                            &program_id,
-                            msg_type,
-                            data,
-                            peer_address,
-                            &mut program,
-                            timestamp,
-                            signature,
-                            version,
-                        )?
-                    }
-                }
-            }
-            None => {
-                debug!("Program {} not found", program_id);
-                MessageDisposition::RetryLater(RetryReason::ProgramNotInstalled)
-            }
+        let disposition = if is_verification_msg {
+            SignatureVerifier::handle_verification_messages(
+                &self.program_context,
+                &program_id,
+                &msg_type,
+                &data,
+                &peer_address,
+            )?;
+            MessageDisposition::Processed
+        } else {
+            self.process_program_message(
+                &program_id,
+                msg_type,
+                data,
+                peer_address,
+                &mut program,
+                timestamp,
+                signature,
+                version,
+            )?
         };
 
         self.apply_message_disposition(msg, &program_id, msg_type, disposition)
@@ -1448,11 +1452,105 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 #[cfg(test)]
 mod transaction_tests {
     use super::*;
-    use crate::test_utils::TestStorageDir;
+    use crate::{
+        comms_helper::serialize_msg,
+        test_utils::{TestBitVMXEnv, TestStorageDir},
+        types::PROGRAM_TYPE_AGGREGATED_KEY,
+    };
 
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
     use crate::types::IncomingBitVMXApiMessages;
     use storage_backend::error::StorageError;
+
+    #[test]
+    fn terminal_programs_discard_peer_messages_before_payload_processing() {
+        let mut env = TestBitVMXEnv::new("peer-lifecycle-gate").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            self_hash.clone(),
+        );
+
+        let ready_id = Uuid::new_v4();
+        Program::new(
+            ready_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address.clone()],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+        env.bitvmx
+            .program_context
+            .globals
+            .set_var(
+                &ready_id,
+                "optional_keys",
+                VariableTypes::String("null".to_string()),
+            )
+            .unwrap();
+        let mut ready_program = Program::load(store.clone(), &ready_id).unwrap().unwrap();
+        ready_program.tick(&mut env.bitvmx.program_context).unwrap();
+        ready_program.tick(&mut env.bitvmx.program_context).unwrap();
+        assert_eq!(
+            ready_program.peer_message_lifecycle_disposition(),
+            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete))
+        );
+
+        // The invalid RSA signature would be rejected if authentication ran.
+        let stale_direct = serialize_msg(
+            "1.0",
+            CommsMessageType::Keys,
+            &ready_id,
+            serde_json::json!({"stale": true}),
+            0,
+            vec![1],
+        )
+        .unwrap();
+        env.bitvmx
+            .process_msg(
+                QueuedMessage::new(Identifier::new(self_hash.clone(), 0), stale_direct).unwrap(),
+            )
+            .unwrap();
+
+        let failed_id = Uuid::new_v4();
+        Program::new(
+            failed_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+        let mut failed_program = Program::load(store, &failed_id).unwrap().unwrap();
+        failed_program
+            .fail_setup(
+                None,
+                SetupFailureReason::StepError("test failure".to_string()),
+                &mut env.bitvmx.program_context,
+            )
+            .unwrap();
+
+        // This is not a BroadcastedMessage. The lifecycle gate must consume it
+        // before the special broadcast path attempts to deserialize the payload.
+        let stale_broadcast = serialize_msg(
+            "1.0",
+            CommsMessageType::Broadcasted,
+            &failed_id,
+            serde_json::json!({"malformed": true}),
+            0,
+            vec![1],
+        )
+        .unwrap();
+        env.bitvmx
+            .process_msg(
+                QueuedMessage::new(Identifier::new(self_hash, 0), stale_broadcast).unwrap(),
+            )
+            .unwrap();
+    }
 
     #[test]
     fn news_handler_and_acknowledgement_commit_independently_per_item() {
