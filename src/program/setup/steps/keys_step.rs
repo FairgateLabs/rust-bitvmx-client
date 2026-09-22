@@ -147,6 +147,10 @@ impl SetupStep for KeysStep {
         "keys"
     }
 
+    fn accepted_message_type(&self) -> CommsMessageType {
+        CommsMessageType::Keys
+    }
+
     fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,
@@ -217,7 +221,10 @@ impl SetupStep for KeysStep {
         );
 
         // Find participant index
-        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
+        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)
+            .ok_or_else(|| {
+                BitVMXError::InvalidCommsAddress(from_participant.pubkey_hash.clone())
+            })?;
 
         // Save to globals with the convention "participant_{idx}_keys"
         self.store_participant_data(

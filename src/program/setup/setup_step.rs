@@ -30,6 +30,9 @@ pub trait SetupStep {
     /// Identifying name of the step (e.g.: "keys", "nonces", "signatures", "proof")
     fn step_name(&self) -> &str;
 
+    /// Peer message type accepted while this step is active.
+    fn accepted_message_type(&self) -> CommsMessageType;
+
     /// **GENERATE** data to send.
     ///
     /// Returns serialized bytes or `None` if this step does not generate data.
@@ -160,6 +163,10 @@ mod tests {
     impl SetupStep for TestStep {
         fn step_name(&self) -> &str {
             "test"
+        }
+
+        fn accepted_message_type(&self) -> CommsMessageType {
+            CommsMessageType::Keys
         }
 
         fn generate_data<BC: BitcoinCoordinatorApi>(

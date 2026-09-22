@@ -17,13 +17,14 @@ use crate::{
     message_queue::{MessageQueue, PushOutcome, QueuedMessage},
     program::{
         participant::CommsAddress,
+        setup::SetupMessageState,
         variables::{Globals, WitnessVars},
     },
-    signature_verifier::{AuthenticationOutcome, SignatureVerifier},
+    signature_verifier::{AuthenticationOutcome, SignatureVerifier, VerificationMessageOutcome},
     types::{
         ErrorReportKind, JobDispatcherType, MessageDisposition, NoOpReason,
-        OutgoingBitVMXApiMessages, PeerSetupFault, ProgramContext, ProgramStatus, RetryReason,
-        SetupFailureReason, RSK_PEGIN_TAG,
+        OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
+        ProgramStatus, RetryReason, SetupFailureReason, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::Txid;
@@ -453,44 +454,91 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         else {
             return Ok(());
         };
+        let disposition = self.process_decoded_peer_message(
+            &msg, version, msg_type, program_id, data, timestamp, signature,
+        )?;
+        match disposition {
+            Some(disposition) => {
+                self.apply_message_disposition(msg, &program_id, msg_type, disposition)
+            }
+            // Broadcast processing owns its control flow until it returns typed
+            // dispositions in a later implementation step.
+            None => Ok(()),
+        }
+    }
 
-        // Load the program and apply its lifecycle gate before authentication or any
-        // message-specific handling. Once setup is terminal, all peer protocol traffic
-        // is stale, including broadcasts and verification-key bootstrap messages.
+    fn process_decoded_peer_message(
+        &mut self,
+        msg: &QueuedMessage,
+        version: String,
+        msg_type: CommsMessageType,
+        program_id: Uuid,
+        data: Value,
+        timestamp: i64,
+        signature: Vec<u8>,
+    ) -> Result<Option<MessageDisposition>, BitVMXError> {
+        // Apply the lifecycle gate before authentication or message-specific
+        // handling. Terminal setup traffic is stale and cannot mutate state.
         let Some(mut program) = self.load_program(&program_id)? else {
             debug!("Program {} not found", program_id);
-            return self.apply_message_disposition(
-                msg,
-                &program_id,
-                msg_type,
-                MessageDisposition::RetryLater(RetryReason::ProgramNotInstalled),
-            );
+            return Ok(Some(MessageDisposition::RetryLater(
+                RetryReason::ProgramNotInstalled,
+            )));
         };
 
         if let Some(disposition) = program.peer_message_lifecycle_disposition() {
-            return self.apply_message_disposition(msg, &program_id, msg_type, disposition);
+            return Ok(Some(disposition));
         }
 
-        // Handle Broadcasted messages specially - they contain original messages to process recursively
+        let sender_pubkey_hash = msg.identifier.pubkey_hash.clone();
+        let peer_address = match program.get_address_from_pubkey_hash(&sender_pubkey_hash) {
+            Some(address) => address,
+            None => {
+                warn!(
+                    "Consuming peer message {:?} for program {} from non-participant {}",
+                    msg_type, program_id, sender_pubkey_hash
+                );
+                return Ok(Some(MessageDisposition::DiscardNoOp(
+                    NoOpReason::UnauthorizedSender,
+                )));
+            }
+        };
+
+        // Broadcast envelopes currently have their own authentication pipeline.
         if msg_type == CommsMessageType::Broadcasted {
             info!("Processing Broadcasted message...");
-            return self
-                .program_context
+            self.program_context
                 .leader_broadcast_helper
                 .process_broadcasted_message(
                     &self.program_context,
-                    msg.identifier,
+                    msg.identifier.clone(),
                     program_id,
                     data,
                     &self.message_queue,
-                );
+                )?;
+            return Ok(None);
         }
 
         let is_verification_msg = matches!(
             msg_type,
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
         );
+
         if !is_verification_msg {
+            let setup_state = program.classify_setup_message(&sender_pubkey_hash, msg_type);
+            match setup_state {
+                SetupMessageState::PendingCurrentContribution
+                | SetupMessageState::NotForCurrentStep => {}
+                no_op_state @ (SetupMessageState::ContributionAlreadyAccepted
+                | SetupMessageState::SetupComplete
+                | SetupMessageState::UnauthorizedSender) => {
+                    let reason = no_op_state
+                        .into_no_op_reason()
+                        .expect("matched setup no-op state");
+                    return Ok(Some(MessageDisposition::DiscardNoOp(reason)));
+                }
+            }
+
             let my_pubkey_hash = self.program_context.comms.get_pubk_hash();
             match SignatureVerifier::authenticate_message(
                 &self.program_context.globals,
@@ -500,7 +548,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &data,
                 timestamp,
                 &signature,
-                &msg.identifier.pubkey_hash,
+                &sender_pubkey_hash,
                 &self.program_context.rsa_public_key,
                 &my_pubkey_hash,
             )? {
@@ -510,53 +558,56 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         "Buffering message due to missing verification key: {:?} {:?}",
                         program_id, msg_type
                     );
-                    return self.apply_message_disposition(
-                        msg,
-                        &program_id,
-                        msg_type,
-                        MessageDisposition::RetryLater(RetryReason::MissingVerificationKey {
-                            peer,
-                        }),
-                    );
+                    return Ok(Some(MessageDisposition::RetryLater(
+                        RetryReason::MissingVerificationKey { peer },
+                    )));
                 }
                 AuthenticationOutcome::Rejected(rejection) => {
                     warn!(
                         "Message authentication rejected from {} for {}: {:?}",
-                        msg.identifier.pubkey_hash, program_id, rejection
+                        sender_pubkey_hash, program_id, rejection
                     );
-                    return Err(BitVMXError::InvalidSignature {
-                        peer: msg.identifier.pubkey_hash.clone(),
-                        msg_type: format!("{:?}", msg_type),
-                        program_id: program_id.to_string(),
-                    });
+                    return Ok(Some(MessageDisposition::FailSetup(PeerSetupFault {
+                        peer: sender_pubkey_hash,
+                        reason: PeerSetupFaultReason::AuthenticationRejected,
+                    })));
                 }
             }
         }
-        let peer_address = program.get_address_from_pubkey_hash(&msg.identifier.pubkey_hash)?;
 
-        let disposition = if is_verification_msg {
-            SignatureVerifier::handle_verification_messages(
+        if is_verification_msg {
+            return match SignatureVerifier::handle_verification_messages(
                 &self.program_context,
                 &program_id,
                 &msg_type,
                 &data,
                 &peer_address,
-            )?;
-            MessageDisposition::Processed
-        } else {
-            self.process_program_message(
-                &program_id,
-                msg_type,
-                data,
-                peer_address,
-                &mut program,
-                timestamp,
-                signature,
-                version,
-            )?
-        };
+            )? {
+                VerificationMessageOutcome::Processed => Ok(Some(MessageDisposition::Processed)),
+                VerificationMessageOutcome::Rejected(rejection) => {
+                    warn!(
+                        "Verification bootstrap message rejected from {} for {}: {:?}",
+                        sender_pubkey_hash, program_id, rejection
+                    );
+                    Ok(Some(MessageDisposition::FailSetup(PeerSetupFault {
+                        peer: sender_pubkey_hash,
+                        reason: rejection.into_peer_setup_fault_reason(),
+                    })))
+                }
+            };
+        }
 
-        self.apply_message_disposition(msg, &program_id, msg_type, disposition)
+        self.process_program_message(
+            &program_id,
+            msg_type,
+            data,
+            peer_address,
+            &mut program,
+            timestamp,
+            signature,
+            version,
+        )
+        .map(Some)
     }
 
     pub fn process_pending_messages(&mut self) -> Result<bool, BitVMXError> {
@@ -1550,6 +1601,85 @@ mod transaction_tests {
                 QueuedMessage::new(Identifier::new(self_hash, 0), stale_broadcast).unwrap(),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn malformed_verification_announcement_fails_active_setup() {
+        let mut env = TestBitVMXEnv::new("verification-bootstrap-rejection").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            self_hash.clone(),
+        );
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+
+        let malformed = serialize_msg(
+            "1.0",
+            CommsMessageType::VerificationKey,
+            &program_id,
+            serde_json::json!({"wrong_field": true}),
+            0,
+            vec![1],
+        )
+        .unwrap();
+        env.bitvmx
+            .process_msg(QueuedMessage::new(Identifier::new(self_hash, 0), malformed).unwrap())
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(program.is_failed());
+    }
+
+    #[test]
+    fn non_participant_message_does_not_fail_active_setup() {
+        let mut env = TestBitVMXEnv::new("non-participant-message").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            env.bitvmx.program_context.comms.get_pubk_hash(),
+        );
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+
+        let unauthorized = serialize_msg(
+            "1.0",
+            CommsMessageType::Keys,
+            &program_id,
+            serde_json::json!({"malformed": true}),
+            0,
+            vec![1],
+        )
+        .unwrap();
+        env.bitvmx
+            .process_msg(
+                QueuedMessage::new(
+                    Identifier::new("non-participant".to_string(), 0),
+                    unauthorized,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert_eq!(program.peer_message_lifecycle_disposition(), None);
     }
 
     #[test]

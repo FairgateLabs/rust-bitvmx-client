@@ -395,25 +395,20 @@ pub fn validate_participants(participants: &[CommsAddress]) -> Result<(), BitVMX
 pub fn get_comms_address_by_pubkey_hash(
     participants: &[CommsAddress],
     pubkey_hash: &PubkHash,
-) -> Result<CommsAddress, BitVMXError> {
-    for p in participants {
-        if &p.pubkey_hash == pubkey_hash {
-            return Ok(p.clone());
-        }
-    }
-    Err(BitVMXError::InvalidCommsAddress(pubkey_hash.clone()))
+) -> Option<CommsAddress> {
+    participants
+        .iter()
+        .find(|participant| &participant.pubkey_hash == pubkey_hash)
+        .cloned()
 }
 
 pub fn get_index_by_pubkey_hash(
     participants: &[CommsAddress],
     pubkey_hash: &PubkHash,
-) -> Result<usize, BitVMXError> {
-    for (i, p) in participants.iter().enumerate() {
-        if &p.pubkey_hash == pubkey_hash {
-            return Ok(i);
-        }
-    }
-    Err(BitVMXError::InvalidCommsAddress(pubkey_hash.clone()))
+) -> Option<usize> {
+    participants
+        .iter()
+        .position(|participant| &participant.pubkey_hash == pubkey_hash)
 }
 
 impl fmt::Display for CommsAddress {
@@ -713,11 +708,11 @@ mod tests {
 
         let missing =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
-        assert!(matches!(
+        assert_eq!(
             get_comms_address_by_pubkey_hash(&participants, &missing),
-            Err(BitVMXError::InvalidCommsAddress(hash)) if hash == missing
-        ));
-        assert!(get_index_by_pubkey_hash(&participants, &missing).is_err());
+            None
+        );
+        assert_eq!(get_index_by_pubkey_hash(&participants, &missing), None);
         assert!("127.0.0.1:1000".parse::<CommsAddress>().is_err());
         assert!(format!("not-an-address,{first_hash}")
             .parse::<CommsAddress>()

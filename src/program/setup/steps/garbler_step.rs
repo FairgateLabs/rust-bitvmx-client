@@ -93,6 +93,10 @@ impl SetupStep for GarblerStep {
         "garbler"
     }
 
+    fn accepted_message_type(&self) -> CommsMessageType {
+        CommsMessageType::GarbledCircuit
+    }
+
     fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,

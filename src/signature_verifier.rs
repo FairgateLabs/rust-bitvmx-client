@@ -10,7 +10,7 @@ use crate::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes},
     },
-    types::ProgramContext,
+    types::{PeerSetupFaultReason, ProgramContext},
 };
 use bitvmx_broker::{
     identification::identifier::{Identifier, PubkHash},
@@ -49,6 +49,35 @@ pub enum AuthenticationRejection {
     MessageReconstruction { reason: String },
     MalformedSignature,
     SignatureMismatch,
+}
+
+/// Result of handling an unsigned verification-key bootstrap message.
+///
+/// Rejections depend only on peer-controlled input. Storage, broker, and
+/// key-manager failures remain `BitVMXError`s so callers can roll them back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerificationMessageOutcome {
+    Processed,
+    Rejected(VerificationMessageRejection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationMessageRejection {
+    MalformedMessage,
+    InvalidVerificationKey,
+    VerificationKeyFingerprintMismatch,
+}
+
+impl VerificationMessageRejection {
+    pub fn into_peer_setup_fault_reason(self) -> PeerSetupFaultReason {
+        match self {
+            Self::MalformedMessage => PeerSetupFaultReason::MalformedMessage,
+            Self::InvalidVerificationKey => PeerSetupFaultReason::InvalidVerificationKey,
+            Self::VerificationKeyFingerprintMismatch => {
+                PeerSetupFaultReason::VerificationKeyFingerprintMismatch
+            }
+        }
+    }
 }
 
 pub struct OperatorVerificationStore;
@@ -319,25 +348,29 @@ impl SignatureVerifier {
         }
     }
 
-    /// Handles verification messages (VerificationKey and VerificationKeyRequest).
-    /// Returns Ok(()) if the message was processed, or Err if there was an error.
+    /// Handles verification messages without deciding setup lifecycle policy.
+    /// Peer-controlled bootstrap failures are returned as typed rejections;
+    /// infrastructure and persistence failures remain errors.
     pub fn handle_verification_messages<BC: BitcoinCoordinatorApi>(
         program_context: &ProgramContext<BC>,
         program_id: &Uuid,
         msg_type: &CommsMessageType,
         data: &Value,
         peer_address: &CommsAddress,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<VerificationMessageOutcome, BitVMXError> {
         match msg_type {
             CommsMessageType::VerificationKey => {
                 Self::handle_verification_key_announcement(program_context, peer_address, data)
             }
-            CommsMessageType::VerificationKeyRequest => Self::handle_verification_key_request(
-                program_context,
-                program_id,
-                peer_address.clone(),
-            ),
-            _ => Ok(()),
+            CommsMessageType::VerificationKeyRequest => {
+                Self::handle_verification_key_request(
+                    program_context,
+                    program_id,
+                    peer_address.clone(),
+                )?;
+                Ok(VerificationMessageOutcome::Processed)
+            }
+            _ => Ok(VerificationMessageOutcome::Processed),
         }
     }
 
@@ -345,24 +378,37 @@ impl SignatureVerifier {
         program_context: &ProgramContext<BC>,
         peer_address: &CommsAddress,
         data: &Value,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<VerificationMessageOutcome, BitVMXError> {
         let pubkey_hash = peer_address.pubkey_hash.clone();
-        let announcement = VerificationKeyAnnouncement::from_value(data)?;
+        let announcement = match VerificationKeyAnnouncement::from_value(data) {
+            Ok(announcement) => announcement,
+            Err(_) => {
+                return Ok(VerificationMessageOutcome::Rejected(
+                    VerificationMessageRejection::MalformedMessage,
+                ));
+            }
+        };
 
         // The broker constructs `peer_address.pubkey_hash` from the mutually
         // authenticated TLS certificate. The application signing key is the same
         // RSA key, so matching these fingerprints binds the announcement to the
         // transport-authenticated peer rather than to a caller-supplied identity.
-        let computed_hash = compute_pubkey_hash(&announcement.verification_key)?;
+        let computed_hash = match compute_pubkey_hash(&announcement.verification_key) {
+            Ok(computed_hash) => computed_hash,
+            Err(_) => {
+                return Ok(VerificationMessageOutcome::Rejected(
+                    VerificationMessageRejection::InvalidVerificationKey,
+                ));
+            }
+        };
         if computed_hash != peer_address.pubkey_hash {
             error!(
                 "Verification key fingerprint mismatch for peer {}",
                 pubkey_hash
             );
-            return Err(BitVMXError::VerificationKeyFingerprintMismatch {
-                peer: pubkey_hash.clone(),
-                computed: computed_hash,
-            });
+            return Ok(VerificationMessageOutcome::Rejected(
+                VerificationMessageRejection::VerificationKeyFingerprintMismatch,
+            ));
         }
 
         info!(
@@ -376,7 +422,7 @@ impl SignatureVerifier {
             &announcement.verification_key,
         )?;
 
-        Ok(())
+        Ok(VerificationMessageOutcome::Processed)
     }
 
     fn handle_verification_key_request<BC: BitcoinCoordinatorApi>(
@@ -905,13 +951,16 @@ mod tests {
         }
         .to_value()?;
 
-        SignatureVerifier::handle_verification_messages(
-            &env.context,
-            &program_id,
-            &CommsMessageType::VerificationKey,
-            &data,
-            &peer_address,
-        )?;
+        assert_eq!(
+            SignatureVerifier::handle_verification_messages(
+                &env.context,
+                &program_id,
+                &CommsMessageType::VerificationKey,
+                &data,
+                &peer_address,
+            )?,
+            VerificationMessageOutcome::Processed
+        );
 
         assert_eq!(
             OperatorVerificationStore::get(&env.context.globals, &peer_hash)?,
@@ -939,14 +988,50 @@ mod tests {
             &data,
             &peer_address,
         );
-        assert!(matches!(
-            result,
-            Err(BitVMXError::VerificationKeyFingerprintMismatch { .. })
-        ));
+        assert_eq!(
+            result?,
+            VerificationMessageOutcome::Rejected(
+                VerificationMessageRejection::VerificationKeyFingerprintMismatch
+            )
+        );
         assert!(!OperatorVerificationStore::has(
             &env.context.globals,
             &peer_address.pubkey_hash
         )?);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_verification_messages_classifies_malformed_keys() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-hvm-malformed")?;
+        let peer_address = CommsAddress::new(
+            env.context.comms.get_address(),
+            "peer-fingerprint".to_string(),
+        );
+        let program_id = Uuid::new_v4();
+
+        assert_eq!(
+            SignatureVerifier::handle_verification_messages(
+                &env.context,
+                &program_id,
+                &CommsMessageType::VerificationKey,
+                &json!({"wrong_field": true}),
+                &peer_address,
+            )?,
+            VerificationMessageOutcome::Rejected(VerificationMessageRejection::MalformedMessage)
+        );
+        assert_eq!(
+            SignatureVerifier::handle_verification_messages(
+                &env.context,
+                &program_id,
+                &CommsMessageType::VerificationKey,
+                &json!({"verification_key": "not a PEM key"}),
+                &peer_address,
+            )?,
+            VerificationMessageOutcome::Rejected(
+                VerificationMessageRejection::InvalidVerificationKey
+            )
+        );
         Ok(())
     }
 
@@ -956,13 +1041,16 @@ mod tests {
         let program_id = Uuid::new_v4();
         let peer_address = env.peer_address(0)?;
 
-        SignatureVerifier::handle_verification_messages(
-            &env.context,
-            &program_id,
-            &CommsMessageType::VerificationKeyRequest,
-            &json!({}),
-            &peer_address,
-        )?;
+        assert_eq!(
+            SignatureVerifier::handle_verification_messages(
+                &env.context,
+                &program_id,
+                &CommsMessageType::VerificationKeyRequest,
+                &json!({}),
+                &peer_address,
+            )?,
+            VerificationMessageOutcome::Processed
+        );
 
         let (_, raw) = env.receive_via_peer(0)?;
         let (_, msg_type, received_program_id, data, _, _) =
@@ -979,13 +1067,16 @@ mod tests {
         let mut env = TestProgramContextEnv::new_with_peers("sigver-hvm-other", 1)?;
         let peer_address = env.peer_address(0)?;
 
-        SignatureVerifier::handle_verification_messages(
-            &env.context,
-            &Uuid::new_v4(),
-            &CommsMessageType::Keys,
-            &json!({}),
-            &peer_address,
-        )?;
+        assert_eq!(
+            SignatureVerifier::handle_verification_messages(
+                &env.context,
+                &Uuid::new_v4(),
+                &CommsMessageType::Keys,
+                &json!({}),
+                &peer_address,
+            )?,
+            VerificationMessageOutcome::Processed
+        );
 
         // Non-verification types are ignored: no key stored, nothing sent.
         assert!(!OperatorVerificationStore::has(

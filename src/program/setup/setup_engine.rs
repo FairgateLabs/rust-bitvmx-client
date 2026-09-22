@@ -34,6 +34,29 @@ pub enum StepState {
     Completed,
 }
 
+/// How an incoming setup message relates to the active setup step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupMessageState {
+    PendingCurrentContribution,
+    ContributionAlreadyAccepted,
+    NotForCurrentStep,
+    UnauthorizedSender,
+    SetupComplete,
+}
+
+impl SetupMessageState {
+    /// Converts setup states that are safe to consume into the corresponding
+    /// message-level no-op reason.
+    pub fn into_no_op_reason(self) -> Option<NoOpReason> {
+        match self {
+            Self::ContributionAlreadyAccepted => Some(NoOpReason::ContributionAlreadyAccepted),
+            Self::UnauthorizedSender => Some(NoOpReason::UnauthorizedSender),
+            Self::SetupComplete => Some(NoOpReason::SetupComplete),
+            Self::PendingCurrentContribution | Self::NotForCurrentStep => None,
+        }
+    }
+}
+
 /// Tracks the state of the setup engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SetupEngineState {
@@ -371,6 +394,34 @@ impl SetupEngine {
         Ok(true)
     }
 
+    fn current_step_accepts(&self, msg_type: CommsMessageType) -> bool {
+        self.steps[self.state.current_step_index].accepted_message_type() == msg_type
+    }
+
+    /// Classifies a participant message against the active setup step without
+    /// inspecting its payload.
+    pub fn classify_participant_message(
+        &self,
+        participants: &[CommsAddress],
+        from: &PubKeyHash,
+        msg_type: CommsMessageType,
+    ) -> SetupMessageState {
+        if self.is_complete() {
+            return SetupMessageState::SetupComplete;
+        }
+        let Some(participant_idx) = get_index_by_pubkey_hash(participants, from) else {
+            return SetupMessageState::UnauthorizedSender;
+        };
+        if !self.current_step_accepts(msg_type) {
+            return SetupMessageState::NotForCurrentStep;
+        }
+        if self.state.has_participant_completed(participant_idx) {
+            SetupMessageState::ContributionAlreadyAccepted
+        } else {
+            SetupMessageState::PendingCurrentContribution
+        }
+    }
+
     /// Receives and verifies data from a participant for the current step.
     ///
     /// This marks the participant as completed for this step.
@@ -388,9 +439,21 @@ impl SetupEngine {
 
         let step_name = self.current_step_name().to_string();
 
-        // Find participant index
-        let participant_idx =
-            get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
+        // Membership is normally established at the outer peer-message boundary,
+        // but direct callers must still consume unknown senders as unauthorized.
+        let Some(participant_idx) =
+            get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)
+        else {
+            return Ok(MessageDisposition::DiscardNoOp(
+                NoOpReason::UnauthorizedSender,
+            ));
+        };
+
+        // Future-step traffic must remain retryable even if this participant has
+        // already contributed to the current step.
+        if !self.current_step_accepts(msg_type) {
+            return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
+        }
 
         // Check if already received
         if self.state.has_participant_completed(participant_idx) {
@@ -403,7 +466,9 @@ impl SetupEngine {
                 "SetupEngine: Already received data from participant {} for step '{}'",
                 participant_idx, step_name
             );
-            return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
+            return Ok(MessageDisposition::DiscardNoOp(
+                NoOpReason::ContributionAlreadyAccepted,
+            ));
         }
 
         debug!(
@@ -636,8 +701,12 @@ impl SetupEngine {
             return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete));
         }
 
-        // Find the participant
-        let from_participant = get_comms_address_by_pubkey_hash(participants, from)?;
+        // The outer peer-message boundary normally establishes membership first.
+        let Some(from_participant) = get_comms_address_by_pubkey_hash(participants, from) else {
+            return Ok(MessageDisposition::DiscardNoOp(
+                NoOpReason::UnauthorizedSender,
+            ));
+        };
 
         let step_name = self.current_step_name().to_string();
         let participants_completed_before = self.state.participants_completed.len();
@@ -1054,6 +1123,37 @@ mod tests {
         let data = serde_json::to_value(ParticipantKeyDeclaration::empty()).unwrap();
 
         assert_eq!(
+            engine.classify_participant_message(
+                &participants,
+                &"unknown-participant".to_string(),
+                CommsMessageType::Keys,
+            ),
+            SetupMessageState::UnauthorizedSender
+        );
+        assert_eq!(
+            engine.classify_participant_message(
+                &participants,
+                &peer.pubkey_hash,
+                CommsMessageType::Keys,
+            ),
+            SetupMessageState::PendingCurrentContribution
+        );
+        let unknown = CommsAddress::new(peer.address, "unknown-participant".to_string());
+        assert_eq!(
+            engine
+                .receive_current_step_data(
+                    data.clone(),
+                    CommsMessageType::Keys,
+                    0,
+                    &unknown,
+                    &protocol,
+                    &participants,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::DiscardNoOp(NoOpReason::UnauthorizedSender)
+        );
+        assert_eq!(
             engine
                 .receive_current_step_data(
                     data.clone(),
@@ -1086,6 +1186,20 @@ mod tests {
                 .receive_current_step_data(
                     data.clone(),
                     CommsMessageType::Keys,
+                    0,
+                    &peer,
+                    &protocol,
+                    &participants,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::DiscardNoOp(NoOpReason::ContributionAlreadyAccepted)
+        );
+        assert_eq!(
+            engine
+                .receive_current_step_data(
+                    data.clone(),
+                    CommsMessageType::PublicNonces,
                     0,
                     &peer,
                     &protocol,

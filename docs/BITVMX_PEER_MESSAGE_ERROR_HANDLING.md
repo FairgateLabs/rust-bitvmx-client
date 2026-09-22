@@ -810,9 +810,12 @@ Tests should verify both the handler result and storage effects:
 3. **Completed:** added the program lifecycle gate so peer messages are processed
    only during setup. Messages for completed or failed programs are consumed before
    authentication, verification-key handling, or broadcast payload processing.
-4. Convert attributable malformed/signature failures from generic `Err` into
-   terminal setup failure while pending, while redundant no-op deliveries
-   remain harmless.
+4. **Completed:** converted direct-message authentication rejections and
+   peer-controlled verification-bootstrap malformations from expected
+   active-setup participants into terminal setup failure, consumed
+   non-participant direct peer traffic without failing the program, and treated
+   current-step repeated contributions as no-op deliveries before payload
+   validation.
 5. Enforce participant and leader authorization using the TLS-authenticated
    sender identifier.
 6. Bring the outer broadcast path under the normal authentication pipeline.

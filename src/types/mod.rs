@@ -51,6 +51,7 @@ pub enum NoOpReason {
     ContributionAlreadyAccepted,
     SetupComplete,
     SetupFailed,
+    UnauthorizedSender,
 }
 
 /// A protocol violation attributable to an authenticated peer.
@@ -65,6 +66,8 @@ pub struct PeerSetupFault {
 pub enum PeerSetupFaultReason {
     AuthenticationRejected,
     MalformedMessage,
+    InvalidVerificationKey,
+    VerificationKeyFingerprintMismatch,
     UnauthorizedMessage,
     InvalidSetupContribution,
 }
@@ -74,6 +77,10 @@ impl std::fmt::Display for PeerSetupFaultReason {
         let description = match self {
             Self::AuthenticationRejected => "message authentication was rejected",
             Self::MalformedMessage => "message was malformed",
+            Self::InvalidVerificationKey => "verification key was invalid",
+            Self::VerificationKeyFingerprintMismatch => {
+                "verification key fingerprint did not match the authenticated peer"
+            }
             Self::UnauthorizedMessage => "message was not authorized",
             Self::InvalidSetupContribution => "setup contribution was invalid",
         };

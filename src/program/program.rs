@@ -12,7 +12,7 @@ use crate::{
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
-        setup::{SetupEngine, SetupEngineState, StepState},
+        setup::{SetupEngine, SetupEngineState, SetupMessageState, StepState},
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
@@ -645,11 +645,23 @@ impl Program {
     }
 
     /// Finds a participant's address by their pubkey hash
-    pub fn get_address_from_pubkey_hash(
+    pub fn get_address_from_pubkey_hash(&self, pubkey_hash: &PubKeyHash) -> Option<CommsAddress> {
+        get_comms_address_by_pubkey_hash(&self.participants, pubkey_hash)
+    }
+
+    /// Classifies a participant message against the current setup step before
+    /// payload validation.
+    pub fn classify_setup_message(
         &self,
         pubkey_hash: &PubKeyHash,
-    ) -> Result<CommsAddress, BitVMXError> {
-        get_comms_address_by_pubkey_hash(&self.participants, pubkey_hash)
+        msg_type: CommsMessageType,
+    ) -> SetupMessageState {
+        match &self.setup_engine {
+            Some(engine) => {
+                engine.classify_participant_message(&self.participants, pubkey_hash, msg_type)
+            }
+            None => SetupMessageState::NotForCurrentStep,
+        }
     }
 
     /// Main entry point for processing incoming communication messages
@@ -1455,7 +1467,7 @@ mod tests {
             .get_address_from_pubkey_hash(
                 &"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
             )
-            .is_err());
+            .is_none());
 
         // An unroutable dispatcher result requests separate failure recording.
         let error = program
