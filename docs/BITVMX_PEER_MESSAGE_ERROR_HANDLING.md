@@ -268,24 +268,15 @@ is consumed, setup is marked failed, and L2 is notified. If that participant's
 contribution was already accepted and another message cannot alter state, it is
 instead `DiscardNoOp` without requiring exact replay comparison.
 
-### `Broadcasted` envelopes bypass normal signature verification
+### `Broadcasted` envelopes use normal signature verification
 
-`BitVMX::process_msg` dispatches `CommsMessageType::Broadcasted` before the
-normal application-signature verification path.
-
-TLS already authenticates the immediate sender, so this is not an unauthenticated
-network path. Nevertheless, the current behavior is inconsistent because:
-
-- every serialized message carries an application signature;
-- comments in `leader_broadcast.rs` state that the leader signature was already
-  verified;
-- direct non-broadcast messages are application-signature verified;
-- application verification protects against modification outside the live TLS
-  connection.
-
-At minimum, the authenticated sender must be checked against the configured
-program leader. Preferably, the outer application signature should also be
-verified for consistency and defense in depth.
+`BitVMX::process_msg` now authorizes the broker/TLS-authenticated immediate
+sender as the configured program leader and then sends `Broadcasted` envelopes
+through the normal application-signature verification path before inspecting
+the payload. A missing leader verification key defers the unchanged envelope,
+while a malformed or mismatched outer signature from the authorized leader
+fails active setup. Only a verified outer envelope reaches embedded-original
+processing.
 
 ### Verification-key bootstrap
 
@@ -820,7 +811,10 @@ Tests should verify both the handler result and storage effects:
    TLS-authenticated sender identifier. Non-participant traffic is consumed
    without affecting setup, while a `Broadcasted` envelope from an expected
    participant other than the configured leader fails setup.
-6. Bring the outer broadcast path under the normal authentication pipeline.
+6. **Completed:** brought the outer broadcast path under the normal
+   authentication pipeline. Missing leader keys defer the envelope, rejected
+   outer signatures fail setup, and only verified envelopes reach embedded
+   original processing.
 7. Refactor embedded-original processing to distinguish verified, missing-key,
    state-level no-op, setup-failing rejection, and system-error outcomes.
 8. Preserve retry state and deduplicate key requests.

@@ -38,7 +38,6 @@ use bitvmx_client::message_queue::{MessageQueue, QueuedMessage};
 use bitvmx_client::program::variables::Globals;
 use bitvmx_client::signature_verifier::OperatorVerificationStore;
 use bitvmx_settings::settings;
-use chrono::Utc;
 use common::{config_trace, init_bitvmx, prepare_bitcoin_guarded};
 use key_manager::create_key_manager_from_config;
 use key_manager::key_manager::KeyManager;
@@ -95,14 +94,13 @@ mod common;
 ///   original whose signer is unknown returns `Ok(false)` from
 ///   `verify_original_message_signature`, the loop `continue`s, and the
 ///   message is dropped without being buffered.
-/// - **Early-return that skips normal buffering for `Broadcasted`.**
-///   `src/bitvmx.rs:388-400`. `BitVMX::process_msg` dispatches
-///   `Broadcasted` straight into the helper, bypassing the path that
-///   would otherwise re-queue on missing keys.
-/// - **The retry pattern the fix should mirror.** `src/bitvmx.rs:407-423`.
-///   For regular non-`Broadcasted` messages, a missing verification key
-///   triggers `MessageQueue::push_back(msg)`, deferring the message until
-///   the key arrives.
+/// - **Outer-envelope authentication.** `BitVMX::process_msg` now authenticates
+///   `Broadcasted` through the normal signature path. If the leader key is
+///   missing, the unchanged outer envelope is re-queued before embedded
+///   originals are inspected.
+/// - **The shared retry pattern.** For direct and `Broadcasted` messages, a
+///   missing sender verification key triggers `MessageQueue::push_back(msg)`,
+///   deferring the message until the key arrives.
 ///
 /// EXPECTED-FAILURE-UNTIL-FIX. While the silent-drop bug is present, the
 /// embedded original is discarded at T0, so at T2 there is nothing left
@@ -135,8 +133,8 @@ fn process_broadcasted_buffers_originals_when_verification_key_unknown() -> Resu
         CommsMessageType::Keys,
     )?;
     let broadcast_envelope = build_broadcasted_envelope(
+        &leader,
         &program_id,
-        &leader.pubkey_hash,
         vec![leader_original],
         CommsMessageType::Keys,
     )?;
@@ -223,8 +221,8 @@ fn process_broadcasted_queues_originals_when_keys_known() -> Result<()> {
         CommsMessageType::Keys,
     )?;
     let queued = build_broadcasted_envelope(
+        &leader,
         &program_id,
-        &leader.pubkey_hash,
         vec![leader_original],
         CommsMessageType::Keys,
     )?;
@@ -251,8 +249,6 @@ fn process_broadcasted_queues_originals_when_keys_known() -> Result<()> {
 // =============================================================================
 // Test support
 // =============================================================================
-
-const TEST_VERSION: &str = "1.0";
 
 /// A self-contained signing identity that stands in for "the leader" in the
 /// test. Holds a `KeyManager` populated from one of the operator key files
@@ -321,14 +317,12 @@ fn build_signed_leader_original(
     })
 }
 
-/// Wrap a list of originals in a `Broadcasted`-typed envelope ready to be
-/// fed into `BitVMX::process_msg`. The outer signature is intentionally a
-/// placeholder: bitvmx.rs:388 takes an early return for `Broadcasted` and
-/// never validates the outer envelope, so any non-empty bytes round-trip
-/// correctly through `deserialize_msg`.
+/// Wrap a list of originals in a signed `Broadcasted` envelope ready to be
+/// fed into `BitVMX::process_msg`. Production authenticates this outer leader
+/// envelope before inspecting any embedded original.
 fn build_broadcasted_envelope(
+    leader: &LeaderEnv,
     program_id: &Uuid,
-    sender: &PubkHash,
     originals: Vec<OriginalMessage>,
     msg_type: CommsMessageType,
 ) -> Result<QueuedMessage> {
@@ -336,16 +330,23 @@ fn build_broadcasted_envelope(
         original_msg_type: msg_type,
         original_messages: originals,
     };
+    let (version, data, timestamp, signature) = prepare_message(
+        &leader.key_manager,
+        &leader.rsa_public_key,
+        program_id,
+        CommsMessageType::Broadcasted,
+        serde_json::to_value(broadcasted_msg)?,
+    )?;
     let bytes = serialize_msg(
-        TEST_VERSION,
+        &version,
         CommsMessageType::Broadcasted,
         program_id,
-        &broadcasted_msg,
-        Utc::now().timestamp_millis(),
-        vec![0xab, 0xcd],
+        data,
+        timestamp,
+        signature,
     )?;
     Ok(QueuedMessage::new(
-        Identifier::new(sender.clone(), 0),
+        Identifier::new(leader.pubkey_hash.clone(), 0),
         bytes,
     )?)
 }
