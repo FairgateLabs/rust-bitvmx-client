@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::rc::Rc;
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::{
+    key::StorageKey,
+    storage::{KeyValueStore, Storage},
+};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -124,23 +127,43 @@ impl OriginalMessage {
 // Leader Broadcast Helper
 // ============================================================================
 
-/// Helper function to generate storage key prefix for original messages
-/// Used to iterate over all messages for a given context and message type
-fn get_original_messages_prefix(context_id: &Uuid, msg_type: CommsMessageType) -> String {
-    format!("bitvmx/original_messages/{}/{:?}/", context_id, msg_type)
+/// Shared "bitvmx/original_message/{context_id}/{msg_type}" prefix
+fn original_message_key<'a>(
+    context_id: &Uuid,
+    msg_type: CommsMessageType,
+    tail: impl IntoIterator<Item = &'a str>,
+) -> Result<StorageKey, BitVMXError> {
+    let id_str = context_id.to_string();
+    Ok(StorageKey::new(
+        [
+            "bitvmx",
+            "original_message",
+            id_str.as_str(),
+            msg_type.as_str(),
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .chain(tail.into_iter().map(str::to_string)),
+    )?)
+}
+
+/// Prefix over every original message for a given context and message type,
+/// for `partial_compare*` scans.
+fn get_original_messages_prefix(
+    context_id: &Uuid,
+    msg_type: CommsMessageType,
+) -> Result<String, BitVMXError> {
+    Ok(original_message_key(context_id, msg_type, [])?.to_scan_prefix())
 }
 
 /// Helper function to generate storage key for a specific original message
-/// Format: bitvmx/original_messages/{context_id}/{msg_type}/{pub_key_hash}
+/// Format: bitvmx/original_message/{context_id}/{msg_type}/{pub_key_hash}
 fn get_original_message_key(
     context_id: &Uuid,
     msg_type: CommsMessageType,
     pub_key_hash: &PubkHash,
-) -> String {
-    format!(
-        "bitvmx/original_messages/{}/{:?}/{}",
-        context_id, msg_type, pub_key_hash
-    )
+) -> Result<StorageKey, BitVMXError> {
+    original_message_key(context_id, msg_type, [pub_key_hash.as_str()])
 }
 
 /// Helper for managing leader broadcast functionality
@@ -175,11 +198,11 @@ impl LeaderBroadcastHelper {
             )));
         }
 
-        let key = get_original_message_key(context_id, msg_type, &original_msg.sender_pubkey_hash);
+        let key = get_original_message_key(context_id, msg_type, &original_msg.sender_pubkey_hash)?;
 
         debug!("New message: {:?}", original_msg.msg_type);
         // Check if message from this sender already exists
-        let existing: Option<OriginalMessage> = self.store.get(&key, None)?;
+        let existing: Option<OriginalMessage> = self.store.get(key.clone(), None)?;
         if existing.is_some() {
             warn!(
                 "Original message from {} already stored for context {} and type {:?}",
@@ -189,7 +212,7 @@ impl LeaderBroadcastHelper {
         }
 
         // Store the message directly - O(1) operation, only serializes this one message
-        self.store.set(&key, original_msg, None)?;
+        self.store.set(key, original_msg, None)?;
         Ok(true)
     }
 
@@ -201,7 +224,7 @@ impl LeaderBroadcastHelper {
         context_id: &Uuid,
         msg_type: CommsMessageType,
     ) -> Result<Vec<OriginalMessage>, BitVMXError> {
-        let prefix = get_original_messages_prefix(context_id, msg_type);
+        let prefix = get_original_messages_prefix(context_id, msg_type)?;
         let stored_messages = self.store.partial_compare(&prefix, None)?;
 
         let mut messages = Vec::new();
@@ -249,12 +272,12 @@ impl LeaderBroadcastHelper {
         context_id: &Uuid,
         msg_type: CommsMessageType,
     ) -> Result<(), BitVMXError> {
-        let prefix = get_original_messages_prefix(context_id, msg_type);
+        let prefix = get_original_messages_prefix(context_id, msg_type)?;
         let stored_messages = self.store.partial_compare(&prefix, None)?;
 
         // Delete each individual message key
         for (key, _) in stored_messages.iter() {
-            self.store.remove(key, None)?;
+            self.store.remove(StorageKey::from_joined(key)?, None)?;
         }
 
         Ok(())
@@ -743,8 +766,9 @@ mod tests {
 
         // Write a value under the messages prefix that is not an
         // OriginalMessage, bypassing store_original_message validation.
-        let key = get_original_message_key(&context_id, CommsMessageType::Keys, &"alice".into());
-        storage.set(&key, 42u32, None).unwrap();
+        let key =
+            get_original_message_key(&context_id, CommsMessageType::Keys, &"alice".into()).unwrap();
+        storage.set(key, 42u32, None).unwrap();
 
         assert!(helper
             .get_original_messages(&context_id, CommsMessageType::Keys)
@@ -855,11 +879,12 @@ mod tests {
         let mut bad = test_original_message("mallory");
         bad.msg_type = CommsMessageType::PublicNonces;
         let key =
-            get_original_message_key(&context_id, CommsMessageType::Keys, &bad.sender_pubkey_hash);
+            get_original_message_key(&context_id, CommsMessageType::Keys, &bad.sender_pubkey_hash)
+                .unwrap();
         env.context
             .leader_broadcast_helper
             .store
-            .set(&key, bad, None)
+            .set(key, bad, None)
             .unwrap();
 
         assert!(env
@@ -875,7 +900,7 @@ mod tests {
                 .leader_broadcast_helper
                 .store
                 .partial_compare(
-                    &get_original_messages_prefix(&context_id, CommsMessageType::Keys),
+                    &get_original_messages_prefix(&context_id, CommsMessageType::Keys).unwrap(),
                     None
                 )
                 .unwrap()

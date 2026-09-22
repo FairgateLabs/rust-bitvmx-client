@@ -52,7 +52,10 @@ use serde_json::Value;
 use std::str::FromStr;
 use std::time::Instant;
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::{
+    key::StorageKey,
+    storage::{KeyValueStore, Storage},
+};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -100,13 +103,26 @@ enum StoreKey {
 }
 
 impl StoreKey {
-    fn get_key(&self) -> String {
+    fn get_key(&self) -> Result<StorageKey, BitVMXError> {
+        fn zkp_key<'a>(
+            id: &Uuid,
+            tail: impl IntoIterator<Item = &'a str>,
+        ) -> Result<StorageKey, BitVMXError> {
+            let id_str = id.to_string();
+            Ok(StorageKey::new(
+                ["bitvmx", "zkp", id_str.as_str()]
+                    .into_iter()
+                    .map(str::to_string)
+                    .chain(tail.into_iter().map(str::to_string)),
+            )?)
+        }
+
         match self {
-            StoreKey::Programs => "bitvmx/programs/all".to_string(),
-            StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
-            StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
-            StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
-            StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
+            StoreKey::Programs => Ok(StorageKey::new(["bitvmx", "program", "list"])?),
+            StoreKey::ZKPProof(id) => zkp_key(id, ["proof"]),
+            StoreKey::ZKPStatus(id) => zkp_key(id, ["status"]),
+            StoreKey::ZKPFrom(id) => zkp_key(id, ["from"]),
+            StoreKey::ZKPJournal(id) => zkp_key(id, ["journal"]),
         }
     }
 }
@@ -872,17 +888,20 @@ impl BitVMX {
             // Store the proof data and status
             let transaction_id = self.store.begin_transaction();
 
-            self.store
-                .set(StoreKey::ZKPProof(id).get_key(), seal, Some(transaction_id))?;
+            self.store.set(
+                StoreKey::ZKPProof(id).get_key()?,
+                seal,
+                Some(transaction_id),
+            )?;
 
             self.store.set(
-                StoreKey::ZKPJournal(id).get_key(),
+                StoreKey::ZKPJournal(id).get_key()?,
                 journal,
                 Some(transaction_id),
             )?;
 
             self.store.set(
-                StoreKey::ZKPStatus(id).get_key(),
+                StoreKey::ZKPStatus(id).get_key()?,
                 status.to_string(),
                 Some(transaction_id),
             )?;
@@ -892,7 +911,7 @@ impl BitVMX {
             // Get the stored 'from' parameter
             let from: Identifier = self
                 .store
-                .get(StoreKey::ZKPFrom(id).get_key(), None)?
+                .get(StoreKey::ZKPFrom(id).get_key()?, None)?
                 .ok_or_else(|| {
                     warn!("Missing 'from' parameter for ZKP request: {}", id);
                     BitVMXError::InvalidMessageFormat
@@ -1150,7 +1169,7 @@ impl BitVMX {
     fn get_programs(&self) -> Result<Vec<ProgramStatus>, BitVMXError> {
         let programs_ids: Option<Vec<ProgramStatus>> = self
             .store
-            .get(StoreKey::Programs.get_key(), None)
+            .get(StoreKey::Programs.get_key()?, None)
             .map_err(BitVMXError::StorageError)?;
 
         Ok(programs_ids.unwrap_or_default())
@@ -1166,7 +1185,7 @@ impl BitVMX {
         programs.push(ProgramStatus::new(*program_id));
 
         self.store
-            .set(StoreKey::Programs.get_key(), programs, None)?;
+            .set(StoreKey::Programs.get_key()?, programs, None)?;
 
         Ok(())
     }
@@ -1373,7 +1392,7 @@ impl BitVMX {
 
         // Store the 'from' parameter
         self.store
-            .set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
+            .set(StoreKey::ZKPFrom(id).get_key()?, from, None)?;
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
@@ -1392,8 +1411,8 @@ impl BitVMX {
         info!("Checking if proof is ready for job: {}", id);
 
         // Get the status from storage
-        let status_key = StoreKey::ZKPStatus(id).get_key();
-        let status: Option<String> = self.store.get(&status_key, None)?;
+        let status_key = StoreKey::ZKPStatus(id).get_key()?;
+        let status: Option<String> = self.store.get(status_key, None)?;
 
         let response = match status {
             Some(status_str) => {
@@ -1414,21 +1433,21 @@ impl BitVMX {
     fn get_zkp_execution_result(&mut self, from: Identifier, id: Uuid) -> Result<(), BitVMXError> {
         // Check if the proof is ready
         info!("Checking if {} ZKP job is ready", id);
-        let status_key = StoreKey::ZKPStatus(id).get_key();
-        let status: Option<String> = self.store.get(&status_key, None)?;
+        let status_key = StoreKey::ZKPStatus(id).get_key()?;
+        let status: Option<String> = self.store.get(status_key, None)?;
 
         let response = match status {
             Some(status_str) => {
                 if status_str == "OK" {
                     info!("Getting ZKP execution result for job: {}", id);
                     let seal: Vec<u8> =
-                        match self.store.get(&StoreKey::ZKPProof(id).get_key(), None)? {
+                        match self.store.get(StoreKey::ZKPProof(id).get_key()?, None)? {
                             Some(seal) => seal,
                             None => return Err(BitVMXError::InconsistentZKPData(id)),
                         };
 
                     let journal: Vec<u8> =
-                        match self.store.get(&StoreKey::ZKPJournal(id).get_key(), None)? {
+                        match self.store.get(StoreKey::ZKPJournal(id).get_key()?, None)? {
                             Some(journal) => journal,
                             None => {
                                 return Err(BitVMXError::InconsistentZKPData(id));

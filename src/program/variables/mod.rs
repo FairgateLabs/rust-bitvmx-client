@@ -4,11 +4,23 @@ pub use shared::*;
 use std::rc::Rc;
 
 use crate::errors::BitVMXError;
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::{
+    key::StorageKey,
+    storage::{KeyValueStore, Storage},
+};
 use uuid::Uuid;
 
 pub struct Globals {
     storage: Rc<Storage>,
+}
+
+fn var_key(uuid: &Uuid, key: &str) -> Result<StorageKey, BitVMXError> {
+    Ok(StorageKey::new([
+        "bitvmx",
+        "var",
+        uuid.to_string().as_str(),
+        key,
+    ])?)
 }
 
 impl Globals {
@@ -17,18 +29,15 @@ impl Globals {
     }
 
     pub fn contains_var(&self, uuid: &Uuid, key: &str) -> Result<bool, BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
-        Ok(self.storage.has_key(&key, None)?)
+        Ok(self.storage.has_key(var_key(uuid, key)?, None)?)
     }
 
     pub fn set_var(&self, uuid: &Uuid, key: &str, value: VariableTypes) -> Result<(), BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
-        Ok(self.storage.set(&key, value, None)?)
+        Ok(self.storage.set(var_key(uuid, key)?, value, None)?)
     }
 
     pub fn get_var(&self, uuid: &Uuid, key: &str) -> Result<Option<VariableTypes>, BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
-        let value: Option<VariableTypes> = self.storage.get(&key, None)?;
+        let value: Option<VariableTypes> = self.storage.get(var_key(uuid, key)?, None)?;
         Ok(value)
     }
 
@@ -44,13 +53,21 @@ impl Globals {
     }
 
     pub fn unset_var(&self, uuid: &Uuid, key: &str) -> Result<(), BitVMXError> {
-        let key = format!("{}:var:{}", uuid, key);
-        Ok(self.storage.remove(&key, None)?)
+        Ok(self.storage.remove(var_key(uuid, key)?, None)?)
     }
 }
 
 pub struct WitnessVars {
     storage: Rc<Storage>,
+}
+
+fn witness_key(uuid: &Uuid, key: &str) -> Result<StorageKey, BitVMXError> {
+    Ok(StorageKey::new([
+        "bitvmx",
+        "witness",
+        uuid.to_string().as_str(),
+        key,
+    ])?)
 }
 
 impl WitnessVars {
@@ -64,13 +81,11 @@ impl WitnessVars {
         key: &str,
         value: WitnessTypes,
     ) -> Result<(), BitVMXError> {
-        let key = format!("{}:witness:{}", uuid, key);
-        Ok(self.storage.set(&key, value, None)?)
+        Ok(self.storage.set(witness_key(uuid, key)?, value, None)?)
     }
 
     pub fn get_witness(&self, uuid: &Uuid, key: &str) -> Result<Option<WitnessTypes>, BitVMXError> {
-        let key = format!("{}:witness:{}", uuid, key);
-        let value = self.storage.get(&key, None)?;
+        let value = self.storage.get(witness_key(uuid, key)?, None)?;
         Ok(value)
     }
 
