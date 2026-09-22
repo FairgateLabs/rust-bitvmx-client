@@ -247,26 +247,19 @@ state changes.
 
 ## Current behavior and risks
 
-### Invalid signatures still propagate at the caller boundary
+### Invalid signatures are setup dispositions
 
-`SignatureVerifier::authenticate_message` now distinguishes `Verified`,
-`MissingKey`, and `Rejected` outcomes. Missing keys are therefore no longer
-represented as general errors in the authentication path, and malformed
-signatures, signature mismatches, and message-reconstruction failures are typed
-authentication rejections.
+`SignatureVerifier::authenticate_message` distinguishes `Verified`,
+`MissingKey`, and `Rejected` outcomes. Missing keys are not general errors, and
+malformed signatures, signature mismatches, and message-reconstruction failures
+are typed authentication rejections.
 
-The direct-message and embedded-original callers have been migrated to this
-API. As an intermediate state, however, they still convert `Rejected` back into
-`BitVMXError::InvalidSignature`. Because comms processing is transactional,
-propagation restores the invalid input. The same bad signature can therefore
-still be retried indefinitely and repeatedly reported as a node error until the
-`FailSetup` disposition is implemented.
-
-During active setup, an invalid signature from an expected participant whose
-contribution is still pending should produce `FailSetup`, not `Err`. The event
-is consumed, setup is marked failed, and L2 is notified. If that participant's
-contribution was already accepted and another message cannot alter state, it is
-instead `DiscardNoOp` without requiring exact replay comparison.
+Direct messages, outer leader envelopes, and embedded originals now map a
+`Rejected` outcome from an expected active-setup participant to `FailSetup`
+rather than propagating `BitVMXError::InvalidSignature`. The event is consumed,
+setup is marked failed, and L2 is notified. If setup state already records an
+embedded participant's contribution, the embedded delivery is instead
+`DiscardNoOp` before signature or payload validation.
 
 ### `Broadcasted` envelopes use normal signature verification
 
@@ -314,30 +307,29 @@ program and its payload is structurally valid.
 
 ### Ambiguous boolean results
 
-Several APIs still encode different meanings as `bool`:
+Some setup APIs still encode different meanings as `bool`:
 
-- the leader-broadcast adapter currently converts an embedded original's
-  `MissingKey` authentication outcome to `false`;
 - setup-step `verify_received` uses `false` for data that did not verify;
 - setup-step `can_advance` uses `false` for a temporary not-ready state.
 
-Top-level signature authentication no longer uses a boolean result. The
-remaining meanings must not share one control-flow representation. In
-particular, an invalid contribution and an absent key require opposite handling:
-fail setup versus retry.
+Signature authentication and embedded-original processing now use explicit
+outcomes. The remaining setup meanings must not share one control-flow
+representation. In particular, an invalid contribution and an absent
+prerequisite require opposite handling: fail setup versus retry.
 
-### Broadcast processing conflates temporary and permanent failures
+### Broadcast processing distinguishes per-original outcomes
 
-Current broadcast processing:
+Broadcast processing now classifies each embedded original as verified,
+missing-key, state-level no-op, or rejected. Claimed senders must belong to the
+program, embedded types must be setup contribution types and agree with the
+envelope, and accepted contributions are discarded before irrelevant payload
+validation. Verified and missing-key originals are queued independently, while
+one rejected original atomically fails the envelope and active setup without
+queueing any originals from that envelope. Storage and key-manager failures
+continue to propagate.
 
-- queues an embedded original when its verification key is missing;
-- propagates malformed structures and known invalid signatures;
-- rejects the whole broadcast transaction when one embedded message is invalid;
-- uses `push_new` for embedded messages, creating fresh retry state.
-
-The stale comments in `tests/leader_broadcast_test.rs` that described
-missing-key originals as silently dropped have been updated to match the current
-queueing behavior.
+Embedded messages still use `push_new`, so preserving retry state and avoiding
+fresh retry budgets remains part of implementation step 8.
 
 ### Redundant deliveries are retried
 
@@ -815,8 +807,11 @@ Tests should verify both the handler result and storage effects:
    authentication pipeline. Missing leader keys defer the envelope, rejected
    outer signatures fail setup, and only verified envelopes reach embedded
    original processing.
-7. Refactor embedded-original processing to distinguish verified, missing-key,
-   state-level no-op, setup-failing rejection, and system-error outcomes.
+7. **Completed:** refactored embedded-original processing to distinguish
+   verified, missing-key, state-level no-op, setup-failing rejection, and
+   system-error outcomes. Embedded senders and types are authorized against the
+   program, and one rejected original atomically fails setup before any original
+   from that envelope is queued.
 8. Preserve retry state and deduplicate key requests.
 9. Refactor setup-step boolean verification results and identify redundant
    messages from existing setup state without persistent replay tracking.

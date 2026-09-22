@@ -165,23 +165,13 @@ fn process_broadcasted_buffers_originals_when_verification_key_unknown() -> Resu
     // required for the test.
     OperatorVerificationStore::store(&view_globals, &leader.pubkey_hash, &leader.rsa_public_key)?;
 
-    // T2: the embedded original must still be recoverable so the keys step
-    // can advance to 4/4. With the bug present the queue is empty here
-    // (the data was discarded at T0), so this assertion fails, which is
-    // the expected signal that the silent-drop bug has not been fixed.
-    //
-    // The assertion uses `is_empty` rather than `pop_front` so it remains
-    // valid regardless of whether the eventual fix re-queues via
-    // `push_new` (immediately poppable) or `push_back` (subject to retry-
-    // policy backoff before pop_front returns Some).
+    // T2: either the outer envelope or its embedded original must remain
+    // recoverable so the keys step can advance once the key is available.
+    // `is_empty` keeps the assertion independent of retry-policy backoff.
     assert!(
         !view_queue.is_empty()?,
-        "leader's embedded original must survive the verification-key race \
-         so it can be retried once the key arrives. Currently it is silently \
-         dropped at T0 by leader_broadcast.rs:404-410 (`continue` after \
-         MissingVerificationKey), so by T2 there is nothing left to retry. \
-         Fix should mirror bitvmx.rs:407-423 which re-queues regular \
-         messages via `push_back` on missing keys."
+        "the authenticated leader envelope or embedded original must survive \
+         the verification-key race so it can be retried once the key arrives"
     );
 
     Ok(())

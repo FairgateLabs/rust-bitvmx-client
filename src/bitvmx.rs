@@ -457,14 +457,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let disposition = self.process_decoded_peer_message(
             &msg, version, msg_type, program_id, data, timestamp, signature,
         )?;
-        match disposition {
-            Some(disposition) => {
-                self.apply_message_disposition(msg, &program_id, msg_type, disposition)
-            }
-            // Broadcast processing owns its control flow until it returns typed
-            // dispositions in a later implementation step.
-            None => Ok(()),
-        }
+        self.apply_message_disposition(msg, &program_id, msg_type, disposition)
     }
 
     fn process_decoded_peer_message(
@@ -476,18 +469,18 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         data: Value,
         timestamp: i64,
         signature: Vec<u8>,
-    ) -> Result<Option<MessageDisposition>, BitVMXError> {
+    ) -> Result<MessageDisposition, BitVMXError> {
         // Apply the lifecycle gate before authentication or message-specific
         // handling. Terminal setup traffic is stale and cannot mutate state.
         let Some(mut program) = self.load_program(&program_id)? else {
             debug!("Program {} not found", program_id);
-            return Ok(Some(MessageDisposition::RetryLater(
+            return Ok(MessageDisposition::RetryLater(
                 RetryReason::ProgramNotInstalled,
-            )));
+            ));
         };
 
         if let Some(disposition) = program.peer_message_lifecycle_disposition() {
-            return Ok(Some(disposition));
+            return Ok(disposition);
         }
 
         let sender_pubkey_hash = msg.identifier.pubkey_hash.clone();
@@ -498,9 +491,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Consuming peer message {:?} for program {} from non-participant {}",
                     msg_type, program_id, sender_pubkey_hash
                 );
-                return Ok(Some(MessageDisposition::DiscardNoOp(
+                return Ok(MessageDisposition::DiscardNoOp(
                     NoOpReason::UnauthorizedSender,
-                )));
+                ));
             }
         };
 
@@ -515,10 +508,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "Rejecting Broadcasted message for program {} from non-leader participant {}",
                 program_id, sender_pubkey_hash
             );
-            return Ok(Some(MessageDisposition::FailSetup(PeerSetupFault {
+            return Ok(MessageDisposition::FailSetup(PeerSetupFault {
                 peer: sender_pubkey_hash,
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
-            })));
+            }));
         }
 
         let is_verification_msg = matches!(
@@ -537,7 +530,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     let reason = no_op_state
                         .into_no_op_reason()
                         .expect("matched setup no-op state");
-                    return Ok(Some(MessageDisposition::DiscardNoOp(reason)));
+                    return Ok(MessageDisposition::DiscardNoOp(reason));
                 }
             }
 
@@ -560,19 +553,19 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         "Buffering message due to missing verification key: {:?} {:?}",
                         program_id, msg_type
                     );
-                    return Ok(Some(MessageDisposition::RetryLater(
+                    return Ok(MessageDisposition::RetryLater(
                         RetryReason::MissingVerificationKey { peer },
-                    )));
+                    ));
                 }
                 AuthenticationOutcome::Rejected(rejection) => {
                     warn!(
                         "Message authentication rejected from {} for {}: {:?}",
                         sender_pubkey_hash, program_id, rejection
                     );
-                    return Ok(Some(MessageDisposition::FailSetup(PeerSetupFault {
+                    return Ok(MessageDisposition::FailSetup(PeerSetupFault {
                         peer: sender_pubkey_hash,
                         reason: PeerSetupFaultReason::AuthenticationRejected,
-                    })));
+                    }));
                 }
             }
         }
@@ -585,16 +578,17 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "Processing authenticated Broadcasted message for program {} from leader {}",
                 program_id, sender_pubkey_hash
             );
-            self.program_context
+            return self
+                .program_context
                 .leader_broadcast_helper
                 .process_broadcasted_message(
                     &self.program_context,
+                    &program,
                     msg.identifier.clone(),
                     program_id,
                     data,
                     &self.message_queue,
-                )?;
-            return Ok(None);
+                );
         }
 
         if is_verification_msg {
@@ -605,16 +599,16 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &data,
                 &peer_address,
             )? {
-                VerificationMessageOutcome::Processed => Ok(Some(MessageDisposition::Processed)),
+                VerificationMessageOutcome::Processed => Ok(MessageDisposition::Processed),
                 VerificationMessageOutcome::Rejected(rejection) => {
                     warn!(
                         "Verification bootstrap message rejected from {} for {}: {:?}",
                         sender_pubkey_hash, program_id, rejection
                     );
-                    Ok(Some(MessageDisposition::FailSetup(PeerSetupFault {
+                    Ok(MessageDisposition::FailSetup(PeerSetupFault {
                         peer: sender_pubkey_hash,
                         reason: rejection.into_peer_setup_fault_reason(),
-                    })))
+                    }))
                 }
             };
         }
@@ -629,7 +623,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             signature,
             version,
         )
-        .map(Some)
     }
 
     pub fn process_pending_messages(&mut self) -> Result<bool, BitVMXError> {
