@@ -504,9 +504,26 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }
         };
 
-        // Broadcast envelopes currently have their own authentication pipeline.
+        // The broker constructs `Identifier` from the mutually authenticated TLS
+        // connection, so authorization must use that immediate sender rather than
+        // anything claimed inside the payload. Only the configured leader may
+        // forward a Broadcasted envelope for this program.
         if msg_type == CommsMessageType::Broadcasted {
-            info!("Processing Broadcasted message...");
+            if !program.validate_leader_pubkey_hash(&sender_pubkey_hash)? {
+                warn!(
+                    "Rejecting Broadcasted message for program {} from non-leader participant {}",
+                    program_id, sender_pubkey_hash
+                );
+                return Ok(Some(MessageDisposition::FailSetup(PeerSetupFault {
+                    peer: sender_pubkey_hash,
+                    reason: PeerSetupFaultReason::UnauthorizedMessage,
+                })));
+            }
+
+            info!(
+                "Processing Broadcasted message for program {} from leader {}",
+                program_id, sender_pubkey_hash
+            );
             self.program_context
                 .leader_broadcast_helper
                 .process_broadcasted_message(
@@ -1504,7 +1521,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 mod transaction_tests {
     use super::*;
     use crate::{
-        comms_helper::serialize_msg,
+        comms_helper::{prepare_message, serialize_msg},
+        leader_broadcast::BroadcastedMessage,
         test_utils::{TestBitVMXEnv, TestStorageDir},
         types::PROGRAM_TYPE_AGGREGATED_KEY,
     };
@@ -1638,6 +1656,105 @@ mod transaction_tests {
 
         let program = Program::load(store, &program_id).unwrap().unwrap();
         assert!(program.is_failed());
+    }
+
+    #[test]
+    fn broadcast_from_non_leader_participant_fails_active_setup() {
+        let mut env = TestBitVMXEnv::new("non-leader-broadcast").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            env.bitvmx.program_context.comms.get_pubk_hash(),
+        );
+        let non_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "11".repeat(32));
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address, non_leader.clone()],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+
+        // Authorization precedes broadcast payload parsing, so even this
+        // malformed envelope is an attributable leader-role violation.
+        let broadcast = serialize_msg(
+            "1.0",
+            CommsMessageType::Broadcasted,
+            &program_id,
+            serde_json::json!({"malformed": true}),
+            0,
+            vec![1],
+        )
+        .unwrap();
+        env.bitvmx
+            .process_msg(
+                QueuedMessage::new(Identifier::new(non_leader.pubkey_hash, 0), broadcast).unwrap(),
+            )
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(program.is_failed());
+    }
+
+    #[test]
+    fn broadcast_from_configured_leader_is_authorized() {
+        let mut env = TestBitVMXEnv::new("leader-broadcast-authorization").unwrap();
+        let store = env.bitvmx.get_store();
+        let leader_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let leader_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            leader_hash.clone(),
+        );
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![leader_address],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+
+        let original_data = serde_json::json!({"declaration": "test"});
+        let (version, data, timestamp, signature) = prepare_message(
+            &env.bitvmx.program_context.key_manager,
+            &env.bitvmx.program_context.rsa_public_key,
+            &program_id,
+            CommsMessageType::Keys,
+            original_data,
+        )
+        .unwrap();
+        let broadcast_data = BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![OriginalMessage {
+                sender_pubkey_hash: leader_hash.clone(),
+                msg_type: CommsMessageType::Keys,
+                data,
+                original_timestamp: timestamp,
+                original_signature: signature,
+                version,
+            }],
+        };
+        let broadcast = serialize_msg(
+            "1.0",
+            CommsMessageType::Broadcasted,
+            &program_id,
+            broadcast_data,
+            0,
+            vec![1],
+        )
+        .unwrap();
+
+        env.bitvmx
+            .process_msg(QueuedMessage::new(Identifier::new(leader_hash, 0), broadcast).unwrap())
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(!program.is_failed());
     }
 
     #[test]

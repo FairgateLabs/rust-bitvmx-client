@@ -816,8 +816,10 @@ Tests should verify both the handler result and storage effects:
    non-participant direct peer traffic without failing the program, and treated
    current-step repeated contributions as no-op deliveries before payload
    validation.
-5. Enforce participant and leader authorization using the TLS-authenticated
-   sender identifier.
+5. **Completed:** enforced participant and leader authorization using the
+   TLS-authenticated sender identifier. Non-participant traffic is consumed
+   without affecting setup, while a `Broadcasted` envelope from an expected
+   participant other than the configured leader fails setup.
 6. Bring the outer broadcast path under the normal authentication pipeline.
 7. Refactor embedded-original processing to distinguish verified, missing-key,
    state-level no-op, setup-failing rejection, and system-error outcomes.

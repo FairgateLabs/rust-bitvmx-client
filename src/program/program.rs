@@ -649,6 +649,25 @@ impl Program {
         get_comms_address_by_pubkey_hash(&self.participants, pubkey_hash)
     }
 
+    /// Checks whether an authenticated participant is this program's leader.
+    ///
+    /// An invalid persisted leader index is local state corruption and is
+    /// therefore returned as an error rather than treated as a peer fault.
+    pub fn validate_leader_pubkey_hash(
+        &self,
+        pubkey_hash: &PubKeyHash,
+    ) -> Result<bool, BitVMXError> {
+        let leader = self.participants.get(self.leader).ok_or_else(|| {
+            BitVMXError::InvalidMessage(format!(
+                "Program {} has invalid leader index {} for {} participants",
+                self.program_id,
+                self.leader,
+                self.participants.len()
+            ))
+        })?;
+        Ok(&leader.pubkey_hash == pubkey_hash)
+    }
+
     /// Classifies a participant message against the current setup step before
     /// payload validation.
     pub fn classify_setup_message(
@@ -1468,6 +1487,14 @@ mod tests {
                 &"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
             )
             .is_none());
+        assert!(program
+            .validate_leader_pubkey_hash(&participant.pubkey_hash)
+            .unwrap());
+        assert!(!program
+            .validate_leader_pubkey_hash(
+                &"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
+            )
+            .unwrap());
 
         // An unroutable dispatcher result requests separate failure recording.
         let error = program
