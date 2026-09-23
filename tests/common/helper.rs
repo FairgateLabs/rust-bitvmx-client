@@ -46,6 +46,7 @@ const MIN_TX_FEE: f64 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    Bitcoin,
     Regtest, // Local regtest whose bitcoind the harness spawns, funds, and mines itself.
     RegtestIndependent, // A regtest node the harness connects to but does not spawn or fund.
     Testnet,
@@ -65,6 +66,7 @@ impl Mode {
             Mode::Regtest | Mode::RegtestIndependent | Mode::Simchain => Network::Regtest,
             Mode::Testnet => Network::Testnet,
             Mode::Testnet4 => Network::Testnet4,
+            Mode::Bitcoin => Network::Bitcoin,
         }
     }
 
@@ -95,6 +97,7 @@ impl Mode {
             }
             Mode::Testnet => "config/wallet_testnet.yaml",
             Mode::Testnet4 => "config/wallet_testnet4.yaml",
+            Mode::Bitcoin => "config/wallet_bitcoin.yaml",
         }
     }
 
@@ -104,6 +107,7 @@ impl Mode {
             (Network::Regtest, true) => Mode::RegtestIndependent,
             (Network::Testnet, true) => Mode::Testnet,
             (Network::Testnet4, true) => Mode::Testnet4,
+            (Network::Bitcoin, true) => Mode::Bitcoin,
             other => panic!("unsupported network/independent combination: {:?}", other),
         }
     }
@@ -605,6 +609,7 @@ pub fn get_configs(network: Network) -> Result<Vec<Config>> {
         Network::Regtest => vec!["op_1", "op_2", "op_3", "op_4"],
         Network::Testnet => vec!["testnet_op_1", "testnet_op_2", "testnet_op_3"],
         Network::Testnet4 => vec!["testnet4_op_1", "testnet4_op_2", "testnet4_op_3"],
+        Network::Bitcoin => vec!["bitcoin_op_1", "bitcoin_op_2", "bitcoin_op_3"],
         _ => panic!("Network not supported: {}", network),
     };
 
