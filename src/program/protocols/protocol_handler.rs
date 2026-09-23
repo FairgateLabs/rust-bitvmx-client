@@ -983,6 +983,9 @@ pub trait ProtocolHandler {
             &speedup_pub,
         )?;
 
+        let output = OutputType::segwit_key(AmountType::Recover, speedup_pub)?;
+        protocol.add_transaction_output(&action_wins(role, action_number), &output)?;
+
         Ok(())
     }
 
