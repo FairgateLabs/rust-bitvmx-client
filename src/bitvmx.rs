@@ -20,7 +20,10 @@ use crate::{
         setup::SetupMessageState,
         variables::{Globals, WitnessVars},
     },
-    signature_verifier::{AuthenticationOutcome, SignatureVerifier, VerificationMessageOutcome},
+    signature_verifier::{
+        AuthenticationOutcome, OperatorVerificationStore, SignatureVerifier,
+        VerificationMessageOutcome,
+    },
     types::{
         ErrorReportKind, JobDispatcherType, MessageDisposition, NoOpReason,
         OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
@@ -389,6 +392,20 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )
     }
 
+    fn request_missing_verification_keys(&self, program_id: &Uuid) -> Result<(), BitVMXError> {
+        let Some(program) = self.load_program(program_id)? else {
+            return Ok(());
+        };
+        OperatorVerificationStore::request_missing_verification_keys(
+            &self.program_context.globals,
+            &self.program_context.comms,
+            &self.program_context.key_manager,
+            &self.program_context.rsa_public_key,
+            program_id,
+            &program.participants,
+        )
+    }
+
     /// Applies peer-message control flow in one place so handlers only classify outcomes.
     fn apply_message_disposition(
         &mut self,
@@ -420,8 +437,23 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         SetupFailureReason::MessageLost,
                     ),
                 };
-                if self.message_queue.push_back(msg)? == PushOutcome::Dropped {
-                    self.fail_program_setup(program_id, Some(peer), failure_reason)?;
+                let retry_needs_keys = matches!(
+                    reason,
+                    RetryReason::MissingVerificationKey { .. }
+                        | RetryReason::MissingParticipantVerificationKeys
+                );
+                match self.message_queue.push_deferred(msg)? {
+                    PushOutcome::Dropped => {
+                        self.fail_program_setup(program_id, Some(peer), failure_reason)?;
+                    }
+                    PushOutcome::Queued | PushOutcome::AlreadyQueued => {
+                        if retry_needs_keys {
+                            // Verification-key requests are intentionally idempotent.
+                            // Re-requesting is harmless, and key presence in
+                            // OperatorVerificationStore naturally stops future requests.
+                            self.request_missing_verification_keys(program_id)?;
+                        }
+                    }
                 }
                 Ok(())
             }

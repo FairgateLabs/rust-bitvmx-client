@@ -12,16 +12,10 @@ use crate::{
     },
     types::{PeerSetupFaultReason, ProgramContext},
 };
-use bitvmx_broker::{
-    identification::identifier::{Identifier, PubkHash},
-    BrokerNode,
-};
+use bitvmx_broker::{identification::identifier::PubkHash, BrokerNode};
 use key_manager::key_manager::KeyManager;
 use serde_json::Value;
-use std::{
-    collections::{HashSet, VecDeque},
-    rc::Rc,
-};
+use std::{collections::HashSet, rc::Rc};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -444,28 +438,6 @@ impl SignatureVerifier {
         pubkey_hashes: &[PubkHash],
     ) -> Result<bool, BitVMXError> {
         OperatorVerificationStore::has_all_keys(globals, pubkey_hashes)
-    }
-
-    /// Handles the MissingVerificationKey error by requesting the key and buffering the message
-    pub fn handle_missing_verification_key<BC: BitcoinCoordinatorApi>(
-        program_context: &ProgramContext<BC>,
-        program_id: &Uuid,
-        address: &CommsAddress,
-        identifier: &Identifier,
-        msg: String,
-        pending_messages: &mut VecDeque<(PubkHash, String)>,
-    ) -> Result<(), BitVMXError> {
-        warn!("Missing verification key for: {:?}", program_id);
-        OperatorVerificationStore::request_missing_verification_keys(
-            &program_context.globals,
-            &program_context.comms,
-            &program_context.key_manager,
-            &program_context.rsa_public_key,
-            program_id,
-            std::slice::from_ref(address),
-        )?;
-        pending_messages.push_back((identifier.to_string(), msg));
-        Ok(())
     }
 }
 
@@ -1084,37 +1056,6 @@ mod tests {
             &peer_address.pubkey_hash
         )?);
         env.assert_no_delivery_via_peer(0);
-        Ok(())
-    }
-
-    #[test]
-    fn handle_missing_verification_key_requests_and_buffers() -> Result<(), BitVMXError> {
-        let mut env = TestProgramContextEnv::new_with_peers("sigver-missing-key", 1)?;
-        let program_id = Uuid::new_v4();
-        let peer_address = env.peer_address(0)?;
-        let identifier = Identifier::new(peer_address.pubkey_hash.clone(), 0);
-        let msg = "pending-payload".to_string();
-        let mut pending = VecDeque::new();
-
-        SignatureVerifier::handle_missing_verification_key(
-            &env.context,
-            &program_id,
-            &peer_address,
-            &identifier,
-            msg.clone(),
-            &mut pending,
-        )?;
-
-        // The original message is buffered for reprocessing.
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].1, msg);
-
-        // A key request went out to the peer.
-        let (_, raw) = env.receive_via_peer(0)?;
-        let (_, msg_type, received_program_id, _, _, _) =
-            crate::comms_helper::deserialize_msg(&raw, 200000)?;
-        assert_eq!(msg_type, CommsMessageType::VerificationKeyRequest);
-        assert_eq!(received_program_id, program_id);
         Ok(())
     }
 }

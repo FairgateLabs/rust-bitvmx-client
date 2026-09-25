@@ -151,10 +151,7 @@ pub enum OriginalMessageOutcome {
     /// The original signature was verified and the reconstructed message can be queued.
     Verified(QueuedMessage),
     /// The claimed sender is authorized, but its verification key has not arrived yet.
-    MissingKey {
-        peer: PubkHash,
-        message: QueuedMessage,
-    },
+    MissingKey { peer: PubkHash },
     /// Setup state already contains this participant's contribution.
     DiscardNoOp(NoOpReason),
     /// The original is attributable but permanently invalid.
@@ -425,6 +422,7 @@ impl LeaderBroadcastHelper {
 
         let mut queued_count = 0usize;
         let mut no_op_count = 0usize;
+        let mut missing_peers = Vec::new();
         for outcome in outcomes {
             match outcome {
                 OriginalMessageOutcome::Verified(message) => {
@@ -432,16 +430,15 @@ impl LeaderBroadcastHelper {
                         "Queueing verified embedded original from {}",
                         message.identifier.pubkey_hash
                     );
-                    message_queue.push_new(message.identifier, message.data)?;
+                    message_queue.push_new_unique(message.identifier, message.data)?;
                     queued_count += 1;
                 }
-                OriginalMessageOutcome::MissingKey { peer, message } => {
+                OriginalMessageOutcome::MissingKey { peer } => {
                     info!(
-                        "Queueing embedded original from {} until its verification key arrives",
+                        "Deferring leader envelope until the verification key for {} arrives",
                         peer
                     );
-                    message_queue.push_new(message.identifier, message.data)?;
-                    queued_count += 1;
+                    missing_peers.push(peer);
                 }
                 OriginalMessageOutcome::DiscardNoOp(reason) => {
                     debug!("Discarding redundant embedded original: {:?}", reason);
@@ -452,10 +449,21 @@ impl LeaderBroadcastHelper {
         }
 
         info!(
-            "Processed BroadcastedMessage from leader {}: {} queued, {} no-op",
-            leader_identifier.pubkey_hash, queued_count, no_op_count
+            "Processed BroadcastedMessage from leader {}: {} queued, {} no-op, {} deferred",
+            leader_identifier.pubkey_hash,
+            queued_count,
+            no_op_count,
+            missing_peers.len()
         );
-        if queued_count == 0 {
+        if let Some(peer) = missing_peers.into_iter().next() {
+            // Retry the authenticated outer envelope rather than creating an
+            // independently fresh budget for every missing-key original. On a
+            // retry, accepted originals are no-ops and pending verified ones are
+            // deduplicated by MessageQueue.
+            Ok(MessageDisposition::RetryLater(
+                crate::types::RetryReason::MissingVerificationKey { peer },
+            ))
+        } else if queued_count == 0 {
             Ok(MessageDisposition::DiscardNoOp(
                 NoOpReason::ContributionAlreadyAccepted,
             ))
@@ -532,9 +540,11 @@ impl LeaderBroadcastHelper {
             &program_context.comms.get_pubk_hash(),
         )?;
 
-        let missing_peer = match authentication {
-            AuthenticationOutcome::Verified => None,
-            AuthenticationOutcome::MissingKey { peer } => Some(peer),
+        match authentication {
+            AuthenticationOutcome::Verified => {}
+            AuthenticationOutcome::MissingKey { peer } => {
+                return Ok(OriginalMessageOutcome::MissingKey { peer });
+            }
             AuthenticationOutcome::Rejected(rejection) => {
                 warn!(
                     "Embedded original authentication rejected from {} (forwarded by {}): {:?}",
@@ -560,13 +570,7 @@ impl LeaderBroadcastHelper {
             full_message,
         )?;
 
-        match missing_peer {
-            Some(peer) => Ok(OriginalMessageOutcome::MissingKey {
-                peer,
-                message: queued_message,
-            }),
-            None => Ok(OriginalMessageOutcome::Verified(queued_message)),
-        }
+        Ok(OriginalMessageOutcome::Verified(queued_message))
     }
 }
 
@@ -1095,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn process_broadcasted_message_queues_original_with_missing_key_for_retry() {
+    fn process_broadcasted_message_retries_envelope_with_missing_original_key() {
         let mut env = TestProgramContextEnv::new("leader-broadcast-missing-key").unwrap();
         let program_id = Uuid::new_v4();
         let unknown_peer = "33".repeat(32);
@@ -1108,9 +1112,9 @@ mod tests {
             )],
         );
 
-        // Sender whose verification key has not arrived yet: verification
-        // returns "missing key", and the message must still be queued so it
-        // can be retried once the key shows up
+        // Sender whose verification key has not arrived yet: keep the outer
+        // envelope as the bounded unit of retry rather than giving the
+        // reconstructed original a fresh retry budget.
         let mut original = test_original_message(&unknown_peer);
         original.data = json!({"step": "keys"});
         let broadcast = BroadcastedMessage {
@@ -1119,7 +1123,8 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        env.context
+        let disposition = env
+            .context
             .leader_broadcast_helper
             .process_broadcasted_message(
                 &env.context,
@@ -1131,11 +1136,13 @@ mod tests {
             )
             .unwrap();
 
-        let queued = queue
-            .pop_front()
-            .unwrap()
-            .expect("missing-key original must be queued for retry");
-        assert_eq!(queued.identifier.pubkey_hash, unknown_peer);
+        assert_eq!(
+            disposition,
+            MessageDisposition::RetryLater(crate::types::RetryReason::MissingVerificationKey {
+                peer: unknown_peer,
+            })
+        );
+        assert!(queue.is_empty().unwrap());
     }
 
     #[test]

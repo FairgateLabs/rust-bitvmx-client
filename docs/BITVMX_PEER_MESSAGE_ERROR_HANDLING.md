@@ -323,13 +323,15 @@ Broadcast processing now classifies each embedded original as verified,
 missing-key, state-level no-op, or rejected. Claimed senders must belong to the
 program, embedded types must be setup contribution types and agree with the
 envelope, and accepted contributions are discarded before irrelevant payload
-validation. Verified and missing-key originals are queued independently, while
-one rejected original atomically fails the envelope and active setup without
-queueing any originals from that envelope. Storage and key-manager failures
-continue to propagate.
+validation. Verified originals are queued independently and missing-key
+originals defer the authenticated outer envelope, while one rejected original
+atomically fails the envelope and active setup without queueing any originals
+from that envelope. Storage and key-manager failures continue to propagate.
 
-Embedded messages still use `push_new`, so preserving retry state and avoiding
-fresh retry budgets remains part of implementation step 8.
+Embedded messages now use unique queue insertion. When an embedded signer key is
+missing, the authenticated outer envelope is the bounded retry unit rather than a
+newly reconstructed original with a fresh budget. Verified originals from a mixed
+envelope are queued uniquely, so retrying the envelope does not duplicate them.
 
 ### Redundant deliveries are retried
 
@@ -544,16 +546,22 @@ retried forever.
 
 ### Retry accounting
 
-Repeated processing must not create fresh retry budgets through unrestricted
-`MessageQueue::push_new` calls. The implementation should either:
+`MessageQueue::push_deferred` records a retry attempt on the existing
+`QueuedMessage` and deduplicates equivalent pending entries without replacing an
+older retry state with a fresh one. Reconstructed verified originals use
+`push_new_unique` for the same reason.
 
-- preserve the existing `QueuedMessage.retry_state`;
-- provide a `push_deferred` API that records subsequent attempts correctly; or
-- retry the original envelope atomically while preventing duplicate processing
-  of already accepted originals.
+For a missing embedded key, the original authenticated leader envelope is
+retried. Already accepted contributions become state-level no-ops and verified
+pending originals are inserted uniquely, so repeated envelope processing cannot
+reset the missing original's retry budget.
 
-Missing-key requests should be deduplicated or throttled so each retry does not
-produce an unnecessary new request.
+Verification-key requests are intentionally idempotent: receiving the request
+only causes the peer to reply with its key. A retry may therefore send another
+request without introducing separate tracking state. Once the key is present,
+`OperatorVerificationStore::request_missing_verification_keys` naturally stops
+sending requests for that peer. Broker delivery retains its own bounded retry
+policy.
 
 ## Setup-step outcomes
 
@@ -635,12 +643,9 @@ Completed in the first implementation step:
 - removed the inaccurate `known_count` field;
 - documented the TLS fingerprint binding used by key announcements.
 
-Remaining:
-
-- map rejection outcomes to `FailSetup` at the authorized active-setup boundary;
-- centralize key-request behavior;
-- integrate or remove the currently separate
-  `handle_missing_verification_key` path.
+Subsequent implementation steps also mapped rejections at the authorized
+active-setup boundary, centralized missing-key request behavior in `BitVMX`, and
+removed the obsolete `handle_missing_verification_key` buffering path.
 
 ### `src/bitvmx.rs`
 
@@ -687,12 +692,19 @@ outcome.
 
 ### `src/message_queue.rs`
 
-- add a clear API for deferring an existing message while preserving retry
-  state;
-- keep retry reasons in control flow and logs rather than adding observability
+Completed in implementation step 8:
+
+- added `push_deferred` for retrying an existing message while preserving and
+  incrementing its retry state;
+- added unique insertion for reconstructed messages without replacing an older
+  retry budget;
+- kept retry reasons in control flow and logs rather than adding observability
   records to storage;
-- increment attempts only for retryable conditions;
-- support deduplication or throttling of verification-key requests.
+- incremented attempts only for retryable dispositions.
+
+Verification-key requests do not need a separate deduplication marker. They are
+idempotent, and existing key storage determines when requests are no longer
+necessary.
 
 ### `src/errors.rs`
 
@@ -704,8 +716,8 @@ Control-flow outcomes should preferably remain dispositions rather than general
 ### `tests/leader_broadcast_test.rs`
 
 Completed: updated the stale comments that described missing-key originals as
-silently dropped. The current source queues those originals, although retry
-accounting and error classification still need improvement.
+silently dropped. The current source retains the authenticated outer envelope
+for bounded retry when an embedded verification key is missing.
 
 ## Required tests
 
@@ -812,7 +824,10 @@ Tests should verify both the handler result and storage effects:
    system-error outcomes. Embedded senders and types are authorized against the
    program, and one rejected original atomically fails setup before any original
    from that envelope is queued.
-8. Preserve retry state and deduplicate key requests.
+8. **Completed:** preserved retry state through `MessageQueue::push_deferred`,
+   deduplicated reconstructed embedded originals, made a missing-key broadcast
+   retry its original outer envelope, and kept verification-key requests
+   idempotent without introducing request-tracking state.
 9. Refactor setup-step boolean verification results and identify redundant
    messages from existing setup state without persistent replay tracking.
 10. Add broker-integrated and transaction-level tests.

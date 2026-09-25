@@ -31,6 +31,8 @@ impl QueuedMessage {
 pub enum PushOutcome {
     /// Queued for another attempt.
     Queued,
+    /// An equivalent message was already queued. Its existing retry state was retained.
+    AlreadyQueued,
     /// Retry budget exhausted. The message was discarded and will not arrive again:
     /// the sender already delivered it successfully and does not resend.
     Dropped,
@@ -146,6 +148,60 @@ impl MessageQueue {
     pub fn push_new(&self, identifier: Identifier, msg: String) -> Result<(), BitVMXError> {
         let queued_msg = QueuedMessage::new(identifier, msg)?;
         self.push(queued_msg)
+    }
+
+    /// Queues a newly reconstructed message unless the same authenticated sender and
+    /// serialized payload are already pending. The existing entry (and therefore its
+    /// retry budget) wins when a duplicate is found.
+    pub fn push_new_unique(
+        &self,
+        identifier: Identifier,
+        msg: String,
+    ) -> Result<PushOutcome, BitVMXError> {
+        self.push_unique(QueuedMessage::new(identifier, msg)?)
+    }
+
+    /// Defers a message that has just encountered a retryable condition.
+    ///
+    /// Unlike `push_new`, this records the attempt on the supplied retry state and
+    /// deduplicates against pending copies. This is the entry point inbound handlers
+    /// should use so reprocessing cannot silently create a fresh retry budget.
+    pub fn push_deferred(&self, mut queued_msg: QueuedMessage) -> Result<PushOutcome, BitVMXError> {
+        queued_msg
+            .retry_state
+            .record_attempt(&self.retry_policy, now_ms()?);
+
+        if self.retry_policy.is_exhausted(&queued_msg.retry_state) {
+            warn!(
+                "Dropping message after {} attempts: {:?}",
+                queued_msg.retry_state.get_attempts(),
+                queued_msg.identifier
+            );
+            return Ok(PushOutcome::Dropped);
+        }
+
+        self.push_unique(queued_msg)
+    }
+
+    fn push_unique(&self, queued_msg: QueuedMessage) -> Result<PushOutcome, BitVMXError> {
+        for id in self.get_queue_ids()? {
+            let Some(stored) = self.get_stored_message(&id)? else {
+                continue;
+            };
+            if stored.identifier == queued_msg.identifier && stored.data == queued_msg.data {
+                let replace_retry_state = self
+                    .get_retry_state(&id)?
+                    .map(|existing| queued_msg.retry_state.get_attempts() > existing.get_attempts())
+                    .unwrap_or(true);
+                if replace_retry_state {
+                    self.save_retry_state(&id, &queued_msg.retry_state)?;
+                }
+                return Ok(PushOutcome::AlreadyQueued);
+            }
+        }
+
+        self.push(queued_msg)?;
+        Ok(PushOutcome::Queued)
     }
 
     fn push(&self, queued_msg: QueuedMessage) -> Result<(), BitVMXError> {
@@ -354,6 +410,65 @@ mod tests {
 
         assert_eq!(queue.get_queue_ids().unwrap().len(), 1);
         assert!(!queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn unique_defer_preserves_retry_budget() {
+        let test_dir = test_storage_dir();
+        let queue = MessageQueue::new(test_dir.storage(), test_retry_policy());
+        let identifier = test_identifier("duplicate");
+        let data = "same-payload".to_string();
+
+        assert_eq!(
+            queue
+                .push_deferred(QueuedMessage::new(identifier.clone(), data.clone()).unwrap())
+                .unwrap(),
+            PushOutcome::Queued
+        );
+        assert_eq!(
+            queue
+                .push_deferred(QueuedMessage::new(identifier, data).unwrap())
+                .unwrap(),
+            PushOutcome::AlreadyQueued
+        );
+
+        let ids = queue.get_queue_ids().unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(
+            queue
+                .get_retry_state(&ids[0])
+                .unwrap()
+                .unwrap()
+                .get_attempts(),
+            1
+        );
+    }
+
+    #[test]
+    fn push_new_unique_does_not_reset_deferred_state() {
+        let test_dir = test_storage_dir();
+        let queue = MessageQueue::new(test_dir.storage(), test_retry_policy());
+        let identifier = test_identifier("reconstructed");
+        let data = "same-payload".to_string();
+
+        queue
+            .push_deferred(QueuedMessage::new(identifier.clone(), data.clone()).unwrap())
+            .unwrap();
+        assert_eq!(
+            queue.push_new_unique(identifier, data).unwrap(),
+            PushOutcome::AlreadyQueued
+        );
+
+        let ids = queue.get_queue_ids().unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(
+            queue
+                .get_retry_state(&ids[0])
+                .unwrap()
+                .unwrap()
+                .get_attempts(),
+            1
+        );
     }
 
     #[test]
