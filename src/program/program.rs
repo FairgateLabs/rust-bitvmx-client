@@ -880,6 +880,23 @@ mod tests {
             .unwrap();
     }
 
+    fn apply_peer_fault(
+        program: &mut Program,
+        disposition: MessageDisposition,
+        env: &mut TestProgramContextEnv,
+    ) {
+        let MessageDisposition::FailSetup(fault) = disposition else {
+            panic!("expected peer setup fault, got {disposition:?}");
+        };
+        program
+            .fail_setup(
+                Some(fault.peer),
+                SetupFailureReason::StepError(fault.reason.to_string()),
+                &mut env.context,
+            )
+            .unwrap();
+    }
+
     #[test]
     fn test_save_serializes_program_and_state_separately() {
         let dir = TestStorageDir::new("program-save");
@@ -1174,16 +1191,16 @@ mod tests {
         let mut program = test_program(storage.clone(), program_id);
         let sender = program.participants[0].pubkey_hash.clone();
 
-        let error = program
+        let disposition = program
             .process_comms_message(
                 &sender,
                 &CommsMessageType::Keys,
                 serde_json::json!({}),
                 &mut env.context,
             )
-            .unwrap_err();
+            .unwrap();
         assert!(env.l2_messages().unwrap().is_empty());
-        record_failure_request(&mut program, error, &mut env);
+        apply_peer_fault(&mut program, disposition, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
         assert_eq!(
             Program::load(storage.clone(), &program_id)
@@ -1204,7 +1221,7 @@ mod tests {
                         assert_eq!(step, "keys");
                         assert_eq!(peer.as_ref(), Some(&sender));
                         assert!(matches!(reason, SetupFailureReason::StepError(text)
-                            if text.contains("Failed to deserialize key declaration")));
+                            if text == "message was malformed"));
                     }
                     other => panic!("expected SetupFailed, got {other:?}"),
                 }
@@ -1259,15 +1276,15 @@ mod tests {
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         let sender = program.participants[0].pubkey_hash.clone();
 
-        let error = program
+        let disposition = program
             .process_comms_message(
                 &sender,
                 &CommsMessageType::Keys,
                 serde_json::json!({}),
                 &mut env.context,
             )
-            .unwrap_err();
-        record_failure_request(&mut program, error, &mut env);
+            .unwrap();
+        apply_peer_fault(&mut program, disposition, &mut env);
         assert_eq!(env.l2_messages().unwrap().len(), 1);
 
         // Later messages for a dead program are discarded, not queued for retry.

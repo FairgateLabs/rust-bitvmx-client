@@ -288,6 +288,16 @@ mod tests {
         .unwrap()
     }
 
+    fn immediate_retry_policy() -> RetryPolicy {
+        RetryPolicy::new(&BrokerNodeConfig {
+            max_msgs_per_tick_utilization: 1.0,
+            max_send_attempts: 3,
+            retry_min_delay_msecs: 1,
+            retry_max_delay_msecs: 4,
+        })
+        .unwrap()
+    }
+
     fn test_identifier(name: &str) -> Identifier {
         Identifier::new(name.to_string(), 0)
     }
@@ -442,6 +452,29 @@ mod tests {
                 .get_attempts(),
             1
         );
+    }
+
+    #[test]
+    fn repeated_defer_uses_one_bounded_retry_budget() {
+        let test_dir = test_storage_dir();
+        let retry_policy = immediate_retry_policy();
+        let queue = MessageQueue::new(test_dir.storage(), retry_policy.clone());
+        let identifier = test_identifier("bounded-retry");
+        let data = "same-envelope".to_string();
+        let mut message = QueuedMessage::new(identifier, data).unwrap();
+
+        for expected_attempts in 1..retry_policy.max_attempts {
+            assert_eq!(queue.push_deferred(message).unwrap(), PushOutcome::Queued);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            message = queue
+                .pop_front()
+                .unwrap()
+                .expect("deferred message should become ready");
+            assert_eq!(message.retry_state.get_attempts(), expected_attempts);
+        }
+
+        assert_eq!(queue.push_deferred(message).unwrap(), PushOutcome::Dropped);
+        assert!(queue.is_empty().unwrap());
     }
 
     #[test]

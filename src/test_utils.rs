@@ -607,6 +607,7 @@ mod tests {
     use bitcoin::transaction::Version;
     use bitcoin_coordinator::types::CoordinatorNews;
 
+    use crate::helper::compute_pubkey_hash;
     use crate::program::protocols::protocol_handler::{new_protocol_type, ProtocolHandler};
     use crate::program::setup::steps::{KeysStep, SetupStepEnum};
     use crate::program::setup::SetupStep;
@@ -629,6 +630,65 @@ mod tests {
             env.coordinator_mock().monitored()[0],
             TypesToMonitor::NewBlock
         ));
+    }
+
+    #[test]
+    fn broker_and_client_fingerprints_match_for_the_same_rsa_key() {
+        let env = TestProgramContextEnv::new("broker-client-fingerprint").unwrap();
+
+        assert_eq!(
+            env.context.comms.get_pubk_hash(),
+            compute_pubkey_hash(&env.context.rsa_public_key).unwrap(),
+            "the TLS certificate SPKI and announced application key must use the same fingerprint",
+        );
+    }
+
+    #[test]
+    fn broker_delivery_reports_the_tls_authenticated_sender() {
+        let mut env =
+            TestProgramContextEnv::new_with_peers("broker-authenticated-sender", 1).unwrap();
+        let expected_sender = env.peers[0].get_pubk_hash();
+        let receiver_hash = env.context.comms.get_pubk_hash();
+        let receiver_address = env.context.comms.get_address();
+
+        env.peers[0]
+            .send_peer(
+                "identity-test",
+                &receiver_hash,
+                receiver_address,
+                "payload-with-no-sender-field".to_string(),
+            )
+            .unwrap();
+
+        let (sender, payload) =
+            TestCommsEnv::receive_via(&mut env.peers[0], &mut env.context.comms).unwrap();
+        assert_eq!(sender.pubkey_hash, expected_sender);
+        assert_eq!(payload, "payload-with-no-sender-field");
+    }
+
+    #[test]
+    fn broker_rejects_a_certificate_missing_from_the_allow_list() {
+        let mut env =
+            TestProgramContextEnv::new_with_peers("broker-reject-unlisted-peer", 1).unwrap();
+        let receiver_hash = env.context.comms.get_pubk_hash();
+        let receiver_address = env.context.comms.get_address();
+        {
+            let allow_list = env.context.comms.get_allow_list();
+            let mut allow_list = allow_list.lock().unwrap();
+            allow_list.set_allow_all(false);
+            allow_list.remove(&env.peers[0].get_pubk_hash());
+        }
+
+        env.peers[0]
+            .send_peer(
+                "allow-list-test",
+                &receiver_hash,
+                receiver_address,
+                "must-not-arrive".to_string(),
+            )
+            .unwrap();
+
+        TestCommsEnv::assert_no_delivery(&mut env.peers[0], &mut env.context.comms);
     }
 
     #[test]

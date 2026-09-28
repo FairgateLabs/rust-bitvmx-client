@@ -1551,15 +1551,30 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 mod transaction_tests {
     use super::*;
     use crate::{
-        comms_helper::{prepare_message, serialize_msg},
+        comms_helper::{prepare_message, serialize_msg, VerificationKeyAnnouncement},
         leader_broadcast::BroadcastedMessage,
         test_utils::{TestBitVMXEnv, TestStorageDir},
         types::PROGRAM_TYPE_AGGREGATED_KEY,
     };
 
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
-    use crate::types::IncomingBitVMXApiMessages;
+    use crate::types::{ErrorReport, ErrorScope, IncomingBitVMXApiMessages};
     use storage_backend::error::StorageError;
+
+    fn test_l2_messages(
+        env: &TestBitVMXEnv,
+    ) -> Result<Vec<OutgoingBitVMXApiMessages>, BitVMXError> {
+        env.bitvmx.program_context.broker_channel.tick()?;
+        let l2 = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(env.bitvmx.program_context.components_config.l2.clone())?;
+        l2.get_all()?
+            .into_iter()
+            .map(|message| OutgoingBitVMXApiMessages::from_string(&message.msg))
+            .collect()
+    }
 
     #[test]
     fn terminal_programs_discard_peer_messages_before_payload_processing() {
@@ -1652,6 +1667,66 @@ mod transaction_tests {
     }
 
     #[test]
+    fn attributable_peer_fault_is_terminal_and_notified_once() {
+        let mut env = TestBitVMXEnv::new("peer-fault-terminal").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![CommsAddress::new(
+                env.bitvmx.program_context.comms.get_address(),
+                self_hash.clone(),
+            )],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+
+        // The sender is an expected participant and its current contribution is
+        // pending, so malformed signature bytes are an attributable peer fault.
+        let invalid = serialize_msg(
+            "1.0",
+            CommsMessageType::Keys,
+            &program_id,
+            serde_json::json!({"malformed": true}),
+            0,
+            vec![1],
+        )
+        .unwrap();
+        let queued = QueuedMessage::new(Identifier::new(self_hash.clone(), 0), invalid).unwrap();
+        env.bitvmx.process_msg(queued.clone()).unwrap();
+
+        let program = Program::load(store.clone(), &program_id)
+            .unwrap()
+            .expect("program must remain persisted");
+        assert!(program.is_failed());
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+
+        let reports = test_l2_messages(&env).unwrap();
+        assert_eq!(reports.len(), 1);
+        match &reports[0] {
+            OutgoingBitVMXApiMessages::Error(ErrorReport {
+                scope: ErrorScope::Program(id),
+                kind: ErrorReportKind::SetupFailed { peer, .. },
+                ..
+            }) => {
+                assert_eq!(*id, program_id);
+                assert_eq!(peer.as_ref(), Some(&self_hash));
+            }
+            other => panic!("expected scoped SetupFailed report, got {other:?}"),
+        }
+
+        // Redelivery is stale after the terminal transition. It must neither
+        // enter the retry queue nor produce another setup-failure report.
+        env.bitvmx.process_msg(queued).unwrap();
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+        assert_eq!(test_l2_messages(&env).unwrap().len(), 1);
+    }
+
+    #[test]
     fn malformed_verification_announcement_fails_active_setup() {
         let mut env = TestBitVMXEnv::new("verification-bootstrap-rejection").unwrap();
         let store = env.bitvmx.get_store();
@@ -1686,6 +1761,68 @@ mod transaction_tests {
 
         let program = Program::load(store, &program_id).unwrap().unwrap();
         assert!(program.is_failed());
+    }
+
+    #[test]
+    fn verification_key_fingerprint_mismatch_fails_setup_without_storing_key() {
+        let mut env = TestBitVMXEnv::new("verification-bootstrap-fingerprint-mismatch").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            env.bitvmx.program_context.comms.get_pubk_hash(),
+        );
+        let peer_hash = "ab".repeat(32);
+        let peer = CommsAddress::new("127.0.0.1:1".parse().unwrap(), peer_hash.clone());
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address, peer],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+
+        // This is a valid RSA public key, but it belongs to this node rather
+        // than to the TLS-authenticated peer fingerprint in `peer_hash`.
+        let announcement = VerificationKeyAnnouncement {
+            verification_key: env.bitvmx.program_context.rsa_public_key.clone(),
+        }
+        .to_value()
+        .unwrap();
+        let message = serialize_msg(
+            "1.0",
+            CommsMessageType::VerificationKey,
+            &program_id,
+            announcement,
+            0,
+            vec![1],
+        )
+        .unwrap();
+        env.bitvmx
+            .process_msg(
+                QueuedMessage::new(Identifier::new(peer_hash.clone(), 0), message).unwrap(),
+            )
+            .unwrap();
+
+        assert!(Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(
+            !OperatorVerificationStore::has(&env.bitvmx.program_context.globals, &peer_hash,)
+                .unwrap()
+        );
+        let reports = test_l2_messages(&env).unwrap();
+        assert!(matches!(
+            reports.as_slice(),
+            [OutgoingBitVMXApiMessages::Error(ErrorReport {
+                scope: ErrorScope::Program(id),
+                kind: ErrorReportKind::SetupFailed { peer: Some(failed_peer), .. },
+                ..
+            })] if *id == program_id && failed_peer == &peer_hash
+        ));
     }
 
     #[test]
@@ -1913,6 +2050,8 @@ mod transaction_tests {
 
         let program = Program::load(store, &program_id).unwrap().unwrap();
         assert_eq!(program.peer_message_lifecycle_disposition(), None);
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+        assert!(test_l2_messages(&env).unwrap().is_empty());
     }
 
     #[test]

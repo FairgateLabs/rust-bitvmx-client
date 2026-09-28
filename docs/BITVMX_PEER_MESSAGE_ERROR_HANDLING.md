@@ -715,9 +715,13 @@ Control-flow outcomes should preferably remain dispositions rather than general
 
 ### `tests/leader_broadcast_test.rs`
 
-Completed: updated the stale comments that described missing-key originals as
-silently dropped. The current source retains the authenticated outer envelope
-for bounded retry when an embedded verification key is missing.
+Completed: preserved the historical testnet-stall timeline and regression
+rationale while removing obsolete expected-failure and source-line claims.
+These ignored integration tests are explicitly scoped as missing-program
+lifecycle smoke tests: they verify that the unchanged outer envelope remains the
+retry unit until the program is installed. Missing outer-key and embedded-key
+behavior is covered directly by the non-Docker unit tests in `src/bitvmx.rs`,
+`src/leader_broadcast.rs`, and `src/message_queue.rs`.
 
 ## Required tests
 
@@ -833,8 +837,20 @@ Tests should verify both the handler result and storage effects:
    malformed and invalid contributions to terminal setup failure; preserved
    local/storage failures as errors; and identified redundant contributions
    from existing setup state without persistent replay tracking.
-10. Add broker-integrated and transaction-level tests.
-11. Update stale reliability documentation and test comments.
+10. **Completed:** added broker-integrated and transaction-level tests covering
+    TLS-authenticated sender identity, allow-list rejection, broker/client
+    fingerprint compatibility, terminal peer-fault persistence and scoped L2
+    notification, idempotent post-failure redelivery, verification-key
+    fingerprint mismatch, non-participant isolation, and bounded retry-budget
+    preservation. Existing setup, signature, broadcast, and rollback tests cover
+    the remaining disposition branches. The full unit suite passes without
+    bitcoind.
+11. **Completed:** updated stale reliability documentation and broadcast test
+    comments while retaining the original incident timeline and regression
+    rationale. The comments now distinguish the current policy—the authenticated
+    outer envelope is the bounded retry unit and peer faults are typed
+    `FailSetup` dispositions—from the narrower missing-program behavior exercised
+    by the ignored integration smoke tests.
 
 ## Core invariant
 
