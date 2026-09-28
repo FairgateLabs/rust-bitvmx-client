@@ -8,7 +8,7 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{MessageDisposition, NoOpReason, ProgramContext, RetryReason},
+    types::{MessageDisposition, NoOpReason, PeerSetupFault, ProgramContext, RetryReason},
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use super::{
     steps::{create_setup_step, SetupStepEnum, SetupStepName},
-    SetupStep,
+    SetupMessageOutcome, SetupStep,
 };
 
 /// Current state of a setup step in the engine.
@@ -476,9 +476,10 @@ impl SetupEngine {
             participant_idx, step_name
         );
 
-        // Verify and store the data
+        // Verify and store the data. Setup steps return explicit control-flow
+        // outcomes; only local and infrastructure failures use `Err`.
         let step = &self.steps[self.state.current_step_index];
-        let verified = step.verify_received(
+        match step.verify_received(
             data,
             msg_type,
             from_participant,
@@ -486,22 +487,28 @@ impl SetupEngine {
             participants,
             context,
             false,
-        )?;
-
-        /*if step.verify_async() && !verified {
-            info!(
-                "SetupEngine: Step '{}' is async and data from participant {} is not verified yet, waiting for async verification to complete",
-                step_name, participant_idx
-             );
-            return Ok(MessageDisposition::Processed);
-        }*/
-
-        if !verified {
-            warn!(
-                "SetupEngine: Data from participant {} for step '{}' did not verify, ignoring",
-                participant_idx, step_name
-            );
-            return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
+        )? {
+            SetupMessageOutcome::Accepted => {}
+            SetupMessageOutcome::NotReady(reason) => {
+                debug!(
+                    "SetupEngine: Contribution from participant {} for step '{}' is not ready: {:?}",
+                    participant_idx, step_name, reason
+                );
+                return Ok(MessageDisposition::RetryLater(reason.into_retry_reason()));
+            }
+            SetupMessageOutcome::NoOp(reason) => {
+                return Ok(MessageDisposition::DiscardNoOp(reason.into_no_op_reason()));
+            }
+            SetupMessageOutcome::Rejected(reason) => {
+                warn!(
+                    "SetupEngine: Rejecting contribution from participant {} for step '{}': {:?}",
+                    participant_idx, step_name, reason
+                );
+                return Ok(MessageDisposition::FailSetup(PeerSetupFault {
+                    peer: from_participant.pubkey_hash.clone(),
+                    reason: reason.into_peer_fault_reason(),
+                }));
+            }
         }
 
         // Mark participant as completed
@@ -849,7 +856,7 @@ impl SetupEngine {
                     // IMPORTANT: Store our own data in globals BEFORE sending to others
                     // The step's can_advance() method checks that ALL participants' data exists in globals
                     let my_participant = &participants[my_idx];
-                    self.current_step().verify_received(
+                    let own_outcome = self.current_step().verify_received(
                         d.clone(),
                         *msg_type,
                         my_participant,
@@ -858,6 +865,12 @@ impl SetupEngine {
                         context,
                         true,
                     )?;
+                    if own_outcome != SetupMessageOutcome::Accepted {
+                        return Err(BitVMXError::InvalidState(format!(
+                            "Locally generated data for step '{}' was not accepted: {:?}",
+                            step_name, own_outcome
+                        )));
+                    }
                     info!(
                             "SetupEngine::tick() - Stored our own data (participant {}) in globals for step '{}' type: {:?}",
                             my_idx,
@@ -973,11 +986,11 @@ impl SetupEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::participant::ParticipantKeyDeclaration;
+    use crate::program::participant::{ParticipantKeyDeclaration, ParticipantKeys};
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::program::variables::VariableTypes;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+    use crate::types::{PeerSetupFaultReason, PROGRAM_TYPE_AGGREGATED_KEY};
 
     fn aggregated_key_protocol(id: Uuid, dir: &TestStorageDir) -> ProtocolType {
         new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap()
@@ -1121,6 +1134,16 @@ mod tests {
         let participants = vec![own.clone(), peer.clone()];
         let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 2).unwrap();
         let data = serde_json::to_value(ParticipantKeyDeclaration::empty()).unwrap();
+        env.context
+            .globals
+            .set_var(
+                &id,
+                "my_keys",
+                VariableTypes::String(
+                    serde_json::to_string(&ParticipantKeys::empty().unwrap()).unwrap(),
+                ),
+            )
+            .unwrap();
 
         assert_eq!(
             engine.classify_participant_message(
@@ -1167,6 +1190,25 @@ mod tests {
                 .unwrap(),
             MessageDisposition::RetryLater(RetryReason::SetupNotReady)
         );
+        assert!(matches!(
+            engine
+                .receive_current_step_data(
+                    serde_json::json!({"malformed": true}),
+                    CommsMessageType::Keys,
+                    0,
+                    &peer,
+                    &protocol,
+                    &participants,
+                    &mut env.context,
+                )
+                .unwrap(),
+            MessageDisposition::FailSetup(PeerSetupFault {
+                peer: fault_peer,
+                reason: PeerSetupFaultReason::MalformedMessage,
+            }) if fault_peer == peer.pubkey_hash
+        ));
+        assert!(!engine.state().has_participant_completed(1));
+
         assert_eq!(
             engine
                 .receive_current_step_data(

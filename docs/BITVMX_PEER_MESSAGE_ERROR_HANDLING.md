@@ -305,17 +305,16 @@ remain necessary for now.
 exception, provided its authenticated sender is a participant in the referenced
 program and its payload is structurally valid.
 
-### Ambiguous boolean results
+### Setup verification uses explicit outcomes
 
-Some setup APIs still encode different meanings as `bool`:
+Setup-step `verify_received` now returns `SetupMessageOutcome`, separating
+accepted, temporarily not-ready, harmless no-op, and rejected contributions.
+`can_advance` remains a boolean because its `false` value has only one meaning:
+the locally driven setup step is not ready to advance.
 
-- setup-step `verify_received` uses `false` for data that did not verify;
-- setup-step `can_advance` uses `false` for a temporary not-ready state.
-
-Signature authentication and embedded-original processing now use explicit
-outcomes. The remaining setup meanings must not share one control-flow
-representation. In particular, an invalid contribution and an absent
-prerequisite require opposite handling: fail setup versus retry.
+Malformed and invalid pending contributions now become setup-failing
+rejections, while absent prerequisites remain retryable and redundant delivery
+is identified from setup-engine participant state before payload validation.
 
 ### Broadcast processing distinguishes per-original outcomes
 
@@ -333,12 +332,12 @@ missing, the authenticated outer envelope is the bounded retry unit rather than 
 newly reconstructed original with a fresh budget. Verified originals from a mixed
 envelope are queued uniquely, so retrying the envelope does not duplicate them.
 
-### Redundant deliveries are retried
+### Redundant deliveries are consumed
 
-Some duplicate or already-processed setup contributions return `RetryLater`.
 Once setup state records that participant's contribution as accepted, another
-message for that same participant and step cannot become useful by waiting and
-should be consumed as `DiscardNoOp`.
+message for that same participant and step is consumed as `DiscardNoOp` before
+payload validation. Future-step traffic remains retryable even if the sender
+already contributed to the current step.
 
 No byte-for-byte comparison or persisted message fingerprint is required. The
 important property is that the repeated message cannot be applied or mutate the
@@ -676,8 +675,9 @@ removed the obsolete `handle_missing_verification_key` buffering path.
 
 ### `src/program/setup/setup_step.rs`
 
-Replace `verify_received -> Result<bool, BitVMXError>` with a typed setup-message
-outcome.
+Completed in implementation step 9: replaced
+`verify_received -> Result<bool, BitVMXError>` with a typed setup-message
+outcome and typed retry, no-op, and rejection reasons.
 
 ### `src/program/setup/setup_engine.rs`
 
@@ -828,8 +828,11 @@ Tests should verify both the handler result and storage effects:
    deduplicated reconstructed embedded originals, made a missing-key broadcast
    retry its original outer envelope, and kept verification-key requests
    idempotent without introducing request-tracking state.
-9. Refactor setup-step boolean verification results and identify redundant
-   messages from existing setup state without persistent replay tracking.
+9. **Completed:** refactored setup-step boolean verification results into typed
+   accepted, not-ready, no-op, and rejected outcomes; mapped peer-controlled
+   malformed and invalid contributions to terminal setup failure; preserved
+   local/storage failures as errors; and identified redundant contributions
+   from existing setup state without persistent replay tracking.
 10. Add broker-integrated and transaction-level tests.
 11. Update stale reliability documentation and test comments.
 

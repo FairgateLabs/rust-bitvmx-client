@@ -12,7 +12,7 @@ use enum_dispatch::enum_dispatch;
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::SetupStep;
+use super::{SetupMessageOutcome, SetupStep};
 use crate::comms_helper::CommsMessageType;
 use crate::errors::BitVMXError;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
