@@ -4,6 +4,7 @@ name: Build and publish client image
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*'
+      - 'force-build-v[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
   contents: read
@@ -15,6 +16,10 @@ jobs:
     steps:
       - name: Check out tagged client
         uses: actions/checkout@v7
+
+      - name: Determine image version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#force-build-}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -35,7 +40,7 @@ jobs:
           context: .
           file: docker/Dockerfile.bitvmx.from_client
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/fairgatelabs/rust-bitvmx-workspace/bitvmx-client:${{ github.ref_name }}
+          tags: ghcr.io/fairgatelabs/rust-bitvmx-workspace/bitvmx-client:${{ steps.version.outputs.version }}
           labels: org.opencontainers.image.source=https://github.com/FairgateLabs/rust-bitvmx-client
           no-cache: true
           push: true
