@@ -19,7 +19,9 @@ jobs:
 
       - name: Determine image version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#force-build-}" >> "$GITHUB_OUTPUT"
+        run: |
+          image_version="$(bash scripts/resolve-image-version.sh "$GITHUB_REF_NAME")"
+          echo "version=$image_version" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
