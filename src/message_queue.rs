@@ -4,11 +4,16 @@ use bitvmx_broker::{
     retry::{now_ms, RetryPolicy, RetryState},
 };
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
+use std::{rc::Rc, sync::LazyLock};
 use storage_backend::key::StorageKey;
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::warn;
 use uuid::Uuid;
+
+static QUEUE_IDS_KEY: LazyLock<StorageKey> = LazyLock::new(|| {
+    StorageKey::new(["bitvmx", "message_queue", "ids"])
+        .expect("the fixed message queue IDs storage key is valid")
+});
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueuedMessage {
@@ -67,10 +72,6 @@ impl MessageQueue {
         )?)
     }
 
-    fn queue_ids_key() -> Result<StorageKey, BitVMXError> {
-        Self::message_queue_key(["ids"])
-    }
-
     fn msg_key(id: &Uuid) -> Result<StorageKey, BitVMXError> {
         let id_str = id.to_string();
         Self::message_queue_key(["msg", id_str.as_str()])
@@ -82,13 +83,13 @@ impl MessageQueue {
     }
 
     fn get_queue_ids(&self) -> Result<Vec<Uuid>, BitVMXError> {
-        let ids: Option<Vec<Uuid>> = self.storage.get(Self::queue_ids_key()?, None)?;
+        let ids: Option<Vec<Uuid>> = self.storage.get(QUEUE_IDS_KEY.as_ref(), None)?;
         Ok(ids.unwrap_or_default())
     }
 
     fn save_queue_ids(&self, ids: Vec<Uuid>) -> Result<(), BitVMXError> {
         self.storage
-            .set(Self::queue_ids_key()?, ids, None)
+            .set(QUEUE_IDS_KEY.as_ref(), ids, None)
             .map_err(BitVMXError::StorageError)?;
         Ok(())
     }
