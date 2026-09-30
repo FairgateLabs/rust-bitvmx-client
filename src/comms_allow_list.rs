@@ -8,7 +8,7 @@
 use std::{
     net::IpAddr,
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use bitvmx_broker::identification::{allow_list::AllowList, identifier::PubkHash};
@@ -21,9 +21,10 @@ use tracing::{info, warn};
 
 use crate::errors::BitVMXError;
 
-fn storage_key() -> Result<StorageKey, BitVMXError> {
-    Ok(StorageKey::new(["bitvmx", "comms", "allow_list"])?)
-}
+static STORAGE_KEY: LazyLock<StorageKey> = LazyLock::new(|| {
+    StorageKey::new(["bitvmx", "comms", "allow_list"])
+        .expect("the fixed comms allow-list storage key is valid")
+});
 
 /// Snapshot of the comms allow list as configured through the API.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,7 +37,7 @@ pub struct PersistedAllowList {
 /// The persisted list, or `None` if the API has never been used and the YAML
 /// still governs.
 fn load(store: &Rc<Storage>) -> Result<Option<PersistedAllowList>, BitVMXError> {
-    Ok(store.get(storage_key()?, None)?)
+    Ok(store.get(STORAGE_KEY.as_ref(), None)?)
 }
 
 /// Snapshot the live allow list and write it through.
@@ -45,7 +46,7 @@ pub fn save(store: &Rc<Storage>, allow_list: &AllowList) -> Result<(), BitVMXErr
         entries: allow_list.entries(),
         allow_all: allow_list.is_allow_all(),
     };
-    store.set(storage_key()?, persisted, None)?;
+    store.set(STORAGE_KEY.as_ref(), persisted, None)?;
     Ok(())
 }
 
@@ -341,7 +342,7 @@ mod tests {
         // the API removed "from-yaml" and added "from-api"
         store
             .set(
-                storage_key().unwrap(),
+                STORAGE_KEY.as_ref(),
                 PersistedAllowList {
                     entries: vec![("from-api".to_string(), None)],
                     allow_all: false,
@@ -448,7 +449,7 @@ mod tests {
 
         store
             .set(
-                storage_key().unwrap(),
+                STORAGE_KEY.as_ref(),
                 PersistedAllowList {
                     entries: vec![("known-peer".to_string(), None)],
                     allow_all: false,
@@ -479,7 +480,7 @@ mod tests {
 
         store
             .set(
-                storage_key().unwrap(),
+                STORAGE_KEY.as_ref(),
                 PersistedAllowList {
                     entries: vec![],
                     allow_all: true,
