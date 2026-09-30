@@ -152,7 +152,7 @@ pub fn response<T: Serialize>(
 /// exchanged in three places:
 /// - serde (wire format): OriginalMessage/BroadcastedMessage serialize the
 ///   variant name as JSON
-/// - storage keys: leader_broadcast builds keys with the Debug name, so
+/// - storage keys: leader_broadcast builds keys with `as_str()` below, so
 ///   stored messages would be orphaned under the old name
 /// - KIND_MAP below: the 2-byte header representation (order-independent,
 ///   but a removed variant frees its byte pair for accidental reuse)
@@ -179,6 +179,21 @@ impl CommsMessageType {
         (&CommsMessageType::VerificationKeyRequest, [0x00, 0x06]),
         (&CommsMessageType::Broadcasted, [0x00, 0x07]),
     ];
+
+    /// Stable string form used to build storage keys. Deliberately not `Debug`:
+    /// keys must not shift if a variant is renamed or the derive changes, and
+    /// segments follow the shared `lower_snake_case` key convention.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CommsMessageType::Keys => "keys",
+            CommsMessageType::PublicNonces => "public_nonces",
+            CommsMessageType::PartialSignatures => "partial_signatures",
+            CommsMessageType::GarbledCircuit => "garbled_circuit",
+            CommsMessageType::VerificationKey => "verification_key",
+            CommsMessageType::VerificationKeyRequest => "verification_key_request",
+            CommsMessageType::Broadcasted => "broadcasted",
+        }
+    }
 
     pub fn should_store(self) -> bool {
         matches!(
