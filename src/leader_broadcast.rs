@@ -202,7 +202,7 @@ impl LeaderBroadcastHelper {
 
         debug!("New message: {:?}", original_msg.msg_type);
         // Check if message from this sender already exists
-        let existing: Option<OriginalMessage> = self.store.get(key.clone(), None)?;
+        let existing: Option<OriginalMessage> = self.store.get(&key, None)?;
         if existing.is_some() {
             warn!(
                 "Original message from {} already stored for context {} and type {:?}",
