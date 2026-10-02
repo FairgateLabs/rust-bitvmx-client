@@ -245,7 +245,7 @@ impl DisputeChannelSetup {
                 let journal_size_input = journal_size.to_le_bytes().to_vec();
                 info!("journal_size_input: {:?}", journal_size_input);
 
-                let elf_id = "bae8e89ef2f1c13ffa632eaf1f6dba2777f34e3d9aeb5859bc3bc7cdb6a5515e"; // Placeholder for the actual ELF ID of the verifier
+                let elf_id = "45148234a42db1e547e5aab4a96a2c1a83da1db5a187bddd6bd69c42932e5a9c"; // Placeholder for the actual ELF ID of the verifier
                 let elf_id_input = hex::decode(elf_id).unwrap();
 
                 let operator_id_hex =

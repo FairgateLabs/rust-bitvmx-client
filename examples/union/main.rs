@@ -65,7 +65,7 @@ pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 100_000;
 
 // Challenge tests settings
-const GROTH16_PROOF: &str = "53613a6a1fe8f65ef14e9ba52ace563cd76299717ae77416bd9258c16442170bd1189f0c0f52b610fed9773b011ae18e7fd3c354afa7ca3a38fb8b31d4ec962a70a10fface20c652753e9f9f7f773fdab9e872bd1cd4f4d6c6fd58666ede851863f151c78913fda890525a8853c3e85c439904311df3c291c365e5536cf37c8b";
+const GROTH16_PROOF: &str = "de5f497725660a77bedc6f8ae66b792dc67a33f9f4fb219cc3d9578e060e55a8d784400c4bff0a58dfdb7148c3f69ed724a79ccc5cfafa5cb80a294edc308605bc2724e2b0823bf415b25a9a6a1b529dfe06b2d2e11d47463343ba1c4db6971b195673398dc9efbd958b3f24fcc99be432ac778b11ecf1e77c6d63d9fc53d9ab";
 const PEGOUT_ID_CHALLENGED: &str =
     "c0fa6e8e79ec89544b173f6f17f30c4c8acfa14d4abf519d41c587ae35cc995c";
 const SLOT_ID_CHALLENGED: usize = 4; // It should be set in the journal
