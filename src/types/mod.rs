@@ -32,6 +32,27 @@ pub enum MessageDisposition {
     FailSetup(PeerSetupFault),
 }
 
+/// Outcome of handling a result from an authenticated job dispatcher.
+///
+/// Returning a disposition (rather than using an error for terminal service output)
+/// lets the service-inbox transaction consume duplicates and terminal outcomes while
+/// reserving `Err` for local or infrastructure failures that must be retried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatcherResultDisposition {
+    /// Result effects were staged successfully.
+    Processed,
+    /// The result cannot change durable state and should be consumed.
+    DiscardNoOp(DispatcherNoOpReason),
+}
+
+/// Why consuming a dispatcher result without applying it is safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatcherNoOpReason {
+    Duplicate,
+    Stale,
+    Orphaned,
+}
+
 /// Why processing the unchanged message may succeed later.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RetryReason {

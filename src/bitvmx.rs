@@ -25,9 +25,10 @@ use crate::{
         VerificationMessageOutcome,
     },
     types::{
-        ErrorReportKind, JobDispatcherType, MessageDisposition, NoOpReason,
-        OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
-        ProgramStatus, RetryReason, SetupFailureReason, RSK_PEGIN_TAG,
+        DispatcherNoOpReason, DispatcherResultDisposition, ErrorReportKind, JobDispatcherType,
+        MessageDisposition, NoOpReason, OutgoingBitVMXApiMessages, PeerSetupFault,
+        PeerSetupFaultReason, ProgramContext, ProgramStatus, RetryReason, SetupFailureReason,
+        RSK_PEGIN_TAG,
     },
 };
 use bitcoin::Txid;
@@ -1056,7 +1057,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
-    fn handle_prover_message(&mut self, msg: String) -> Result<(), BitVMXError> {
+    fn handle_prover_message(
+        &mut self,
+        msg: String,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
             self.ping_helper.received_message(
                 JobDispatcherType::ZKP,
@@ -1117,14 +1121,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             let response = self.proof_ready(id)?;
             self.reply(from, response)?;
         }
-        Ok(())
+        Ok(DispatcherResultDisposition::Processed)
     }
 
     fn handle_dispatcher_message(
         &mut self,
         dispatcher: JobDispatcherType,
         msg: &String,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
         if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
             self.ping_helper.received_message(
                 dispatcher,
@@ -1151,17 +1155,38 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             };
 
             if let Some(mut program) = self.load_program(&program_id)? {
-                program.receive_dispatcher_result(
+                return program.receive_dispatcher_result(
                     parsed,
                     context,
                     dispatcher,
                     &mut self.program_context,
-                )?;
+                );
             } else {
-                warn!("Program {} not found for dispatcher result", program_id);
+                error!("Program {} not found for dispatcher result", program_id);
+                return Ok(DispatcherResultDisposition::DiscardNoOp(
+                    DispatcherNoOpReason::Orphaned,
+                ));
             }
         }
-        Ok(())
+        Ok(DispatcherResultDisposition::Processed)
+    }
+
+    /// Applies service-result control flow at the inbox transaction boundary.
+    fn apply_dispatcher_result_disposition(
+        &mut self,
+        dispatcher: JobDispatcherType,
+        disposition: DispatcherResultDisposition,
+    ) -> Result<(), BitVMXError> {
+        match disposition {
+            DispatcherResultDisposition::Processed => Ok(()),
+            DispatcherResultDisposition::DiscardNoOp(reason) => {
+                debug!(
+                    "Consuming no-op result from {:?} dispatcher: {:?}",
+                    dispatcher, reason
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Processes a bounded number of inputs, committing each independently.
@@ -1191,13 +1216,24 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
             match from {
                 identifier if identifier == self.config.components.garbler => {
-                    self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
+                    let disposition =
+                        self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
+                    self.apply_dispatcher_result_disposition(
+                        JobDispatcherType::Garbler,
+                        disposition,
+                    )?;
                 }
                 identifier if identifier == self.config.components.emulator => {
-                    self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
+                    let disposition =
+                        self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
+                    self.apply_dispatcher_result_disposition(
+                        JobDispatcherType::Emulator,
+                        disposition,
+                    )?;
                 }
                 identifier if identifier == self.config.components.prover => {
-                    self.handle_prover_message(msg)?;
+                    let disposition = self.handle_prover_message(msg)?;
+                    self.apply_dispatcher_result_disposition(JobDispatcherType::ZKP, disposition)?;
                 }
                 _ => {
                     self.handle_api_message(msg, from)?;

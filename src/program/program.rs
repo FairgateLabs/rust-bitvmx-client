@@ -17,8 +17,9 @@ use crate::{
     },
     signature_verifier::OperatorVerificationStore,
     types::{
-        ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType, MessageDisposition,
-        NoOpReason, OutgoingBitVMXApiMessages, ProgramContext, RetryReason, SetupFailureReason,
+        DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport, ErrorReportKind,
+        ErrorScope, JobDispatcherType, MessageDisposition, NoOpReason, OutgoingBitVMXApiMessages,
+        ProgramContext, RetryReason, SetupFailureReason,
     },
 };
 use bitcoin::{Transaction, Txid};
@@ -104,6 +105,14 @@ impl Program {
 
     pub(crate) fn is_failed(&self) -> bool {
         self.state == ProgramState::Failed
+    }
+
+    fn is_setup_complete(&self) -> bool {
+        self.state == ProgramState::Ready
+    }
+
+    fn is_stale_setup_result(&self, context: &Context) -> bool {
+        self.is_setup_complete() && matches!(context, Context::SetupStep(_, _, _, _))
     }
 
     /// Returns the no-op disposition for terminal setup states.
@@ -333,7 +342,7 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
+            Err(e) if !self.is_setup_complete() => {
                 self.handle_setup_error(e, None, program_context)
             }
             other => other,
@@ -502,15 +511,17 @@ impl Program {
         context: Context,
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        if self.is_failed() {
-            return Ok(());
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        if self.is_failed() || self.is_stale_setup_result(&context) {
+            return Ok(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::Stale,
+            ));
         }
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
-                self.handle_setup_error(e, None, program_context)
-            }
-            other => other,
+            Err(e) if !self.is_setup_complete() => self
+                .handle_setup_error(e, None, program_context)
+                .map(|_| DispatcherResultDisposition::Processed),
+            other => other.map(|_| DispatcherResultDisposition::Processed),
         }
     }
 
@@ -521,19 +532,6 @@ impl Program {
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
-        // Setup dispatcher results may be delivered more than once or arrive after
-        // setup has completed. They are no longer actionable once the program is
-        // ready and must not turn an otherwise harmless replay into a fatal tick
-        // error. ProgramStep results remain valid after setup.
-        if matches!(&context, Context::SetupStep(_, _, _, _))
-            && matches!(self.state, ProgramState::Ready)
-        {
-            debug!(
-                "Program::receive_dispatcher_result() - Ignoring setup result for ready program"
-            );
-            return Ok(());
-        }
-
         match dispatcher {
             JobDispatcherType::Garbler => {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
@@ -613,7 +611,7 @@ impl Program {
             return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
         }
 
-        if matches!(self.state, ProgramState::Ready) {
+        if self.is_setup_complete() {
             debug!("Program::receive_setup_data() - Setup complete, discarding stale message");
             return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete));
         }
@@ -717,7 +715,7 @@ impl Program {
             return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
         }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
+            Err(e) if !self.is_setup_complete() => {
                 self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
                 Ok(MessageDisposition::Processed)
             }
@@ -1319,7 +1317,7 @@ mod tests {
         );
 
         // Replayed dispatcher results and ticks cannot restart a failed setup.
-        program
+        let dispatcher_disposition = program
             .receive_dispatcher_result(
                 serde_json::json!({}),
                 Context::ProgramId(program.program_id),
@@ -1327,6 +1325,10 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
+        assert_eq!(
+            dispatcher_disposition,
+            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale)
+        );
         program.tick(&mut env.context).unwrap();
 
         assert_eq!(program.state, ProgramState::Failed);
@@ -1390,7 +1392,7 @@ mod tests {
             "".to_string(),
             CommsMessageType::Keys,
         );
-        program
+        let dispatcher_disposition = program
             .receive_dispatcher_result(
                 serde_json::json!({"stale": true}),
                 context,
@@ -1398,6 +1400,10 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
+        assert_eq!(
+            dispatcher_disposition,
+            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale)
+        );
         assert_eq!(program.state, ProgramState::Ready);
     }
 
