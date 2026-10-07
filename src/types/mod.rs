@@ -43,6 +43,13 @@ pub enum DispatcherResultDisposition {
     Processed,
     /// The result cannot change durable state and should be consumed.
     DiscardNoOp(DispatcherNoOpReason),
+    /// The dispatcher terminated a runtime job. Applying this disposition marks the
+    /// owning program failed and reports the failure in the inbox transaction.
+    FailJob {
+        program_id: Uuid,
+        job_id: String,
+        reason: String,
+    },
 }
 
 /// Why consuming a dispatcher result without applying it is safe.
@@ -53,6 +60,8 @@ pub enum DispatcherNoOpReason {
     Orphaned,
     /// The authenticated service sent neither a control message nor a result envelope.
     MalformedEnvelope,
+    /// The envelope was valid but its job id could not identify a supported owner.
+    Uncorrelatable,
 }
 
 /// Why processing the unchanged message may succeed later.

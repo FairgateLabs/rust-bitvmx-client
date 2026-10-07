@@ -38,6 +38,13 @@ use uuid::Uuid;
 
 use super::participant::CommsAddress;
 
+#[derive(Clone, Serialize, Deserialize)]
+struct RuntimeJobFailure {
+    job_id: String,
+    dispatcher: JobDispatcherType,
+    reason: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
@@ -50,6 +57,9 @@ pub struct Program {
     state: ProgramState,
     /// Serializable snapshot embedded in the program since SetupEngine contains trait objects.
     setup_engine_state: Option<SetupEngineState>,
+    /// Durable terminal outcome for a failed asynchronous runtime job.
+    #[serde(default)]
+    runtime_failure: Option<RuntimeJobFailure>,
     /// All participant keys collected during setup (populated by build_protocol)
     #[serde(skip)]
     pub setup_engine: Option<SetupEngine>,
@@ -176,6 +186,49 @@ impl Program {
         Ok(())
     }
 
+    /// Marks the whole program terminal after a dispatcher-declared runtime failure.
+    /// Runtime recovery/replacement is not supported, so the program is no longer driven.
+    pub(crate) fn fail_job<BC: BitcoinCoordinatorApi>(
+        &mut self,
+        job_id: String,
+        dispatcher: JobDispatcherType,
+        reason: String,
+        program_context: &mut ProgramContext<BC>,
+    ) -> Result<(), BitVMXError> {
+        if self.is_failed() {
+            return Ok(());
+        }
+
+        self.state = ProgramState::Failed;
+        self.runtime_failure = Some(RuntimeJobFailure {
+            job_id: job_id.clone(),
+            dispatcher,
+            reason: reason.clone(),
+        });
+        self.save()?;
+        try_send_error_report(
+            &program_context.broker_channel,
+            &program_context.components_config.l2,
+            ErrorReport::new(
+                ErrorScope::Program(self.program_id),
+                ErrorReportKind::JobFailed { job_id, dispatcher },
+                Some(reason),
+            ),
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn runtime_failure(&self) -> Option<(&str, JobDispatcherType, &str)> {
+        self.runtime_failure.as_ref().map(|failure| {
+            (
+                failure.job_id.as_str(),
+                failure.dispatcher,
+                failure.reason.as_str(),
+            )
+        })
+    }
+
     /// Creates a SetupEngine for the protocol using its setup_steps() method.
     fn try_create_setup_engine(
         protocol: &ProtocolType,
@@ -251,6 +304,7 @@ impl Program {
             protocol,
             state: ProgramState::SettingUp,
             setup_engine_state: None, // Will be set when saving
+            runtime_failure: None,
             setup_engine,
             storage: Some(storage.clone()),
         };
@@ -500,6 +554,39 @@ impl Program {
 
         self.send_setup_completed(program_context)?;
         Ok(())
+    }
+
+    /// Handles a dispatcher-declared failure without attempting to decode its plain-text
+    /// result. Setup failures use the existing rollback-then-settle path; runtime failures
+    /// are applied centrally as terminal job dispositions.
+    pub(crate) fn receive_dispatcher_failure(
+        &self,
+        context: &Context,
+        reason: String,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        if self.is_failed() || self.is_stale_setup_result(context) {
+            return Ok(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::Stale,
+            ));
+        }
+
+        match context {
+            Context::SetupStep(_, _, _, _) => Err(BitVMXError::SetupAttemptFailed {
+                program_id: self.program_id,
+                peer: None,
+                source: Box::new(BitVMXError::InvalidMessage(format!(
+                    "dispatcher job failed: {reason}"
+                ))),
+            }),
+            Context::ProgramStep(_, job_id) => Ok(DispatcherResultDisposition::FailJob {
+                program_id: self.program_id,
+                job_id: job_id.clone(),
+                reason,
+            }),
+            _ => Ok(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::Uncorrelatable,
+            )),
+        }
     }
 
     /// Receives results from job dispatchers (Garbler, Emulator).
@@ -864,6 +951,7 @@ mod tests {
             protocol,
             state: ProgramState::SettingUp,
             setup_engine_state: None,
+            runtime_failure: None,
             setup_engine,
             storage: Some(storage),
         }

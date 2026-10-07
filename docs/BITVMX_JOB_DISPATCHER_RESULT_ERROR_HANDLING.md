@@ -47,8 +47,8 @@ Important current gaps are:
 
 The first control-flow foundation is implemented:
 
-- `DispatcherResultDisposition` currently has only `Processed` and
-  `DiscardNoOp(DispatcherNoOpReason)`;
+- `DispatcherResultDisposition` has `Processed`,
+  `DiscardNoOp(DispatcherNoOpReason)`, and a terminal `FailJob` outcome;
 - Garbler, Emulator, and ZKP handlers return this typed disposition;
 - `BitVMX::process_one_api_message` applies service dispositions centrally while
   the inbox transaction is active;
@@ -61,19 +61,22 @@ The first control-flow foundation is implemented:
 - Garbler, Emulator, and ZKP ingress share one envelope decoder that distinguishes
   `PingMessage` from `ResultMessage` without parsing the result payload;
 - malformed service envelopes are logged and consumed as
-  `DiscardNoOp(MalformedEnvelope)`, so they cannot poison the shared inbox.
+  `DiscardNoOp(MalformedEnvelope)`, so they cannot poison the shared inbox;
+- `is_error` is handled before result payload parsing: setup failures use the
+  existing rollback-then-settle path, runtime failures atomically mark the whole
+  program failed and emit a scoped `JobFailed` report, and ZKP failures persist a
+  `FAILED` reason and notify the saved requester;
+- malformed job ids and missing ZKP correlation are consumed as uncorrelatable or
+  orphaned results rather than retried indefinitely.
 
-`FailSetup` and `FailJob` are deliberately **not** enum variants yet. There are
-no complete handlers for those outcomes, and adding variants before durable
-failure behavior exists would make it possible to consume a result without
-recording the required terminal state. Add each variant together with its real
-producer, persistence/notification behavior, and tests.
+`FailSetup` is deliberately **not** an enum variant: setup keeps the existing
+`SetupAttemptFailed` two-transaction settlement so partially staged effects are
+rolled back before terminal state is recorded. `FailJob` was added together with
+its producer, terminal program transition, scoped notification, and tests.
 
-The result-processing behavior has otherwise not changed. In particular,
-`is_error`, malformed result payloads and contexts, ZKP byte conversion, strict
-source/context validation, expected-job tracking, and runtime job failure are
-still unresolved and can still cause the retry/liveness problems described in
-this document.
+Malformed successful result payloads, strict source/context validation, ZKP byte
+conversion, expected-job tracking, and finer-grained runtime-job recovery are
+still unresolved.
 
 ## Desired contract
 
@@ -83,6 +86,7 @@ The currently implemented contract is:
 pub enum DispatcherResultDisposition {
     Processed,
     DiscardNoOp(DispatcherNoOpReason),
+    FailJob { program_id: Uuid, job_id: String, reason: String },
 }
 ```
 
@@ -96,18 +100,11 @@ Handlers return `Result<DispatcherResultDisposition, BitVMXError>`.
   steps, this still includes both infrastructure errors and some permanent
   dispatcher-controlled errors.
 
-The target contract should eventually add terminal variants when their behavior
-is implemented:
-
-```rust,ignore
-FailSetup { program_id: Uuid, reason: String },
-FailJob { scope: ErrorScope, job_id: String, reason: String },
-```
-
-- `FailSetup` must consume the terminal dispatcher outcome and put setup into its
-  failed state with the existing L2 notification;
-- `FailJob` must persist a terminal asynchronous-job result, notify the
-  responsible program/request, and consume the input.
+The setup path intentionally does not use an in-transaction `FailSetup` variant.
+It rolls back partial effects, records terminal setup state and the existing L2
+notification in a new transaction, then consumes the restored result through the
+failed-program lifecycle gate. `FailJob` marks the whole owning program failed,
+emits a scoped L2 `JobFailed` report, and consumes the input atomically.
 
 If setup failure still needs the existing two-transaction settlement, preserve
 `SetupAttemptFailed`: roll back partial result effects, record failed setup in a
@@ -256,7 +253,8 @@ be failed or retried under a bounded policy rather than waiting forever.
    dispatcher-specific payload handlers. **Complete:** malformed envelopes are
    logged and consumed with the explicit `MalformedEnvelope` no-op reason.
 3. **Handle `is_error` first** and map it to setup, runtime-job, or ZKP terminal
-   failure.
+   failure. **Complete:** plain-text dispatcher failures are handled without
+   result payload parsing; runtime failure currently terminates the whole program.
 4. **Enforce the source/context routing table** before loading or mutating a
    program.
 5. **Introduce expected-job records** with stable unique ids, owner, dispatcher,

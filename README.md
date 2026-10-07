@@ -192,6 +192,7 @@ A `Request`-scoped report is delivered to whoever issued that request, not to L2
 | `SetupFailed { step, peer, reason }` | A setup cannot complete. Terminal: no further messages for that program, and its id cannot be reused. |
 | `JobDispatcherUnresponsive(which)` | A job dispatcher stopped answering pings within the timeout. It may be gone, or far enough behind on its inbox to look that way, so treat it as a warning about job progress rather than proof the process died. |
 | `JobDispatcherRecovered(which)` | That dispatcher is answering again. |
+| `JobFailed { job_id, dispatcher }` | A dispatcher declared a runtime job failed. Terminal: the owning program is marked failed; `detail` contains the dispatcher reason. |
 | `BitcoinRpcUnavailable` | The bitcoin node is unreachable. The client keeps running and retrying. |
 | `BitcoinRpcRecovered` | The bitcoin node is reachable again. |
 | `Fatal` | The client cannot continue and is exiting — storage or the message broker failed. Best-effort: it may not arrive. |

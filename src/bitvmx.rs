@@ -1102,14 +1102,47 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 );
             }
             DispatcherEnvelope::Result(result_message) => {
+                let id = match Uuid::parse_str(&result_message.job_id) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        warn!(
+                            "Ignoring ZKP result with uncorrelatable job id: {}",
+                            result_message.job_id
+                        );
+                        return Ok(DispatcherResultDisposition::DiscardNoOp(
+                            DispatcherNoOpReason::Uncorrelatable,
+                        ));
+                    }
+                };
+
+                // Correlate before recording either success or failure. An unknown request
+                // cannot be answered and must not poison the shared inbox.
+                let Some(from): Option<Identifier> =
+                    self.store.get(StoreKey::ZKPFrom(id).get_key()?, None)?
+                else {
+                    warn!("Missing 'from' parameter for ZKP request: {}", id);
+                    return Ok(DispatcherResultDisposition::DiscardNoOp(
+                        DispatcherNoOpReason::Orphaned,
+                    ));
+                };
+
+                if result_message.is_error {
+                    let reason = format!("FAILED: {}", result_message.result);
+                    self.store
+                        .set(StoreKey::ZKPStatus(id).get_key()?, reason.clone(), None)?;
+                    self.reply(
+                        from,
+                        OutgoingBitVMXApiMessages::ProofGenerationError(id, reason),
+                    )?;
+                    return Ok(DispatcherResultDisposition::Processed);
+                }
+
                 let parsed: serde_json::Value = result_message.result_as_value()?;
                 let data = parsed.get("data").ok_or_else(|| {
                     warn!("Missing data field in result. Raw message: {}", msg);
                     BitVMXError::InvalidMessageFormat
                 })?;
 
-                let id = Uuid::parse_str(&result_message.job_id)
-                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
                 // Extract status and vec from data
                 let status = data["status"].as_str().ok_or_else(|| {
                     warn!("Missing status field in data. Raw message: {}", msg);
@@ -1141,15 +1174,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 self.store
                     .set(StoreKey::ZKPStatus(id).get_key()?, status.to_string(), None)?;
 
-                // Get the stored 'from' parameter
-                let from: Identifier = self
-                    .store
-                    .get(StoreKey::ZKPFrom(id).get_key()?, None)?
-                    .ok_or_else(|| {
-                        warn!("Missing 'from' parameter for ZKP request: {}", id);
-                        BitVMXError::InvalidMessageFormat
-                    })?;
-
                 let response = self.proof_ready(id)?;
                 self.reply(from, response)?;
             }
@@ -1178,23 +1202,37 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 );
             }
             DispatcherEnvelope::Result(result_message) => {
-                let parsed: serde_json::Value = result_message.result_as_value()?;
-                let context = Context::from_string(&result_message.job_id)?;
-                info!("Received result from dispatcher {}", parsed);
+                let context = match Context::from_string(&result_message.job_id) {
+                    Ok(context) => context,
+                    Err(error) => {
+                        warn!(
+                            "Ignoring dispatcher result with uncorrelatable job id '{}': {}",
+                            result_message.job_id, error
+                        );
+                        return Ok(DispatcherResultDisposition::DiscardNoOp(
+                            DispatcherNoOpReason::Uncorrelatable,
+                        ));
+                    }
+                };
                 let program_id = match &context {
                     Context::ProgramId(program_id) => *program_id,
                     Context::SetupStep(program_id, _, _, _) => *program_id,
                     Context::ProgramStep(program_id, _) => *program_id,
                     _ => {
-                        warn!(
-                            "Invalid context for dispatcher result: {:?}. Expected ProgramId.",
-                            context
-                        );
-                        return Err(BitVMXError::InvalidMessageFormat);
+                        warn!("Uncorrelatable dispatcher result context: {:?}", context);
+                        return Ok(DispatcherResultDisposition::DiscardNoOp(
+                            DispatcherNoOpReason::Uncorrelatable,
+                        ));
                     }
                 };
 
                 if let Some(mut program) = self.load_program(&program_id)? {
+                    if result_message.is_error {
+                        return program.receive_dispatcher_failure(&context, result_message.result);
+                    }
+
+                    let parsed: serde_json::Value = result_message.result_as_value()?;
+                    info!("Received result from dispatcher {}", parsed);
                     return program.receive_dispatcher_result(
                         parsed,
                         context,
@@ -1226,6 +1264,20 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     dispatcher, reason
                 );
                 Ok(())
+            }
+            DispatcherResultDisposition::FailJob {
+                program_id,
+                job_id,
+                reason,
+            } => {
+                let Some(mut program) = self.load_program(&program_id)? else {
+                    warn!(
+                        "Program {} disappeared while applying failed dispatcher job {}",
+                        program_id, job_id
+                    );
+                    return Ok(());
+                };
+                program.fail_job(job_id, dispatcher, reason, &mut self.program_context)
             }
         }
     }
@@ -1742,6 +1794,183 @@ mod transaction_tests {
             OutgoingBitVMXApiMessages::from_string(&message.msg),
             Ok(OutgoingBitVMXApiMessages::Pong(id)) if id == ping_id
         )));
+    }
+
+    #[test]
+    fn zkp_plain_text_dispatcher_error_is_stored_and_notified() {
+        let mut env = TestBitVMXEnv::new("zkp-dispatcher-error").unwrap();
+        let id = Uuid::new_v4();
+        let requester_id = env.bitvmx.config.components.l2.clone();
+        let requester = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(requester_id.clone())
+            .unwrap();
+        env.bitvmx
+            .store
+            .set(StoreKey::ZKPFrom(id).get_key().unwrap(), requester_id, None)
+            .unwrap();
+        let message = ResultMessage::new(
+            id.to_string(),
+            "prover process exited with status 1".to_string(),
+            true,
+        )
+        .to_string()
+        .unwrap();
+
+        assert_eq!(
+            env.bitvmx.handle_prover_message(&message).unwrap(),
+            DispatcherResultDisposition::Processed
+        );
+        let status: String = env
+            .bitvmx
+            .store
+            .get(StoreKey::ZKPStatus(id).get_key().unwrap(), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, "FAILED: prover process exited with status 1");
+
+        env.bitvmx.program_context.broker_channel.tick().unwrap();
+        let replies = requester.get_all().unwrap();
+        assert!(matches!(
+            replies.as_slice(),
+            [message] if matches!(
+                OutgoingBitVMXApiMessages::from_string(&message.msg),
+                Ok(OutgoingBitVMXApiMessages::ProofGenerationError(response_id, reason))
+                    if response_id == id && reason == status
+            )
+        ));
+    }
+
+    #[test]
+    fn setup_plain_text_dispatcher_error_is_settled_then_consumed() {
+        let mut env = TestBitVMXEnv::new("setup-dispatcher-error").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            env.bitvmx.program_context.comms.get_pubk_hash(),
+        );
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+        let context = Context::SetupStep(
+            program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        );
+        let message = ResultMessage::new(
+            context.to_string().unwrap(),
+            "garbler failed before producing JSON".to_string(),
+            true,
+        )
+        .to_string()
+        .unwrap();
+        let destination = env.bitvmx.config.components.bitvmx.clone();
+        let garbler = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(env.bitvmx.config.components.garbler.clone())
+            .unwrap();
+        garbler.send(&destination, message).unwrap();
+        env.bitvmx.program_context.broker_channel.tick().unwrap();
+
+        assert!(env
+            .bitvmx
+            .run_step("test dispatcher error", |bitvmx| {
+                bitvmx.process_api_messages()
+            })
+            .unwrap()
+            .is_none());
+        assert!(Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+
+        // The first attempt rolls back before recording setup failure. Redelivery is
+        // consumed by the failed-program lifecycle gate.
+        assert!(env.bitvmx.process_api_messages().unwrap());
+        assert!(env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .check_receive(None)
+            .unwrap()
+            .is_empty());
+        let reports = test_l2_messages(&env).unwrap();
+        assert!(matches!(
+            reports.as_slice(),
+            [OutgoingBitVMXApiMessages::Error(ErrorReport {
+                scope: ErrorScope::Program(id),
+                kind: ErrorReportKind::SetupFailed { reason: SetupFailureReason::StepError(reason), .. },
+                ..
+            })] if *id == program_id && reason.contains("garbler failed before producing JSON")
+        ));
+    }
+
+    #[test]
+    fn runtime_plain_text_dispatcher_error_fails_program() {
+        let mut env = TestBitVMXEnv::new("runtime-dispatcher-error").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            env.bitvmx.program_context.comms.get_pubk_hash(),
+        );
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address],
+            0,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+        let context = Context::ProgramStep(program_id, "execute-round-1".to_string());
+        let message = ResultMessage::new(
+            context.to_string().unwrap(),
+            "emulator crashed".to_string(),
+            true,
+        )
+        .to_string()
+        .unwrap();
+
+        let disposition = env
+            .bitvmx
+            .handle_dispatcher_message(JobDispatcherType::Emulator, &message)
+            .unwrap();
+        env.bitvmx
+            .apply_dispatcher_result_disposition(JobDispatcherType::Emulator, disposition)
+            .unwrap();
+
+        let failed_program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(failed_program.is_failed());
+        assert_eq!(
+            failed_program.runtime_failure(),
+            Some((
+                "execute-round-1",
+                JobDispatcherType::Emulator,
+                "emulator crashed"
+            ))
+        );
+        let reports = test_l2_messages(&env).unwrap();
+        assert!(matches!(
+            reports.as_slice(),
+            [OutgoingBitVMXApiMessages::Error(ErrorReport {
+                scope: ErrorScope::Program(id),
+                kind: ErrorReportKind::JobFailed { job_id, dispatcher: JobDispatcherType::Emulator },
+                detail: Some(reason),
+            })] if *id == program_id && job_id == "execute-round-1" && reason == "emulator crashed"
+        ));
     }
 
     #[test]

@@ -208,6 +208,11 @@ pub enum ErrorReportKind {
     },
     JobDispatcherUnresponsive(JobDispatcherType),
     JobDispatcherRecovered(JobDispatcherType),
+    /// Terminal runtime-job failure. The owning program is no longer driven.
+    JobFailed {
+        job_id: String,
+        dispatcher: JobDispatcherType,
+    },
     /// Storage or the broker failed; the node is exiting. Best-effort: may not arrive.
     Fatal,
     NonFatal,
