@@ -51,6 +51,8 @@ pub enum DispatcherNoOpReason {
     Duplicate,
     Stale,
     Orphaned,
+    /// The authenticated service sent neither a control message nor a result envelope.
+    MalformedEnvelope,
 }
 
 /// Why processing the unchanged message may succeed later.

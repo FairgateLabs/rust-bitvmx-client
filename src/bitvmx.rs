@@ -95,6 +95,15 @@ impl<BC: BitcoinCoordinatorApi> Drop for BitVMX<BC> {
         sleep(Duration::from_millis(100));
     }
 }
+
+/// A decoded message from an authenticated job-dispatcher route. Result payloads
+/// deliberately remain encoded until the dispatcher-specific handler validates them.
+#[derive(Debug)]
+enum DispatcherEnvelope {
+    Control(PingMessage),
+    Result(ResultMessage),
+}
+
 enum StoreKey {
     Programs,
     ZKPProof(Uuid),
@@ -1057,69 +1066,93 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
+    /// Decodes only the service envelope. A malformed frame has no trustworthy job
+    /// correlation, so callers consume it rather than retrying it indefinitely.
+    fn decode_dispatcher_envelope(msg: &str) -> Option<DispatcherEnvelope> {
+        if let Ok(message) = serde_json::from_str::<PingMessage>(msg) {
+            return Some(DispatcherEnvelope::Control(message));
+        }
+
+        match ResultMessage::from_str(msg) {
+            Ok(message) => Some(DispatcherEnvelope::Result(message)),
+            Err(error) => {
+                warn!("Rejecting malformed dispatcher envelope: {}", error);
+                None
+            }
+        }
+    }
+
     fn handle_prover_message(
         &mut self,
-        msg: String,
+        msg: &str,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
-        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper.received_message(
-                JobDispatcherType::ZKP,
-                &message,
-                &self.program_context,
-                &self.config.components,
-            );
-        } else {
-            let result_message = ResultMessage::from_str(&msg)?;
-            let parsed: serde_json::Value = result_message.result_as_value()?;
-            let data = parsed.get("data").ok_or_else(|| {
-                warn!("Missing data field in result. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
+        let Some(envelope) = Self::decode_dispatcher_envelope(msg) else {
+            return Ok(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::MalformedEnvelope,
+            ));
+        };
 
-            let id = Uuid::parse_str(&result_message.job_id)
-                .map_err(|_| BitVMXError::InvalidMessageFormat)?;
-            // Extract status and vec from data
-            let status = data["status"].as_str().ok_or_else(|| {
-                warn!("Missing status field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-            let journal = data["journal"].as_array().ok_or_else(|| {
-                warn!("Missing journal field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-            let seal = data["seal"].as_array().ok_or_else(|| {
-                warn!("Missing seal field in data. Raw message: {}", msg);
-                BitVMXError::InvalidMessageFormat
-            })?;
-
-            // Convert seal to Vec<u8>
-            let seal: Vec<u8> = seal
-                .iter()
-                .filter_map(|v| v.as_u64())
-                .map(|v| v as u8)
-                .collect();
-
-            // Store the proof data and status.
-            self.store
-                .set(StoreKey::ZKPProof(id).get_key()?, seal, None)?;
-            self.store
-                .set(StoreKey::ZKPJournal(id).get_key()?, journal, None)?;
-            self.store
-                .set(StoreKey::ZKPStatus(id).get_key()?, status.to_string(), None)?;
-
-            // Get the stored 'from' parameter
-            let from: Identifier = self
-                .store
-                .get(StoreKey::ZKPFrom(id).get_key()?, None)?
-                .ok_or_else(|| {
-                    warn!("Missing 'from' parameter for ZKP request: {}", id);
+        match envelope {
+            DispatcherEnvelope::Control(message) => {
+                self.ping_helper.received_message(
+                    JobDispatcherType::ZKP,
+                    &message,
+                    &self.program_context,
+                    &self.config.components,
+                );
+            }
+            DispatcherEnvelope::Result(result_message) => {
+                let parsed: serde_json::Value = result_message.result_as_value()?;
+                let data = parsed.get("data").ok_or_else(|| {
+                    warn!("Missing data field in result. Raw message: {}", msg);
                     BitVMXError::InvalidMessageFormat
                 })?;
 
-            let response = self.proof_ready(id)?;
-            self.reply(from, response)?;
+                let id = Uuid::parse_str(&result_message.job_id)
+                    .map_err(|_| BitVMXError::InvalidMessageFormat)?;
+                // Extract status and vec from data
+                let status = data["status"].as_str().ok_or_else(|| {
+                    warn!("Missing status field in data. Raw message: {}", msg);
+                    BitVMXError::InvalidMessageFormat
+                })?;
+
+                let journal = data["journal"].as_array().ok_or_else(|| {
+                    warn!("Missing journal field in data. Raw message: {}", msg);
+                    BitVMXError::InvalidMessageFormat
+                })?;
+
+                let seal = data["seal"].as_array().ok_or_else(|| {
+                    warn!("Missing seal field in data. Raw message: {}", msg);
+                    BitVMXError::InvalidMessageFormat
+                })?;
+
+                // Convert seal to Vec<u8>
+                let seal: Vec<u8> = seal
+                    .iter()
+                    .filter_map(|v| v.as_u64())
+                    .map(|v| v as u8)
+                    .collect();
+
+                // Store the proof data and status.
+                self.store
+                    .set(StoreKey::ZKPProof(id).get_key()?, seal, None)?;
+                self.store
+                    .set(StoreKey::ZKPJournal(id).get_key()?, journal, None)?;
+                self.store
+                    .set(StoreKey::ZKPStatus(id).get_key()?, status.to_string(), None)?;
+
+                // Get the stored 'from' parameter
+                let from: Identifier = self
+                    .store
+                    .get(StoreKey::ZKPFrom(id).get_key()?, None)?
+                    .ok_or_else(|| {
+                        warn!("Missing 'from' parameter for ZKP request: {}", id);
+                        BitVMXError::InvalidMessageFormat
+                    })?;
+
+                let response = self.proof_ready(id)?;
+                self.reply(from, response)?;
+            }
         }
         Ok(DispatcherResultDisposition::Processed)
     }
@@ -1127,45 +1160,53 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     fn handle_dispatcher_message(
         &mut self,
         dispatcher: JobDispatcherType,
-        msg: &String,
+        msg: &str,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
-        if let Some(message) = serde_json::from_str::<PingMessage>(&msg).ok() {
-            self.ping_helper.received_message(
-                dispatcher,
-                &message,
-                &self.program_context,
-                &self.config.components,
-            );
-        } else {
-            let result_message = ResultMessage::from_str(&msg)?;
-            let parsed: serde_json::Value = result_message.result_as_value()?;
-            let context = Context::from_string(&result_message.job_id)?;
-            info!("Received result from dispatcher {}", parsed);
-            let program_id = match &context {
-                Context::ProgramId(program_id) => *program_id,
-                Context::SetupStep(program_id, _, _, _) => *program_id,
-                Context::ProgramStep(program_id, _) => *program_id,
-                _ => {
-                    warn!(
-                        "Invalid context for dispatcher result: {:?}. Expected ProgramId.",
-                        context
-                    );
-                    return Err(BitVMXError::InvalidMessageFormat);
-                }
-            };
+        let Some(envelope) = Self::decode_dispatcher_envelope(msg) else {
+            return Ok(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::MalformedEnvelope,
+            ));
+        };
 
-            if let Some(mut program) = self.load_program(&program_id)? {
-                return program.receive_dispatcher_result(
-                    parsed,
-                    context,
+        match envelope {
+            DispatcherEnvelope::Control(message) => {
+                self.ping_helper.received_message(
                     dispatcher,
-                    &mut self.program_context,
+                    &message,
+                    &self.program_context,
+                    &self.config.components,
                 );
-            } else {
-                error!("Program {} not found for dispatcher result", program_id);
-                return Ok(DispatcherResultDisposition::DiscardNoOp(
-                    DispatcherNoOpReason::Orphaned,
-                ));
+            }
+            DispatcherEnvelope::Result(result_message) => {
+                let parsed: serde_json::Value = result_message.result_as_value()?;
+                let context = Context::from_string(&result_message.job_id)?;
+                info!("Received result from dispatcher {}", parsed);
+                let program_id = match &context {
+                    Context::ProgramId(program_id) => *program_id,
+                    Context::SetupStep(program_id, _, _, _) => *program_id,
+                    Context::ProgramStep(program_id, _) => *program_id,
+                    _ => {
+                        warn!(
+                            "Invalid context for dispatcher result: {:?}. Expected ProgramId.",
+                            context
+                        );
+                        return Err(BitVMXError::InvalidMessageFormat);
+                    }
+                };
+
+                if let Some(mut program) = self.load_program(&program_id)? {
+                    return program.receive_dispatcher_result(
+                        parsed,
+                        context,
+                        dispatcher,
+                        &mut self.program_context,
+                    );
+                } else {
+                    error!("Program {} not found for dispatcher result", program_id);
+                    return Ok(DispatcherResultDisposition::DiscardNoOp(
+                        DispatcherNoOpReason::Orphaned,
+                    ));
+                }
             }
         }
         Ok(DispatcherResultDisposition::Processed)
@@ -1232,7 +1273,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     )?;
                 }
                 identifier if identifier == self.config.components.prover => {
-                    let disposition = self.handle_prover_message(msg)?;
+                    let disposition = self.handle_prover_message(&msg)?;
                     self.apply_dispatcher_result_disposition(JobDispatcherType::ZKP, disposition)?;
                 }
                 _ => {
@@ -1632,6 +1673,75 @@ mod transaction_tests {
             .into_iter()
             .map(|message| OutgoingBitVMXApiMessages::from_string(&message.msg))
             .collect()
+    }
+
+    #[test]
+    fn dispatcher_envelope_decoder_does_not_parse_result_payload() {
+        let result = ResultMessage::new(
+            "job-id".to_string(),
+            "plain-text dispatcher failure".to_string(),
+            true,
+        )
+        .to_string()
+        .unwrap();
+
+        match BitVMX::decode_dispatcher_envelope(&result) {
+            Some(DispatcherEnvelope::Result(result)) => {
+                assert_eq!(result.job_id, "job-id");
+                assert_eq!(result.result, "plain-text dispatcher failure");
+                assert!(result.is_error);
+            }
+            other => panic!("expected result envelope, got {other:?}"),
+        }
+        assert!(matches!(
+            BitVMX::decode_dispatcher_envelope(&serde_json::to_string(&PingMessage::Pong).unwrap()),
+            Some(DispatcherEnvelope::Control(PingMessage::Pong))
+        ));
+        assert!(BitVMX::decode_dispatcher_envelope("not JSON").is_none());
+    }
+
+    #[test]
+    fn malformed_dispatcher_input_does_not_block_following_api_message() {
+        let mut env = TestBitVMXEnv::new("malformed-dispatcher-envelope").unwrap();
+        let destination = env.bitvmx.config.components.bitvmx.clone();
+        let garbler = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(env.bitvmx.config.components.garbler.clone())
+            .unwrap();
+        let l2 = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(env.bitvmx.config.components.l2.clone())
+            .unwrap();
+        let ping_id = Uuid::new_v4();
+
+        garbler.send(&destination, "not JSON".to_string()).unwrap();
+        l2.send(
+            &destination,
+            IncomingBitVMXApiMessages::Ping(ping_id)
+                .to_string()
+                .unwrap(),
+        )
+        .unwrap();
+        env.bitvmx.program_context.broker_channel.tick().unwrap();
+
+        assert!(env.bitvmx.process_api_messages().unwrap());
+        assert!(env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .check_receive(None)
+            .unwrap()
+            .is_empty());
+        env.bitvmx.program_context.broker_channel.tick().unwrap();
+        let replies = l2.get_all().unwrap();
+        assert!(replies.iter().any(|message| matches!(
+            OutgoingBitVMXApiMessages::from_string(&message.msg),
+            Ok(OutgoingBitVMXApiMessages::Pong(id)) if id == ping_id
+        )));
     }
 
     #[test]

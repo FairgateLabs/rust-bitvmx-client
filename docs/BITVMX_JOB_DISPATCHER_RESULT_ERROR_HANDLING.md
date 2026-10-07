@@ -57,7 +57,11 @@ The first control-flow foundation is implemented:
   are consumed as `Stale`;
 - `Duplicate` exists as a no-op reason but no dispatcher path emits it yet;
 - `Program::is_setup_complete` and `Program::is_stale_setup_result` centralize
-  the corresponding lifecycle checks.
+  the corresponding lifecycle checks;
+- Garbler, Emulator, and ZKP ingress share one envelope decoder that distinguishes
+  `PingMessage` from `ResultMessage` without parsing the result payload;
+- malformed service envelopes are logged and consumed as
+  `DiscardNoOp(MalformedEnvelope)`, so they cannot poison the shared inbox.
 
 `FailSetup` and `FailJob` are deliberately **not** enum variants yet. There are
 no complete handlers for those outcomes, and adding variants before durable
@@ -65,8 +69,8 @@ failure behavior exists would make it possible to consume a result without
 recording the required terminal state. Add each variant together with its real
 producer, persistence/notification behavior, and tests.
 
-The existing parsing behavior has otherwise not changed. In particular,
-`is_error`, malformed envelopes and payloads, ZKP byte conversion, strict
+The result-processing behavior has otherwise not changed. In particular,
+`is_error`, malformed result payloads and contexts, ZKP byte conversion, strict
 source/context validation, expected-job tracking, and runtime job failure are
 still unresolved and can still cause the retry/liveness problems described in
 this document.
@@ -85,8 +89,9 @@ pub enum DispatcherResultDisposition {
 Handlers return `Result<DispatcherResultDisposition, BitVMXError>`.
 
 - `Processed`: result effects were staged successfully;
-- `DiscardNoOp`: a stale or orphaned result is intentionally consumed; the
-  `Duplicate` reason is defined but is not emitted by a dispatcher path yet;
+- `DiscardNoOp`: a stale, orphaned, or malformed uncorrelatable service message
+  is intentionally consumed; the `Duplicate` reason is defined but is not emitted
+  by a dispatcher path yet;
 - `Err`: processing rolls back. Until error classification is narrowed in later
   steps, this still includes both infrastructure errors and some permanent
   dispatcher-controlled errors.
@@ -248,7 +253,8 @@ be failed or retried under a bounded policy rather than waiting forever.
    `DiscardNoOp` are wired centrally; terminal failure variants are deferred
    until their behavior exists.
 2. **Unify envelope parsing** for Garbler, Emulator, and ZKP while retaining
-   dispatcher-specific payload handlers.
+   dispatcher-specific payload handlers. **Complete:** malformed envelopes are
+   logged and consumed with the explicit `MalformedEnvelope` no-op reason.
 3. **Handle `is_error` first** and map it to setup, runtime-job, or ZKP terminal
    failure.
 4. **Enforce the source/context routing table** before loading or mutating a
