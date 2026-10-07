@@ -516,6 +516,20 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )
     }
 
+    pub(super) fn proof_ready(
+        &mut self,
+        id: Uuid,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        info!("Checking if proof is ready for job: {}", id);
+
+        let status: Option<String> = self.store.get(StoreKey::ZKPStatus(id).get_key()?, None)?;
+        Ok(match status {
+            Some(status) if status == "OK" => OutgoingBitVMXApiMessages::ProofReady(id),
+            Some(status) => OutgoingBitVMXApiMessages::ProofGenerationError(id, status),
+            None => OutgoingBitVMXApiMessages::ProofNotReady(id),
+        })
+    }
+
     fn generate_zkp(
         &mut self,
         from: Identifier,
