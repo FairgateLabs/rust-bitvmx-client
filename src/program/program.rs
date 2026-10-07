@@ -556,18 +556,81 @@ impl Program {
         Ok(())
     }
 
+    /// Validates the authenticated dispatcher against the job context before protocol
+    /// code is invoked.
+    fn dispatcher_result_preflight(
+        &self,
+        context: &Context,
+        dispatcher: JobDispatcherType,
+    ) -> Result<Option<DispatcherResultDisposition>, BitVMXError> {
+        if self.is_failed() {
+            return Ok(Some(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::Stale,
+            )));
+        }
+
+        let route_is_valid = matches!(
+            (dispatcher, context),
+            (
+                JobDispatcherType::Garbler,
+                Context::SetupStep(_, _, _, _) | Context::ProgramStep(_, _)
+            ) | (JobDispatcherType::Emulator, Context::ProgramStep(_, _))
+        );
+
+        if !route_is_valid {
+            let reason = match dispatcher {
+                JobDispatcherType::Garbler => format!(
+                    "Invalid context for Garbler result: {context:?}. Expected SetupStep or ProgramStep."
+                ),
+                JobDispatcherType::Emulator => format!(
+                    "Invalid context for Emulator result: {context:?}. Expected ProgramStep."
+                ),
+                JobDispatcherType::ZKP => format!("Unknown dispatcher type: {dispatcher:?}"),
+            };
+
+            // During setup, an attributable dispatcher protocol violation uses the existing
+            // rollback-then-settle path so no partially staged setup effects can commit.
+            if !self.is_setup_complete() {
+                return Err(BitVMXError::SetupAttemptFailed {
+                    program_id: self.program_id,
+                    peer: None,
+                    source: Box::new(BitVMXError::InvalidMessage(reason)),
+                });
+            }
+
+            let job_id = match context {
+                Context::ProgramStep(_, job_id) => job_id.clone(),
+                _ => context
+                    .to_string()
+                    .unwrap_or_else(|_| format!("{context:?}")),
+            };
+            return Ok(Some(DispatcherResultDisposition::FailJob {
+                program_id: self.program_id,
+                job_id,
+                reason,
+            }));
+        }
+
+        if self.is_stale_setup_result(context) {
+            return Ok(Some(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::Stale,
+            )));
+        }
+
+        Ok(None)
+    }
+
     /// Handles a dispatcher-declared failure without attempting to decode its plain-text
     /// result. Setup failures use the existing rollback-then-settle path; runtime failures
     /// are applied centrally as terminal job dispositions.
     pub(crate) fn receive_dispatcher_failure(
         &self,
         context: &Context,
+        dispatcher: JobDispatcherType,
         reason: String,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
-        if self.is_failed() || self.is_stale_setup_result(context) {
-            return Ok(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::Stale,
-            ));
+        if let Some(disposition) = self.dispatcher_result_preflight(context, dispatcher)? {
+            return Ok(disposition);
         }
 
         match context {
@@ -583,9 +646,7 @@ impl Program {
                 job_id: job_id.clone(),
                 reason,
             }),
-            _ => Ok(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::Uncorrelatable,
-            )),
+            _ => unreachable!("dispatcher preflight accepted an unsupported context"),
         }
     }
 
@@ -599,10 +660,8 @@ impl Program {
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
-        if self.is_failed() || self.is_stale_setup_result(&context) {
-            return Ok(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::Stale,
-            ));
+        if let Some(disposition) = self.dispatcher_result_preflight(&context, dispatcher)? {
+            return Ok(disposition);
         }
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
             Err(e) if !self.is_setup_complete() => self
@@ -1492,6 +1551,37 @@ mod tests {
             dispatcher_disposition,
             DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale)
         );
+        assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_ready_program_rejects_cross_dispatcher_setup_context_as_failed_job() {
+        let mut env = TestProgramContextEnv::new("program-ready-cross-dispatcher").unwrap();
+        let dir = TestStorageDir::new("program-ready-cross-dispatcher-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        program.state = ProgramState::Ready;
+        let context = Context::SetupStep(
+            program.program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        );
+
+        let disposition = program
+            .receive_dispatcher_result(
+                serde_json::json!({"must_not_reach_protocol": true}),
+                context,
+                JobDispatcherType::Emulator,
+                &mut env.context,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            disposition,
+            DispatcherResultDisposition::FailJob { program_id, reason, .. }
+                if program_id == program.program_id
+                    && reason.contains("Invalid context for Emulator result")
+        ));
         assert_eq!(program.state, ProgramState::Ready);
     }
 

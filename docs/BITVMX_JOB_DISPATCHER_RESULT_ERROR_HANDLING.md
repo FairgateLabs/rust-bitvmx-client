@@ -67,16 +67,23 @@ The first control-flow foundation is implemented:
   program failed and emit a scoped `JobFailed` report, and ZKP failures persist a
   `FAILED` reason and notify the saved requester;
 - malformed job ids and missing ZKP correlation are consumed as uncorrelatable or
-  orphaned results rather than retried indefinitely.
+  orphaned results rather than retried indefinitely;
+- authenticated dispatcher routes are checked against the job context before protocol
+  dispatch: Garbler accepts `SetupStep` and `ProgramStep`, Emulator accepts only
+  `ProgramStep`, and ZKP accepts request UUIDs through its separate handler;
+- a dispatcher-labelled success with a non-JSON payload is routed through the same
+  terminal setup/job failure path rather than returned as a retryable parse error;
+- an incompatible context attributable to active setup uses the existing
+  rollback-then-settle setup failure path, while one attributable to a ready program
+  produces `FailJob`; failed programs remain stale no-ops.
 
 `FailSetup` is deliberately **not** an enum variant: setup keeps the existing
 `SetupAttemptFailed` two-transaction settlement so partially staged effects are
 rolled back before terminal state is recorded. `FailJob` was added together with
 its producer, terminal program transition, scoped notification, and tests.
 
-Malformed successful result payloads, strict source/context validation, ZKP byte
-conversion, expected-job tracking, and finer-grained runtime-job recovery are
-still unresolved.
+Malformed successful result payloads, ZKP byte conversion, expected-job tracking,
+and finer-grained runtime-job recovery are still unresolved.
 
 ## Desired contract
 
@@ -255,8 +262,10 @@ be failed or retried under a bounded policy rather than waiting forever.
 3. **Handle `is_error` first** and map it to setup, runtime-job, or ZKP terminal
    failure. **Complete:** plain-text dispatcher failures are handled without
    result payload parsing; runtime failure currently terminates the whole program.
-4. **Enforce the source/context routing table** before loading or mutating a
-   program.
+4. **Enforce the source/context routing table** before invoking protocol code.
+   **Complete:** cross-dispatcher and unsupported contexts are rejected through terminal
+   setup/job outcomes; malformed successful JSON is classified through that terminal
+   path; request contexts on Garbler/Emulator routes are consumed as uncorrelatable.
 5. **Introduce expected-job records** with stable unique ids, owner, dispatcher,
    kind, and pending/completed/failed status.
 6. **Make runtime job failure explicit.** Add protocol callbacks/state for

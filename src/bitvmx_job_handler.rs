@@ -168,10 +168,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     }
                 };
                 let program_id = match &context {
-                    Context::ProgramId(program_id) => *program_id,
-                    Context::SetupStep(program_id, _, _, _) => *program_id,
-                    Context::ProgramStep(program_id, _) => *program_id,
-                    _ => {
+                    Context::ProgramId(program_id)
+                    | Context::Protocol(program_id, _)
+                    | Context::SetupStep(program_id, _, _, _)
+                    | Context::ProgramStep(program_id, _) => *program_id,
+                    Context::RequestId(_, _) => {
                         warn!("Uncorrelatable dispatcher result context: {:?}", context);
                         return Ok(DispatcherResultDisposition::DiscardNoOp(
                             DispatcherNoOpReason::Uncorrelatable,
@@ -181,10 +182,27 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
                 if let Some(mut program) = self.load_program(&program_id)? {
                     if result_message.is_error {
-                        return program.receive_dispatcher_failure(&context, result_message.result);
+                        return program.receive_dispatcher_failure(
+                            &context,
+                            dispatcher,
+                            result_message.result,
+                        );
                     }
 
-                    let parsed: serde_json::Value = result_message.result_as_value()?;
+                    // A dispatcher-labelled success with a non-JSON payload is a permanent
+                    // dispatcher output failure, not a retryable local error. The failure path
+                    // performs source/context preflight before choosing the setup or runtime
+                    // terminal outcome.
+                    let parsed: serde_json::Value = match result_message.result_as_value() {
+                        Ok(parsed) => parsed,
+                        Err(error) => {
+                            return program.receive_dispatcher_failure(
+                                &context,
+                                dispatcher,
+                                format!("invalid successful result payload: {error}"),
+                            );
+                        }
+                    };
                     info!("Received result from dispatcher {}", parsed);
                     return program.receive_dispatcher_result(
                         parsed,
@@ -388,6 +406,49 @@ mod tests {
             OutgoingBitVMXApiMessages::from_string(&message.msg),
             Ok(OutgoingBitVMXApiMessages::Pong(id)) if id == ping_id
         )));
+    }
+
+    #[test]
+    fn malformed_cross_dispatcher_result_is_classified_as_a_route_failure() {
+        let mut env = TestBitVMXEnv::new("dispatcher-route-before-payload").unwrap();
+        let store = env.bitvmx.get_store();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            env.bitvmx.program_context.comms.get_pubk_hash(),
+        );
+        let program_id = Uuid::new_v4();
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address],
+            0,
+            &mut env.bitvmx.program_context,
+            store,
+        )
+        .unwrap();
+        let context = Context::SetupStep(
+            program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        );
+        let message = ResultMessage::new(
+            context.to_string().unwrap(),
+            "not a JSON result payload".to_string(),
+            false,
+        )
+        .to_string()
+        .unwrap();
+
+        let error = env
+            .bitvmx
+            .handle_dispatcher_message(JobDispatcherType::Emulator, &message)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BitVMXError::SetupAttemptFailed { source, .. }
+                if source.to_string().contains("Invalid context for Emulator result")
+        ));
     }
 
     #[test]
