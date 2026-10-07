@@ -52,7 +52,10 @@ use serde_json::Value;
 use std::str::FromStr;
 use std::time::Instant;
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::{
+    key::StorageKey,
+    storage::{KeyValueStore, Storage},
+};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -100,13 +103,26 @@ enum StoreKey {
 }
 
 impl StoreKey {
-    fn get_key(&self) -> String {
+    fn get_key(&self) -> Result<StorageKey, BitVMXError> {
+        fn zkp_key<'a>(
+            id: &Uuid,
+            tail: impl IntoIterator<Item = &'a str>,
+        ) -> Result<StorageKey, BitVMXError> {
+            let id_str = id.to_string();
+            Ok(StorageKey::new(
+                ["bitvmx", "zkp", id_str.as_str()]
+                    .into_iter()
+                    .map(str::to_string)
+                    .chain(tail.into_iter().map(str::to_string)),
+            )?)
+        }
+
         match self {
-            StoreKey::Programs => "bitvmx/programs/all".to_string(),
-            StoreKey::ZKPProof(id) => format!("bitvmx/zkp/{}/proof", id),
-            StoreKey::ZKPStatus(id) => format!("bitvmx/zkp/{}/status", id),
-            StoreKey::ZKPFrom(id) => format!("bitvmx/zkp/{}/from", id),
-            StoreKey::ZKPJournal(id) => format!("bitvmx/zkp/{}/journal", id),
+            StoreKey::Programs => Ok(StorageKey::new(["bitvmx", "program", "list"])?),
+            StoreKey::ZKPProof(id) => zkp_key(id, ["proof"]),
+            StoreKey::ZKPStatus(id) => zkp_key(id, ["status"]),
+            StoreKey::ZKPFrom(id) => zkp_key(id, ["from"]),
+            StoreKey::ZKPJournal(id) => zkp_key(id, ["journal"]),
         }
     }
 }
@@ -1083,16 +1099,16 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
             // Store the proof data and status.
             self.store
-                .set(StoreKey::ZKPProof(id).get_key(), seal, None)?;
+                .set(StoreKey::ZKPProof(id).get_key()?, seal, None)?;
             self.store
-                .set(StoreKey::ZKPJournal(id).get_key(), journal, None)?;
+                .set(StoreKey::ZKPJournal(id).get_key()?, journal, None)?;
             self.store
-                .set(StoreKey::ZKPStatus(id).get_key(), status.to_string(), None)?;
+                .set(StoreKey::ZKPStatus(id).get_key()?, status.to_string(), None)?;
 
             // Get the stored 'from' parameter
             let from: Identifier = self
                 .store
-                .get(StoreKey::ZKPFrom(id).get_key(), None)?
+                .get(StoreKey::ZKPFrom(id).get_key()?, None)?
                 .ok_or_else(|| {
                     warn!("Missing 'from' parameter for ZKP request: {}", id);
                     BitVMXError::InvalidMessageFormat
@@ -1490,7 +1506,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
     fn get_programs(&self) -> Result<Vec<ProgramStatus>, BitVMXError> {
         let programs_ids: Option<Vec<ProgramStatus>> =
-            self.store.get(StoreKey::Programs.get_key(), None)?;
+            self.store.get(StoreKey::Programs.get_key()?, None)?;
 
         Ok(programs_ids.unwrap_or_default())
     }
@@ -1529,7 +1545,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         info!("Checking if proof is ready for job: {}", id);
 
         // Get the status from storage
-        let status_key = StoreKey::ZKPStatus(id).get_key();
+        let status_key = StoreKey::ZKPStatus(id).get_key()?;
         let status: Option<String> = self.store.get(&status_key, None)?;
 
         let response = match status {
@@ -1560,6 +1576,12 @@ mod transaction_tests {
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
     use crate::types::{ErrorReport, ErrorScope, IncomingBitVMXApiMessages};
     use storage_backend::error::StorageError;
+
+    macro_rules! test_key {
+        ($name:expr) => {
+            StorageKey::new(["bitvmx", "test", $name]).unwrap()
+        };
+    }
 
     fn test_l2_messages(
         env: &TestBitVMXEnv,
@@ -2059,28 +2081,36 @@ mod transaction_tests {
         let dir = TestStorageDir::new("news-independent-transactions");
         let store = dir.storage();
         let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.set("handler-first", true, None)?;
-            store.set("ack-first", true, None)?;
+            store.set(test_key!("handler-first"), true, None)?;
+            store.set(test_key!("ack-first"), true, None)?;
             Err(BitVMXError::InvalidMessageFormat)
         });
         assert!(result.is_err());
         BitVMX::run_transaction(&store, || {
-            store.set("handler-second", true, None)?;
-            store.set("ack-second", true, None)?;
+            store.set(test_key!("handler-second"), true, None)?;
+            store.set(test_key!("ack-second"), true, None)?;
             Ok(())
         })
         .unwrap();
 
         drop(store);
         let store = dir.storage();
-        assert_eq!(store.get::<_, bool>("handler-first", None).unwrap(), None);
-        assert_eq!(store.get::<_, bool>("ack-first", None).unwrap(), None);
         assert_eq!(
-            store.get::<_, bool>("handler-second", None).unwrap(),
+            store.get::<bool>(test_key!("handler-first"), None).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.get::<bool>(test_key!("ack-first"), None).unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .get::<bool>(test_key!("handler-second"), None)
+                .unwrap(),
             Some(true)
         );
         assert_eq!(
-            store.get::<_, bool>("ack-second", None).unwrap(),
+            store.get::<bool>(test_key!("ack-second"), None).unwrap(),
             Some(true)
         );
     }
@@ -2091,43 +2121,52 @@ mod transaction_tests {
         let store = dir.storage();
         let valid =
             serde_json::to_string(&IncomingBitVMXApiMessages::Ping(Uuid::new_v4())).unwrap();
-        store.set("bad-input", "not JSON", None).unwrap();
-        store.set("next-input", &valid, None).unwrap();
+        store.set(test_key!("bad-input"), "not JSON", None).unwrap();
+        store.set(test_key!("next-input"), &valid, None).unwrap();
 
         for key in ["bad-input", "next-input"] {
             BitVMX::run_transaction(&store, || {
-                let payload: String = store.get(key, None)?.unwrap();
-                store.remove(key, None)?;
+                let payload: String = store.get(test_key!(key), None)?.unwrap();
+                store.remove(test_key!(key), None)?;
                 if BitVMX::discard_if_malformed(serde_json::from_str::<IncomingBitVMXApiMessages>(
                     &payload,
                 ))
                 .is_some()
                 {
-                    store.set("handled", true, None)?;
+                    store.set(test_key!("handled"), true, None)?;
                 }
                 Ok(())
             })
             .unwrap();
         }
 
-        assert_eq!(store.get::<_, String>("bad-input", None).unwrap(), None);
-        assert_eq!(store.get::<_, String>("next-input", None).unwrap(), None);
-        assert_eq!(store.get::<_, bool>("handled", None).unwrap(), Some(true));
+        assert_eq!(
+            store.get::<String>(test_key!("bad-input"), None).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.get::<String>(test_key!("next-input"), None).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.get::<bool>(test_key!("handled"), None).unwrap(),
+            Some(true)
+        );
     }
 
     #[test]
     fn malformed_input_consumption_rolls_back_with_transaction() {
         let dir = TestStorageDir::new("reject-rollback");
         let store = dir.storage();
-        store.set("input", "[]", None).unwrap();
+        store.set(test_key!("input"), "[]", None).unwrap();
         let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove("input", None)?;
+            store.remove(test_key!("input"), None)?;
             assert!(BitVMX::discard_if_malformed(deserialize_msg("[]".into(), 1024)).is_none());
             Err(BitVMXError::StorageError(StorageError::WriteError))
         });
         assert!(result.is_err());
         assert_eq!(
-            store.get::<_, String>("input", None).unwrap(),
+            store.get::<String>(test_key!("input"), None).unwrap(),
             Some("[]".into())
         );
     }
@@ -2138,11 +2177,11 @@ mod transaction_tests {
         let mut reporter = Reporter::new(env.context.components_config.l2.clone());
         let dir = TestStorageDir::new("nonfatal-step-storage");
         let store = dir.storage();
-        store.set("input", true, None).unwrap();
+        store.set(test_key!("input"), true, None).unwrap();
 
         let failed: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove("input", None)?;
-            store.set("partial", true, None)?;
+            store.remove(test_key!("input"), None)?;
+            store.set(test_key!("partial"), true, None)?;
             Err(BitVMXError::InvalidMessageFormat)
         });
         assert_eq!(
@@ -2150,12 +2189,15 @@ mod transaction_tests {
                 .unwrap(),
             None
         );
-        assert_eq!(store.get::<_, bool>("input", None).unwrap(), Some(true));
-        assert_eq!(store.get::<_, bool>("partial", None).unwrap(), None);
+        assert_eq!(
+            store.get::<bool>(test_key!("input"), None).unwrap(),
+            Some(true)
+        );
+        assert_eq!(store.get::<bool>(test_key!("partial"), None).unwrap(), None);
         assert_eq!(env.l2_messages().unwrap().len(), 1);
 
         let next = BitVMX::run_transaction(&store, || {
-            store.set("independent", true, None)?;
+            store.set(test_key!("independent"), true, None)?;
             Ok(true)
         });
         assert_eq!(
@@ -2163,7 +2205,7 @@ mod transaction_tests {
             Some(true)
         );
         assert_eq!(
-            store.get::<_, bool>("independent", None).unwrap(),
+            store.get::<bool>(test_key!("independent"), None).unwrap(),
             Some(true)
         );
         assert_eq!(env.l2_messages().unwrap().len(), 1);
@@ -2192,16 +2234,22 @@ mod transaction_tests {
         let dir = TestStorageDir::new("broker-tick-commit");
         let store = dir.storage();
         BitVMX::run_transaction(&store, || {
-            store.set("broker", true, None)?;
+            store.set(test_key!("broker"), true, None)?;
             Ok(())
         })
         .unwrap();
 
         store.begin_global_transaction().unwrap();
-        store.set("application", true, None).unwrap();
+        store.set(test_key!("application"), true, None).unwrap();
         store.rollback_global_transaction().unwrap();
-        assert_eq!(store.get::<_, bool>("broker", None).unwrap(), Some(true));
-        assert_eq!(store.get::<_, bool>("application", None).unwrap(), None);
+        assert_eq!(
+            store.get::<bool>(test_key!("broker"), None).unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            store.get::<bool>(test_key!("application"), None).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -2209,18 +2257,24 @@ mod transaction_tests {
         let dir = TestStorageDir::new("broker-tick-independent");
         let store = dir.storage();
         BitVMX::run_transaction(&store, || {
-            store.set("comms", true, None)?;
+            store.set(test_key!("comms"), true, None)?;
             Ok(())
         })
         .unwrap();
 
         let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.set("services", true, None)?;
+            store.set(test_key!("services"), true, None)?;
             Err(BitVMXError::InvalidMessageFormat)
         });
         assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-        assert_eq!(store.get::<_, bool>("comms", None).unwrap(), Some(true));
-        assert_eq!(store.get::<_, bool>("services", None).unwrap(), None);
+        assert_eq!(
+            store.get::<bool>(test_key!("comms"), None).unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            store.get::<bool>(test_key!("services"), None).unwrap(),
+            None
+        );
         // No leaked transaction blocks the next phase.
         store.begin_global_transaction().unwrap();
         store.rollback_global_transaction().unwrap();
@@ -2231,36 +2285,51 @@ mod transaction_tests {
         let dir = TestStorageDir::new("application-item-transactions");
         let store = dir.storage();
         for key in ["input-a", "input-b", "input-c"] {
-            store.set(key, true, None).unwrap();
+            store.set(test_key!(key), true, None).unwrap();
         }
 
         let value = BitVMX::run_transaction(&store, || {
-            store.remove("input-a", None)?;
-            store.set("state-a", true, None)?;
+            store.remove(test_key!("input-a"), None)?;
+            store.set(test_key!("state-a"), true, None)?;
             Ok(42)
         })
         .unwrap();
         assert_eq!(value, 42);
 
         let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove("input-b", None)?;
-            store.set("partial-b", true, None)?;
+            store.remove(test_key!("input-b"), None)?;
+            store.set(test_key!("partial-b"), true, None)?;
             Err(BitVMXError::InvalidMessageFormat)
         });
         assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-        assert_eq!(store.get::<_, bool>("input-a", None).unwrap(), None);
-        assert_eq!(store.get::<_, bool>("state-a", None).unwrap(), Some(true));
-        assert_eq!(store.get::<_, bool>("partial-b", None).unwrap(), None);
-        assert_eq!(store.get::<_, bool>("input-b", None).unwrap(), Some(true));
-        assert_eq!(store.get::<_, bool>("input-c", None).unwrap(), Some(true));
+        assert_eq!(store.get::<bool>(test_key!("input-a"), None).unwrap(), None);
+        assert_eq!(
+            store.get::<bool>(test_key!("state-a"), None).unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            store.get::<bool>(test_key!("partial-b"), None).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.get::<bool>(test_key!("input-b"), None).unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            store.get::<bool>(test_key!("input-c"), None).unwrap(),
+            Some(true)
+        );
 
         // The next step can open its own transaction after the failure.
         BitVMX::run_transaction(&store, || {
-            store.set("next-step", true, None)?;
+            store.set(test_key!("next-step"), true, None)?;
             Ok(())
         })
         .unwrap();
-        assert_eq!(store.get::<_, bool>("next-step", None).unwrap(), Some(true));
+        assert_eq!(
+            store.get::<bool>(test_key!("next-step"), None).unwrap(),
+            Some(true)
+        );
     }
 
     #[test]
@@ -2281,16 +2350,19 @@ mod transaction_tests {
     fn fatal_broker_error_also_rolls_back() {
         let dir = TestStorageDir::new("broker-tick-fatal");
         let store = dir.storage();
-        store.set("incoming", true, None).unwrap();
+        store.set(test_key!("incoming"), true, None).unwrap();
         let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove("incoming", None)?;
+            store.remove(test_key!("incoming"), None)?;
             Err(BitVMXError::StorageError(StorageError::WriteError))
         });
         assert!(matches!(
             result,
             Err(BitVMXError::StorageError(StorageError::WriteError))
         ));
-        assert_eq!(store.get::<_, bool>("incoming", None).unwrap(), Some(true));
+        assert_eq!(
+            store.get::<bool>(test_key!("incoming"), None).unwrap(),
+            Some(true)
+        );
         store.begin_global_transaction().unwrap();
         store.rollback_global_transaction().unwrap();
     }

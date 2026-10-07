@@ -318,6 +318,7 @@ pub trait ProtocolHandler {
     }
 
     fn save_protocol(&self, protocol: Protocol) -> Result<(), ProtocolBuilderError> {
+        log_amounts(&protocol, &self.context().protocol_name)?;
         protocol.save(
             self.context()
                 .storage
@@ -891,6 +892,12 @@ pub trait ProtocolHandler {
         let pb = ProtocolBuilder {};
         pb.add_speedup_output(protocol, &timeout_tx(to), amount_speedup, other_speedup)?;
 
+        // This transaction ends the protocol. Send it to the party that wins on timeout instead of leaving it to the miner as fee.
+        protocol.add_transaction_output(
+            &timeout_tx(to),
+            &OutputType::segwit_key(AmountType::Recover, other_speedup)?,
+        )?;
+
         // store the input and leaf for the timeout tx
         context.globals.set_var(
             &self.context().id,
@@ -922,6 +929,12 @@ pub trait ProtocolHandler {
             &timeout_input_tx(to),
             amount_speedup,
             other_speedup,
+        )?;
+
+        // This transaction also ends the protocol and would otherwise burn the remaining amount.
+        protocol.add_transaction_output(
+            &timeout_input_tx(to),
+            &OutputType::segwit_key(AmountType::Recover, other_speedup)?,
         )?;
 
         Ok(())
@@ -1074,6 +1087,46 @@ pub fn external_action(role: &ParticipantRole, n: u32) -> String {
     }
 }
 
+// For amounts logging control, without txids
+fn log_amounts(protocol: &Protocol, protocol_name: &str) -> Result<(), ProtocolBuilderError> {
+    let tag = protocol_name
+        .rsplit_once('_')
+        .map_or(protocol_name, |(p, _)| p);
+
+    let mut outs = 0;
+    let mut sum = 0u64;
+    let mut max_fee = (0u64, String::new());
+
+    for name in protocol.transaction_names() {
+        let tx = protocol.transaction_by_name(&name)?;
+        let out: u64 = tx.output.iter().map(|o| o.value.to_sat()).sum();
+        let mut into = 0u64;
+        for input in protocol.inputs(&name)? {
+            into += input
+                .output_type()
+                .map_err(ProtocolBuilderError::from)?
+                .get_value()
+                .map_or(0, |v| v.to_sat());
+        }
+
+        outs += tx.output.len();
+        sum += out;
+        let fee = into.saturating_sub(out);
+        if fee > max_fee.0 {
+            max_fee = (fee, name);
+        }
+    }
+
+    // 'outs' is the number of outputs in the whole graph.
+    // 'sum' is every output value added up, across all branches. Alternative branches are mutually exclusive, so this is not a real cost.
+    // 'max_fee' is the largest single transaction fee, and 'at' names that transaction.
+    info!(
+        "amounts {} outs={} sum={} max_fee={} at={}",
+        tag, outs, sum, max_fee.0, max_fee.1
+    );
+    Ok(())
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProtocolContext {
     pub protocol_name: String,
@@ -1129,6 +1182,8 @@ pub fn new_protocol_type(
     my_idx: usize,
     storage: Rc<Storage>,
 ) -> Result<ProtocolType, BitVMXError> {
+    // Also used as musig2's session id, which must be a single StorageKey
+    // segment, so `_` rather than `/`.
     let protocol_name = format!("{}_{}", name, id);
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
 

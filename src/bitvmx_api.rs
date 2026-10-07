@@ -41,7 +41,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         programs.push(ProgramStatus::new(*program_id));
 
         self.store
-            .set(StoreKey::Programs.get_key(), programs, None)?;
+            .set(StoreKey::Programs.get_key()?, programs, None)?;
 
         Ok(())
     }
@@ -527,7 +527,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         // Store the 'from' parameter
         self.store
-            .set(StoreKey::ZKPFrom(id).get_key(), from, None)?;
+            .set(StoreKey::ZKPFrom(id).get_key()?, from, None)?;
 
         let msg = serde_json::to_string(&DispatcherJob {
             job_id: id.to_string(),
@@ -548,7 +548,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         // Check if the proof is ready
         info!("Checking if {} ZKP job is ready", id);
-        let status_key = StoreKey::ZKPStatus(id).get_key();
+        let status_key = StoreKey::ZKPStatus(id).get_key()?;
         let status: Option<String> = self.store.get(&status_key, None)?;
 
         let response = match status {
@@ -557,7 +557,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     info!("Getting ZKP execution result for job: {}", id);
                     let seal: Vec<u8> = match self
                         .store
-                        .get(&StoreKey::ZKPProof(id).get_key(), None)?
+                        .get(&StoreKey::ZKPProof(id).get_key()?, None)?
                     {
                         Some(seal) => seal,
                         None => {
@@ -572,7 +572,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
                     let journal: Vec<u8> = match self
                         .store
-                        .get(&StoreKey::ZKPJournal(id).get_key(), None)?
+                        .get(&StoreKey::ZKPJournal(id).get_key()?, None)?
                     {
                         Some(journal) => journal,
                         None => {
@@ -1386,7 +1386,7 @@ mod tests {
         ));
         env.bitvmx
             .store
-            .set(StoreKey::ZKPStatus(id).get_key(), "FAILED", None)
+            .set(StoreKey::ZKPStatus(id).get_key().unwrap(), "FAILED", None)
             .unwrap();
         assert!(matches!(
             env.bitvmx.get_zkp_execution_result(id).unwrap(),
@@ -1395,21 +1395,25 @@ mod tests {
         ));
         env.bitvmx
             .store
-            .set(StoreKey::ZKPStatus(id).get_key(), "OK", None)
+            .set(StoreKey::ZKPStatus(id).get_key().unwrap(), "OK", None)
             .unwrap();
         assert!(
             matches!(env.bitvmx.get_zkp_execution_result(id).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("proof is missing"))
         );
         env.bitvmx
             .store
-            .set(StoreKey::ZKPProof(id).get_key(), vec![1_u8], None)
+            .set(StoreKey::ZKPProof(id).get_key().unwrap(), vec![1_u8], None)
             .unwrap();
         assert!(
             matches!(env.bitvmx.get_zkp_execution_result(id).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("journal is missing"))
         );
         env.bitvmx
             .store
-            .set(StoreKey::ZKPJournal(id).get_key(), vec![2_u8], None)
+            .set(
+                StoreKey::ZKPJournal(id).get_key().unwrap(),
+                vec![2_u8],
+                None,
+            )
             .unwrap();
         assert!(matches!(
             env.bitvmx.get_zkp_execution_result(id).unwrap(),

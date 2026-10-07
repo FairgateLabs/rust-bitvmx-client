@@ -27,7 +27,11 @@ use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::rc::Rc;
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::{
+    error::StorageError,
+    key::StorageKey,
+    storage::{KeyValueStore, Storage},
+};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -53,14 +57,27 @@ pub struct Program {
 }
 
 impl Program {
+    fn program_key<'a>(
+        program_id: &Uuid,
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, StorageError> {
+        let id_str = program_id.to_string();
+        StorageKey::new(
+            ["bitvmx", "program", id_str.as_str()]
+                .into_iter()
+                .map(str::to_string)
+                .chain(tail.into_iter().map(str::to_string)),
+        )
+    }
+
     /// Returns the storage key for a program.
-    fn key_program(program_id: &Uuid) -> String {
-        format!("program/{program_id}")
+    fn key_program(program_id: &Uuid) -> Result<StorageKey, StorageError> {
+        Self::program_key(program_id, [])
     }
 
     /// Returns the storage key for a program's separately serialized state.
-    fn key_program_state(program_id: &Uuid) -> String {
-        format!("program/{program_id}/state")
+    fn key_program_state(program_id: &Uuid) -> Result<StorageKey, StorageError> {
+        Self::program_key(program_id, ["state"])
     }
 
     /// Sends SetupCompleted to the L2 channel.
@@ -239,7 +256,7 @@ impl Program {
     /// Loads a program from storage, returning `None` when it does not exist.
     pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Option<Self>, BitVMXError> {
         let Some(mut program): Option<Program> =
-            storage.get(&Self::key_program(program_id), None)?
+            storage.get(Self::key_program(program_id)?, None)?
         else {
             return Ok(None);
         };
@@ -252,7 +269,7 @@ impl Program {
             Self::try_create_setup_engine(&program.protocol, program.participants.len())?;
 
         program.state = storage
-            .get(&Self::key_program_state(program_id), None)?
+            .get(Self::key_program_state(program_id)?, None)?
             .unwrap_or_default();
 
         debug!(
@@ -299,12 +316,12 @@ impl Program {
         );
 
         storage.set(
-            &Self::key_program_state(&self.program_id),
+            Self::key_program_state(&self.program_id)?,
             &self.state,
             None,
         )?;
 
-        storage.set(&Self::key_program(&self.program_id), self, None)?;
+        storage.set(Self::key_program(&self.program_id)?, self, None)?;
 
         Ok(())
     }
@@ -817,7 +834,7 @@ impl Program {
 
 pub fn is_active_program(storage: &Rc<Storage>, uuid: &Uuid) -> Result<bool, BitVMXError> {
     let state: ProgramState = storage
-        .get(&Program::key_program_state(uuid), None)?
+        .get(Program::key_program_state(uuid)?, None)?
         .unwrap_or_default();
     Ok(state.is_active())
 }
@@ -908,11 +925,11 @@ mod tests {
         program.save().unwrap();
 
         let serialized_program: Program = storage
-            .get(&Program::key_program(&program_id), None)
+            .get(Program::key_program(&program_id).unwrap(), None)
             .unwrap()
             .unwrap();
         let serialized_state: ProgramState = storage
-            .get(&Program::key_program_state(&program_id), None)
+            .get(Program::key_program_state(&program_id).unwrap(), None)
             .unwrap()
             .unwrap();
 

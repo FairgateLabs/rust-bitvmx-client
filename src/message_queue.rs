@@ -4,10 +4,16 @@ use bitvmx_broker::{
     retry::{now_ms, RetryPolicy, RetryState},
 };
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
+use std::{rc::Rc, sync::LazyLock};
+use storage_backend::key::StorageKey;
 use storage_backend::storage::{KeyValueStore, Storage};
 use tracing::warn;
 use uuid::Uuid;
+
+static QUEUE_IDS_KEY: LazyLock<StorageKey> = LazyLock::new(|| {
+    StorageKey::new(["bitvmx", "message_queue", "ids"])
+        .expect("the fixed message queue IDs storage key is valid")
+});
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueuedMessage {
@@ -44,10 +50,6 @@ struct StoredMessage {
     data: String,
 }
 
-const QUEUE_IDS_KEY: &str = "bitvmx/message_queue/ids";
-const MSG_KEY_PREFIX: &str = "bitvmx/message_queue/msg/";
-const RETRY_STATE_KEY_PREFIX: &str = "bitvmx/message_queue/retry_state/";
-
 pub struct MessageQueue {
     storage: Rc<Storage>,
     retry_policy: RetryPolicy,
@@ -61,62 +63,75 @@ impl MessageQueue {
         }
     }
 
+    fn message_queue_key<'a>(
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, BitVMXError> {
+        Ok(StorageKey::new(
+            ["bitvmx", "message_queue"]
+                .into_iter()
+                .map(str::to_string)
+                .chain(tail.into_iter().map(str::to_string)),
+        )?)
+    }
+
+    fn msg_key(id: &Uuid) -> Result<StorageKey, BitVMXError> {
+        let id_str = id.to_string();
+        Self::message_queue_key(["msg", id_str.as_str()])
+    }
+
+    fn retry_state_key(id: &Uuid) -> Result<StorageKey, BitVMXError> {
+        let id_str = id.to_string();
+        Self::message_queue_key(["retry_state", id_str.as_str()])
+    }
+
     fn get_queue_ids(&self) -> Result<Vec<Uuid>, BitVMXError> {
-        let ids: Option<Vec<Uuid>> = self.storage.get(QUEUE_IDS_KEY, None)?;
+        let ids: Option<Vec<Uuid>> = self.storage.get(QUEUE_IDS_KEY.as_ref(), None)?;
         Ok(ids.unwrap_or_default())
     }
 
     fn save_queue_ids(&self, ids: Vec<Uuid>) -> Result<(), BitVMXError> {
         self.storage
-            .set(QUEUE_IDS_KEY, ids, None)
+            .set(QUEUE_IDS_KEY.as_ref(), ids, None)
             .map_err(BitVMXError::StorageError)?;
         Ok(())
     }
 
-    fn msg_key(id: &Uuid) -> String {
-        format!("{}{}", MSG_KEY_PREFIX, id)
-    }
-
-    fn retry_state_key(id: &Uuid) -> String {
-        format!("{}{}", RETRY_STATE_KEY_PREFIX, id)
-    }
-
     fn get_stored_message(&self, id: &Uuid) -> Result<Option<StoredMessage>, BitVMXError> {
         self.storage
-            .get(&Self::msg_key(id), None)
+            .get(Self::msg_key(id)?, None)
             .map_err(BitVMXError::StorageError)
     }
 
     fn save_stored_message(&self, id: &Uuid, msg: &StoredMessage) -> Result<(), BitVMXError> {
         self.storage
-            .set(&Self::msg_key(id), msg, None)
+            .set(Self::msg_key(id)?, msg, None)
             .map_err(BitVMXError::StorageError)?;
         Ok(())
     }
 
     fn get_retry_state(&self, id: &Uuid) -> Result<Option<RetryState>, BitVMXError> {
         self.storage
-            .get(&Self::retry_state_key(id), None)
+            .get(Self::retry_state_key(id)?, None)
             .map_err(BitVMXError::StorageError)
     }
 
     fn save_retry_state(&self, id: &Uuid, retry_state: &RetryState) -> Result<(), BitVMXError> {
         self.storage
-            .set(&Self::retry_state_key(id), retry_state, None)
+            .set(Self::retry_state_key(id)?, retry_state, None)
             .map_err(BitVMXError::StorageError)?;
         Ok(())
     }
 
     fn remove_stored_message(&self, id: &Uuid) -> Result<(), BitVMXError> {
         self.storage
-            .remove(&Self::msg_key(id), None)
+            .remove(Self::msg_key(id)?, None)
             .map_err(BitVMXError::StorageError)?;
         Ok(())
     }
 
     fn remove_retry_state(&self, id: &Uuid) -> Result<(), BitVMXError> {
         self.storage
-            .remove(&Self::retry_state_key(id), None)
+            .remove(Self::retry_state_key(id)?, None)
             .map_err(BitVMXError::StorageError)?;
         Ok(())
     }

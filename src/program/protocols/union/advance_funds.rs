@@ -224,9 +224,11 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             tx_name, tx_id, tx_status.confirmations
         );
 
-        self.send_spv(context, tx_id)?;
-
         if tx_name == ADVANCE_FUNDS_TX {
+            // Input funding transactions are monitored too, but their proofs must
+            // never be published as the advance-funds payment.
+            self.send_spv(context, tx_id)?;
+
             let request: AdvanceFundsRequest = self.advance_funds_request(context)?;
             let mut block_height = None;
 

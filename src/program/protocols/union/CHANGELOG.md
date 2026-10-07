@@ -6,17 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+### Fixed
+
+- Publish `FundsAdvanceSPV` only for `ADVANCE_FUNDS_TX`; funding-input notifications must not be submitted as the user payment proof.
+
 ### Added
 
 - `PenalizedMember` struct to store penalized operators and watchtowers and dispatch disabler transactions if needed.
 - `RejectPegin` protocol to allow the committee to reject a pegin request.
 - `CANCEL_TAKE0_TX` transactions to consume `ACCEPT_PEGIN_TX` output enabler.
 - `request_pegin_timelock` to `PacketSettings`. It defines the time the user block funds while the committee accepts the pegin request.
-- `UnionSPVNotification` message to notify Union Client about SPV proofs related to advance funds and challenge transactions.
+- `UnionSPVNotification` message to notify Union Client about SPV proofs related to advance funds.
 - Send a `CancelUserTake` SPV notification after a `CANCEL_TAKE0_TX` transaction is mined.
+- `DisputeTxNotification` message carrying the challenge, accept-pegin correlation, and SPV proof
+  for every transaction in the dispute flow.
 
 ### Changed
 
+- Resolve challenge transaction IDs directly from the protocol graph without collecting signatures.
 - Store `PacketSettings` directly in each `Committee`, including peg-in, peg-out, and reject peg-in confirmation counts.
 - Read Union protocol confirmation and timelock settings from the committee instead of global `UnionSettings`.
 - Update `ACCEPT_PEGIN_TX`:

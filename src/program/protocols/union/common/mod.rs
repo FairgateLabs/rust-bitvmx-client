@@ -2,7 +2,7 @@ mod shared;
 pub use shared::*;
 
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use bitcoin::{PublicKey, ScriptBuf};
+use bitcoin::{PublicKey, ScriptBuf, Txid};
 use key_manager::{key_manager::KeyManager, winternitz};
 use protocol_builder::{
     builder::Protocol,
@@ -10,7 +10,7 @@ use protocol_builder::{
     scripts::{ProtocolScript, SignMode},
     types::{input::SpendMode, output::AmountType, InputArgs, OutputType},
 };
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -18,12 +18,89 @@ use crate::{
     program::{
         participant::ParticipantRole,
         protocols::union::types::{
-            Committee, PenalizedMember, MY_IDX, OP_CLAIM_GATE, SPEEDUP_VALUE, WT_CLAIM_GATE,
+            Committee, DisputeTxNotification, DisputeTxType, PenalizedMember, ACCEPT_PEGIN_TX,
+            MY_IDX, OP_CLAIM_GATE, SPEEDUP_VALUE, WT_CLAIM_GATE,
         },
         variables::{PartialUtxo, VariableTypes},
     },
-    types::ProgramContext,
+    spv_proof::get_spv_proof,
+    types::{OutgoingBitVMXApiMessages, ProgramContext},
 };
+
+pub fn get_accept_pegin_txid<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
+    committee_id: Uuid,
+    slot_index: usize,
+) -> Result<Txid, BitVMXError> {
+    context
+        .globals
+        .get_var(&committee_id, &indexed_name(ACCEPT_PEGIN_TX, slot_index))?
+        .ok_or_else(|| {
+            BitVMXError::InvalidParameter(format!(
+                "Accept pegin transaction not found for committee {committee_id}, slot {slot_index}"
+            ))
+        })?
+        .utxo()
+        .map(|utxo| utxo.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn send_dispute_tx_notification<BC: BitcoinCoordinatorApi>(
+    context: &ProgramContext<BC>,
+    program_id: Uuid,
+    member_index: usize,
+    txid: Txid,
+    kickoff_txid: Txid,
+    committee_id: Uuid,
+    slot_index: usize,
+    tx_type: DisputeTxType,
+) -> Result<(), BitVMXError> {
+    let proof = match context.bitcoin_coordinator.get_transaction(txid) {
+        Ok(tx) => match tx.block_info {
+            Some(block_info) => Some(get_spv_proof(txid, block_info)?),
+            None => {
+                warn!("Transaction {txid} has no block info yet, skipping SPV proof");
+                None
+            }
+        },
+        Err(error) => {
+            warn!("Failed to retrieve transaction info for txid {txid}: {error:?}");
+            None
+        }
+    };
+    let accept_pegin_txid = match get_accept_pegin_txid(context, committee_id, slot_index) {
+        Ok(accept_pegin_txid) => Some(accept_pegin_txid),
+        Err(error) => {
+            warn!(
+                "Failed to retrieve accept pegin txid for committee {committee_id}, slot {slot_index}: {error:?}"
+            );
+            None
+        }
+    };
+    let notification = DisputeTxNotification {
+        txid,
+        kickoff_txid,
+        accept_pegin_txid,
+        committee_id,
+        slot_index,
+        spv_proof: proof,
+        tx_type: tx_type.clone(),
+    };
+    let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
+        program_id,
+        DisputeTxNotification::name(),
+        VariableTypes::String(serde_json::to_string(&notification)?),
+    ))?;
+
+    info!(
+        id = member_index,
+        "Sending {tx_type:#?} dispute SPV data: {data}"
+    );
+    context
+        .broker_channel
+        .send_service(&context.components_config.l2, data)?;
+    Ok(())
+}
 
 pub fn create_transaction_reference(
     protocol: &mut protocol_builder::builder::Protocol,

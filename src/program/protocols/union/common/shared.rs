@@ -30,6 +30,8 @@ pub fn get_accept_pegin_pid(committee_id: Uuid, slot_index: usize) -> Uuid {
 }
 
 pub fn get_advance_funds_pid(committee_id: Uuid, slot_index: usize) -> Uuid {
+    // FIXME: Make this derivation operator-aware and define protocol-id reuse so AdvanceFunds is
+    // never triggered twice for the same operator and slot.
     let mut hasher = Sha256::new();
     hasher.update(committee_id.as_bytes());
     hasher.update(&slot_index.to_be_bytes());
