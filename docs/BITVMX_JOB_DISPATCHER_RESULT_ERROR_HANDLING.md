@@ -43,29 +43,66 @@ Important current gaps are:
 6. Garbler and Emulator support at-least-once deduplication in some paths, but
    source/context compatibility is not enforced centrally.
 
+## Implementation status
+
+The first control-flow foundation is implemented:
+
+- `DispatcherResultDisposition` currently has only `Processed` and
+  `DiscardNoOp(DispatcherNoOpReason)`;
+- Garbler, Emulator, and ZKP handlers return this typed disposition;
+- `BitVMX::process_one_api_message` applies service dispositions centrally while
+  the inbox transaction is active;
+- a result for a missing program is consumed as `Orphaned`;
+- results for failed programs and setup results delivered after setup completion
+  are consumed as `Stale`;
+- `Duplicate` exists as a no-op reason but no dispatcher path emits it yet;
+- `Program::is_setup_complete` and `Program::is_stale_setup_result` centralize
+  the corresponding lifecycle checks.
+
+`FailSetup` and `FailJob` are deliberately **not** enum variants yet. There are
+no complete handlers for those outcomes, and adding variants before durable
+failure behavior exists would make it possible to consume a result without
+recording the required terminal state. Add each variant together with its real
+producer, persistence/notification behavior, and tests.
+
+The existing parsing behavior has otherwise not changed. In particular,
+`is_error`, malformed envelopes and payloads, ZKP byte conversion, strict
+source/context validation, expected-job tracking, and runtime job failure are
+still unresolved and can still cause the retry/liveness problems described in
+this document.
+
 ## Desired contract
 
-Parse and route a service message into an explicit disposition:
+The currently implemented contract is:
 
 ```rust
 pub enum DispatcherResultDisposition {
     Processed,
     DiscardNoOp(DispatcherNoOpReason),
-    FailSetup { program_id: Uuid, reason: String },
-    FailJob { scope: ErrorScope, job_id: String, reason: String },
 }
 ```
 
-The handler returns
-`Result<DispatcherResultDisposition, BitVMXError>`.
+Handlers return `Result<DispatcherResultDisposition, BitVMXError>`.
 
 - `Processed`: result effects were staged successfully;
-- `DiscardNoOp`: duplicate, stale, or orphaned result is intentionally consumed;
-- `FailSetup`: consume the terminal dispatcher outcome and transactionally put
-  the setup into its failed state with the existing L2 notification;
-- `FailJob`: persist a terminal result for the asynchronous job, notify the
-  responsible program/request, and consume the input;
-- `Err`: only local/infrastructure work failed; roll back for retry or stop.
+- `DiscardNoOp`: a stale or orphaned result is intentionally consumed; the
+  `Duplicate` reason is defined but is not emitted by a dispatcher path yet;
+- `Err`: processing rolls back. Until error classification is narrowed in later
+  steps, this still includes both infrastructure errors and some permanent
+  dispatcher-controlled errors.
+
+The target contract should eventually add terminal variants when their behavior
+is implemented:
+
+```rust,ignore
+FailSetup { program_id: Uuid, reason: String },
+FailJob { scope: ErrorScope, job_id: String, reason: String },
+```
+
+- `FailSetup` must consume the terminal dispatcher outcome and put setup into its
+  failed state with the existing L2 notification;
+- `FailJob` must persist a terminal asynchronous-job result, notify the
+  responsible program/request, and consume the input.
 
 If setup failure still needs the existing two-transaction settlement, preserve
 `SetupAttemptFailed`: roll back partial result effects, record failed setup in a
@@ -207,7 +244,9 @@ be failed or retried under a bounded policy rather than waiting forever.
 ## Implementation plan
 
 1. **Create typed dispatcher dispositions** and apply them centrally at the
-   service-inbox transaction boundary.
+   service-inbox transaction boundary. **Partially complete:** `Processed` and
+   `DiscardNoOp` are wired centrally; terminal failure variants are deferred
+   until their behavior exists.
 2. **Unify envelope parsing** for Garbler, Emulator, and ZKP while retaining
    dispatcher-specific payload handlers.
 3. **Handle `is_error` first** and map it to setup, runtime-job, or ZKP terminal
