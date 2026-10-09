@@ -3,7 +3,6 @@ use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
-use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use console::style;
 use enum_dispatch::enum_dispatch;
@@ -1024,25 +1023,25 @@ pub trait ProtocolHandler {
     fn execute_job<J: Serialize + DispatcherMessage, BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &ProgramContext<BC>,
-        dest: &Identifier,
+        dispatcher: JobDispatcherType,
         job_type: J,
         step: &str,
     ) -> Result<(), BitVMXError> {
-        let dispatcher = if dest == &program_context.components_config.garbler {
-            JobDispatcherType::Garbler
-        } else if dest == &program_context.components_config.emulator {
-            JobDispatcherType::Emulator
-        } else {
-            return Err(BitVMXError::InvalidParameter(format!(
-                "unknown dispatcher destination for program job: {dest:?}"
-            )));
+        let destination = match dispatcher {
+            JobDispatcherType::Garbler => &program_context.components_config.garbler,
+            JobDispatcherType::Emulator => &program_context.components_config.emulator,
+            JobDispatcherType::ZKP => {
+                return Err(BitVMXError::InvalidParameter(
+                    "ZKP is not a program dispatcher".to_string(),
+                ))
+            }
         };
         program_context
             .expected_jobs
             .send_dispatcher_job(
                 &program_context.broker_channel,
                 dispatcher,
-                dest,
+                destination,
                 Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
                 job_type,
             )

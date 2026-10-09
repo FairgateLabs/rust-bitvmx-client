@@ -62,8 +62,9 @@ The first control-flow foundation is implemented:
 - Garbler, Emulator, and ZKP ingress share `dispatcher_result_message`, which
   distinguishes control messages, encoded results, and settled malformed input without
   using an error return for normal control flow or parsing the result payload. A
-  source-specific `FnOnce` correlates the wire id, after which expected-job validation
-  is applied centrally before either result handler receives the message;
+  source-specific `FnOnce` resolves owner and semantic context from the expected-job
+  id, after which validation is applied centrally before either result handler receives
+  the message;
 - malformed service envelopes are logged and consumed as
   `DiscardNoOp(MalformedEnvelope)`, so they cannot poison the shared inbox;
 - `is_error` is handled before result payload parsing: setup failures use the
@@ -91,6 +92,10 @@ The first control-flow foundation is implemented:
 - registration is idempotent for an existing job with matching immutable metadata,
   regardless of status, and the dispatcher request is not sent again. This prevents
   replayed API/news input from blocking the inbox or repeating completed work;
+- Garbler and Emulator use their serialized semantic `Context` as the stable wire id.
+  Protocols are responsible for assigning a distinct step identifier to every logical
+  execution, including rounds where applicable; repeated dispatch of that context is an
+  idempotent no-op. ZKP keeps its already-unique request UUID;
 - retry is deliberately separate from registration: the future scheduler must move an
   existing `RetryPending` record back to `Pending` and resend the same job id;
 - ZKP success payloads deserialize directly into `zk_result::ResultType`, so malformed
@@ -106,9 +111,10 @@ rolled back before terminal state is recorded. `JobFailed` records the expected 
 retry-pending and emits a scoped notification, but never changes a ready program to
 `ProgramState::Failed`.
 
-Malformed successful Garbler/Emulator result payloads, distinct-execution job ids,
-service delivery failure handling, and finer-grained runtime-job recovery are still
-unresolved.
+Malformed successful Garbler/Emulator result payloads, service delivery failure handling,
+and finer-grained runtime-job recovery are still unresolved. Current protocol dispatch
+sites use execution-specific semantic step names (including rounds where applicable);
+any future repeatable protocol operation must supply a distinct semantic execution key.
 
 ## Planned dispatcher-specific failure policy (not implemented)
 
@@ -138,12 +144,11 @@ payload (or enough information to reconstruct it), plus an explicit operator dis
 operation. A retry reuses the same unique job correlation id; creating a fresh id for
 each retry would allow delayed results to affect the wrong execution.
 
-Remaining expected-job work also includes an iterable retry index, retention/cleanup
-for terminal records, and an explicit dispatcher argument at program dispatch call
-sites instead of inferring the dispatcher by comparing destination identities. The
-expected-job status is the transport correlation/deduplication gate; existing protocol
-`job_done` markers remain a domain-level effect guard until the distinct-execution ID
-audit decides whether both layers are still needed.
+Remaining expected-job work also includes an iterable retry index and retention/cleanup
+for terminal records. Program dispatch call sites now pass the dispatcher explicitly
+instead of inferring it by comparing destination identities. The expected-job status is
+the transport correlation/deduplication gate; existing protocol `job_done` markers
+remain a domain-level effect guard.
 
 ## Desired contract
 
@@ -243,14 +248,12 @@ owning setup. For failures from the correct dispatcher, a context attributable t
 active setup becomes `FailSetup`; a malformed or unsupported runtime context becomes
 `JobFailed`/service fault and is consumed without failing the program.
 
-For stronger protection, persist expected job metadata when dispatching:
-`job_id`, dispatcher identity, program/request owner, semantic context, job kind,
-and state. Registration should generate the unique wire `job_id`; dispatcher results
-are then correlated by lookup rather than by decoding `Context` from the wire id.
-The ZKP request UUID is already unique and can remain its correlation id; submitting
-the same ZKP request UUID again is an idempotent no-op. Then a result can be checked
-against the job that was actually issued rather than only against strings encoded in
-`Context`.
+Persist expected job metadata when dispatching: `job_id`, dispatcher identity,
+program/request owner, job kind, and state. Garbler and Emulator use the serialized
+semantic `Context` as their stable unique `job_id`; protocols must make each logical
+execution distinguishable in that context. The ZKP request UUID is already unique and
+remains its correlation id. A result is checked against the expected-job record that was
+actually issued rather than trusted solely because its id decodes as a `Context`.
 
 ### 5. Apply lifecycle and deduplication gates
 
@@ -351,12 +354,12 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
    failure or job-failure outcomes; malformed successful JSON follows the same path;
    request contexts on Garbler/Emulator routes are consumed as uncorrelatable.
 5. **Introduce expected-job records** with stable unique ids, owner, dispatcher,
-   kind, and pending/retry-pending/completed/discarded/failed status. **Complete for
-   current job ids:** all dispatch paths persist and validate the record atomically;
-   repeated registration with matching metadata is an idempotent no-op. Reusable step
-   ids still need distinct-execution ids in item 10.
-6. **Make runtime job failure explicit.** Add protocol callbacks/state for
-   terminal `ProgramStep` failure and scoped reporting.
+   kind, and pending/retry-pending/completed/discarded/failed status. **Complete:** all
+   dispatch paths persist and validate the record atomically; repeated registration
+   with matching metadata is an idempotent no-op.
+6. **Make runtime job failure explicit.** **Complete for the current retry-pending
+   policy:** runtime failure is durably scoped to its expected job, reported, and does
+   not terminate the owning program.
 7. **Narrow setup classification.** Keep storage/system failures as `Err`; make
    dispatcher-declared and dispatcher-payload failures terminal setup outcomes.
 8. **Harden ZKP parsing and correlation.** **Complete for current failure policy:**
@@ -367,12 +370,13 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
    domain record. The expected-job record authoritatively owns lifecycle and failure
    state, avoiding duplicate status tracking; retry metadata will be added there with
    the future ZKP retry policy.
-10. **Replace context-derived ids and audit deduplication.** Generate a unique
-   correlation id when registering each Garbler/Emulator job, persist its semantic
-   context in the expected-job record, and resolve results through that record. Keep
-   the ZKP request UUID as its unique id and treat repeat submission as a no-op. Ensure
-   protocol state makes dispatch itself at-most-once across the transaction boundary,
-   and ensure `job_done:<step>` cannot alias distinct jobs or rounds.
+10. **Audit context-derived ids and deduplication.** **Complete for current protocol
+   operations:** Garbler/Emulator use their semantic context as the stable correlation
+   id, current round-dependent operations include the round in their step identifier,
+   and ZKP uses its unique request UUID. Protocols own the invariant that distinct
+   executions have distinct contexts; future repeatable operations must provide a new
+   execution discriminator so expected-job registration and `job_done:<step>` do not
+   alias executions.
 11. **Handle service delivery dead letters/timeouts** through expected-job state
     and the dispatcher-specific terminal-or-indefinite-retry policy documented above.
 12. **Document liveness semantics** and decide whether recovery/down reports are

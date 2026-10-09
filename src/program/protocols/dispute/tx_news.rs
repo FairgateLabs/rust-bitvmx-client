@@ -21,7 +21,7 @@ use crate::{
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{JobDispatcherType, ProgramContext},
 };
 use bitcoin::{script::read_scriptint, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -283,7 +283,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                         let full_input = unify_inputs(&drp.ctx.id, program_context)?;
                         drp.execute_job(
                             program_context,
-                            &program_context.components_config.emulator,
+                            JobDispatcherType::Emulator,
                             EmulatorJobType::ProverExecute(
                                 program_definition.clone(),
                                 full_input,
@@ -325,7 +325,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
 
                         drp.execute_job(
                             program_context,
-                            &program_context.components_config.emulator,
+                            JobDispatcherType::Emulator,
                             EmulatorJobType::VerifierCheckExecution(
                                 program_definition.clone(),
                                 input_program,
@@ -466,7 +466,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
 
                         drp.execute_job(
                             program_context,
-                            &program_context.components_config.emulator,
+                            JobDispatcherType::Emulator,
                             EmulatorJobType::VerifierChooseChallenge(
                                 program_definition.clone(),
                                 execution_path.clone(),
@@ -619,7 +619,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                         );
                         drp.execute_job(
                             program_context,
-                            &program_context.components_config.emulator,
+                            JobDispatcherType::Emulator,
                             msg,
                             "verifier_choose_challenge_for_read",
                         )?;
@@ -794,7 +794,7 @@ fn handle_nary_verifier<BC: BitcoinCoordinatorApi>(
     };
     drp.execute_job(
         program_context,
-        &program_context.components_config.emulator,
+        JobDispatcherType::Emulator,
         job_type,
         &step_name,
     )?;
@@ -878,7 +878,7 @@ fn handle_nary_prover<BC: BitcoinCoordinatorApi>(
     if round > 1 || ready {
         drp.execute_job(
             program_context,
-            &program_context.components_config.emulator,
+            JobDispatcherType::Emulator,
             job,
             &step_name,
         )?;

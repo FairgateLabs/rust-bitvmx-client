@@ -2,7 +2,7 @@ use super::{BitVMX, Context, StoreKey};
 use crate::{
     error_handling::try_send_error_report,
     errors::BitVMXError,
-    expected_job::{ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus},
+    expected_job::{ExpectedJob, ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     types::{
         DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport, ErrorReportKind,
@@ -39,7 +39,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         &mut self,
         dispatcher: JobDispatcherType,
         msg: &str,
-        correlate: impl FnOnce(&str) -> Result<ExpectedJobCorrelation<C>, String>,
+        correlate: impl FnOnce(&ExpectedJob) -> Result<ExpectedJobCorrelation<C>, String>,
     ) -> Result<DispatcherIngress<C>, BitVMXError> {
         if let Ok(message) = serde_json::from_str::<PingMessage>(msg) {
             self.ping_helper.received_message(
@@ -64,7 +64,19 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 ));
             }
         };
-        let correlation = match correlate(&message.job_id) {
+        let Some(expected) = self.program_context.expected_jobs.get(&message.job_id)? else {
+            warn!(
+                "Ignoring result for job that was not issued locally: {}",
+                message.job_id
+            );
+            return Ok(DispatcherIngress::Settled(
+                DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Orphaned),
+            ));
+        };
+        if let Err(disposition) = self.pending_expected_job(&expected, dispatcher)? {
+            return Ok(DispatcherIngress::Settled(disposition));
+        }
+        let correlation = match correlate(&expected) {
             Ok(correlation) => correlation,
             Err(error) => {
                 warn!(
@@ -76,13 +88,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 ));
             }
         };
-        if let Err(disposition) = self.pending_expected_job(
-            &message.job_id,
-            dispatcher,
-            correlation.owner,
-            correlation.kind,
-        )? {
-            return Ok(DispatcherIngress::Settled(disposition));
+        if expected.owner != correlation.owner || expected.kind != correlation.kind {
+            warn!(
+                "Expected-job metadata does not match result '{}'",
+                message.job_id
+            );
+            return Ok(DispatcherIngress::Settled(
+                DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Uncorrelatable),
+            ));
         }
         Ok(DispatcherIngress::Result(message, correlation.context))
     }
@@ -92,28 +105,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// authenticated source differently.
     fn pending_expected_job(
         &self,
-        job_id: &str,
+        expected: &ExpectedJob,
         dispatcher: JobDispatcherType,
-        owner: ExpectedJobOwner,
-        kind: ExpectedJobKind,
     ) -> Result<Result<(), DispatcherResultDisposition>, BitVMXError> {
-        let Some(expected) = self.program_context.expected_jobs.get(job_id)? else {
-            warn!("Ignoring result for job that was not issued locally: {job_id}");
-            return Ok(Err(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::Orphaned,
-            )));
-        };
         if expected.dispatcher != dispatcher {
             warn!(
-                "Ignoring result for job '{job_id}' from {dispatcher:?}; expected {:?}",
-                expected.dispatcher
+                "Ignoring result for job '{}' from {dispatcher:?}; expected {:?}",
+                expected.job_id, expected.dispatcher
             );
-            return Ok(Err(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::Uncorrelatable,
-            )));
-        }
-        if expected.owner != owner || expected.kind != kind {
-            warn!("Expected-job metadata does not match result '{job_id}'");
             return Ok(Err(DispatcherResultDisposition::DiscardNoOp(
                 DispatcherNoOpReason::Uncorrelatable,
             )));
@@ -147,8 +146,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         msg: &str,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
         let (result_message, id) =
-            match self.dispatcher_result_message(JobDispatcherType::ZKP, msg, |job_id| {
-                let id = Uuid::parse_str(job_id).map_err(|error| error.to_string())?;
+            match self.dispatcher_result_message(JobDispatcherType::ZKP, msg, |expected| {
+                let ExpectedJobOwner::Request(id) = expected.owner else {
+                    return Err("ZKP job does not have a request owner".to_string());
+                };
                 Ok(ExpectedJobCorrelation {
                     context: id,
                     owner: ExpectedJobOwner::Request(id),
@@ -249,8 +250,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         msg: &str,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
         let (result_message, (context, program_id)) =
-            match self.dispatcher_result_message(dispatcher, msg, |job_id| {
-                let context = Context::from_string(job_id).map_err(|error| error.to_string())?;
+            match self.dispatcher_result_message(dispatcher, msg, |expected| {
+                let context =
+                    Context::from_string(&expected.job_id).map_err(|error| error.to_string())?;
                 let (program_id, kind) = match &context {
                     Context::SetupStep(program_id, _, _, _) => {
                         (*program_id, ExpectedJobKind::Setup)
@@ -445,8 +447,10 @@ mod tests {
 
         match env
             .bitvmx
-            .dispatcher_result_message(JobDispatcherType::ZKP, &result, |job_id| {
-                let id = Uuid::parse_str(job_id).map_err(|error| error.to_string())?;
+            .dispatcher_result_message(JobDispatcherType::ZKP, &result, |expected| {
+                let ExpectedJobOwner::Request(id) = expected.owner else {
+                    return Err("ZKP job does not have a request owner".to_string());
+                };
                 Ok(ExpectedJobCorrelation {
                     context: id,
                     owner: ExpectedJobOwner::Request(id),

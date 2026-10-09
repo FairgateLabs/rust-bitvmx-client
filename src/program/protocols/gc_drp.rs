@@ -54,7 +54,10 @@ use crate::{
         },
         variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP},
+    types::{
+        IncomingBitVMXApiMessages, JobDispatcherType, ParticipantChannel, ProgramContext,
+        PROGRAM_TYPE_GC_DRP,
+    },
 };
 
 use super::protocol_handler::{ProtocolContext, ProtocolHandler};
@@ -588,7 +591,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
 
                         self.execute_job(
                             program_context,
-                            &program_context.components_config.garbler,
+                            JobDispatcherType::Garbler,
                             GarbledJobType::Evaluate(
                                 config.circuit,
                                 commitments,

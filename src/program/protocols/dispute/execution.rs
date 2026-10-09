@@ -24,7 +24,7 @@ use crate::{
         },
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{JobDispatcherType, ProgramContext},
 };
 
 pub fn execution_result<BC: BitcoinCoordinatorApi>(
@@ -79,7 +79,7 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                 let job = serde_json::from_str::<EmulatorJobType>(&msg.string()?)?;
                 drp.execute_job(
                     context,
-                    &context.components_config.emulator,
+                    JobDispatcherType::Emulator,
                     job,
                     "verifier_choose_segment_conflict_step_round_1",
                 )?;
