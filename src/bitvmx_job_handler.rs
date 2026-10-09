@@ -6,7 +6,7 @@ use crate::{
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     types::{
         DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport, ErrorReportKind,
-        ErrorScope, JobDispatcherType, OutgoingBitVMXApiMessages,
+        ErrorScope, JobDispatcherType, OutgoingBitVMXApiMessages, ZKPExecution,
     },
 };
 use bitvmx_broker::{identification::identifier::Identifier, ReceivedMessage};
@@ -134,8 +134,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         reason: String,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
         let status = format!("FAILED: {reason}");
-        self.store
-            .set(StoreKey::ZKPStatus(id).get_key()?, status.clone(), None)?;
         self.reply(
             requester,
             OutgoingBitVMXApiMessages::ProofGenerationError(id, status.clone()),
@@ -163,16 +161,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         // Correlate before recording either success or failure. An unknown request
         // cannot be answered and must not poison the shared inbox.
-        let Some(from): Option<Identifier> =
-            self.store.get(StoreKey::ZKPFrom(id).get_key()?, None)?
-        else {
+        let execution: Option<ZKPExecution> = self
+            .store
+            .get(StoreKey::ZKPExecution(id).get_key()?, None)?;
+        let Some(execution) = execution else {
             let reason = format!("Missing requester correlation for ZKP job {id}");
             warn!("{reason}");
-            self.store.set(
-                StoreKey::ZKPStatus(id).get_key()?,
-                format!("FAILED: {reason}"),
-                None,
-            )?;
             self.program_context
                 .expected_jobs
                 .fail(&result_message.job_id, reason)?;
@@ -180,6 +174,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 DispatcherNoOpReason::Orphaned,
             ));
         };
+        let from = execution.requester().clone();
 
         if result_message.is_error {
             return self.fail_zkp_result(id, &result_message.job_id, from, result_message.result);
@@ -202,18 +197,26 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }
         };
 
-        self.store
-            .set(StoreKey::ZKPProof(id).get_key()?, seal, None)?;
-        self.store
-            .set(StoreKey::ZKPJournal(id).get_key()?, journal, None)?;
-        self.store
-            .set(StoreKey::ZKPStatus(id).get_key()?, status.to_string(), None)?;
+        if status != "OK" {
+            return self.fail_zkp_result(
+                id,
+                &result_message.job_id,
+                from,
+                format!("prover returned unsuccessful status: {status}"),
+            );
+        }
 
-        let response = self.proof_ready(id)?;
-        self.reply(from, response)?;
+        self.store.set(
+            StoreKey::ZKPExecution(id).get_key()?,
+            ZKPExecution::with_output(from.clone(), seal, journal),
+            None,
+        )?;
+
         self.program_context
             .expected_jobs
             .complete(&result_message.job_id)?;
+        let response = self.proof_ready(id)?;
+        self.reply(from, response)?;
         Ok(DispatcherResultDisposition::Processed)
     }
 
@@ -405,7 +408,7 @@ mod tests {
         test_utils::TestBitVMXEnv,
         types::{
             ErrorReport, ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages,
-            SetupFailureReason, PROGRAM_TYPE_AGGREGATED_KEY,
+            SetupFailureReason, ZKPOutput, PROGRAM_TYPE_AGGREGATED_KEY,
         },
     };
     fn test_l2_messages(
@@ -592,7 +595,11 @@ mod tests {
             .unwrap();
         env.bitvmx
             .store
-            .set(StoreKey::ZKPFrom(id).get_key().unwrap(), requester_id, None)
+            .set(
+                StoreKey::ZKPExecution(id).get_key().unwrap(),
+                ZKPExecution::new(requester_id),
+                None,
+            )
             .unwrap();
         env.bitvmx
             .program_context
@@ -611,23 +618,17 @@ mod tests {
             env.bitvmx.handle_prover_message(&message).unwrap(),
             DispatcherResultDisposition::Processed
         );
-        let status: String = env
+        let expected = env
             .bitvmx
-            .store
-            .get(StoreKey::ZKPStatus(id).get_key().unwrap(), None)
+            .program_context
+            .expected_jobs
+            .get(&id.to_string())
             .unwrap()
             .unwrap();
+        let ExpectedJobStatus::Failed(status) = expected.status else {
+            panic!("expected failed ZKP job");
+        };
         assert_eq!(status, "FAILED: prover process exited with status 1");
-        assert!(matches!(
-            env.bitvmx
-                .program_context
-                .expected_jobs
-                .get(&id.to_string())
-                .unwrap()
-                .unwrap()
-                .status,
-            ExpectedJobStatus::Failed(_)
-        ));
         assert_eq!(
             env.bitvmx.handle_prover_message(&message).unwrap(),
             DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Duplicate)
@@ -646,13 +647,83 @@ mod tests {
     }
 
     #[test]
+    fn successful_zkp_result_completes_job_and_stores_domain_output() {
+        let mut env = TestBitVMXEnv::new("zkp-success").unwrap();
+        let id = Uuid::new_v4();
+        let requester_id = env.bitvmx.config.components.l2.clone();
+        let requester = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(requester_id.clone())
+            .unwrap();
+        env.bitvmx
+            .store
+            .set(
+                StoreKey::ZKPExecution(id).get_key().unwrap(),
+                ZKPExecution::new(requester_id),
+                None,
+            )
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(id.to_string(), JobDispatcherType::ZKP)
+            .unwrap();
+        let payload = serde_json::json!({
+            "type": "ProveResult",
+            "data": { "seal": [1, 2], "journal": [3, 4], "status": "OK" }
+        });
+        let message = ResultMessage::new(id.to_string(), payload.to_string(), false)
+            .to_string()
+            .unwrap();
+
+        assert_eq!(
+            env.bitvmx.handle_prover_message(&message).unwrap(),
+            DispatcherResultDisposition::Processed
+        );
+        let expected = env
+            .bitvmx
+            .program_context
+            .expected_jobs
+            .get(&id.to_string())
+            .unwrap()
+            .unwrap();
+        assert!(matches!(expected.status, ExpectedJobStatus::Completed));
+        let execution: ZKPExecution = env
+            .bitvmx
+            .store
+            .get(StoreKey::ZKPExecution(id).get_key().unwrap(), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            execution.into_output(),
+            Some(ZKPOutput::new(vec![1, 2], vec![3, 4]))
+        );
+
+        env.bitvmx.program_context.broker_channel.tick().unwrap();
+        let replies = requester.get_all().unwrap();
+        assert!(matches!(
+            replies.as_slice(),
+            [message] if matches!(
+                OutgoingBitVMXApiMessages::from_string(&message.msg),
+                Ok(OutgoingBitVMXApiMessages::ProofReady(response_id)) if response_id == id
+            )
+        ));
+    }
+
+    #[test]
     fn invalid_zkp_bytes_are_rejected_without_blocking_the_inbox() {
         let mut env = TestBitVMXEnv::new("zkp-invalid-bytes").unwrap();
         let id = Uuid::new_v4();
         let requester_id = env.bitvmx.config.components.l2.clone();
         env.bitvmx
             .store
-            .set(StoreKey::ZKPFrom(id).get_key().unwrap(), requester_id, None)
+            .set(
+                StoreKey::ZKPExecution(id).get_key().unwrap(),
+                ZKPExecution::new(requester_id),
+                None,
+            )
             .unwrap();
         env.bitvmx
             .program_context
@@ -671,13 +742,6 @@ mod tests {
             env.bitvmx.handle_prover_message(&message).unwrap(),
             DispatcherResultDisposition::Processed
         );
-        let status: String = env
-            .bitvmx
-            .store
-            .get(StoreKey::ZKPStatus(id).get_key().unwrap(), None)
-            .unwrap()
-            .unwrap();
-        assert!(status.contains("invalid successful result payload"));
         assert!(matches!(
             env.bitvmx
                 .program_context
@@ -686,7 +750,8 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .status,
-            ExpectedJobStatus::Failed(_)
+            ExpectedJobStatus::Failed(ref reason)
+                if reason.contains("invalid successful result payload")
         ));
     }
 
@@ -707,13 +772,12 @@ mod tests {
             env.bitvmx.handle_prover_message(&message).unwrap(),
             DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Orphaned)
         );
-        let status: String = env
+        let execution: Option<ZKPExecution> = env
             .bitvmx
             .store
-            .get(StoreKey::ZKPStatus(id).get_key().unwrap(), None)
-            .unwrap()
+            .get(StoreKey::ZKPExecution(id).get_key().unwrap(), None)
             .unwrap();
-        assert!(status.contains("Missing requester correlation"));
+        assert!(execution.is_none());
         assert!(matches!(
             env.bitvmx
                 .program_context
@@ -722,7 +786,8 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .status,
-            ExpectedJobStatus::Failed(_)
+            ExpectedJobStatus::Failed(ref reason)
+                if reason.contains("Missing requester correlation")
         ));
     }
 

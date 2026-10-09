@@ -95,7 +95,10 @@ The first control-flow foundation is implemented:
   existing `RetryPending` record back to `Pending` and resend the same job id;
 - ZKP success payloads deserialize directly into `zk_result::ResultType`, so malformed
   payloads and non-`u8` journal/seal values become consumed, reported failures rather
-  than being silently filtered or truncated.
+  than being silently filtered or truncated;
+- ZKP requester correlation and proof/journal output are stored in one typed domain
+  record, while the expected-job record is the single source of truth for dispatcher
+  lifecycle and failure state. Both are updated in the inbox transaction.
 
 `FailSetup` is deliberately **not** an enum variant: setup keeps the existing
 `SetupAttemptFailed` two-transaction settlement so partially staged effects are
@@ -306,14 +309,14 @@ For ZKP:
 - on success, store proof, journal, and `OK`, then enqueue `ProofReady`;
 - on dispatcher or payload failure, store `FAILED` plus the reason and enqueue
   `ProofGenerationError`;
-- decide that missing `ZKPFrom` is either fatal local corruption or an orphaned
-  terminal result that is consumed and reported. It must not retry forever.
+- a missing ZKP execution record/requester is treated as an orphaned terminal result
+  that is consumed and recorded. It must not retry forever.
 
-As a separate next step, replace the partitioned `ZKPFrom`, `ZKPStatus`, `ZKPProof`,
-and `ZKPJournal` entries with one durable typed ZKP execution record containing the
-request id, requester, lifecycle status, proof/journal output, and failure/retry
-metadata. Queries and result settlement should read or update that record atomically,
-so partially written ZKP state cannot exist.
+ZKP persistence now separates responsibilities between two durable typed records. The
+expected-job record owns dispatcher lifecycle, failure reasons, and future retry
+metadata. The ZKP domain record owns requester correlation and optional proof/journal
+output. Queries combine them, treating a completed expected job without output as
+inconsistent state; result settlement updates both in the same transaction.
 
 ## Liveness control-message caveat
 
@@ -359,9 +362,11 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
 8. **Harden ZKP parsing and correlation.** **Complete for current failure policy:**
    deserialize the shared typed result, reject invalid bytes without filtering or
    truncation, persist a useful failed status, and consume malformed prover output.
-9. **Unify ZKP persistence.** Replace `ZKPFrom`, `ZKPStatus`, `ZKPProof`, and
-   `ZKPJournal` with one typed, atomically updated ZKP execution record. Keep this
-   separate from the current dispatcher-ingress work.
+9. **Unify ZKP persistence.** **Complete for the current terminal failure policy:**
+   `ZKPFrom`, `ZKPStatus`, `ZKPProof`, and `ZKPJournal` were replaced by a typed ZKP
+   domain record. The expected-job record authoritatively owns lifecycle and failure
+   state, avoiding duplicate status tracking; retry metadata will be added there with
+   the future ZKP retry policy.
 10. **Replace context-derived ids and audit deduplication.** Generate a unique
    correlation id when registering each Garbler/Emulator job, persist its semantic
    context in the expected-job record, and resolve results through that record. Keep

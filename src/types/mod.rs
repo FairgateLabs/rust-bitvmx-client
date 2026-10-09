@@ -190,6 +190,54 @@ impl RequestId {
     }
 }
 
+/// ZKP-specific API correlation and output. Dispatcher lifecycle and failure
+/// state are owned by the corresponding expected-job record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ZKPExecution {
+    requester: Identifier,
+    output: Option<ZKPOutput>,
+}
+
+impl ZKPExecution {
+    pub(crate) fn new(requester: Identifier) -> Self {
+        Self {
+            requester,
+            output: None,
+        }
+    }
+
+    pub(crate) fn with_output(requester: Identifier, proof: Vec<u8>, journal: Vec<u8>) -> Self {
+        Self {
+            requester,
+            output: Some(ZKPOutput::new(proof, journal)),
+        }
+    }
+
+    pub(crate) fn requester(&self) -> &Identifier {
+        &self.requester
+    }
+
+    pub(crate) fn into_output(self) -> Option<ZKPOutput> {
+        self.output
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ZKPOutput {
+    proof: Vec<u8>,
+    journal: Vec<u8>,
+}
+
+impl ZKPOutput {
+    pub(crate) fn new(proof: Vec<u8>, journal: Vec<u8>) -> Self {
+        Self { proof, journal }
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Vec<u8>) {
+        (self.proof, self.journal)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ParticipantChannel {
     pub id: Identifier,

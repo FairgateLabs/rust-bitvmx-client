@@ -2,7 +2,7 @@ use super::{BitVMX, Context, StoreKey};
 use crate::comms_allow_list;
 use crate::error_handling::is_fatal;
 use crate::errors::BitVMXError;
-use crate::expected_job::ExpectedJobRegistration;
+use crate::expected_job::{ExpectedJobRegistration, ExpectedJobStatus};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
@@ -11,7 +11,7 @@ use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::types::{
     IncomingBitVMXApiMessages, JobDispatcherType, OutgoingBitVMXApiMessages, ProgramStatus,
-    FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+    ZKPExecution, FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -522,11 +522,26 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
         info!("Checking if proof is ready for job: {}", id);
 
-        let status: Option<String> = self.store.get(StoreKey::ZKPStatus(id).get_key()?, None)?;
-        Ok(match status {
-            Some(status) if status == "OK" => OutgoingBitVMXApiMessages::ProofReady(id),
-            Some(status) => OutgoingBitVMXApiMessages::ProofGenerationError(id, status),
-            None => OutgoingBitVMXApiMessages::ProofNotReady(id),
+        let expected = self.program_context.expected_jobs.get(&id.to_string())?;
+        Ok(match expected.map(|job| job.status) {
+            Some(ExpectedJobStatus::Completed) => {
+                let execution: Option<ZKPExecution> = self
+                    .store
+                    .get(StoreKey::ZKPExecution(id).get_key()?, None)?;
+                match execution.and_then(ZKPExecution::into_output) {
+                    Some(_) => OutgoingBitVMXApiMessages::ProofReady(id),
+                    None => OutgoingBitVMXApiMessages::ProofGenerationError(
+                        id,
+                        format!("Inconsistent ZKP data for job {id}: completed job has no output"),
+                    ),
+                }
+            }
+            Some(ExpectedJobStatus::Failed(reason) | ExpectedJobStatus::Discarded(reason)) => {
+                OutgoingBitVMXApiMessages::ProofGenerationError(id, reason)
+            }
+            Some(ExpectedJobStatus::Pending | ExpectedJobStatus::RetryPending(_)) | None => {
+                OutgoingBitVMXApiMessages::ProofNotReady(id)
+            }
         })
     }
 
@@ -548,8 +563,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )?;
 
         if registration == ExpectedJobRegistration::Registered {
-            self.store
-                .set(StoreKey::ZKPFrom(id).get_key()?, from, None)?;
+            self.store.set(
+                StoreKey::ZKPExecution(id).get_key()?,
+                ZKPExecution::new(from),
+                None,
+            )?;
         }
         Ok(())
     }
@@ -558,50 +576,31 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         &mut self,
         id: Uuid,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        // Check if the proof is ready
         info!("Checking if {} ZKP job is ready", id);
-        let status_key = StoreKey::ZKPStatus(id).get_key()?;
-        let status: Option<String> = self.store.get(&status_key, None)?;
-
-        let response = match status {
-            Some(status_str) => {
-                if status_str == "OK" {
-                    info!("Getting ZKP execution result for job: {}", id);
-                    let seal: Vec<u8> = match self
-                        .store
-                        .get(&StoreKey::ZKPProof(id).get_key()?, None)?
-                    {
-                        Some(seal) => seal,
-                        None => {
-                            return Ok(Self::api_error(
-                                    id,
-                                    format!(
-                                        "Inconsistent ZKP data for job {id}: status is OK but the proof is missing"
-                                    ),
-                                ));
-                        }
-                    };
-
-                    let journal: Vec<u8> = match self
-                        .store
-                        .get(&StoreKey::ZKPJournal(id).get_key()?, None)?
-                    {
-                        Some(journal) => journal,
-                        None => {
-                            return Ok(Self::api_error(
-                                    id,
-                                    format!(
-                                        "Inconsistent ZKP data for job {id}: status is OK but the journal is missing"
-                                    ),
-                                ));
-                        }
-                    };
-                    OutgoingBitVMXApiMessages::ZKPResult(id, seal, journal)
-                } else {
-                    OutgoingBitVMXApiMessages::ProofGenerationError(id, status_str)
+        let expected = self.program_context.expected_jobs.get(&id.to_string())?;
+        let response = match expected.map(|job| job.status) {
+            Some(ExpectedJobStatus::Completed) => {
+                let execution: Option<ZKPExecution> = self
+                    .store
+                    .get(StoreKey::ZKPExecution(id).get_key()?, None)?;
+                match execution.and_then(ZKPExecution::into_output) {
+                    Some(output) => {
+                        info!("Getting ZKP execution result for job: {}", id);
+                        let (proof, journal) = output.into_parts();
+                        OutgoingBitVMXApiMessages::ZKPResult(id, proof, journal)
+                    }
+                    None => Self::api_error(
+                        id,
+                        format!("Inconsistent ZKP data for job {id}: completed job has no output"),
+                    ),
                 }
             }
-            None => OutgoingBitVMXApiMessages::ProofNotReady(id),
+            Some(ExpectedJobStatus::Failed(reason) | ExpectedJobStatus::Discarded(reason)) => {
+                OutgoingBitVMXApiMessages::ProofGenerationError(id, reason)
+            }
+            Some(ExpectedJobStatus::Pending | ExpectedJobStatus::RetryPending(_)) | None => {
+                OutgoingBitVMXApiMessages::ProofNotReady(id)
+            }
         };
 
         Ok(response)
@@ -1397,33 +1396,40 @@ mod tests {
             OutgoingBitVMXApiMessages::ProofNotReady(response_id) if response_id == id
         ));
         env.bitvmx
-            .store
-            .set(StoreKey::ZKPStatus(id).get_key().unwrap(), "FAILED", None)
+            .program_context
+            .expected_jobs
+            .register(id.to_string(), JobDispatcherType::ZKP)
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .fail(&id.to_string(), "FAILED".to_string())
             .unwrap();
         assert!(matches!(
             env.bitvmx.get_zkp_execution_result(id).unwrap(),
             OutgoingBitVMXApiMessages::ProofGenerationError(response_id, message)
                 if response_id == id && message == "FAILED"
         ));
+
         env.bitvmx
-            .store
-            .set(StoreKey::ZKPStatus(id).get_key().unwrap(), "OK", None)
+            .program_context
+            .expected_jobs
+            .complete(&id.to_string())
             .unwrap();
-        assert!(
-            matches!(env.bitvmx.get_zkp_execution_result(id).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("proof is missing"))
-        );
-        env.bitvmx
-            .store
-            .set(StoreKey::ZKPProof(id).get_key().unwrap(), vec![1_u8], None)
-            .unwrap();
-        assert!(
-            matches!(env.bitvmx.get_zkp_execution_result(id).unwrap(), OutgoingBitVMXApiMessages::ApiError(_, message) if message.contains("journal is missing"))
-        );
+        assert!(matches!(
+            env.bitvmx.get_zkp_execution_result(id).unwrap(),
+            OutgoingBitVMXApiMessages::ApiError(response_id, message)
+                if response_id == id && message.contains("completed job has no output")
+        ));
         env.bitvmx
             .store
             .set(
-                StoreKey::ZKPJournal(id).get_key().unwrap(),
-                vec![2_u8],
+                StoreKey::ZKPExecution(id).get_key().unwrap(),
+                ZKPExecution::with_output(
+                    env.bitvmx.config.components.l2.clone(),
+                    vec![1],
+                    vec![2],
+                ),
                 None,
             )
             .unwrap();
@@ -1709,6 +1715,14 @@ mod tests {
                 .status,
             crate::expected_job::ExpectedJobStatus::Pending
         ));
+        let execution: ZKPExecution = env
+            .bitvmx
+            .store
+            .get(StoreKey::ZKPExecution(id).get_key().unwrap(), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(execution.requester(), &env.bitvmx.config.components.l2);
+        assert!(execution.into_output().is_none());
     }
 
     #[test]

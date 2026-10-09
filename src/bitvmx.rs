@@ -97,33 +97,19 @@ impl<BC: BitcoinCoordinatorApi> Drop for BitVMX<BC> {
 
 enum StoreKey {
     Programs,
-    ZKPProof(Uuid),
-    ZKPStatus(Uuid),
-    ZKPFrom(Uuid),
-    ZKPJournal(Uuid),
+    ZKPExecution(Uuid),
 }
 
 impl StoreKey {
     fn get_key(&self) -> Result<StorageKey, BitVMXError> {
-        fn zkp_key<'a>(
-            id: &Uuid,
-            tail: impl IntoIterator<Item = &'a str>,
-        ) -> Result<StorageKey, BitVMXError> {
-            let id_str = id.to_string();
-            Ok(StorageKey::new(
-                ["bitvmx", "zkp", id_str.as_str()]
-                    .into_iter()
-                    .map(str::to_string)
-                    .chain(tail.into_iter().map(str::to_string)),
-            )?)
-        }
-
         match self {
             StoreKey::Programs => Ok(StorageKey::new(["bitvmx", "program", "list"])?),
-            StoreKey::ZKPProof(id) => zkp_key(id, ["proof"]),
-            StoreKey::ZKPStatus(id) => zkp_key(id, ["status"]),
-            StoreKey::ZKPFrom(id) => zkp_key(id, ["from"]),
-            StoreKey::ZKPJournal(id) => zkp_key(id, ["journal"]),
+            StoreKey::ZKPExecution(id) => Ok(StorageKey::new([
+                "bitvmx",
+                "zkp",
+                id.to_string().as_str(),
+                "execution",
+            ])?),
         }
     }
 }
