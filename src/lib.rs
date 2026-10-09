@@ -5,6 +5,7 @@ pub mod comms_helper;
 pub mod config;
 pub mod error_handling;
 pub mod errors;
+pub(crate) mod expected_job;
 pub mod helper;
 pub mod leader_broadcast;
 pub mod message_queue;

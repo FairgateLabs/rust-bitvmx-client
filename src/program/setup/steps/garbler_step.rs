@@ -1,5 +1,4 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::garbled_messages::{
     GCCommitmentsFile, GCJobProveResult, GCJobVerifyResult, GarbledJobType, ProofBlob,
     Sha256CommitmentHex,
@@ -26,7 +25,7 @@ use crate::{
         },
         variables::{Globals, VariableTypes},
     },
-    types::ProgramContext,
+    types::{JobDispatcherType, ProgramContext},
 };
 
 pub const GC_INPUT_PK: &str = "GC_INPUT_PK";
@@ -127,8 +126,11 @@ impl SetupStep for GarblerStep {
             GarbledJobType::Prove(config.circuit.clone(), output_dir.clone())
         };
 
-        let prove_job = DispatcherJob {
-            job_id: Context::SetupStep(
+        context.expected_jobs.send_dispatcher_job(
+            &context.broker_channel,
+            JobDispatcherType::Garbler,
+            &context.components_config.garbler,
+            Context::SetupStep(
                 protocol_id,
                 self.step_name().to_string(),
                 GC_JOB_GENERATE_STEP.to_string(),
@@ -136,12 +138,7 @@ impl SetupStep for GarblerStep {
             )
             .to_string()?,
             job_type,
-        };
-
-        let msg = serde_json::to_string(&prove_job)?;
-        context
-            .broker_channel
-            .send_service(&context.components_config.garbler, msg)?;
+        )?;
 
         Ok(None)
     }
@@ -635,21 +632,19 @@ fn dispatch_proof_verification<BC: BitcoinCoordinatorApi>(
     info!("[Verifier] Verifying GC + Lamport proofs...");
     let verify_job = GarbledJobType::Verify(proof_blob, config.circuit.clone(), output_dir.clone());
 
-    let prove_job = DispatcherJob {
-        job_id: Context::SetupStep(
+    context.expected_jobs.send_dispatcher_job(
+        &context.broker_channel,
+        JobDispatcherType::Garbler,
+        &context.components_config.garbler,
+        Context::SetupStep(
             protocol_id,
             step_name.to_string(),
             GC_JOB_VERIFY_STEP.to_string(),
             CommsMessageType::GarbledCircuit,
         )
         .to_string()?,
-        job_type: verify_job,
-    };
-
-    let msg = serde_json::to_string(&prove_job)?;
-    context
-        .broker_channel
-        .send_service(&context.components_config.garbler, msg)?;
+        verify_job,
+    )?;
 
     Ok(())
 }

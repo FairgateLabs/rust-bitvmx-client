@@ -38,13 +38,6 @@ use uuid::Uuid;
 
 use super::participant::CommsAddress;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct RuntimeJobFailure {
-    job_id: String,
-    dispatcher: JobDispatcherType,
-    reason: String,
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct Program {
     pub program_id: Uuid,
@@ -57,9 +50,6 @@ pub struct Program {
     state: ProgramState,
     /// Serializable snapshot embedded in the program since SetupEngine contains trait objects.
     setup_engine_state: Option<SetupEngineState>,
-    /// Durable terminal outcome for a failed asynchronous runtime job.
-    #[serde(default)]
-    runtime_failure: Option<RuntimeJobFailure>,
     /// All participant keys collected during setup (populated by build_protocol)
     #[serde(skip)]
     pub setup_engine: Option<SetupEngine>,
@@ -186,49 +176,6 @@ impl Program {
         Ok(())
     }
 
-    /// Marks the whole program terminal after a dispatcher-declared runtime failure.
-    /// Runtime recovery/replacement is not supported, so the program is no longer driven.
-    pub(crate) fn fail_job<BC: BitcoinCoordinatorApi>(
-        &mut self,
-        job_id: String,
-        dispatcher: JobDispatcherType,
-        reason: String,
-        program_context: &mut ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        if self.is_failed() {
-            return Ok(());
-        }
-
-        self.state = ProgramState::Failed;
-        self.runtime_failure = Some(RuntimeJobFailure {
-            job_id: job_id.clone(),
-            dispatcher,
-            reason: reason.clone(),
-        });
-        self.save()?;
-        try_send_error_report(
-            &program_context.broker_channel,
-            &program_context.components_config.l2,
-            ErrorReport::new(
-                ErrorScope::Program(self.program_id),
-                ErrorReportKind::JobFailed { job_id, dispatcher },
-                Some(reason),
-            ),
-        )?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn runtime_failure(&self) -> Option<(&str, JobDispatcherType, &str)> {
-        self.runtime_failure.as_ref().map(|failure| {
-            (
-                failure.job_id.as_str(),
-                failure.dispatcher,
-                failure.reason.as_str(),
-            )
-        })
-    }
-
     /// Creates a SetupEngine for the protocol using its setup_steps() method.
     fn try_create_setup_engine(
         protocol: &ProtocolType,
@@ -304,7 +251,6 @@ impl Program {
             protocol,
             state: ProgramState::SettingUp,
             setup_engine_state: None, // Will be set when saving
-            runtime_failure: None,
             setup_engine,
             storage: Some(storage.clone()),
         };
@@ -565,7 +511,7 @@ impl Program {
     ) -> Result<Option<DispatcherResultDisposition>, BitVMXError> {
         if self.is_failed() {
             return Ok(Some(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::Stale,
+                DispatcherNoOpReason::SetupFailed,
             )));
         }
 
@@ -598,14 +544,14 @@ impl Program {
                 });
             }
 
+            let expected_job_id = context.to_string()?;
             let job_id = match context {
                 Context::ProgramStep(_, job_id) => job_id.clone(),
-                _ => context
-                    .to_string()
-                    .unwrap_or_else(|_| format!("{context:?}")),
+                _ => expected_job_id.clone(),
             };
-            return Ok(Some(DispatcherResultDisposition::FailJob {
+            return Ok(Some(DispatcherResultDisposition::JobFailed {
                 program_id: self.program_id,
+                expected_job_id,
                 job_id,
                 reason,
             }));
@@ -622,7 +568,7 @@ impl Program {
 
     /// Handles a dispatcher-declared failure without attempting to decode its plain-text
     /// result. Setup failures use the existing rollback-then-settle path; runtime failures
-    /// are applied centrally as terminal job dispositions.
+    /// are recorded centrally without changing the program lifecycle.
     pub(crate) fn receive_dispatcher_failure(
         &self,
         context: &Context,
@@ -641,8 +587,9 @@ impl Program {
                     "dispatcher job failed: {reason}"
                 ))),
             }),
-            Context::ProgramStep(_, job_id) => Ok(DispatcherResultDisposition::FailJob {
+            Context::ProgramStep(_, job_id) => Ok(DispatcherResultDisposition::JobFailed {
                 program_id: self.program_id,
+                expected_job_id: context.to_string()?,
                 job_id: job_id.clone(),
                 reason,
             }),
@@ -1010,7 +957,6 @@ mod tests {
             protocol,
             state: ProgramState::SettingUp,
             setup_engine_state: None,
-            runtime_failure: None,
             setup_engine,
             storage: Some(storage),
         }
@@ -1474,7 +1420,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             dispatcher_disposition,
-            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale)
+            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::SetupFailed)
         );
         program.tick(&mut env.context).unwrap();
 
@@ -1555,7 +1501,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ready_program_rejects_cross_dispatcher_setup_context_as_failed_job() {
+    fn test_ready_program_rejects_cross_dispatcher_setup_context_as_job_failure() {
         let mut env = TestProgramContextEnv::new("program-ready-cross-dispatcher").unwrap();
         let dir = TestStorageDir::new("program-ready-cross-dispatcher-storage");
         let mut program = test_program(dir.storage(), Uuid::new_v4());
@@ -1578,7 +1524,7 @@ mod tests {
 
         assert!(matches!(
             disposition,
-            DispatcherResultDisposition::FailJob { program_id, reason, .. }
+            DispatcherResultDisposition::JobFailed { program_id, reason, .. }
                 if program_id == program.program_id
                     && reason.contains("Invalid context for Emulator result")
         ));

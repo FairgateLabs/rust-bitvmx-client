@@ -15,6 +15,7 @@ use crate::{
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
+    expected_job::ExpectedJobs,
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::{MessageQueue, PushOutcome, QueuedMessage},
     program::{
@@ -232,6 +233,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 
         let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
+        let expected_jobs = ExpectedJobs::new(store.clone());
 
         let program_context = ProgramContext::new(
             comms,
@@ -243,6 +245,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             WitnessVars::new(store.clone()),
             config.components.clone(),
             leader_broadcast_helper,
+            expected_jobs,
         );
 
         info!("Program context initialized successfully");

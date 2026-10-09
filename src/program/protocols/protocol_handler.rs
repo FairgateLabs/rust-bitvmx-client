@@ -4,7 +4,6 @@ use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
 use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use console::style;
 use enum_dispatch::enum_dispatch;
@@ -60,7 +59,8 @@ use crate::types::{
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
 use crate::types::{
-    ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP, PROGRAM_TYPE_GC_GENERATION,
+    JobDispatcherType, ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP,
+    PROGRAM_TYPE_GC_GENERATION,
 };
 
 use crate::program::setup::steps::SetupStepName;
@@ -1028,12 +1028,25 @@ pub trait ProtocolHandler {
         job_type: J,
         step: &str,
     ) -> Result<(), BitVMXError> {
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
-            job_type: job_type,
-        })?;
-        program_context.broker_channel.send_service(dest, msg)?;
-        Ok(())
+        let dispatcher = if dest == &program_context.components_config.garbler {
+            JobDispatcherType::Garbler
+        } else if dest == &program_context.components_config.emulator {
+            JobDispatcherType::Emulator
+        } else {
+            return Err(BitVMXError::InvalidParameter(format!(
+                "unknown dispatcher destination for program job: {dest:?}"
+            )));
+        };
+        program_context
+            .expected_jobs
+            .send_dispatcher_job(
+                &program_context.broker_channel,
+                dispatcher,
+                dest,
+                Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
+                job_type,
+            )
+            .map(|_| ())
     }
 }
 

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    expected_job::ExpectedJobs,
     leader_broadcast::LeaderBroadcastHelper,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::variables::{Globals, WitnessVars},
@@ -43,10 +44,13 @@ pub enum DispatcherResultDisposition {
     Processed,
     /// The result cannot change durable state and should be consumed.
     DiscardNoOp(DispatcherNoOpReason),
-    /// The dispatcher terminated a runtime job. Applying this disposition marks the
-    /// owning program failed and reports the failure in the inbox transaction.
-    FailJob {
+    /// The dispatcher rejected a runtime job. Applying this disposition records and
+    /// reports the job failure without changing the owning program's lifecycle.
+    JobFailed {
         program_id: Uuid,
+        /// Exact wire id used to retrieve the durable expected-job record.
+        expected_job_id: String,
+        /// Human-readable protocol job name used in reports.
         job_id: String,
         reason: String,
     },
@@ -57,6 +61,8 @@ pub enum DispatcherResultDisposition {
 pub enum DispatcherNoOpReason {
     Duplicate,
     Stale,
+    /// The owning program has already terminated during setup.
+    SetupFailed,
     Orphaned,
     /// The authenticated service sent neither a control message nor a result envelope.
     MalformedEnvelope,
@@ -133,10 +139,11 @@ pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
     pub leader_broadcast_helper: LeaderBroadcastHelper,
+    pub(crate) expected_jobs: ExpectedJobs,
 }
 
 impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
-    pub fn new(
+    pub(crate) fn new(
         comms: BrokerNode,
         key_manager: Rc<KeyManager>,
         rsa_public_key: String,
@@ -146,6 +153,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
         witness: WitnessVars,
         components_config: ComponentsConfig,
         leader_broadcast_helper: LeaderBroadcastHelper,
+        expected_jobs: ExpectedJobs,
     ) -> Self {
         Self {
             comms,
@@ -157,6 +165,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
             witness,
             components_config,
             leader_broadcast_helper,
+            expected_jobs,
         }
     }
 }

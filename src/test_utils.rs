@@ -25,6 +25,7 @@ use uuid::Uuid;
 use crate::bitvmx::BitVMX;
 use crate::config::Config;
 use crate::errors::BitVMXError;
+use crate::expected_job::ExpectedJobs;
 use crate::leader_broadcast::LeaderBroadcastHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
@@ -534,6 +535,7 @@ impl TestProgramContextEnv {
             WitnessVars::new(env.storage.clone()),
             env.config.components.clone(),
             LeaderBroadcastHelper::new(env.storage.clone()),
+            ExpectedJobs::new(env.storage.clone()),
         );
 
         let peers = (0..peer_count)

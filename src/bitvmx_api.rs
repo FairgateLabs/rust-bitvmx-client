@@ -2,6 +2,7 @@ use super::{BitVMX, Context, StoreKey};
 use crate::comms_allow_list;
 use crate::error_handling::is_fatal;
 use crate::errors::BitVMXError;
+use crate::expected_job::ExpectedJobRegistration;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
@@ -9,15 +10,14 @@ use crate::program::protocols::protocol_handler::ProtocolHandler;
 use crate::program::variables::VariableTypes;
 use crate::spv_proof::get_spv_proof;
 use crate::types::{
-    IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ProgramStatus, FINAL_AGGREGATED_KEY,
-    PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+    IncomingBitVMXApiMessages, JobDispatcherType, OutgoingBitVMXApiMessages, ProgramStatus,
+    FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
 };
 use bitcoin::secp256k1::Message;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::{errors::BitcoinCoordinatorError, TypesToMonitor};
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
 use bitvmx_transaction_monitor::errors::MonitorError;
 use bitvmx_wallet::wallet::Destination;
@@ -539,20 +539,18 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     ) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
 
-        // Store the 'from' parameter
-        self.store
-            .set(StoreKey::ZKPFrom(id).get_key()?, from, None)?;
+        let registration = self.program_context.expected_jobs.send_dispatcher_job(
+            &self.program_context.broker_channel,
+            JobDispatcherType::ZKP,
+            &self.config.components.prover,
+            id.to_string(),
+            ProverJobType::Prove(input, elf_file_path, format!("./zkp-jobs/{}", id)),
+        )?;
 
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: id.to_string(),
-            job_type: ProverJobType::Prove(input, elf_file_path, format!("./zkp-jobs/{}", id)),
-        })?;
-
-        info!("Sending dispatcher job message: {}", msg);
-        self.program_context
-            .broker_channel
-            .send_service(&self.config.components.prover, msg)?;
-
+        if registration == ExpectedJobRegistration::Registered {
+            self.store
+                .set(StoreKey::ZKPFrom(id).get_key()?, from, None)?;
+        }
         Ok(())
     }
 
@@ -1681,6 +1679,36 @@ mod tests {
         assert_eq!(dispatched[0].confirmation_trigger, Some(2));
         assert_eq!(dispatched[0].stuck_in_mempool_blocks, Some(7));
         assert!(api_replies(&mut env.bitvmx).is_empty());
+    }
+
+    #[test]
+    fn repeated_zkp_request_is_an_idempotent_no_op() {
+        let mut env = TestBitVMXEnv::new("api-zkp-repeat").unwrap();
+        let prover = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(env.bitvmx.config.components.prover.clone())
+            .unwrap();
+        let id = Uuid::new_v4();
+        let request =
+            IncomingBitVMXApiMessages::GenerateZKP(id, vec![1, 2, 3], "test.elf".to_string());
+
+        send_api(&mut env.bitvmx, request.clone()).unwrap();
+        send_api(&mut env.bitvmx, request).unwrap();
+        env.bitvmx.program_context.broker_channel.tick().unwrap();
+
+        assert_eq!(prover.get_all().unwrap().len(), 1);
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&id.to_string())
+                .unwrap()
+                .unwrap()
+                .status,
+            crate::expected_job::ExpectedJobStatus::Pending
+        ));
     }
 
     #[test]
