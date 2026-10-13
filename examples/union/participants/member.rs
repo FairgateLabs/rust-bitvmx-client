@@ -1,5 +1,6 @@
 use crate::wallet::helper::print_link;
 use crate::{
+    macros::wait_for_message_blocking,
     setup::{
         accept_pegin_setup::AcceptPegInSetup, advance_funds_setup::AdvanceFunds,
         dispute_channel_setup::DisputeChannelSetup, dispute_core_setup::DisputeCoreSetup,
@@ -24,8 +25,8 @@ use bitvmx_client::{
             },
             dispute_core::PEGOUT_ID,
             types::{
-                AdvanceFundsRegistered, MemberData, PacketSettings, ADVANCE_FUNDS_INPUT,
-                REIMBURSEMENT_KICKOFF_TX,
+                AdvanceFundsRegistered, MemberData, PacketSettings, PegInAccepted, PegOutAccepted,
+                ADVANCE_FUNDS_INPUT, PEGOUT_ACCEPTED, REIMBURSEMENT_KICKOFF_TX,
             },
         },
         variables::{PartialUtxo, VariableTypes},
@@ -316,7 +317,7 @@ impl Member {
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
         addresses: &Vec<CommsAddress>,
-    ) -> Result<()> {
+    ) -> Result<PegInAccepted> {
         info!(id = self.id, "Accepting peg-in");
         AcceptPegInSetup::setup(
             &self.id,
@@ -334,10 +335,13 @@ impl Member {
             addresses,
         )?;
 
+        // Sent to L2 right before SetupCompleted
+        let pegin_accepted = self.wait_for_json_variable("pegin_accepted")?;
+
         let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
         info!(id = "AcceptPegInSetup", program_id = ?program_id, "Accept pegin setup completed (from member)");
 
-        Ok(())
+        Ok(pegin_accepted)
     }
 
     pub fn setup_full_penalization(
@@ -363,7 +367,7 @@ impl Member {
         user_pubkey: PublicKey,
         user_take_sighash: &[u8],
         addresses: &Vec<CommsAddress>,
-    ) -> Result<()> {
+    ) -> Result<PegOutAccepted> {
         UserTakeSetup::setup(
             committee_id,
             slot_index,
@@ -377,11 +381,30 @@ impl Member {
             addresses,
         )?;
 
+        // Sent to L2 right before SetupCompleted
+        let pegout_accepted = self.wait_for_json_variable(PEGOUT_ACCEPTED)?;
+
         // Wait for the UserTake setup to complete
         let program_id = wait_until_msg!(&self.bitvmx, SetupCompleted(_program_id) => _program_id);
         info!(id = self.id, program_id = ?program_id, "UserTake setup completed (from member)");
 
-        Ok(())
+        Ok(pegout_accepted)
+    }
+
+    /// Waits for the JSON `Variable` named `name` that a protocol sends to L2.
+    fn wait_for_json_variable<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<T> {
+        let msg = wait_for_message_blocking(
+            &self.bitvmx,
+            |msg| matches!(msg, Variable(_, var_name, _) if var_name == name),
+        )?;
+        match msg {
+            Variable(_, _, VariableTypes::String(json)) => Ok(serde_json::from_str(&json)?),
+            _ => Err(anyhow::anyhow!(
+                "Expected {} String variable, got {:?}",
+                name,
+                msg
+            )),
+        }
     }
 
     pub fn advance_funds(

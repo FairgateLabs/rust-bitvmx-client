@@ -11,11 +11,12 @@ use bitvmx_client::{
     program::{
         protocols::{
             dispute::program_input,
-            union::types::{P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE},
+            union::types::{PegInAccepted, PegOutAccepted, P2TR_FEE, SPEEDUP_VALUE, USER_TAKE_FEE},
         },
         variables::{PartialUtxo, VariableTypes},
     },
 };
+use key_manager::musig2::{secp::MaybeScalar, PubNonce};
 use uuid::Uuid;
 pub const PEGIN_CONFIRMATIONS: u16 = 6; // This value should be get from the contract
 
@@ -146,10 +147,40 @@ fn format_bytes32_constant(name: &str, value: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Formats an internal pure function returning `values` as a `sol_type` array named `var`
+fn format_array_function(fn_name: &str, sol_type: &str, var: &str, values: &[String]) -> String {
+    let mut s = format!(
+        "    function {}() internal pure returns ({}[] memory {}) {{\n",
+        fn_name, sol_type, var
+    );
+    s.push_str(&format!(
+        "        {} = new {}[]({});\n",
+        var,
+        sol_type,
+        values.len()
+    ));
+    for (i, value) in values.iter().enumerate() {
+        let single = format!("        {}[{}] = {};", var, i, value);
+        if single.len() <= 120 {
+            s.push_str(&format!("{}\n", single));
+        } else {
+            s.push_str(&format!(
+                "        {}[{}] =\n            {};\n",
+                var, i, value
+            ));
+        }
+    }
+    s.push_str("    }\n");
+    s
+}
+
 pub fn format_solidity_data_file(
     committee_agg_key: &PublicKey,
     dispute_agg_key: &PublicKey,
     dispute_keys: &[PublicKey],
+    take_keys: &[PublicKey],
+    pegin_accepted: &[PegInAccepted],
+    pegout_accepted: &[PegOutAccepted],
     user_pubkey: &PublicKey,
     pegout_id: &[u8; 32],
     op_index: usize,
@@ -253,6 +284,29 @@ pub fn format_solidity_data_file(
         }
     }
 
+    // Committee Musig2 data for SignatureManager addMemberNonce / addMemberSignature
+    s.push_str(&format_bytes32_constant(
+        "EXPECTED_ACCEPT_PEGIN_SIGHASH",
+        &format!(
+            "0x{}",
+            pegin_accepted[0].accept_pegin_sighash.to_lower_hex_string()
+        ),
+    ));
+    s.push_str("\n");
+    s.push_str(&format_bytes32_constant(
+        "EXPECTED_USER_TAKE_TXID",
+        &format!("0x{}", pegout_accepted[0].user_take_txid),
+    ));
+    s.push_str("\n");
+    s.push_str(&format_bytes32_constant(
+        "EXPECTED_USER_TAKE_SIGHASH",
+        &format!(
+            "0x{}",
+            pegout_accepted[0].user_take_sighash.to_lower_hex_string()
+        ),
+    ));
+    s.push_str("\n");
+
     s.push_str(
         "    function _getBitVMXDisputeKeys() internal pure returns (CompactPubKey[] memory keys) {\n",
     );
@@ -272,6 +326,74 @@ pub fn format_solidity_data_file(
         ));
     }
     s.push_str("    }\n");
+    s.push_str("\n");
+
+    // Members take keys, nonces and partial signatures are all in _getBitVMXDisputeKeys() member order.
+    // BitVMX sorts the take keys before aggregating them.
+    let take_keys: Vec<String> = take_keys
+        .iter()
+        .map(|key| {
+            let bytes = key.to_bytes();
+            format!(
+                "CompactPubKey({{parity: 0x{:02x}, xOnly: 0x{}}})",
+                bytes[0],
+                bytes[1..].to_lower_hex_string()
+            )
+        })
+        .collect();
+    s.push_str(&format_array_function(
+        "_getBitVMXTakeKeys",
+        "CompactPubKey",
+        "keys",
+        &take_keys,
+    ));
+    s.push_str("\n");
+
+    let nonce = |nonce: &PubNonce| format!("hex\"{}\"", nonce.serialize().to_lower_hex_string());
+    let signature = |sig: &MaybeScalar| format!("0x{}", sig.serialize().to_lower_hex_string());
+    let accept_pegin_nonces: Vec<String> = pegin_accepted
+        .iter()
+        .map(|a| nonce(&a.accept_pegin_nonce))
+        .collect();
+    let accept_pegin_signatures: Vec<String> = pegin_accepted
+        .iter()
+        .map(|a| signature(&a.accept_pegin_signature))
+        .collect();
+    let user_take_nonces: Vec<String> = pegout_accepted
+        .iter()
+        .map(|a| nonce(&a.user_take_nonce))
+        .collect();
+    let user_take_signatures: Vec<String> = pegout_accepted
+        .iter()
+        .map(|a| signature(&a.user_take_signature))
+        .collect();
+    s.push_str(&format_array_function(
+        "_getBitVMXAcceptPeginNonces",
+        "bytes",
+        "nonces",
+        &accept_pegin_nonces,
+    ));
+    s.push_str("\n");
+    s.push_str(&format_array_function(
+        "_getBitVMXAcceptPeginPartialSignatures",
+        "bytes32",
+        "signatures",
+        &accept_pegin_signatures,
+    ));
+    s.push_str("\n");
+    s.push_str(&format_array_function(
+        "_getBitVMXUserTakeNonces",
+        "bytes",
+        "nonces",
+        &user_take_nonces,
+    ));
+    s.push_str("\n");
+    s.push_str(&format_array_function(
+        "_getBitVMXUserTakePartialSignatures",
+        "bytes32",
+        "signatures",
+        &user_take_signatures,
+    ));
     s.push_str("\n");
 
     for (i, (name, tx)) in named_transactions.iter().enumerate() {
