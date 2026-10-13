@@ -1127,19 +1127,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }) => {
                 let store = self.store.clone();
                 Self::run_transaction(&store, || {
-                    if let Some(mut program) = self.load_program(&program_id)? {
-                        program.fail_setup(
-                            peer,
-                            SetupFailureReason::StepError(source.to_string()),
-                            &mut self.program_context,
-                        )?;
-                    } else {
-                        warn!(
-                            "Program {} not found while recording setup failure",
-                            program_id
-                        );
-                    }
-                    Ok(())
+                    self.fail_program_setup(
+                        &program_id,
+                        peer,
+                        SetupFailureReason::StepError(source.to_string()),
+                    )
                 })?;
                 Ok(None)
             }

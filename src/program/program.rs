@@ -8,7 +8,7 @@ use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
     error_handling::{classify, try_send_error_report, Severity},
-    errors::{BitVMXError, ProgramError},
+    errors::{BitVMXError, DispatcherResultError, ProgramError},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -566,6 +566,24 @@ impl Program {
         Ok(None)
     }
 
+    /// Converts only errors attributable to dispatcher output into terminal setup
+    /// failures. Infrastructure errors must escape unchanged so the inbox transaction
+    /// rolls back and can be retried.
+    fn handle_setup_dispatcher_error(
+        &self,
+        error: BitVMXError,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        if matches!(&error, BitVMXError::DispatcherResultError(_)) {
+            Err(BitVMXError::SetupAttemptFailed {
+                program_id: self.program_id,
+                peer: None,
+                source: Box::new(error),
+            })
+        } else {
+            Err(error)
+        }
+    }
+
     /// Handles a dispatcher-declared failure without attempting to decode its plain-text
     /// result. Setup failures use the existing rollback-then-settle path; runtime failures
     /// are recorded centrally without changing the program lifecycle.
@@ -583,9 +601,7 @@ impl Program {
             Context::SetupStep(_, _, _, _) => Err(BitVMXError::SetupAttemptFailed {
                 program_id: self.program_id,
                 peer: None,
-                source: Box::new(BitVMXError::InvalidMessage(format!(
-                    "dispatcher job failed: {reason}"
-                ))),
+                source: Box::new(DispatcherResultError::DeclaredFailure(reason).into()),
             }),
             Context::ProgramStep(_, job_id) => Ok(DispatcherResultDisposition::JobFailed {
                 program_id: self.program_id,
@@ -611,9 +627,7 @@ impl Program {
             return Ok(disposition);
         }
         match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
-            Err(e) if !self.is_setup_complete() => self
-                .handle_setup_error(e, None, program_context)
-                .map(|_| DispatcherResultDisposition::Processed),
+            Err(error) if !self.is_setup_complete() => self.handle_setup_dispatcher_error(error),
             other => other.map(|_| DispatcherResultDisposition::Processed),
         }
     }
@@ -1583,6 +1597,53 @@ mod tests {
         record_failure_request(&mut other_program, error, &mut env);
         assert_eq!(other_program.state, ProgramState::Failed);
         assert_eq!(env.l2_messages().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_setup_dispatcher_output_errors_are_terminal_but_infrastructure_retries() {
+        let dir = TestStorageDir::new("program-dispatcher-error-classification");
+        let program = test_program(dir.storage(), Uuid::new_v4());
+
+        let payload_error = program
+            .handle_setup_dispatcher_error(
+                DispatcherResultError::InvalidOutput("malformed garbler result".to_string()).into(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            payload_error,
+            BitVMXError::SetupAttemptFailed { source, .. }
+                if matches!(*source, BitVMXError::DispatcherResultError(
+                    DispatcherResultError::InvalidOutput(_)
+                ))
+        ));
+
+        let missing_artifact = program
+            .handle_setup_dispatcher_error(
+                DispatcherResultError::MissingArtifact {
+                    path: "missing.bin".to_string(),
+                    details: "not found".to_string(),
+                }
+                .into(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            missing_artifact,
+            BitVMXError::SetupAttemptFailed { source, .. }
+                if matches!(*source, BitVMXError::DispatcherResultError(
+                    DispatcherResultError::MissingArtifact { .. }
+                ))
+        ));
+
+        let infrastructure_error = program
+            .handle_setup_dispatcher_error(BitVMXError::IOError(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "temporary local I/O failure",
+            )))
+            .unwrap_err();
+        assert!(matches!(
+            infrastructure_error,
+            BitVMXError::IOError(error) if error.kind() == std::io::ErrorKind::Interrupted
+        ));
     }
 
     #[test]

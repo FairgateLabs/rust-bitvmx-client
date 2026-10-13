@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    errors::BitVMXError,
+    errors::{BitVMXError, DispatcherResultError},
     program::{
         participant::{CommsAddress, ParticipantRole},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
@@ -152,37 +152,40 @@ impl SetupStep for GarblerStep {
         protocol_id: &Uuid,
     ) -> Result<Value, BitVMXError> {
         if msg_type != CommsMessageType::GarbledCircuit {
-            return Err(BitVMXError::InvalidMessage(format!(
+            return Err(DispatcherResultError::InvalidOutput(format!(
                 "Expected message type GarbledCircuit, but got: {:?}",
                 msg_type
-            )));
+            ))
+            .into());
         }
 
         let expected_role = match sub_step {
             GC_JOB_GENERATE_STEP => ParticipantRole::Prover,
             GC_JOB_VERIFY_STEP => ParticipantRole::Verifier,
             _ => {
-                return Err(BitVMXError::InvalidState(format!(
+                return Err(DispatcherResultError::InvalidOutput(format!(
                     "Unknown sub_step for GarblerStep result: {}",
                     sub_step
-                )));
+                ))
+                .into());
             }
         };
         let config = GCConfiguration::load(protocol_id, &context.globals)?;
         if config.role != expected_role {
-            return Err(BitVMXError::InvalidState(format!(
+            return Err(DispatcherResultError::InvalidOutput(format!(
                 "Garbler sub-step '{}' requires role {:?}, but local role is {:?}",
                 sub_step, expected_role, config.role
-            )));
+            ))
+            .into());
         }
 
         if sub_step == GC_JOB_GENERATE_STEP {
             let prove_result: GCJobProveResult =
                 serde_json::from_value(result.clone()).map_err(|e| {
-                    BitVMXError::InvalidMessage(format!(
+                    BitVMXError::from(DispatcherResultError::InvalidOutput(format!(
                         "Failed to deserialize garbler data: {}",
                         e
-                    ))
+                    )))
                 })?;
 
             import_input_private_keys(&prove_result, &config, context)?;
@@ -190,14 +193,14 @@ impl SetupStep for GarblerStep {
             info!("[Prover] Imported Garbled Circuit Input Private Key");
 
             let commitments_path = &prove_result.commitments_path;
-            let encoded_commitments = std::fs::read(commitments_path)?;
+            let encoded_commitments = read_dispatcher_artifact(commitments_path)?;
 
             let commitments: GCCommitmentsFile = serde_json::from_slice(&encoded_commitments)
                 .map_err(|e| {
-                    BitVMXError::InvalidMessage(format!(
+                    BitVMXError::from(DispatcherResultError::InvalidOutput(format!(
                         "Failed to deserialize commitments data: {} ",
                         e
-                    ))
+                    )))
                 })?;
 
             let [public_input_pk, _, _] = match import_public_keys(
@@ -210,10 +213,11 @@ impl SetupStep for GarblerStep {
             )? {
                 SetupValueOutcome::Accepted(keys) => keys,
                 SetupValueOutcome::Rejected(reason) => {
-                    return Err(BitVMXError::InvalidMessage(format!(
+                    return Err(DispatcherResultError::InvalidOutput(format!(
                         "Locally generated garbler public keys were rejected: {:?}",
                         reason
-                    )));
+                    ))
+                    .into());
                 }
             };
 
@@ -231,8 +235,8 @@ impl SetupStep for GarblerStep {
             info!("  digest_labels: {}", &prove_result.digest_labels);
             info!("  digest_lamport: {}", &prove_result.digest_lamport);
 
-            let gc_proof = std::fs::read(gc_proof_path)?;
-            let lamport_proof = std::fs::read(lamport_proof_path)?;
+            let gc_proof = read_dispatcher_artifact(gc_proof_path)?;
+            let lamport_proof = read_dispatcher_artifact(lamport_proof_path)?;
 
             let proof_blob = ProofBlob {
                 prove_result,
@@ -256,10 +260,10 @@ impl SetupStep for GarblerStep {
         if sub_step == GC_JOB_VERIFY_STEP {
             let verify_result: GCJobVerifyResult =
                 serde_json::from_value(result.clone()).map_err(|e| {
-                    BitVMXError::InvalidMessage(format!(
+                    BitVMXError::from(DispatcherResultError::InvalidOutput(format!(
                         "Failed to deserialize verification data: {}",
                         e
-                    ))
+                    )))
                 })?;
 
             info!(" result[\"status\"]: {}", verify_result.status);
@@ -271,10 +275,11 @@ impl SetupStep for GarblerStep {
             );
 
             if !verify_result.valid {
-                return Err(BitVMXError::InvalidMessage(format!(
+                return Err(DispatcherResultError::InvalidOutput(format!(
                     "The provided proof is invalid: {:?}",
                     verify_result
-                )));
+                ))
+                .into());
             }
 
             context
@@ -553,38 +558,55 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
     ]))
 }
 
+fn read_dispatcher_artifact(path: &str) -> Result<Vec<u8>, BitVMXError> {
+    std::fs::read(path).map_err(|error| {
+        DispatcherResultError::MissingArtifact {
+            path: path.to_string(),
+            details: error.to_string(),
+        }
+        .into()
+    })
+}
+
 fn import_input_private_keys<BC: BitcoinCoordinatorApi>(
     prove_result: &GCJobProveResult,
     config: &GCConfiguration,
     context: &ProgramContext<BC>,
 ) -> Result<(), BitVMXError> {
     let io_inputs_path = &prove_result.io_inputs_path;
-    let io_inputs = decrypt_or_read_file_bytes(&io_inputs_path)?;
+    let io_inputs = decrypt_or_read_file_bytes(io_inputs_path).map_err(|error| {
+        DispatcherResultError::MissingArtifact {
+            path: io_inputs_path.to_string(),
+            details: error.to_string(),
+        }
+    })?;
     let hash_type = LamportType::SHA256;
     let hash_size = hash_type.hash_size();
     let public_input_size = config.circuit_public_input.len();
     let num_inputs = prove_result.num_inputs;
 
     if public_input_size > num_inputs {
-        return Err(BitVMXError::InvalidMessage(format!(
+        return Err(DispatcherResultError::InvalidOutput(format!(
             "Public input size {} exceeds total input count {}",
             public_input_size, num_inputs
-        )));
+        ))
+        .into());
     }
 
     let expected_chunks = num_inputs.checked_mul(2).ok_or_else(|| {
-        BitVMXError::InvalidMessage("Garbler private-key chunk count overflow".to_string())
+        DispatcherResultError::InvalidOutput("Garbler private-key chunk count overflow".to_string())
     })?;
     let expected_bytes = expected_chunks.checked_mul(hash_size).ok_or_else(|| {
-        BitVMXError::InvalidMessage("Garbler private-key byte count overflow".to_string())
+        DispatcherResultError::InvalidOutput("Garbler private-key byte count overflow".to_string())
     })?;
     if io_inputs.len() != expected_bytes {
-        return Err(BitVMXError::InvalidMessage(format!(
+        return Err(DispatcherResultError::InvalidOutput(format!(
             "Invalid garbler private-key data length: expected {} bytes for {} inputs, got {}",
             expected_bytes,
             num_inputs,
             io_inputs.len()
-        )));
+        ))
+        .into());
     }
 
     let mut bytes_0s: Vec<&[u8]> = Vec::with_capacity(num_inputs);
@@ -969,7 +991,7 @@ mod tests {
         std::fs::write(&result.io_inputs_path, [0u8; 3]).unwrap();
         assert!(matches!(
             import_input_private_keys(&result, &config, &env.context),
-            Err(BitVMXError::InvalidMessage(_))
+            Err(BitVMXError::DispatcherResultError(_))
         ));
 
         let invalid: Sha256CommitmentHex =
@@ -1059,7 +1081,7 @@ mod tests {
                 &mut env.context,
                 &id,
             ),
-            Err(BitVMXError::InvalidMessage(_))
+            Err(BitVMXError::DispatcherResultError(_))
         ));
         assert_eq!(
             step.receive_dispatcher_result(
@@ -1107,7 +1129,7 @@ mod tests {
                 &mut env.context,
                 &id,
             ),
-            Err(BitVMXError::InvalidMessage(_))
+            Err(BitVMXError::DispatcherResultError(_))
         ));
         assert!(matches!(
             step.receive_dispatcher_result(
@@ -1117,7 +1139,7 @@ mod tests {
                 &mut env.context,
                 &id,
             ),
-            Err(BitVMXError::InvalidState(_))
+            Err(BitVMXError::DispatcherResultError(_))
         ));
         assert!(matches!(
             step.receive_dispatcher_result(
@@ -1127,7 +1149,7 @@ mod tests {
                 &mut env.context,
                 &id,
             ),
-            Err(BitVMXError::InvalidMessage(_))
+            Err(BitVMXError::DispatcherResultError(_))
         ));
     }
 
@@ -1145,7 +1167,7 @@ mod tests {
             &mut env.context,
             &id,
         );
-        assert!(matches!(result, Err(BitVMXError::InvalidState(_))));
+        assert!(matches!(result, Err(BitVMXError::DispatcherResultError(_))));
 
         store_config(&env.context, &id, ParticipantRole::Prover);
         let result = step.receive_dispatcher_result(
@@ -1155,6 +1177,6 @@ mod tests {
             &mut env.context,
             &id,
         );
-        assert!(matches!(result, Err(BitVMXError::InvalidState(_))));
+        assert!(matches!(result, Err(BitVMXError::DispatcherResultError(_))));
     }
 }

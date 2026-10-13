@@ -111,8 +111,12 @@ rolled back before terminal state is recorded. `JobFailed` records the expected 
 retry-pending and emits a scoped notification, but never changes a ready program to
 `ProgramState::Failed`.
 
-Malformed successful Garbler/Emulator result payloads, service delivery failure handling,
-and finer-grained runtime-job recovery are still unresolved. Current protocol dispatch
+Malformed successful runtime Garbler/Emulator payloads, service delivery failure
+handling, and finer-grained runtime-job recovery are still unresolved. Successful setup
+Garbler output is now classified through the dedicated `DispatcherResultError` type:
+malformed or semantically invalid payloads and inaccessible declared artifacts terminate
+setup through the rollback-then-settle path, while ordinary `BitVMXError` local and
+infrastructure failures roll back for retry. Current protocol dispatch
 sites use execution-specific semantic step names (including rounds where applicable);
 any future repeatable protocol operation must supply a distinct semantic execution key.
 
@@ -360,8 +364,11 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
 6. **Make runtime job failure explicit.** **Complete for the current retry-pending
    policy:** runtime failure is durably scoped to its expected job, reported, and does
    not terminate the owning program.
-7. **Narrow setup classification.** Keep storage/system failures as `Err`; make
-   dispatcher-declared and dispatcher-payload failures terminal setup outcomes.
+7. **Narrow setup classification.** **Complete:** dispatcher result producers explicitly
+   return the typed `DispatcherResultError` for declared failures, malformed/semantically
+   invalid setup output, and inaccessible declared artifacts. Only that typed error uses
+   the terminal rollback-then-settle path; ordinary local/infrastructure `BitVMXError`
+   values roll back inbox consumption.
 8. **Harden ZKP parsing and correlation.** **Complete for current failure policy:**
    deserialize the shared typed result, reject invalid bytes without filtering or
    truncation, persist a useful failed status, and consume malformed prover output.

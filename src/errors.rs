@@ -223,6 +223,9 @@ pub enum BitVMXError {
     #[error("Job type error {0}")]
     DispatcherError(#[from] DispatcherError),
 
+    #[error("Dispatcher result error: {0}")]
+    DispatcherResultError(#[from] DispatcherResultError),
+
     #[error("Job Dispatcher {0} is not responding")]
     JobDispatcherNotResponding(String),
 
@@ -363,6 +366,23 @@ pub enum BitVMXError {
 
     #[error("Not found {0}")]
     NotFound(String),
+}
+
+/// A permanent failure attributable to an authenticated dispatcher's result.
+///
+/// Producers must create this error explicitly. Local storage, broker, key-manager,
+/// and other infrastructure failures continue to use their ordinary `BitVMXError`
+/// variants and therefore remain retryable at the dispatcher ingress boundary.
+#[derive(Error, Debug)]
+pub enum DispatcherResultError {
+    #[error("dispatcher reported job failure: {0}")]
+    DeclaredFailure(String),
+
+    #[error("invalid dispatcher output: {0}")]
+    InvalidOutput(String),
+
+    #[error("could not read declared dispatcher artifact '{path}': {details}")]
+    MissingArtifact { path: String, details: String },
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {
