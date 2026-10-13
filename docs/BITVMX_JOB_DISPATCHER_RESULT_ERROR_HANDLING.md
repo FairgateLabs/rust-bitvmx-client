@@ -111,13 +111,15 @@ rolled back before terminal state is recorded. `JobFailed` records the expected 
 retry-pending and emits a scoped notification, but never changes a ready program to
 `ProgramState::Failed`.
 
-Malformed successful runtime Garbler/Emulator payloads, service delivery failure
-handling, and finer-grained runtime-job recovery are still unresolved. Successful setup
-Garbler output is now classified through the dedicated `DispatcherResultError` type:
-malformed or semantically invalid payloads and inaccessible declared artifacts terminate
-setup through the rollback-then-settle path, while ordinary `BitVMXError` local and
-infrastructure failures roll back for retry. Current protocol dispatch
-sites use execution-specific semantic step names (including rounds where applicable);
+Service delivery failure handling and finer-grained runtime-job recovery are still
+unresolved. Garbler and Emulator output is now classified through the dedicated
+`DispatcherResultError` type: malformed or semantically invalid setup output and
+inaccessible declared artifacts terminate setup through the rollback-then-settle path;
+runtime output explicitly classified as malformed or semantically invalid moves the
+expected job to `RetryPending` without failing the program; and ordinary `BitVMXError` local and
+infrastructure failures roll back for retry. Runtime validation is performed before
+protocol mutations whenever a failure is classified as dispatcher-attributable. Current
+protocol dispatch sites use execution-specific semantic step names (including rounds where applicable);
 any future repeatable protocol operation must supply a distinct semantic execution key.
 
 ## Planned dispatcher-specific failure policy (not implemented)
@@ -362,8 +364,9 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
    dispatch paths persist and validate the record atomically; repeated registration
    with matching metadata is an idempotent no-op.
 6. **Make runtime job failure explicit.** **Complete for the current retry-pending
-   policy:** runtime failure is durably scoped to its expected job, reported, and does
-   not terminate the owning program.
+   policy:** declared failures and typed malformed/semantically invalid Garbler and
+   Emulator output are durably scoped to the expected job, reported, and do not
+   terminate the owning program; local/infrastructure failures still roll back.
 7. **Narrow setup classification.** **Complete:** dispatcher result producers explicitly
    return the typed `DispatcherResultError` for declared failures, malformed/semantically
    invalid setup output, and inaccessible declared artifacts. Only that typed error uses

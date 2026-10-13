@@ -584,6 +584,30 @@ impl Program {
         }
     }
 
+    /// Converts only errors attributable to dispatcher output into retryable runtime-job
+    /// failures. Local and infrastructure errors escape unchanged so inbox processing rolls
+    /// back rather than committing partially staged protocol effects.
+    fn handle_runtime_dispatcher_error(
+        &self,
+        context: &Context,
+        error: BitVMXError,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        let BitVMXError::DispatcherResultError(error) = error else {
+            return Err(error);
+        };
+        let Context::ProgramStep(_, job_id) = context else {
+            return Err(BitVMXError::InvalidState(format!(
+                "runtime dispatcher error has non-program context: {context:?}"
+            )));
+        };
+        Ok(DispatcherResultDisposition::JobFailed {
+            program_id: self.program_id,
+            expected_job_id: context.to_string()?,
+            job_id: job_id.clone(),
+            reason: error.to_string(),
+        })
+    }
+
     /// Handles a dispatcher-declared failure without attempting to decode its plain-text
     /// result. Setup failures use the existing rollback-then-settle path; runtime failures
     /// are recorded centrally without changing the program lifecycle.
@@ -626,28 +650,32 @@ impl Program {
         if let Some(disposition) = self.dispatcher_result_preflight(&context, dispatcher)? {
             return Ok(disposition);
         }
-        match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
-            Err(error) if !self.is_setup_complete() => self.handle_setup_dispatcher_error(error),
-            other => other.map(|_| DispatcherResultDisposition::Processed),
+        match self.receive_dispatcher_result_inner(result, &context, dispatcher, program_context) {
+            Ok(()) => Ok(DispatcherResultDisposition::Processed),
+            Err(error) => match &context {
+                Context::SetupStep(_, _, _, _) => self.handle_setup_dispatcher_error(error),
+                Context::ProgramStep(_, _) => self.handle_runtime_dispatcher_error(&context, error),
+                _ => unreachable!("dispatcher preflight accepted an unsupported context"),
+            },
         }
     }
 
     fn receive_dispatcher_result_inner<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
-        context: Context,
+        context: &Context,
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match dispatcher {
             JobDispatcherType::Garbler => {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
-                match &context {
+                match context {
                     Context::SetupStep(_, _, _, _) => {
                         if let Some(engine) = &mut self.setup_engine {
                             if engine.receive_dispatcher_result(
                                 result,
-                                &context,
+                                context,
                                 self.my_idx,
                                 &self.program_id,
                                 self.leader,
@@ -670,7 +698,7 @@ impl Program {
                         //TODO: Connect with GC DRP
                         return self.protocol.gc_drp()?.execution_result(
                             result,
-                            &context,
+                            context,
                             program_context,
                         );
                     }
@@ -684,11 +712,10 @@ impl Program {
             }
             JobDispatcherType::Emulator => {
                 debug!("Program::receive_dispatcher_result() - Received result from Emulator");
-                return self.protocol.dispute()?.execution_result(
-                    result,
-                    &context,
-                    program_context,
-                );
+                return self
+                    .protocol
+                    .dispute()?
+                    .execution_result(result, context, program_context);
             }
             _ => {
                 return Err(BitVMXError::InvalidMessage(format!(
@@ -1639,6 +1666,47 @@ mod tests {
                 std::io::ErrorKind::Interrupted,
                 "temporary local I/O failure",
             )))
+            .unwrap_err();
+        assert!(matches!(
+            infrastructure_error,
+            BitVMXError::IOError(error) if error.kind() == std::io::ErrorKind::Interrupted
+        ));
+    }
+
+    #[test]
+    fn test_runtime_dispatcher_output_errors_retry_job_but_infrastructure_retries_inbox() {
+        let dir = TestStorageDir::new("program-runtime-dispatcher-error-classification");
+        let program = test_program(dir.storage(), Uuid::new_v4());
+        let context = Context::ProgramStep(program.program_id, "evaluate-round-1".to_string());
+
+        let disposition = program
+            .handle_runtime_dispatcher_error(
+                &context,
+                DispatcherResultError::InvalidOutput("malformed emulator result".to_string())
+                    .into(),
+            )
+            .unwrap();
+        assert!(matches!(
+            disposition,
+            DispatcherResultDisposition::JobFailed {
+                program_id,
+                expected_job_id,
+                job_id,
+                reason,
+            } if program_id == program.program_id
+                && expected_job_id == context.to_string().unwrap()
+                && job_id == "evaluate-round-1"
+                && reason.contains("malformed emulator result")
+        ));
+
+        let infrastructure_error = program
+            .handle_runtime_dispatcher_error(
+                &context,
+                BitVMXError::IOError(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "temporary local I/O failure",
+                )),
+            )
             .unwrap_err();
         assert!(matches!(
             infrastructure_error,

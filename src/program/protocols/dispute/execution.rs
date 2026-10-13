@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     bitvmx::Context,
-    errors::BitVMXError,
+    errors::{BitVMXError, DispatcherResultError},
     program::{
         protocols::{
             dispute::{
@@ -46,7 +46,9 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
         None
     };
 
-    let result = EmulatorResultType::from_value(result)?;
+    let result = EmulatorResultType::from_value(result).map_err(|error| {
+        DispatcherResultError::InvalidOutput(format!("invalid emulator result: {error}"))
+    })?;
     match &result {
         EmulatorResultType::ProverExecuteResult {
             last_step,
@@ -103,17 +105,27 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
             };
 
             if save_round != *round {
-                return Err(BitVMXError::InvalidState(format!(
-                    "Saved round {} does not match the expected round {}",
-                    save_round, round
-                )));
+                return Err(DispatcherResultError::InvalidOutput(format!(
+                    "emulator result round {round} does not match expected round {save_round}"
+                ))
+                .into());
             }
-            for (i, h) in hashes.iter().enumerate() {
-                set_input_hex(
+            let decoded_hashes = hashes
+                .iter()
+                .map(|hash| {
+                    hex::decode(hash).map_err(|error| {
+                        DispatcherResultError::InvalidOutput(format!(
+                            "invalid emulator hash '{hash}': {error}"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for (i, hash) in decoded_hashes.into_iter().enumerate() {
+                set_input(
                     id,
                     context,
                     &format!("{}_{}_{}", prover_hash, round, i + 1),
-                    h,
+                    hash,
                 )?;
             }
 
@@ -147,10 +159,10 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                 .number()? as u8;
 
             if save_round != *round {
-                return Err(BitVMXError::InvalidState(format!(
-                    "Saved round {} does not match the expected round {}",
-                    save_round, round
-                )));
+                return Err(DispatcherResultError::InvalidOutput(format!(
+                    "emulator result round {round} does not match expected round {save_round}"
+                ))
+                .into());
             }
 
             let (nary_verifier, selection_bits) =
@@ -186,7 +198,33 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                 drp.dispatch(context, tx, Some(sp), None)?;
             } else {
                 let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
-                    prover_final_trace.as_final_trace_with_hashes_and_step()?;
+                    prover_final_trace
+                        .as_final_trace_with_hashes_and_step()
+                        .map_err(|error| {
+                            DispatcherResultError::InvalidOutput(format!(
+                                "invalid emulator final trace: {error}"
+                            ))
+                        })?;
+                let instruction =
+                    get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
+                        .ok_or_else(|| {
+                            DispatcherResultError::InvalidOutput(format!(
+                                "unknown emulator instruction {}_{}",
+                                trace.read_pc.opcode,
+                                trace.read_pc.pc.get_micro()
+                            ))
+                        })?;
+                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+                instruction_names.sort();
+                let index = instruction_names
+                    .iter()
+                    .position(|candidate| candidate == &instruction)
+                    .ok_or_else(|| {
+                        DispatcherResultError::InvalidOutput(format!(
+                            "unsupported emulator instruction {instruction}"
+                        ))
+                    })?;
                 let mut inputs: Vec<InputPair> = vec![
                     ("prover_write_address", trace.trace_step.get_write().address).into(),
                     ("prover_write_value", trace.trace_step.get_write().value).into(),
@@ -213,22 +251,6 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                     ("prover_conflict_step_tk", conflict_step).into(),
                 ]);
                 set_inputs(id, context, inputs)?;
-                let instruction =
-                    get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
-                        .ok_or_else(|| {
-                            BitVMXError::InstructionNotFound(format!(
-                                "{}_{}",
-                                trace.read_pc.opcode,
-                                trace.read_pc.pc.get_micro()
-                            ))
-                        })?;
-                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
-                instruction_names.sort();
-                let index = instruction_names
-                    .iter()
-                    .position(|i| i == &instruction)
-                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
                 // first index leaf is the challenge_step, we have to skip it
                 let (tx, sp) =
                     drp.get_tx_with_speedup_data(context, EXECUTE, 0, (index + 1) as u32, true)?;
@@ -283,8 +305,13 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                     drp.requested_confirmations(context),
                 )?;
             } else {
-                let (resigned_step_hash, resigned_next_hash, write_step) =
-                    prover_hashes_and_step.as_hashes_with_step()?;
+                let (resigned_step_hash, resigned_next_hash, write_step) = prover_hashes_and_step
+                    .as_hashes_with_step()
+                    .map_err(|error| {
+                        DispatcherResultError::InvalidOutput(format!(
+                            "invalid emulator hashes-and-step result: {error}"
+                        ))
+                    })?;
 
                 info!(
                     "Prover got hashes and step result: {:?}, {:?}, {:?}",

@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 use crate::{
     bitvmx::Context,
-    errors::BitVMXError,
+    errors::{BitVMXError, DispatcherResultError},
     program::{
         participant::{
             CommsAddress, ParticipantKeyDeclaration, ParticipantKeys,
@@ -662,11 +662,25 @@ impl GCDisputeResolutionProtocol {
             None
         };
 
-        let result: GCJobEvaluationResult = serde_json::from_value(result)?;
+        let result: GCJobEvaluationResult = serde_json::from_value(result).map_err(|error| {
+            DispatcherResultError::InvalidOutput(format!(
+                "invalid garbler evaluation result: {error}"
+            ))
+        })?;
 
         // TODO: don't send if output is correct
-        // We assume there is a single output
-        let signature = LamportSignature::from_bytes(&result.output[0], 1, LamportType::SHA256)?;
+        // We assume there is a single output.
+        let output = result.output.first().ok_or_else(|| {
+            DispatcherResultError::InvalidOutput(
+                "garbler evaluation result contains no output".to_string(),
+            )
+        })?;
+        let signature =
+            LamportSignature::from_bytes(output, 1, LamportType::SHA256).map_err(|error| {
+                DispatcherResultError::InvalidOutput(format!(
+                    "invalid garbler output signature: {error}"
+                ))
+            })?;
         context.witness.set_witness(
             &self.ctx.id,
             "circuit_output",
