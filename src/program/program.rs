@@ -586,24 +586,23 @@ impl Program {
 
     /// Converts only errors attributable to dispatcher output into retryable runtime-job
     /// failures. Local and infrastructure errors escape unchanged so inbox processing rolls
-    /// back rather than committing partially staged protocol effects.
+    /// back rather than committing partially staged protocol effects. The caller has
+    /// already matched `Context::ProgramStep` to reach here, so `job_id` is taken
+    /// directly instead of re-destructuring the context and risking a dropped error on
+    /// an unreachable branch.
     fn handle_runtime_dispatcher_error(
         &self,
-        context: &Context,
+        expected_job_id: String,
+        job_id: &str,
         error: BitVMXError,
     ) -> Result<DispatcherResultDisposition, BitVMXError> {
         let BitVMXError::DispatcherResultError(error) = error else {
             return Err(error);
         };
-        let Context::ProgramStep(_, job_id) = context else {
-            return Err(BitVMXError::InvalidState(format!(
-                "runtime dispatcher error has non-program context: {context:?}"
-            )));
-        };
         Ok(DispatcherResultDisposition::JobFailed {
             program_id: self.program_id,
-            expected_job_id: context.to_string()?,
-            job_id: job_id.clone(),
+            expected_job_id,
+            job_id: job_id.to_string(),
             reason: error.to_string(),
         })
     }
@@ -654,7 +653,9 @@ impl Program {
             Ok(()) => Ok(DispatcherResultDisposition::Processed),
             Err(error) => match &context {
                 Context::SetupStep(_, _, _, _) => self.handle_setup_dispatcher_error(error),
-                Context::ProgramStep(_, _) => self.handle_runtime_dispatcher_error(&context, error),
+                Context::ProgramStep(_, job_id) => {
+                    self.handle_runtime_dispatcher_error(context.to_string()?, job_id, error)
+                }
                 _ => unreachable!("dispatcher preflight accepted an unsupported context"),
             },
         }
@@ -1681,7 +1682,8 @@ mod tests {
 
         let disposition = program
             .handle_runtime_dispatcher_error(
-                &context,
+                context.to_string().unwrap(),
+                "evaluate-round-1",
                 DispatcherResultError::InvalidOutput("malformed emulator result".to_string())
                     .into(),
             )
@@ -1701,7 +1703,8 @@ mod tests {
 
         let infrastructure_error = program
             .handle_runtime_dispatcher_error(
-                &context,
+                context.to_string().unwrap(),
+                "evaluate-round-1",
                 BitVMXError::IOError(std::io::Error::new(
                     std::io::ErrorKind::Interrupted,
                     "temporary local I/O failure",

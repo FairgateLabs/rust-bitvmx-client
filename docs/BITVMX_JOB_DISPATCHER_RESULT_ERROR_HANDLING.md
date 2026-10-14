@@ -42,6 +42,19 @@ Important current gaps are:
    missing correlation state as a retryable generic format error;
 6. Garbler and Emulator support at-least-once deduplication in some paths, but
    source/context compatibility is not enforced centrally.
+7. the runtime `ProgramStep` path has no rollback-then-settle step between a
+   `DispatcherResultError` classification and commit. Setup gets this via
+   `SetupAttemptFailed` (roll back staged effects, then record terminal state in
+   a new transaction); runtime does not. Today this is safe only because every
+   runtime result handler happens to validate the dispatcher payload before
+   calling `set_input`/`set_inputs`/`dispatch`, so a classified failure is raised
+   before any protocol mutation is staged. Nothing enforces that ordering
+   structurally: a future branch that mutates state before validating its input
+   would have that mutation commit silently alongside the `RetryPending` job
+   status instead of being rolled back. Treat "validate before mutate" as a
+   required convention for every `ProgramStep` result handler until this is
+   enforced in code (e.g. a validate-then-apply split, or staging mutations
+   behind the same classification gate setup already has).
 
 ## Implementation status
 
@@ -118,7 +131,9 @@ inaccessible declared artifacts terminate setup through the rollback-then-settle
 runtime output explicitly classified as malformed or semantically invalid moves the
 expected job to `RetryPending` without failing the program; and ordinary `BitVMXError` local and
 infrastructure failures roll back for retry. Runtime validation is performed before
-protocol mutations whenever a failure is classified as dispatcher-attributable. Current
+protocol mutations whenever a failure is classified as dispatcher-attributable, but this
+ordering is a convention each handler must uphold, not a structural guarantee the way
+setup's rollback-then-settle is; see gap 7 above. Current
 protocol dispatch sites use execution-specific semantic step names (including rounds where applicable);
 any future repeatable protocol operation must supply a distinct semantic execution key.
 
@@ -367,6 +382,8 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
    policy:** declared failures and typed malformed/semantically invalid Garbler and
    Emulator output are durably scoped to the expected job, reported, and do not
    terminate the owning program; local/infrastructure failures still roll back.
+   **Not done:** a structural rollback-then-settle guard for the runtime path (see
+   gap 7) — today the ordering is enforced by handler convention, not by code.
 7. **Narrow setup classification.** **Complete:** dispatcher result producers explicitly
    return the typed `DispatcherResultError` for declared failures, malformed/semantically
    invalid setup output, and inaccessible declared artifacts. Only that typed error uses

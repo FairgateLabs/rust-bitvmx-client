@@ -27,6 +27,20 @@ use crate::{
     types::{JobDispatcherType, ProgramContext},
 };
 
+/// Decodes an emulator-supplied hex string, classifying a malformed value as
+/// dispatcher-attributable instead of letting it escape as a raw `FromHexError`
+/// (which would roll back the inbox transaction and re-deliver the same poisoned
+/// result forever instead of moving the job to `RetryPending`).
+fn decode_hex_input(field: &str, value: &str) -> Result<Vec<u8>, BitVMXError> {
+    hex::decode(value)
+        .map_err(|error| {
+            DispatcherResultError::InvalidOutput(format!(
+                "invalid emulator hex value for '{field}': {error}"
+            ))
+        })
+        .map_err(Into::into)
+}
+
 pub fn execution_result<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
     drp: &DisputeResolutionProtocol,
@@ -64,7 +78,11 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                 context,
                 vec![
                     ("prover_last_step", *last_step).into(),
-                    ("prover_last_hash", last_hash.clone()).into(),
+                    (
+                        "prover_last_hash",
+                        decode_hex_input("last_hash", last_hash)?,
+                    )
+                        .into(),
                 ],
             )?;
 
@@ -246,8 +264,16 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                     inputs.push(("prover_witness", witness).into());
                 }
                 inputs.extend([
-                    ("prover_step_hash_tk", resigned_step_hash.clone()).into(),
-                    ("prover_next_hash_tk", resigned_next_hash.clone()).into(),
+                    (
+                        "prover_step_hash_tk",
+                        decode_hex_input("resigned_step_hash", &resigned_step_hash)?,
+                    )
+                        .into(),
+                    (
+                        "prover_next_hash_tk",
+                        decode_hex_input("resigned_next_hash", &resigned_next_hash)?,
+                    )
+                        .into(),
                     ("prover_conflict_step_tk", conflict_step).into(),
                 ]);
                 set_inputs(id, context, inputs)?;
@@ -322,8 +348,16 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                     id,
                     context,
                     vec![
-                        ("prover_step_hash_tk2", resigned_step_hash.clone()).into(),
-                        ("prover_next_hash_tk2", resigned_next_hash.clone()).into(),
+                        (
+                            "prover_step_hash_tk2",
+                            decode_hex_input("resigned_step_hash", &resigned_step_hash)?,
+                        )
+                            .into(),
+                        (
+                            "prover_next_hash_tk2",
+                            decode_hex_input("resigned_next_hash", &resigned_next_hash)?,
+                        )
+                            .into(),
                         ("prover_write_step_tk2", write_step).into(),
                     ],
                 )?;

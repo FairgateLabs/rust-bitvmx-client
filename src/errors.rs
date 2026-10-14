@@ -361,9 +361,6 @@ pub enum BitVMXError {
     #[error("Rom data {0} not found")]
     RomDataNotFound(u32),
 
-    #[error("Instruction {0} not found")]
-    InstructionNotFound(String),
-
     #[error("Not found {0}")]
     NotFound(String),
 }
