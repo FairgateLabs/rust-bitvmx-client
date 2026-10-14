@@ -127,8 +127,9 @@ pub fn test_full() -> Result<()> {
     info!("Setting up aggregated addresses");
     info!("================================================");
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
-        .to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0, None)
+            .to_string()?;
     send_all(&id_channel_pairs, &command)?;
     let msgs = get_all(&channels, &mut instances, false)?;
     let aggregated_pub_key = msgs[0].aggregated_pub_key().unwrap();
@@ -145,7 +146,7 @@ pub fn test_full() -> Result<()> {
     let sub_id_channel_pairs = vec![id_channel_pairs[0].clone(), id_channel_pairs[1].clone()];
     let aggregation_id = Uuid::new_v4();
     let command =
-        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0)
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0, None)
             .to_string()?;
     send_all(&sub_id_channel_pairs, &command)?;
     let msgs = get_all(&sub_channel, &mut instances, false)?;
@@ -267,7 +268,7 @@ pub fn test_full() -> Result<()> {
         //aggregated for happy path
         let aggregation_id = Uuid::new_v4();
         let command =
-            IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
+            IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0, None)
                 .to_string()?;
         send_all(&id_channel_pairs, &command)?;
         let msgs = get_all(&channels, &mut instances, false)?;

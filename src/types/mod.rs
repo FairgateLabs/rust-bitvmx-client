@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::{
     expected_job::ExpectedJobs,
     leader_broadcast::LeaderBroadcastHelper,
+    operation_timeout::OperationTimeouts,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::variables::{Globals, WitnessVars},
 };
@@ -139,6 +140,7 @@ pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
     pub leader_broadcast_helper: LeaderBroadcastHelper,
+    pub(crate) operation_timeouts: OperationTimeouts,
     pub(crate) expected_jobs: ExpectedJobs,
 }
 
@@ -153,6 +155,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
         witness: WitnessVars,
         components_config: ComponentsConfig,
         leader_broadcast_helper: LeaderBroadcastHelper,
+        operation_timeouts: OperationTimeouts,
         expected_jobs: ExpectedJobs,
     ) -> Self {
         Self {
@@ -165,6 +168,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
             witness,
             components_config,
             leader_broadcast_helper,
+            operation_timeouts,
             expected_jobs,
         }
     }

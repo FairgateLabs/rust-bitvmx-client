@@ -131,7 +131,8 @@ pub enum IncomingBitVMXApiMessages {
     GetTransaction(Uuid, Txid),
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
-    Setup(ProgramId, String, Vec<CommsAddress>, u16),
+    /// Optional timeout is the overall setup budget in seconds.
+    Setup(ProgramId, String, Vec<CommsAddress>, u16, Option<u64>),
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
     SubscribeToSpendingUTXO(Uuid, Txid, u32, Option<u32>), // id, txid, vout, confirmation_threshold
     SubscribeToOutputPattern(Uuid, OutputPatternFilter, Option<u32>),
@@ -139,13 +140,21 @@ pub enum IncomingBitVMXApiMessages {
     GetSPVProof(Uuid, Txid),
     DispatchTransaction(Uuid, Transaction, Option<u32>, Option<u32>), // id, transaction, confirmation_threshold, stuck_in_mempool_blocks
     DispatchTransactionName(Uuid, String),
-    SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
+    /// Optional timeout is the overall setup budget in seconds.
+    SetupKey(
+        Uuid,
+        Vec<CommsAddress>,
+        Option<Vec<PublicKey>>,
+        u16,
+        Option<u64>,
+    ),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
     GetEvenPubKey(Uuid),
     SignMessage(Uuid, Vec<u8>, PublicKey), // id, payload_to_sign, public_key_to_use
-    GenerateZKP(Uuid, Vec<u8>, String),
+    /// Optional timeout is the prover job execution budget in seconds.
+    GenerateZKP(Uuid, Vec<u8>, String, Option<u64>),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
     /// Stops automatic retries for an unresolved runtime dispatcher job.

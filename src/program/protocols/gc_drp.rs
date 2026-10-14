@@ -133,6 +133,7 @@ impl GCDisputeConfiguration {
                 PROGRAM_TYPE_GC_DRP.to_string(),
                 addresses,
                 leader,
+                None,
             )
             .to_string()?,
         ])
@@ -599,6 +600,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                                 output_dir,
                             ),
                             "verifier_evaluate_circuit",
+                            None,
                         )?;
                     }
                     _ => {}

@@ -127,6 +127,7 @@ impl SetupStep for GarblerStep {
         };
 
         context.expected_jobs.send_dispatcher_job(
+            &context.operation_timeouts,
             &context.broker_channel,
             JobDispatcherType::Garbler,
             &context.components_config.garbler,
@@ -138,6 +139,7 @@ impl SetupStep for GarblerStep {
             )
             .to_string()?,
             job_type,
+            None,
         )?;
 
         Ok(None)
@@ -655,6 +657,7 @@ fn dispatch_proof_verification<BC: BitcoinCoordinatorApi>(
     let verify_job = GarbledJobType::Verify(proof_blob, config.circuit.clone(), output_dir.clone());
 
     context.expected_jobs.send_dispatcher_job(
+        &context.operation_timeouts,
         &context.broker_channel,
         JobDispatcherType::Garbler,
         &context.components_config.garbler,
@@ -666,6 +669,7 @@ fn dispatch_proof_verification<BC: BitcoinCoordinatorApi>(
         )
         .to_string()?,
         verify_job,
+        None,
     )?;
 
     Ok(())

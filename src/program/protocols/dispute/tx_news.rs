@@ -292,6 +292,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                                 fail_force_config.main.fail_config_prover.clone(),
                             ),
                             "prover_execute",
+                            None,
                         )?;
                     }
 
@@ -337,6 +338,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                                 fail_force_config.main.fail_config_verifier.clone(),
                             ),
                             "verifier_check_execution",
+                            None,
                         )?;
 
                         let (tx, sp) = drp.get_tx_with_speedup_data(
@@ -478,6 +480,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                                 fail_force_config.main.force_challenge.clone(),
                             ),
                             "verifier_choose_challenge",
+                            None,
                         )?;
                     }
 
@@ -622,6 +625,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                             JobDispatcherType::Emulator,
                             msg,
                             "verifier_choose_challenge_for_read",
+                            None,
                         )?;
                     }
 
@@ -797,6 +801,7 @@ fn handle_nary_verifier<BC: BitcoinCoordinatorApi>(
         JobDispatcherType::Emulator,
         job_type,
         &step_name,
+        None,
     )?;
 
     Ok(())
@@ -881,6 +886,7 @@ fn handle_nary_prover<BC: BitcoinCoordinatorApi>(
             JobDispatcherType::Emulator,
             job,
             &step_name,
+            None,
         )?;
     } else {
         info!("The execution is not ready. Saving the message.");

@@ -103,6 +103,7 @@ impl SlotProtocolConfiguration {
                 PROGRAM_TYPE_SLOT.to_string(),
                 addresses,
                 leader,
+                None,
             )
             .to_string()?,
         ])

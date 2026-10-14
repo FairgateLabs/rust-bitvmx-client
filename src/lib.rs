@@ -9,6 +9,7 @@ pub(crate) mod expected_job;
 pub mod helper;
 pub mod leader_broadcast;
 pub mod message_queue;
+pub(crate) mod operation_timeout;
 pub mod ping_helper;
 pub mod ports;
 pub mod program;

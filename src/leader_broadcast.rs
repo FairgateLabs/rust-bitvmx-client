@@ -652,6 +652,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             participants,
             0,
+            None,
             &mut env.context,
             store.clone(),
         )

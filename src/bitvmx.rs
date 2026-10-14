@@ -15,9 +15,10 @@ use crate::{
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
-    expected_job::ExpectedJobs,
+    expected_job::{ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus, ExpectedJobs},
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::{MessageQueue, PushOutcome, QueuedMessage},
+    operation_timeout::{OperationTimeoutId, OperationTimeouts, TimeoutFailurePolicy},
     program::{
         participant::CommsAddress,
         setup::SetupMessageState,
@@ -28,9 +29,9 @@ use crate::{
         VerificationMessageOutcome,
     },
     types::{
-        ErrorReportKind, MessageDisposition, NoOpReason, OutgoingBitVMXApiMessages, PeerSetupFault,
-        PeerSetupFaultReason, ProgramContext, ProgramStatus, RetryReason, SetupFailureReason,
-        RSK_PEGIN_TAG,
+        DispatcherResultDisposition, ErrorReportKind, MessageDisposition, NoOpReason,
+        OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
+        ProgramStatus, RetryReason, SetupFailureReason, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::Txid;
@@ -219,6 +220,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
 
         let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
+        let operation_timeouts = OperationTimeouts::new(store.clone());
         let expected_jobs = ExpectedJobs::new(store.clone());
 
         let program_context = ProgramContext::new(
@@ -231,6 +233,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             WitnessVars::new(store.clone()),
             config.components.clone(),
             leader_broadcast_helper,
+            operation_timeouts,
             expected_jobs,
         );
 
@@ -1237,14 +1240,16 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             // Failed work stays pending; do not count a failed phase as idle.
             let mut had_work = false;
 
+            had_work |=
+                Self::measure_time("operation timeouts", || self.process_operation_timeouts())?;
+
             had_work |= Self::measure_time("dispatcher retries", || {
                 self.run_step("dispatcher retries", |this| {
                     Self::run_transaction(&store, || {
-                        Ok(this
-                            .program_context
-                            .expected_jobs
-                            .redispatch_due(&this.program_context.broker_channel)?
-                            > 0)
+                        Ok(this.program_context.expected_jobs.redispatch_due(
+                            &this.program_context.operation_timeouts,
+                            &this.program_context.broker_channel,
+                        )? > 0)
                     })
                 })
             })?
@@ -1316,6 +1321,104 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             return Ok(());
         }
         Ok(())
+    }
+
+    /// Applies a bounded timeout snapshot, settling every expiration in its own
+    /// transaction so one broken operation cannot roll back unrelated deadlines.
+    fn process_operation_timeouts(&mut self) -> Result<bool, BitVMXError> {
+        let ids = self.program_context.operation_timeouts.expired(32)?;
+        let had_work = !ids.is_empty();
+        let store = self.store.clone();
+
+        for id in ids {
+            self.run_step(&format!("operation timeout {id:?}"), |this| {
+                Self::run_transaction(&store, || this.apply_operation_timeout(&id))
+            })?;
+        }
+        Ok(had_work)
+    }
+
+    fn apply_operation_timeout(&mut self, id: &OperationTimeoutId) -> Result<(), BitVMXError> {
+        let Some(timeout) = self.program_context.operation_timeouts.get(id)? else {
+            return Ok(());
+        };
+        if timeout.deadline_ms > bitvmx_broker::retry::now_ms()? {
+            return Ok(());
+        }
+
+        match timeout.policy {
+            TimeoutFailurePolicy::FailSetup { program_id, job_id } => {
+                let Some(program) = self.load_program(&program_id)? else {
+                    return self.program_context.operation_timeouts.cancel(id);
+                };
+                if program.peer_message_lifecycle_disposition().is_some() {
+                    return self.program_context.operation_timeouts.cancel(id);
+                }
+
+                if let Some(job_id) = job_id {
+                    let valid_pending_setup_job = self
+                        .program_context
+                        .expected_jobs
+                        .get(&job_id)?
+                        .is_some_and(|job| {
+                            job.owner == ExpectedJobOwner::Program(program_id)
+                                && job.kind == ExpectedJobKind::Setup
+                                && matches!(job.status, ExpectedJobStatus::Pending)
+                        });
+                    if !valid_pending_setup_job {
+                        return self.program_context.operation_timeouts.cancel(id);
+                    }
+                    self.program_context.expected_jobs.fail(
+                        &self.program_context.operation_timeouts,
+                        &job_id,
+                        "dispatcher job execution timed out".to_string(),
+                    )?;
+                }
+                self.fail_program_setup(
+                    &program_id,
+                    None,
+                    SetupFailureReason::StepError("setup operation timed out".to_string()),
+                )
+            }
+            TimeoutFailurePolicy::FailRequestJob { request_id, job_id } => {
+                let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
+                    return self.program_context.operation_timeouts.cancel(id);
+                };
+                if job.owner != ExpectedJobOwner::Request(request_id)
+                    || job.kind != ExpectedJobKind::Zkp
+                    || !matches!(job.status, ExpectedJobStatus::Pending)
+                {
+                    return self.program_context.operation_timeouts.cancel(id);
+                }
+                self.fail_zkp_timeout(request_id, &job_id)
+            }
+            TimeoutFailurePolicy::RetryRuntimeJob { program_id, job_id } => {
+                let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
+                    return self.program_context.operation_timeouts.cancel(id);
+                };
+                if job.owner != ExpectedJobOwner::Program(program_id)
+                    || job.kind != ExpectedJobKind::Program
+                    || !matches!(job.status, ExpectedJobStatus::Pending)
+                {
+                    return self.program_context.operation_timeouts.cancel(id);
+                }
+                let Some(program) = self.load_program(&program_id)? else {
+                    return self.program_context.operation_timeouts.cancel(id);
+                };
+                if program.is_failed() {
+                    return self.program_context.operation_timeouts.cancel(id);
+                }
+                self.apply_dispatcher_result_disposition(
+                    job.dispatcher,
+                    DispatcherResultDisposition::JobFailed {
+                        program_id,
+                        expected_job_id: job_id.clone(),
+                        job_id,
+                        reason: "dispatcher job execution timed out".to_string(),
+                    },
+                )
+            }
+        }
     }
 
     /// Advances each program in its own transaction, reporting nonfatal failures locally.
@@ -1420,6 +1523,100 @@ mod transaction_tests {
             .collect()
     }
 
+    fn create_single_participant_program(env: &mut TestBitVMXEnv, program_id: Uuid) -> Rc<Storage> {
+        let store = env.bitvmx.get_store();
+        let self_address = CommsAddress::new(
+            env.bitvmx.program_context.comms.get_address(),
+            env.bitvmx.program_context.comms.get_pubk_hash(),
+        );
+        Program::new(
+            program_id,
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![self_address],
+            0,
+            None,
+            &mut env.bitvmx.program_context,
+            store.clone(),
+        )
+        .unwrap();
+        store
+    }
+
+    #[test]
+    fn setup_timeout_fails_a_setup_waiting_without_input() {
+        let mut env = TestBitVMXEnv::new("setup-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        env.bitvmx
+            .program_context
+            .operation_timeouts
+            .cancel_setup(program_id)
+            .unwrap();
+        OperationTimeouts::new(store.clone())
+            .register_setup(program_id, Some(Duration::ZERO))
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(!env.bitvmx.process_operation_timeouts().unwrap());
+    }
+
+    #[test]
+    fn runtime_job_timeout_enters_retry_without_failing_program() {
+        let mut env = TestBitVMXEnv::new("runtime-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        env.bitvmx
+            .program_context
+            .globals
+            .set_var(
+                &program_id,
+                "optional_keys",
+                VariableTypes::String("null".to_string()),
+            )
+            .unwrap();
+        let mut program = Program::load(store.clone(), &program_id).unwrap().unwrap();
+        program.tick(&mut env.bitvmx.program_context).unwrap();
+        program.tick(&mut env.bitvmx.program_context).unwrap();
+
+        let job_id = Context::ProgramStep(program_id, "execute-round-1".to_string())
+            .to_string()
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(job_id.clone(), crate::types::JobDispatcherType::Emulator)
+            .unwrap();
+        let timeout_id = OperationTimeoutId::DispatcherJob(job_id.clone());
+        env.bitvmx
+            .program_context
+            .operation_timeouts
+            .cancel(&timeout_id)
+            .unwrap();
+        OperationTimeouts::new(store.clone())
+            .register_runtime_job(program_id, job_id.clone(), Some(Duration::ZERO), false)
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&job_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ExpectedJobStatus::RetryPending(_)
+        ));
+        assert!(!Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+    }
+
     #[test]
     fn terminal_programs_discard_peer_messages_before_payload_processing() {
         let mut env = TestBitVMXEnv::new("peer-lifecycle-gate").unwrap();
@@ -1436,6 +1633,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address.clone()],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1479,6 +1677,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1524,6 +1723,7 @@ mod transaction_tests {
                 self_hash.clone(),
             )],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1585,6 +1785,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1623,6 +1824,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address, peer],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1684,6 +1886,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address, non_leader.clone()],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1725,6 +1928,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![leader_address],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1790,6 +1994,7 @@ mod transaction_tests {
                 leader_hash.clone(),
             )],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1828,6 +2033,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![remote_leader.clone(), self_address],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -1868,6 +2074,7 @@ mod transaction_tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )

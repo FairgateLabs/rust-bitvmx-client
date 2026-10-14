@@ -27,7 +27,7 @@ use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 use storage_backend::{
     error::StorageError,
     key::StorageKey,
@@ -154,6 +154,9 @@ impl Program {
 
         self.state = ProgramState::Failed;
         self.save()?;
+        program_context
+            .operation_timeouts
+            .cancel_setup(self.program_id)?;
 
         try_send_error_report(
             &program_context.broker_channel,
@@ -199,6 +202,7 @@ impl Program {
         program_type: &str,
         peers: Vec<CommsAddress>,
         leader: usize,
+        setup_timeout: Option<Duration>,
         context: &mut ProgramContext<BC>,
         storage: Rc<Storage>,
     ) -> Result<(), BitVMXError> {
@@ -255,10 +259,14 @@ impl Program {
             storage: Some(storage.clone()),
         };
 
-        // Save the initial program and its separately serialized state.
+        // Save the program and its overall setup deadline together in the caller's
+        // transaction. Replayed setup requests do not renew the original budget.
         program.save()?;
+        context
+            .operation_timeouts
+            .register_setup(program_id, setup_timeout)?;
 
-        info!("Program: Setup complete for program {}", program_id);
+        info!("Program: Setup initialized for program {}", program_id);
         Ok(())
     }
 
@@ -402,6 +410,9 @@ impl Program {
                     self.protocol.setup_complete(&program_context)?;
                     self.start_monitoring(program_context)?;
                     self.state = ProgramState::Ready;
+                    program_context
+                        .operation_timeouts
+                        .cancel_setup(self.program_id)?;
                     state_changed = true;
                     info!("Program: Setup finalized, transitioning to Ready state");
                 }
@@ -1140,6 +1151,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![],
             0,
+            None,
             &mut env.context,
             dir.storage(),
         );
@@ -1150,6 +1162,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address.clone()],
             1,
+            None,
             &mut env.context,
             dir.storage(),
         );
@@ -1168,6 +1181,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![stranger],
             0,
+            None,
             &mut env.context,
             dir.storage(),
         );
@@ -1190,6 +1204,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address.clone()],
             0,
+            None,
             &mut env.context,
             storage.clone(),
         )

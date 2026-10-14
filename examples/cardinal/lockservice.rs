@@ -208,8 +208,9 @@ pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> 
     info!("================================================");
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
-        .to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0, None)
+            .to_string()?;
 
     info!("Command to all: {:?}", command);
     send_all(&id_channel_pairs, &command)?;
@@ -253,9 +254,14 @@ pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> 
         } else {
             //aggregated for happy path
             let aggregation_id = Uuid::new_v4();
-            let command =
-                IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
-                    .to_string()?;
+            let command = IncomingBitVMXApiMessages::SetupKey(
+                aggregation_id,
+                addresses.clone(),
+                None,
+                0,
+                None,
+            )
+            .to_string()?;
             send_all(&id_channel_pairs, &command)?;
             let msgs = get_all(&channels)?;
             info!("Received AggregatedPubkey message from all channels");

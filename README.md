@@ -88,7 +88,7 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `Setup(uuid, program_type, participants, leader_idx)` | `SetupCompleted(uuid)` or `ApiError(uuid, error)` | Setup the program; returns `ApiError` for duplicate identifiers and non-fatal setup failures |
+| `Setup(uuid, program_type, participants, leader_idx, setup_timeout_secs)` | `SetupCompleted(uuid)` or `ApiError(uuid, error)` | Setup the program with an optional overall timeout in seconds (`None` defaults to one hour); returns `ApiError` for duplicate identifiers and non-fatal setup failures |
 | `SetVar(uuid, key, value)` | `Variable(uuid, key, value)` | Set a variable in the program |
 | `GetVar(uuid, key)` | `Variable(uuid, key, value)` or `NotFound(uuid, key)` | Get variable value |
 | `SetWitness(uuid, address, witness)` | `Witness(uuid, key, witness)` | Set witness data |
@@ -134,7 +134,7 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `SetupKey(uuid, addresses, operator_keys, leader_idx)` | `ApiError(uuid, error)` on failure; otherwise N/A | Setup keys; returns `ApiError` for invalid participants, duplicate identifiers, or other non-fatal setup failures, and has no direct success response |
+| `SetupKey(uuid, addresses, operator_keys, leader_idx, setup_timeout_secs)` | `ApiError(uuid, error)` on failure; otherwise N/A | Setup keys with an optional overall timeout in seconds (`None` defaults to one hour); returns `ApiError` for invalid participants, duplicate identifiers, or other non-fatal setup failures, and has no direct success response |
 | `GetAggregatedPubkey(uuid)` | `AggregatedPubkey(uuid, aggregated_pubkey)`, `AggregatedPubkeyNotReady(uuid)`, or `ApiError(uuid, error)` | Get aggregated public key; returns `ApiError` when the stored value is not a public key |
 | `GetKeyPair(uuid)` | `KeyPair(uuid, private_key, public_key)` or `ApiError(uuid, error)` | Generate key pair; returns `ApiError` when the aggregated key is missing or invalid, or for a non-storage key-manager failure |
 | `GetPubKey(uuid, new_key)` | `PubKey(uuid, pub_key)` or `ApiError(uuid, error)` | Get public key; returns `ApiError` when an existing aggregated key is missing or invalid, or for a non-storage key-manager failure |
@@ -152,7 +152,7 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `GenerateZKP(uuid, payload_to_sign, name)` | `ProofReady(uuid)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` | Generate zero-knowledge proof |
+| `GenerateZKP(uuid, payload_to_sign, name, execution_timeout_secs)` | `ProofReady(uuid)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` | Generate zero-knowledge proof; the optional timeout defaults to 900 seconds |
 | `ProofReady(uuid)` | `ProofReady(uuid)` | Check if proof is ready |
 | `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, zkp_result, zkp_proof)` or `ApiError(uuid, error)` | Get ZKP execution result; returns `ApiError` when a successful job is missing its proof or journal |
 

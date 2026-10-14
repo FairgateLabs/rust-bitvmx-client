@@ -118,6 +118,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             )));
         }
         if !matches!(expected.status, ExpectedJobStatus::Pending) {
+            if let ExpectedJobStatus::Failed(reason) = &expected.status {
+                if reason.contains("dispatcher job execution timed out") {
+                    error!(
+                        "Discarding late result from {dispatcher:?} for timed-out job '{}': {}",
+                        expected.job_id, reason
+                    );
+                }
+            }
             return Ok(Err(DispatcherResultDisposition::DiscardNoOp(
                 DispatcherNoOpReason::Duplicate,
             )));
@@ -125,7 +133,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(Ok(()))
     }
 
-    fn fail_zkp_result(
+    pub(super) fn fail_zkp_result(
         &mut self,
         id: Uuid,
         job_id: &str,
@@ -137,7 +145,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             requester,
             OutgoingBitVMXApiMessages::ProofGenerationError(id, status.clone()),
         )?;
-        self.program_context.expected_jobs.fail(job_id, status)?;
+        self.program_context.expected_jobs.fail(
+            &self.program_context.operation_timeouts,
+            job_id,
+            status,
+        )?;
         Ok(DispatcherResultDisposition::Processed)
     }
 
@@ -168,9 +180,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let Some(execution) = execution else {
             let reason = format!("Missing requester correlation for ZKP job {id}");
             warn!("{reason}");
-            self.program_context
-                .expected_jobs
-                .fail(&result_message.job_id, reason)?;
+            self.program_context.expected_jobs.fail(
+                &self.program_context.operation_timeouts,
+                &result_message.job_id,
+                reason,
+            )?;
             return Ok(DispatcherResultDisposition::DiscardNoOp(
                 DispatcherNoOpReason::Orphaned,
             ));
@@ -213,9 +227,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             None,
         )?;
 
-        self.program_context
-            .expected_jobs
-            .complete(&result_message.job_id)?;
+        self.program_context.expected_jobs.complete(
+            &self.program_context.operation_timeouts,
+            &result_message.job_id,
+        )?;
         let response = self.proof_ready(id)?;
         self.reply(from, response)?;
         Ok(DispatcherResultDisposition::Processed)
@@ -227,15 +242,20 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: &DispatcherResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            DispatcherResultDisposition::Processed => {
-                self.program_context.expected_jobs.complete(job_id)
-            }
-            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale) => self
+            DispatcherResultDisposition::Processed => self
                 .program_context
                 .expected_jobs
-                .discard(job_id, "stale dispatcher result".to_string()),
+                .complete(&self.program_context.operation_timeouts, job_id),
+            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale) => {
+                self.program_context.expected_jobs.discard(
+                    &self.program_context.operation_timeouts,
+                    job_id,
+                    "stale dispatcher result".to_string(),
+                )
+            }
             DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::SetupFailed) => {
                 self.program_context.expected_jobs.fail(
+                    &self.program_context.operation_timeouts,
                     job_id,
                     "owning setup failed before the dispatcher result settled".to_string(),
                 )
@@ -302,9 +322,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         } else {
             let reason = format!("Program {program_id} not found for dispatcher result");
             error!("{reason}");
-            self.program_context
-                .expected_jobs
-                .fail(&result_message.job_id, reason)?;
+            self.program_context.expected_jobs.fail(
+                &self.program_context.operation_timeouts,
+                &result_message.job_id,
+                reason,
+            )?;
             return Ok(DispatcherResultDisposition::DiscardNoOp(
                 DispatcherNoOpReason::Orphaned,
             ));
@@ -312,7 +334,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     }
 
     /// Applies service-result control flow at the inbox transaction boundary.
-    fn apply_dispatcher_result_disposition(
+    pub(super) fn apply_dispatcher_result_disposition(
         &mut self,
         dispatcher: JobDispatcherType,
         disposition: DispatcherResultDisposition,
@@ -332,9 +354,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 job_id,
                 reason,
             } => {
-                self.program_context
-                    .expected_jobs
-                    .retry_pending(&expected_job_id, reason.clone())?;
+                self.program_context.expected_jobs.retry_pending(
+                    &self.program_context.operation_timeouts,
+                    &expected_job_id,
+                    reason.clone(),
+                )?;
                 try_send_error_report(
                     &self.program_context.broker_channel,
                     &self.program_context.components_config.l2,
@@ -545,6 +569,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store,
         )
@@ -648,6 +673,48 @@ mod tests {
                     if response_id == id && reason == status
             )
         ));
+    }
+
+    #[test]
+    fn late_zkp_result_after_timeout_matches_the_persisted_timeout_reason() {
+        let mut env = TestBitVMXEnv::new("zkp-late-after-timeout").unwrap();
+        let id = Uuid::new_v4();
+        let job_id = id.to_string();
+        let requester = env.bitvmx.config.components.l2.clone();
+        env.bitvmx
+            .store
+            .set(
+                StoreKey::ZKPExecution(id).get_key().unwrap(),
+                ZKPExecution::new(requester),
+                None,
+            )
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(job_id.clone(), JobDispatcherType::ZKP)
+            .unwrap();
+
+        env.bitvmx.fail_zkp_timeout(id, &job_id).unwrap();
+        let expected = env
+            .bitvmx
+            .program_context
+            .expected_jobs
+            .get(&job_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            expected.status,
+            ExpectedJobStatus::Failed("FAILED: dispatcher job execution timed out".to_string())
+        );
+
+        let late_result = ResultMessage::new(job_id, "{}".to_string(), false)
+            .to_string()
+            .unwrap();
+        assert_eq!(
+            env.bitvmx.handle_prover_message(&late_result).unwrap(),
+            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Duplicate)
+        );
     }
 
     #[test]
@@ -809,6 +876,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address],
             0,
+            None,
             &mut env.bitvmx.program_context,
             store.clone(),
         )
@@ -908,6 +976,7 @@ mod tests {
                 PROGRAM_TYPE_AGGREGATED_KEY,
                 vec![self_address],
                 0,
+                None,
                 &mut env.bitvmx.program_context,
                 store.clone(),
             )

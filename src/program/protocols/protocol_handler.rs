@@ -18,7 +18,7 @@ use protocol_builder::types::{InputArgs, OutputType, Utxo};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 use storage_backend::error::StorageError;
 use storage_backend::storage::Storage;
 use tracing::{error, info};
@@ -1026,6 +1026,7 @@ pub trait ProtocolHandler {
         dispatcher: JobDispatcherType,
         job_type: J,
         step: &str,
+        execution_timeout: Option<Duration>,
     ) -> Result<(), BitVMXError> {
         let destination = match dispatcher {
             JobDispatcherType::Garbler => &program_context.components_config.garbler,
@@ -1039,11 +1040,13 @@ pub trait ProtocolHandler {
         program_context
             .expected_jobs
             .send_dispatcher_job(
+                &program_context.operation_timeouts,
                 &program_context.broker_channel,
                 dispatcher,
                 destination,
                 Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
                 job_type,
+                execution_timeout,
             )
             .map(|_| ())
     }

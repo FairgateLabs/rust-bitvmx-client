@@ -164,7 +164,8 @@ pub fn test_all_aux(
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
     let pair_0_1_agg_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0);
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0, None);
     helper.id_channel_pairs[0]
         .channel
         .send(&helper.id_channel_pairs[0].id, command.to_string()?)?;
@@ -681,7 +682,8 @@ fn test_zkp() -> Result<()> {
         IncomingBitVMXApiMessages::GenerateZKP(
             id,
             vec![1, 2, 3, 4],
-            "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string()
+            "../rust-bitvmx-zk-proof/target/riscv-guest/methods/bitvmx/riscv32im-risc0-zkvm-elf/release/bitvmx.bin".to_string(),
+            None,
         ).to_string()?,
     );
 

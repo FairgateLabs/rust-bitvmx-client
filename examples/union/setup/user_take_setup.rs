@@ -55,6 +55,7 @@ impl UserTakeSetup {
             PROGRAM_TYPE_USER_TAKE.to_string(),
             addresses.to_vec(),
             0,
+            None,
         )?;
 
         Ok(())

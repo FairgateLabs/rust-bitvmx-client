@@ -25,12 +25,12 @@ use uuid::Uuid;
 use crate::bitvmx::BitVMX;
 use crate::config::Config;
 use crate::errors::BitVMXError;
-use crate::expected_job::ExpectedJobs;
 use crate::leader_broadcast::LeaderBroadcastHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::variables::{Globals, WitnessVars};
 use crate::types::{OutgoingBitVMXApiMessages, ProgramContext};
+use crate::{expected_job::ExpectedJobs, operation_timeout::OperationTimeouts};
 
 /// Temporary storage directory for unit tests. Creates a unique path under the
 /// system temp dir and removes it on drop.
@@ -525,6 +525,9 @@ impl TestProgramContextEnv {
             env.config.broker.settings.clone(),
         )?;
 
+        let operation_timeouts = OperationTimeouts::new(env.storage.clone());
+        let expected_jobs = ExpectedJobs::new(env.storage.clone());
+
         let context = ProgramContext::new(
             comms,
             env.key_manager.clone(),
@@ -535,7 +538,8 @@ impl TestProgramContextEnv {
             WitnessVars::new(env.storage.clone()),
             env.config.components.clone(),
             LeaderBroadcastHelper::new(env.storage.clone()),
-            ExpectedJobs::new(env.storage.clone()),
+            operation_timeouts,
+            expected_jobs,
         );
 
         let peers = (0..peer_count)

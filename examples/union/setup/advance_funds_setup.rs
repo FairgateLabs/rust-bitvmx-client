@@ -58,6 +58,7 @@ impl AdvanceFunds {
             PROGRAM_TYPE_ADVANCE_FUNDS.to_string(),
             vec![my_address],
             0,
+            None,
         )?;
 
         Ok(())

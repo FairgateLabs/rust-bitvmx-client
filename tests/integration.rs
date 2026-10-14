@@ -99,7 +99,7 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
 
     let aggregation_id = Uuid::new_v4();
     let command =
-        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0)
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, participants.clone(), None, 0, None)
             .to_string()?;
     send_all(&id_channel_pairs, &command)?;
 
@@ -198,6 +198,7 @@ pub fn test_aggregation() -> Result<()> {
         vec![addres_1.clone(), addres_2.clone(), addres_3.clone()],
         None,
         0,
+        None,
     )
     .to_string()?;
 

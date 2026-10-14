@@ -7,6 +7,12 @@ introduce breaking changes between versions.
 
 ### Changed
 
+- **BREAKING**: Added operation-specific timeout arguments. `Setup` and `SetupKey` now accept an optional overall
+  setup timeout in seconds, `GenerateZKP` accepts an optional prover execution timeout in seconds,
+  `Program::new` accepts an optional setup `Duration`, and protocol `execute_job` accepts an optional
+  per-attempt job `Duration`. `None` currently falls back to one hour for setup and 900 seconds for dispatcher jobs. Protocol implementations are required to
+  select explicit, operation-appropriate timeouts for production use rather than relying on these
+  compatibility defaults.
 - Added `DiscardDispatcherJob(request_id, job_id, reason)`, available to the configured L2 operator,
   to stop automatic retries for unresolved runtime Garbler and Emulator jobs. Successful and
   repeated idempotent requests return `JobDiscarded(request_id, job_id)`; unsupported job types or

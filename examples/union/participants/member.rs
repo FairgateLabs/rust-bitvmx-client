@@ -540,7 +540,7 @@ impl Member {
         );
 
         self.bitvmx
-            .setup_key(aggregation_id, addresses, public_keys, 0)?;
+            .setup_key(aggregation_id, addresses, public_keys, 0, None)?;
 
         let aggregated_key = wait_until_msg!(&self.bitvmx, AggregatedPubkey(_, _key) => _key);
         debug!(

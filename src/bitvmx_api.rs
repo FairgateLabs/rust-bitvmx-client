@@ -26,6 +26,7 @@ use protocol_builder::{
     errors::{GraphError, ProtocolBuilderError},
     graph::graph::GraphOptions,
 };
+use std::time::Duration;
 use storage_backend::storage::KeyValueStore;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -52,6 +53,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         program_type: String,
         peer_address: Vec<CommsAddress>,
         leader: u16,
+        setup_timeout_secs: Option<u64>,
     ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
         if self.program_exists(&id)? {
             return Ok(Some(Self::api_error(
@@ -67,6 +69,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             &program_type,
             peer_address,
             leader as usize,
+            setup_timeout_secs.map(std::time::Duration::from_secs),
             &mut self.program_context,
             self.store.clone(),
         ) {
@@ -235,6 +238,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
+        setup_timeout_secs: Option<u64>,
     ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
         info!("Setting up key for program: {:?}", id);
 
@@ -275,6 +279,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             PROGRAM_TYPE_AGGREGATED_KEY,
             participants,
             leader_idx as usize,
+            setup_timeout_secs.map(std::time::Duration::from_secs),
             &mut self.program_context,
             self.store.clone(),
         ) {
@@ -545,21 +550,41 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         })
     }
 
+    pub(super) fn fail_zkp_timeout(&mut self, id: Uuid, job_id: &str) -> Result<(), BitVMXError> {
+        let reason = "dispatcher job execution timed out".to_string();
+        let execution: Option<ZKPExecution> = self
+            .store
+            .get(StoreKey::ZKPExecution(id).get_key()?, None)?;
+        if let Some(execution) = execution {
+            self.fail_zkp_result(id, job_id, execution.requester().clone(), reason)?;
+        } else {
+            self.program_context.expected_jobs.fail(
+                &self.program_context.operation_timeouts,
+                job_id,
+                reason,
+            )?;
+        }
+        Ok(())
+    }
+
     fn generate_zkp(
         &mut self,
         from: Identifier,
         id: Uuid,
         input: Vec<u8>,
         elf_file_path: String,
+        execution_timeout_secs: Option<u64>,
     ) -> Result<(), BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
 
         let registration = self.program_context.expected_jobs.send_dispatcher_job(
+            &self.program_context.operation_timeouts,
             &self.program_context.broker_channel,
             JobDispatcherType::ZKP,
             &self.config.components.prover,
             id.to_string(),
             ProverJobType::Prove(input, elf_file_path, format!("./zkp-jobs/{}", id)),
+            execution_timeout_secs.map(Duration::from_secs),
         )?;
 
         if registration == ExpectedJobRegistration::Registered {
@@ -611,9 +636,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         match job.status {
             ExpectedJobStatus::Pending | ExpectedJobStatus::RetryPending(_) => {
-                self.program_context
-                    .expected_jobs
-                    .discard(&job_id, reason.to_string())?;
+                self.program_context.expected_jobs.discard(
+                    &self.program_context.operation_timeouts,
+                    &job_id,
+                    reason.to_string(),
+                )?;
                 info!("Operator discarded dispatcher job '{}': {}", job_id, reason);
                 Ok(OutgoingBitVMXApiMessages::JobDiscarded(request_id, job_id))
             }
@@ -1014,9 +1041,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 IncomingBitVMXApiMessages::GetTransactionInfoByName(id, name) => {
                     self.get_transaction_info_by_name(id, name).map(Some)
                 }
-                IncomingBitVMXApiMessages::Setup(id, program_type, participants, leader) => {
-                    self.setup(id, program_type, participants, leader)
-                }
+                IncomingBitVMXApiMessages::Setup(
+                    id,
+                    program_type,
+                    participants,
+                    leader,
+                    setup_timeout_secs,
+                ) => self.setup(id, program_type, participants, leader, setup_timeout_secs),
                 IncomingBitVMXApiMessages::SubscribeToTransaction(
                     id,
                     txid,
@@ -1069,7 +1100,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     participants,
                     participants_keys,
                     leader_idx,
-                ) => self.setup_key(id, participants, participants_keys, leader_idx),
+                    setup_timeout_secs,
+                ) => self.setup_key(
+                    id,
+                    participants,
+                    participants_keys,
+                    leader_idx,
+                    setup_timeout_secs,
+                ),
                 IncomingBitVMXApiMessages::GetKeyPair(id) => self.get_key_pair(id).map(Some),
                 IncomingBitVMXApiMessages::GetPubKey(id, new) => {
                     self.get_pub_key(id, new).map(Some)
@@ -1081,8 +1119,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 IncomingBitVMXApiMessages::GetAggregatedPubkey(id) => {
                     self.get_aggregated_pubkey(id).map(Some)
                 }
-                IncomingBitVMXApiMessages::GenerateZKP(id, input, elf_file_path) => {
-                    self.generate_zkp(from, id, input, elf_file_path)?;
+                IncomingBitVMXApiMessages::GenerateZKP(
+                    id,
+                    input,
+                    elf_file_path,
+                    execution_timeout_secs,
+                ) => {
+                    self.generate_zkp(from, id, input, elf_file_path, execution_timeout_secs)?;
                     Ok(None)
                 }
                 IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(id).map(Some),
@@ -1407,19 +1450,25 @@ mod tests {
 
         send_api(
             &mut env.bitvmx,
-            IncomingBitVMXApiMessages::SetupKey(empty_id, vec![], None, 0),
+            IncomingBitVMXApiMessages::SetupKey(empty_id, vec![], None, 0, None),
         )
         .unwrap();
         send_api(
             &mut env.bitvmx,
-            IncomingBitVMXApiMessages::SetupKey(leader_id, vec![participant.clone()], None, 1),
+            IncomingBitVMXApiMessages::SetupKey(
+                leader_id,
+                vec![participant.clone()],
+                None,
+                1,
+                None,
+            ),
         )
         .unwrap();
         env.bitvmx.add_new_program(&duplicate_id).unwrap();
         assert!(env.bitvmx.program_exists(&duplicate_id).unwrap());
         send_api(
             &mut env.bitvmx,
-            IncomingBitVMXApiMessages::SetupKey(duplicate_id, vec![participant], None, 0),
+            IncomingBitVMXApiMessages::SetupKey(duplicate_id, vec![participant], None, 0, None),
         )
         .unwrap();
         assert!(matches!(
@@ -1461,7 +1510,11 @@ mod tests {
         env.bitvmx
             .program_context
             .expected_jobs
-            .fail(&id.to_string(), "FAILED".to_string())
+            .fail(
+                &env.bitvmx.program_context.operation_timeouts,
+                &id.to_string(),
+                "FAILED".to_string(),
+            )
             .unwrap();
         assert!(matches!(
             env.bitvmx.get_zkp_execution_result(id).unwrap(),
@@ -1472,7 +1525,10 @@ mod tests {
         env.bitvmx
             .program_context
             .expected_jobs
-            .complete(&id.to_string())
+            .complete(
+                &env.bitvmx.program_context.operation_timeouts,
+                &id.to_string(),
+            )
             .unwrap();
         assert!(matches!(
             env.bitvmx.get_zkp_execution_result(id).unwrap(),
@@ -1756,7 +1812,7 @@ mod tests {
             .unwrap();
         let id = Uuid::new_v4();
         let request =
-            IncomingBitVMXApiMessages::GenerateZKP(id, vec![1, 2, 3], "test.elf".to_string());
+            IncomingBitVMXApiMessages::GenerateZKP(id, vec![1, 2, 3], "test.elf".to_string(), None);
 
         send_api(&mut env.bitvmx, request.clone()).unwrap();
         send_api(&mut env.bitvmx, request).unwrap();
@@ -1784,6 +1840,37 @@ mod tests {
     }
 
     #[test]
+    fn zkp_timeout_fails_the_request_and_notifies_the_requester() {
+        let mut env = TestBitVMXEnv::new("api-zkp-timeout").unwrap();
+        let id = Uuid::new_v4();
+        let request = IncomingBitVMXApiMessages::GenerateZKP(
+            id,
+            vec![1, 2, 3],
+            "test.elf".to_string(),
+            Some(0),
+        );
+
+        send_api(&mut env.bitvmx, request).unwrap();
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&id.to_string())
+                .unwrap()
+                .unwrap()
+                .status,
+            ExpectedJobStatus::Failed(ref reason) if reason.contains("timed out")
+        ));
+        assert!(matches!(
+            api_replies(&mut env.bitvmx).as_slice(),
+            [OutgoingBitVMXApiMessages::ProofGenerationError(response_id, reason)]
+                if *response_id == id && reason.contains("timed out")
+        ));
+    }
+
+    #[test]
     fn operator_can_idempotently_discard_a_retrying_runtime_job() {
         let mut env = TestBitVMXEnv::new("api-discard-dispatcher-job").unwrap();
         let job_id = Context::ProgramStep(Uuid::new_v4(), "execute-round-1".to_string())
@@ -1797,7 +1884,11 @@ mod tests {
         env.bitvmx
             .program_context
             .expected_jobs
-            .retry_pending(&job_id, "emulator failed".to_string())
+            .retry_pending(
+                &env.bitvmx.program_context.operation_timeouts,
+                &job_id,
+                "emulator failed".to_string(),
+            )
             .unwrap();
 
         let first_request = Uuid::new_v4();

@@ -102,6 +102,7 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                     JobDispatcherType::Emulator,
                     job,
                     "verifier_choose_segment_conflict_step_round_1",
+                    None,
                 )?;
             } else {
                 info!("The msg to choose segment was not ready");

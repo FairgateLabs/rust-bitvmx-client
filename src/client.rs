@@ -66,12 +66,14 @@ impl BitVMXClient {
         program_type: String,
         addresses: Vec<CommsAddress>,
         leader: u16,
+        setup_timeout_secs: Option<u64>,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Setup(
             id,
             program_type,
             addresses,
             leader,
+            setup_timeout_secs,
         ))
     }
 
@@ -100,12 +102,14 @@ impl BitVMXClient {
         participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
+        setup_timeout_secs: Option<u64>,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SetupKey(
             id,
             participants,
             participants_keys,
             leader_idx,
+            setup_timeout_secs,
         ))
     }
 
@@ -121,11 +125,18 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetCommInfo(id))
     }
 
-    pub fn generate_zkp(&self, id: Uuid, input: Vec<u8>, elf_file_path: String) -> Result<()> {
+    pub fn generate_zkp(
+        &self,
+        id: Uuid,
+        input: Vec<u8>,
+        elf_file_path: String,
+        execution_timeout_secs: Option<u64>,
+    ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GenerateZKP(
             id,
             input,
             elf_file_path,
+            execution_timeout_secs,
         ))
     }
 

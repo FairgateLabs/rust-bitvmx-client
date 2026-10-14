@@ -87,6 +87,7 @@ pub fn test_aggregated_key() -> Result<()> {
         addresses.clone(),
         None,
         0, // First operator is leader (index 0)
+        None,
     )
     .to_string()?;
     send_all(&id_channel_pairs, &command)?;
@@ -246,6 +247,7 @@ pub fn test_aggregated_single_participant() -> Result<()> {
         addresses.clone(),
         None,
         0, // Op1 is leader (and only participant)
+        None,
     )
     .to_string()?;
     send_all(&id_channel_pairs, &command)?;
