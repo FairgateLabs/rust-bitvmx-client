@@ -46,8 +46,7 @@ Important current gaps are:
    missing correlation state as a retryable generic format error;
 6. Garbler and Emulator support at-least-once deduplication in some paths, but
    source/context compatibility is not enforced centrally.
-7. service delivery failures are not correlated to expected jobs by the broker, so they
-   cannot yet enter the same failure-policy boundary as an expired operation.
+7. terminal expected-job records do not yet have a retention/cleanup policy.
 
 ## Implementation status
 
@@ -117,11 +116,13 @@ rolled back before terminal state is recorded. `JobFailed` records the expected 
 retry-pending and emits a scoped notification, but never changes a ready program to
 `ProgramState::Failed`.
 
-Service delivery failure handling is still unresolved. Durable operation deadlines are now
-implemented for complete setup processes and all dispatcher job attempts. Setup deadlines
-use the existing terminal setup-failure path; runtime Garbler/Emulator deadlines use the existing
-durable retry/backoff and `JobFailed` reporting path. ZKP deadlines terminally fail the request,
-persist the timeout reason, and notify the saved requester with `ProofGenerationError`.
+Service delivery failures deliberately do not have a separate expected-job settlement path.
+The broker retains a service outbox entry when sending it fails and logs the failure; the client
+leaves the expected job pending. Its durable execution deadline is authoritative if delivery or
+processing never completes. Setup deadlines use the existing terminal setup-failure path;
+runtime Garbler/Emulator deadlines use the existing durable retry/backoff and `JobFailed`
+reporting path. ZKP deadlines terminally fail the request, persist the timeout reason, and notify
+the saved requester with `ProofGenerationError`.
 Operator-driven discard is implemented for unresolved runtime Garbler and Emulator jobs
 through the authenticated L2 API route. Timeouts remain independent from dispatcher ping
 failures and liveness state.
@@ -392,9 +393,10 @@ timeout event must be a no-op after checking current setup/job state. Restarting
 must not reset elapsed deadlines or create a fresh timeout budget. A retry establishes a new
 job-attempt deadline using that job's persisted duration without changing its stable correlation id.
 
-Broker service dead letters and other explicit delivery-failure signals should feed this same
-failure-policy boundary (or accelerate the relevant deadline), rather than implementing a
-second timeout state machine.
+Broker service-send failures are observational: log them and retain the queued message, but do
+not correlate them into expected-job state. If the message remains undelivered, the already
+registered operation deadline invokes the appropriate policy. This avoids a second failure path
+and deliberately trades immediate failure detection for simpler lifecycle handling.
 
 ## Liveness control-message caveat
 
@@ -411,12 +413,10 @@ not by itself fail every pending job or setup: operation deadlines are independe
 and may differ by operation type. Liveness can inform logging, alerts, or scheduling, while the
 global timeout handler authoritatively decides when a concrete operation has expired.
 
-Outbound job dispatch can also fail into a broker dead-letter path. Peer
-outbound dead letters are handled for setup, but service/job dead letters are
-not currently correlated to jobs. Add a service send-failure/dead-letter callback that
-resolves the registered operation and invokes the same failure-policy boundary as timeout
-expiration: terminal failure for Garbler setup jobs, and durable indefinite retry with
-backoff/manual discard for Garbler runtime `Evaluate`, Emulator, and later ZKP jobs.
+Outbound peer dead letters remain setup-domain signals. Service dispatch is different: the
+broker keeps a service outbox entry until it can place it in the destination's durable inbox.
+A send failure is logged and otherwise ignored by expected-job processing. The operation timeout,
+not dispatcher liveness or a delivery callback, decides when the concrete setup/job has failed.
 
 ## Implementation plan
 
@@ -463,22 +463,21 @@ backoff/manual discard for Garbler runtime `Evaluate`, Emulator, and later ZKP j
    executions have distinct contexts; future repeatable operations must provide a new
    execution discriminator so expected-job registration and `job_done:<step>` do not
    alias executions.
-11. **Implement the global operation timeout handler.** **Complete for setup and runtime
-    Garbler/Emulator jobs:** durable typed absolute deadlines are registered for complete setup
-    processes and dispatcher attempts, processed in bounded independent transactions, and
-    cancelled atomically on completion or terminal discard. Setup expiration covers absent peer
-    messages and setup dispatcher output; runtime expiration enters existing retry/backoff
-    without failing the program and reuses the stable job id. Setup creation and runtime job
-    dispatch accept independent optional durations, with compatibility defaults of one hour and
-    900 seconds respectively. ZKP registration remains deferred until its retry/manual-discard
-    policy is implemented.
-12. **Handle service delivery dead letters** through the same operation failure-policy
-    boundary. A dead letter may trigger or accelerate the registered operation timeout, but
-    must not introduce a separate lifecycle. **Not implemented:** the broker does not yet
-    correlate service delivery failures to expected jobs.
-13. **Document liveness semantics** and decide whether recovery/down reports are
-    best effort or durable. Dispatcher liveness must remain distinct from operation timeout
-    state.
+11. **Implement the global operation timeout handler.** **Complete:** durable typed absolute
+    deadlines are registered for complete setup processes and dispatcher attempts, processed in
+    bounded independent transactions, and cancelled atomically on completion or terminal discard.
+    Setup expiration covers absent peer messages and setup dispatcher output; runtime expiration
+    enters existing retry/backoff without failing the program and reuses the stable job id; ZKP
+    expiration terminally fails and notifies the requester. Compatibility defaults are one hour
+    for setup and 900 seconds for dispatcher execution.
+12. **Use operation deadlines for service delivery failure.** **Complete by policy:** service
+    send failures are logged and retained by the broker but do not mutate expected-job state or
+    accelerate its deadline. If delivery never completes, the durable operation timeout invokes
+    the same setup-terminal, runtime-retry, or ZKP-terminal policy without another correlation or
+    settlement mechanism.
+13. **Document liveness semantics.** **Complete:** dispatcher down/recovery reports are best-effort,
+    observational node-health information. They do not change setup or expected-job state;
+    operation deadlines are authoritative.
 
 ## Required tests
 
@@ -511,10 +510,9 @@ backoff/manual discard for Garbler runtime `Evaluate`, Emulator, and later ZKP j
 13. A job-execution deadline applies the documented setup-terminal or runtime-retry policy,
     reusing the same stable job correlation id; completion/discard cancels the deadline and a
     stale expiration is a no-op.
-14. A correlated service dead letter feeds the same failure-policy boundary as expiration.
-15. A missed dispatcher Pong reports node health but does not directly fail unrelated jobs or
+14. A missed dispatcher Pong reports node health but does not directly fail unrelated jobs or
     setups.
-16. A commit failure after a Pong is fatal, preserving the in-memory-state safety assumption.
+15. A commit failure after a Pong is fatal, preserving the in-memory-state safety assumption.
 
 ## Core invariant
 
