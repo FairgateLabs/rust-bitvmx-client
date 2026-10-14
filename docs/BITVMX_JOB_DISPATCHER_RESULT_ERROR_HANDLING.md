@@ -124,8 +124,11 @@ rolled back before terminal state is recorded. `JobFailed` records the expected 
 retry-pending and emits a scoped notification, but never changes a ready program to
 `ProgramState::Failed`.
 
-Service delivery failure handling and finer-grained runtime-job recovery are still
-unresolved. Garbler and Emulator output is now classified through the dedicated
+Service delivery failure handling and operator-driven discard are still unresolved.
+Runtime Garbler and Emulator failures now retain the exact serialized dispatch envelope
+and destination, record durable exponential-backoff metadata, and are redispatched with
+the same correlation id by the main loop. Garbler and Emulator output is classified
+through the dedicated
 `DispatcherResultError` type: malformed or semantically invalid setup output and
 inaccessible declared artifacts terminate setup through the rollback-then-settle path;
 runtime output explicitly classified as malformed or semantically invalid moves the
@@ -159,14 +162,14 @@ The intended policy is dispatcher-specific:
   recorded here for future work and must not be implemented as part of the current ID
   work.
 
-Indefinite retry must be durable and must not retain the failed result at the front of
-shared inbox. Expected-job state therefore needs retry metadata and the dispatched job
-payload (or enough information to reconstruct it), plus an explicit operator discard
-operation. A retry reuses the same unique job correlation id; creating a fresh id for
+Indefinite retry is durable and does not retain the failed result at the front of the
+shared inbox. Expected-job state retains exponential-backoff metadata and the exact
+dispatched job payload and destination. An explicit operator discard operation is still
+needed. A retry reuses the same unique job correlation id; creating a fresh id for
 each retry would allow delayed results to affect the wrong execution.
 
-Remaining expected-job work also includes an iterable retry index and retention/cleanup
-for terminal records. Program dispatch call sites now pass the dispatcher explicitly
+Expected jobs now maintain an iterable retry index; remaining work includes
+retention/cleanup for terminal records. Program dispatch call sites pass the dispatcher explicitly
 instead of inferring it by comparing destination identities. The expected-job status is
 the transport correlation/deduplication gate; existing protocol `job_done` markers
 remain a domain-level effect guard.
@@ -323,8 +326,9 @@ transaction as inbox consumption.
 For failed runtime jobs, keep the protocol and owning program active. Consume and
 report the failed attempt atomically, then durably retry the same expected job with
 backoff until success or explicit operator discard. The current implementation records
-`RetryPending` and reports the failed attempt but still lacks the retry scheduler and
-manual-discard operation.
+`RetryPending`, reports the failed attempt, and redispatches the retained envelope with
+exponential backoff; it still lacks the manual-discard operation and delivery-timeout
+correlation.
 
 For ZKP:
 
@@ -406,6 +410,9 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
    alias executions.
 11. **Handle service delivery dead letters/timeouts** through expected-job state
     and the dispatcher-specific terminal-or-indefinite-retry policy documented above.
+    **Partial:** result failures now durably schedule and redispatch the same envelope
+    with exponential backoff. Broker delivery failures and liveness timeouts are not yet
+    correlated to expected jobs, and explicit operator discard is still missing.
 12. **Document liveness semantics** and decide whether recovery/down reports are
     best effort or durable.
 

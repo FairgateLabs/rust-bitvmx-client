@@ -208,7 +208,7 @@ pub enum ErrorReportKind {
     },
     JobDispatcherUnresponsive(JobDispatcherType),
     JobDispatcherRecovered(JobDispatcherType),
-    /// Terminal runtime-job failure. The owning program is no longer driven.
+    /// A runtime-job attempt failed and entered durable retry; the program stays active.
     JobFailed {
         job_id: String,
         dispatcher: JobDispatcherType,

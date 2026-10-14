@@ -1237,6 +1237,19 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             // Failed work stays pending; do not count a failed phase as idle.
             let mut had_work = false;
 
+            had_work |= Self::measure_time("dispatcher retries", || {
+                self.run_step("dispatcher retries", |this| {
+                    Self::run_transaction(&store, || {
+                        Ok(this
+                            .program_context
+                            .expected_jobs
+                            .redispatch_due(&this.program_context.broker_channel)?
+                            > 0)
+                    })
+                })
+            })?
+            .unwrap_or(true);
+
             had_work |= Self::measure_time("programs", || {
                 self.run_step("programs", Self::process_programs)
             })?
