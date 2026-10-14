@@ -572,6 +572,61 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
+    fn discard_dispatcher_job(
+        &mut self,
+        requester: &Identifier,
+        request_id: Uuid,
+        job_id: String,
+        reason: String,
+    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
+        use crate::expected_job::{ExpectedJobKind, ExpectedJobStatus};
+
+        if requester != &self.config.components.l2 {
+            return Ok(Self::api_error(
+                request_id,
+                "Only the configured L2 operator may discard dispatcher jobs".to_string(),
+            ));
+        }
+
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Ok(Self::api_error(
+                request_id,
+                "A dispatcher job discard reason is required".to_string(),
+            ));
+        }
+
+        let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
+            return Ok(Self::api_error(
+                request_id,
+                format!("Dispatcher job '{job_id}' was not found"),
+            ));
+        };
+        if job.kind != ExpectedJobKind::Program {
+            return Ok(Self::api_error(
+                request_id,
+                format!("Dispatcher job '{job_id}' is not a runtime program job"),
+            ));
+        }
+
+        match job.status {
+            ExpectedJobStatus::Pending | ExpectedJobStatus::RetryPending(_) => {
+                self.program_context
+                    .expected_jobs
+                    .discard(&job_id, reason.to_string())?;
+                info!("Operator discarded dispatcher job '{}': {}", job_id, reason);
+                Ok(OutgoingBitVMXApiMessages::JobDiscarded(request_id, job_id))
+            }
+            ExpectedJobStatus::Discarded(_) => {
+                Ok(OutgoingBitVMXApiMessages::JobDiscarded(request_id, job_id))
+            }
+            status => Ok(Self::api_error(
+                request_id,
+                format!("Dispatcher job '{job_id}' cannot be discarded from status {status:?}"),
+            )),
+        }
+    }
+
     fn get_zkp_execution_result(
         &mut self,
         id: Uuid,
@@ -1034,6 +1089,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                     self.get_zkp_execution_result(id).map(Some)
                 }
+                IncomingBitVMXApiMessages::DiscardDispatcherJob(id, job_id, reason) => self
+                    .discard_dispatcher_job(&from, id, job_id, reason)
+                    .map(Some),
                 IncomingBitVMXApiMessages::Encrypt(id, message, public_key) => {
                     self.encrypt_message(id, message, public_key).map(Some)
                 }
@@ -1723,6 +1781,105 @@ mod tests {
             .unwrap();
         assert_eq!(execution.requester(), &env.bitvmx.config.components.l2);
         assert!(execution.into_output().is_none());
+    }
+
+    #[test]
+    fn operator_can_idempotently_discard_a_retrying_runtime_job() {
+        let mut env = TestBitVMXEnv::new("api-discard-dispatcher-job").unwrap();
+        let job_id = Context::ProgramStep(Uuid::new_v4(), "execute-round-1".to_string())
+            .to_string()
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(job_id.clone(), JobDispatcherType::Emulator)
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .retry_pending(&job_id, "emulator failed".to_string())
+            .unwrap();
+
+        let first_request = Uuid::new_v4();
+        let second_request = Uuid::new_v4();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::DiscardDispatcherJob(
+                first_request,
+                job_id.clone(),
+                "operator intervention".to_string(),
+            ),
+        )
+        .unwrap();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::DiscardDispatcherJob(
+                second_request,
+                job_id.clone(),
+                "repeated request".to_string(),
+            ),
+        )
+        .unwrap();
+
+        let replies = api_replies(&mut env.bitvmx);
+        assert!(matches!(
+            &replies[0],
+            OutgoingBitVMXApiMessages::JobDiscarded(id, discarded) if *id == first_request && discarded == &job_id
+        ));
+        assert!(matches!(
+            &replies[1],
+            OutgoingBitVMXApiMessages::JobDiscarded(id, discarded) if *id == second_request && discarded == &job_id
+        ));
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&job_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            crate::expected_job::ExpectedJobStatus::Discarded(ref reason)
+                if reason == "operator intervention"
+        ));
+    }
+
+    #[test]
+    fn discard_dispatcher_job_rejects_non_runtime_jobs() {
+        let mut env = TestBitVMXEnv::new("api-discard-non-runtime-job").unwrap();
+        let job_id = Uuid::new_v4().to_string();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(job_id.clone(), JobDispatcherType::ZKP)
+            .unwrap();
+        let request_id = Uuid::new_v4();
+
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::DiscardDispatcherJob(
+                request_id,
+                job_id.clone(),
+                "not needed".to_string(),
+            ),
+        )
+        .unwrap();
+
+        let replies = api_replies(&mut env.bitvmx);
+        assert!(matches!(
+            &replies[0],
+            OutgoingBitVMXApiMessages::ApiError(id, message)
+                if *id == request_id && message.contains("not a runtime program job")
+        ));
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&job_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            crate::expected_job::ExpectedJobStatus::Pending
+        ));
     }
 
     #[test]

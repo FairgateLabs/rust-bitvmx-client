@@ -7,6 +7,11 @@ introduce breaking changes between versions.
 
 ### Changed
 
+- Added `DiscardDispatcherJob(request_id, job_id, reason)`, available to the configured L2 operator,
+  to stop automatic retries for unresolved runtime Garbler and Emulator jobs. Successful and
+  repeated idempotent requests return `JobDiscarded(request_id, job_id)`; unsupported job types or
+  states return `ApiError(request_id, error)`.
+
 ## 0.8.7
 
 - Following [rust-bitvmx-storage-backend change `87f690e`](https://github.com/FairgateLabs/rust-bitvmx-storage-backend/commit/87f690e866bdea521dafdb7ed8b37044fc12df6a),

@@ -148,6 +148,8 @@ pub enum IncomingBitVMXApiMessages {
     GenerateZKP(Uuid, Vec<u8>, String),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
+    /// Stops automatic retries for an unresolved runtime dispatcher job.
+    DiscardDispatcherJob(Uuid, String, String), // request id, job id, reason
     Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>, String),
     #[serde(skip)]
@@ -300,6 +302,7 @@ pub enum OutgoingBitVMXApiMessages {
     ProofReady(Uuid),
     ProofNotReady(Uuid),
     ProofGenerationError(Uuid, String),
+    JobDiscarded(Uuid, String), // request id, job id
     SPVProof(Txid, Option<BtcTxSPVProof>),
     Encrypted(Uuid, Vec<u8>),
     Decrypted(Uuid, Vec<u8>),
@@ -466,6 +469,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::ProofGenerationError(_, _) => {
                 "ProofGenerationError".to_string()
             }
+            OutgoingBitVMXApiMessages::JobDiscarded(_, _) => "JobDiscarded".to_string(),
             OutgoingBitVMXApiMessages::SPVProof(_, _) => "SPVProof".to_string(),
             OutgoingBitVMXApiMessages::BackupResult(_, _, _) => "BackupResult".to_string(),
             OutgoingBitVMXApiMessages::Encrypted(_, _) => "Encrypted".to_string(),

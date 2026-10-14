@@ -95,6 +95,7 @@ This table shows the mapping between request messages and their expected respons
 | `GetWitness(uuid, address)` | `Witness(uuid, key, witness)` or `NotFound(uuid, key)` | Get witness data |
 | `GetHashedMessage(uuid, name, vout, leaf)` | `HashedMessage(uuid, name, vout, leaf, _)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get hashed message; returns `NotFound` when the program is absent and `ApiError` for non-fatal lookup failures |
 | `GetProtocolVisualization(uuid)` | `ProtocolVisualization(uuid, visualization)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get protocol visualization; returns `NotFound` when the program is absent and `ApiError` for non-fatal visualization failures |
+| `DiscardDispatcherJob(uuid, job_id, reason)` | `JobDiscarded(uuid, job_id)` or `ApiError(uuid, error)` | The configured L2 operator stops automatic retries for an unresolved runtime Garbler/Emulator job. Repeated discard is idempotent; setup and ZKP jobs cannot be discarded through this operation. |
 
 #### Transaction Management
 
@@ -192,7 +193,7 @@ A `Request`-scoped report is delivered to whoever issued that request, not to L2
 | `SetupFailed { step, peer, reason }` | A setup cannot complete. Terminal: no further messages for that program, and its id cannot be reused. |
 | `JobDispatcherUnresponsive(which)` | A job dispatcher stopped answering pings within the timeout. It may be gone, or far enough behind on its inbox to look that way, so treat it as a warning about job progress rather than proof the process died. |
 | `JobDispatcherRecovered(which)` | That dispatcher is answering again. |
-| `JobFailed { job_id, dispatcher }` | A dispatcher declared a runtime attempt failed. The program remains active and the job is retained as retry-pending; `detail` contains the reason. Automatic redispatch/manual discard is tracked separately. |
+| `JobFailed { job_id, dispatcher }` | A dispatcher declared a runtime attempt failed. The program remains active and the job is retained for automatic redispatch; `detail` contains the reason. Use `DiscardDispatcherJob` to stop retries explicitly. |
 | `BitcoinRpcUnavailable` | The bitcoin node is unreachable. The client keeps running and retrying. |
 | `BitcoinRpcRecovered` | The bitcoin node is reachable again. |
 | `Fatal` | The client cannot continue and is exiting — storage or the message broker failed. Best-effort: it may not arrive. |
