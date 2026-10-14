@@ -1555,6 +1555,50 @@ mod tests {
     }
 
     #[test]
+    fn terminal_zkp_output_remains_queryable_after_facility_reconstruction() {
+        let mut env = TestBitVMXEnv::new("api-zkp-terminal-history").unwrap();
+        let id = Uuid::new_v4();
+        let job_id = id.to_string();
+        let store = env.bitvmx.store.clone();
+
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(job_id.clone(), JobDispatcherType::ZKP)
+            .unwrap();
+        env.bitvmx
+            .store
+            .set(
+                StoreKey::ZKPExecution(id).get_key().unwrap(),
+                ZKPExecution::with_output(
+                    env.bitvmx.config.components.l2.clone(),
+                    vec![1, 2],
+                    vec![3, 4],
+                ),
+                None,
+            )
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .complete(&env.bitvmx.program_context.operation_timeouts, &job_id)
+            .unwrap();
+
+        // Recreate the storage-backed facilities as a restart would. Both the
+        // terminal transport record and its associated domain output remain.
+        env.bitvmx.program_context.expected_jobs =
+            crate::expected_job::ExpectedJobs::new(store.clone());
+        env.bitvmx.program_context.operation_timeouts =
+            crate::operation_timeout::OperationTimeouts::new(store);
+
+        assert!(matches!(
+            env.bitvmx.get_zkp_execution_result(id).unwrap(),
+            OutgoingBitVMXApiMessages::ZKPResult(response_id, seal, journal)
+                if response_id == id && seal == vec![1, 2] && journal == vec![3, 4]
+        ));
+    }
+
+    #[test]
     fn key_crypto_and_aggregated_key_responses_cover_success_and_validation() {
         let mut env = TestBitVMXEnv::new("api-key-operations").unwrap();
         let id = Uuid::new_v4();

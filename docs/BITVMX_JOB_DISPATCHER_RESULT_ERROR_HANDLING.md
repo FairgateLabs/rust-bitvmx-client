@@ -46,7 +46,8 @@ Important current gaps are:
    missing correlation state as a retryable generic format error;
 6. Garbler and Emulator support at-least-once deduplication in some paths, but
    source/context compatibility is not enforced centrally.
-7. terminal expected-job records do not yet have a retention/cleanup policy.
+7. terminal expected-job records are deliberately retained indefinitely so delayed
+   results remain deduplicated and job history remains available for diagnosis.
 
 ## Implementation status
 
@@ -171,9 +172,12 @@ creating a fresh id for each retry would allow delayed results to affect the wro
 Expected jobs now maintain an iterable retry index, and the API exposes an idempotent
 `DiscardDispatcherJob` operation for unresolved runtime Garbler/Emulator jobs. Discard marks
 the expected job terminal so delayed results are consumed as duplicates and future retries stop;
-setup and ZKP jobs are deliberately excluded under their current policies. Remaining work includes
-retention/cleanup for terminal records. Program dispatch call sites pass the dispatcher explicitly
-instead of inferring it by comparing destination identities. The expected-job status is
+setup and ZKP jobs are deliberately excluded under their current policies. Terminal expected-job
+records and ZKP output are retained in durable storage; the online client does not delete historical
+job data. If storage growth eventually requires cleanup, implement a separately invoked offline
+maintenance procedure that runs only after a verified database backup and preserves referential
+consistency between expected-job and ZKP domain records. Program dispatch call sites pass the
+dispatcher explicitly instead of inferring it by comparing destination identities. The expected-job status is
 the transport correlation/deduplication gate; existing protocol `job_done` markers
 remain a domain-level effect guard.
 
@@ -478,6 +482,10 @@ not dispatcher liveness or a delivery callback, decides when the concrete setup/
 13. **Document liveness semantics.** **Complete:** dispatcher down/recovery reports are best-effort,
     observational node-health information. They do not change setup or expected-job state;
     operation deadlines are authoritative.
+14. **Keep terminal expected-job history.** **Policy complete; no online cleanup planned:** completed,
+    failed, and discarded jobs and their ZKP domain output remain in durable storage indefinitely.
+    If cleanup becomes operationally necessary, design an offline maintenance procedure that requires
+    a verified database backup before deleting records; do not add automatic deletion to the main loop.
 
 ## Required tests
 
@@ -513,6 +521,8 @@ not dispatcher liveness or a delivery callback, decides when the concrete setup/
 14. A missed dispatcher Pong reports node health but does not directly fail unrelated jobs or
     setups.
 15. A commit failure after a Pong is fatal, preserving the in-memory-state safety assumption.
+16. Terminal expected jobs and associated domain data remain available indefinitely; the running
+    client never removes them automatically.
 
 ## Core invariant
 

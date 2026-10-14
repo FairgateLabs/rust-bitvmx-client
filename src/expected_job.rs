@@ -430,6 +430,48 @@ mod tests {
     }
 
     #[test]
+    fn terminal_job_history_survives_facility_reconstruction() {
+        let dir = TestStorageDir::new("expected-job-terminal-history");
+        let storage = dir.storage();
+        let jobs = expected_jobs(storage.clone());
+        let completed = Uuid::new_v4().to_string();
+        let failed = Uuid::new_v4().to_string();
+        let discarded = Context::ProgramStep(Uuid::new_v4(), "execute-round-1".to_string())
+            .to_string()
+            .unwrap();
+
+        jobs.register(completed.clone(), JobDispatcherType::ZKP)
+            .unwrap();
+        jobs.register(failed.clone(), JobDispatcherType::ZKP)
+            .unwrap();
+        jobs.register(discarded.clone(), JobDispatcherType::Emulator)
+            .unwrap();
+        let timeouts = OperationTimeouts::new(storage.clone());
+        jobs.complete(&timeouts, &completed).unwrap();
+        jobs.fail(&timeouts, &failed, "prover failed".to_string())
+            .unwrap();
+        jobs.discard(&timeouts, &discarded, "operator discarded".to_string())
+            .unwrap();
+
+        // Reconstructing the online facility models a restart. Terminal records
+        // remain the durable deduplication and diagnostic history; no online
+        // maintenance path removes them.
+        let restarted = expected_jobs(storage);
+        assert!(matches!(
+            restarted.get(&completed).unwrap().unwrap().status,
+            ExpectedJobStatus::Completed
+        ));
+        assert!(matches!(
+            restarted.get(&failed).unwrap().unwrap().status,
+            ExpectedJobStatus::Failed(ref reason) if reason == "prover failed"
+        ));
+        assert!(matches!(
+            restarted.get(&discarded).unwrap().unwrap().status,
+            ExpectedJobStatus::Discarded(ref reason) if reason == "operator discarded"
+        ));
+    }
+
+    #[test]
     fn updating_an_unknown_job_is_an_error() {
         let dir = TestStorageDir::new("unknown-expected-job");
         let storage = dir.storage();
