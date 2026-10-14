@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Changed
 
+- Pass the new optional setup timeout through Union setup requests. Existing flows use `None`
+  (the one-hour compatibility default); production deployments must select timeouts appropriate
+  to each protocol operation.
 - Resolve challenge transaction IDs directly from the protocol graph without collecting signatures.
 - Store `PacketSettings` directly in each `Committee`, including peg-in, peg-out, and reject peg-in confirmation counts.
 - Read Union protocol confirmation and timelock settings from the committee instead of global `UnionSettings`.

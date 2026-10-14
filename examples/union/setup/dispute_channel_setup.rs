@@ -307,7 +307,7 @@ impl DisputeChannelSetup {
             VariableTypes::String(serde_json::to_string(&dispute_configuration)?),
         )?;
 
-        bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0)?;
+        bitvmx.setup(drp_id, PROGRAM_TYPE_DRP.to_string(), participants, 0, None)?;
 
         Ok(())
     }

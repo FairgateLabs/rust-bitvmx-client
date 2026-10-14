@@ -43,6 +43,7 @@ impl FullPenalizationSetup {
             PROGRAM_TYPE_FULL_PENALIZATION.to_string(),
             addresses.to_vec(),
             0,
+            None,
         )?;
 
         Ok(())

@@ -50,6 +50,9 @@ pub enum BitVMXError {
     #[error("Poisoned lock error: {0}")]
     PoisonedLockError(String),
 
+    #[error("Failed to roll back transaction: {0}")]
+    TransactionRollbackError(#[source] StorageError),
+
     #[error("Problem creating directory {0}: {1}")]
     DirectoryCreationError(String, std::io::Error),
 
@@ -102,8 +105,8 @@ pub enum BitVMXError {
         program_id: String,
     },
 
-    #[error("Missing verification key for sender {peer}. Known keys: {known_count}")]
-    MissingVerificationKey { peer: String, known_count: usize },
+    #[error("Missing verification key for sender {peer}")]
+    MissingVerificationKey { peer: String },
 
     #[error("Participant key '{name}' not found (expected {expected_type})")]
     ParticipantKeyNotFound {
@@ -161,11 +164,26 @@ pub enum BitVMXError {
     #[error("Program already exists: {0}")]
     ProgramAlreadyExists(Uuid),
 
+    #[error("Setup attempt failed for program {program_id}: {source}")]
+    SetupAttemptFailed {
+        program_id: Uuid,
+        peer: Option<bitvmx_broker::identification::identifier::PubkHash>,
+        #[source]
+        source: Box<BitVMXError>,
+    },
+
+    /// Internal transaction-boundary signal. The failed result attempt must be rolled
+    /// back before the expected job is moved to its durable retry state.
+    #[error("Runtime dispatcher job {job_id} failed for program {program_id}: {reason}")]
+    RuntimeJobAttemptFailed {
+        program_id: Uuid,
+        expected_job_id: String,
+        job_id: String,
+        reason: String,
+    },
+
     #[error("Program {0} is not ready to run. Please install it first.")]
     ProgramNotReady(Uuid),
-
-    #[error("Cannot find program with id {0}")]
-    ProgramNotFound(Uuid),
 
     #[error("Cannot find protocol with name {0}")]
     ProtocolNotFound(String),
@@ -188,9 +206,6 @@ pub enum BitVMXError {
     #[error("Execution error: {0}")]
     ExecutionError(#[from] emulator::ExecutionResult),
 
-    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
-    InconsistentZKPData(Uuid),
-
     /* =========================
      * Witness / Merkle / Scripts
      * ========================= */
@@ -200,8 +215,8 @@ pub enum BitVMXError {
     #[error("Invalid witness: {0:?}")]
     InvalidWitness(Witness),
 
-    #[error("Invalid merkle tree")]
-    InvalidMerkleTree,
+    #[error("SPV proof error: {0}")]
+    SPVError(#[from] crate::spv_proof::SPVError),
 
     #[error("Script not found for program id {0}")]
     ScriptNotFound(Uuid),
@@ -217,6 +232,9 @@ pub enum BitVMXError {
      * ========================= */
     #[error("Job type error {0}")]
     DispatcherError(#[from] DispatcherError),
+
+    #[error("Dispatcher result error: {0}")]
+    DispatcherResultError(#[from] DispatcherResultError),
 
     #[error("Job Dispatcher {0} is not responding")]
     JobDispatcherNotResponding(String),
@@ -271,9 +289,6 @@ pub enum BitVMXError {
 
     #[error("Invalid transaction status {0}")]
     InvalidTransactionStatus(String),
-
-    #[error("Transaction not found in block")]
-    TransactionNotFoundInBlock,
 
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,
@@ -356,11 +371,25 @@ pub enum BitVMXError {
     #[error("Rom data {0} not found")]
     RomDataNotFound(u32),
 
-    #[error("Instruction {0} not found")]
-    InstructionNotFound(String),
-
     #[error("Not found {0}")]
     NotFound(String),
+}
+
+/// A permanent failure attributable to an authenticated dispatcher's result.
+///
+/// Producers must create this error explicitly. Local storage, broker, key-manager,
+/// and other infrastructure failures continue to use their ordinary `BitVMXError`
+/// variants and therefore remain retryable at the dispatcher ingress boundary.
+#[derive(Error, Debug)]
+pub enum DispatcherResultError {
+    #[error("dispatcher reported job failure: {0}")]
+    DeclaredFailure(String),
+
+    #[error("invalid dispatcher output: {0}")]
+    InvalidOutput(String),
+
+    #[error("could not read declared dispatcher artifact '{path}': {details}")]
+    MissingArtifact { path: String, details: String },
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {
@@ -418,9 +447,6 @@ pub enum ProgramError {
 
     #[error("Error loading Program: {0}")]
     LoadError(#[from] StorageError),
-
-    #[error("Program not found in storage. Program id: {0}")]
-    ProgramNotFound(Uuid),
 
     #[error("Storage unavailable")]
     StorageUnavailable,

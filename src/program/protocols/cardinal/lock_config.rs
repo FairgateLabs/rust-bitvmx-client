@@ -102,6 +102,7 @@ impl LockProtocolConfiguration {
                 PROGRAM_TYPE_LOCK.to_string(),
                 addresses,
                 leader,
+                None,
             )
             .to_string()?,
         ])

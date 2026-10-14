@@ -53,7 +53,7 @@ impl RawPeer {
             config.broker.settings.clone(),
         )?;
 
-        let address = CommsAddress::new(node.get_address(), node.get_pubk_hash()?);
+        let address = CommsAddress::new(node.get_address(), node.get_pubk_hash());
         info!("Raw peer listening as {:?}", address);
         Ok(Self { node, address })
     }
@@ -91,7 +91,7 @@ impl RawPeer {
         let mut heard = false;
         for message in self.node.check_receive(None)? {
             let ReceivedMessage::Msg(_, raw) = message;
-            if let Ok((_, msg_type, id, _, _, _)) = deserialize_msg(raw, 200000) {
+            if let Ok((_, msg_type, id, _, _, _)) = deserialize_msg(&raw, 200000) {
                 info!("Raw peer received {:?} for program {}", msg_type, id);
                 heard |= id == *program_id;
             }
@@ -143,6 +143,7 @@ fn start_program(
             vec![me, peer.address.clone()],
             None,
             leader,
+            None,
         )
         .to_string()?,
     )?;

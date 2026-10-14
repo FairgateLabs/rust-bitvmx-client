@@ -3,8 +3,6 @@ use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_scriptexec::scriptint_vec;
-use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
 use bitvmx_job_dispatcher::dispatcher_message::DispatcherMessage;
 use console::style;
 use enum_dispatch::enum_dispatch;
@@ -20,7 +18,7 @@ use protocol_builder::types::{InputArgs, OutputType, Utxo};
 use protocol_builder::{builder::Protocol, errors::ProtocolBuilderError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 use storage_backend::error::StorageError;
 use storage_backend::storage::Storage;
 use tracing::{error, info};
@@ -60,7 +58,8 @@ use crate::types::{
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
 use crate::types::{
-    ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP, PROGRAM_TYPE_GC_GENERATION,
+    JobDispatcherType, ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP,
+    PROGRAM_TYPE_GC_GENERATION,
 };
 
 use crate::program::setup::steps::SetupStepName;
@@ -1024,16 +1023,32 @@ pub trait ProtocolHandler {
     fn execute_job<J: Serialize + DispatcherMessage, BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &ProgramContext<BC>,
-        dest: &Identifier,
+        dispatcher: JobDispatcherType,
         job_type: J,
         step: &str,
+        execution_timeout: Option<Duration>,
     ) -> Result<(), BitVMXError> {
-        let msg = serde_json::to_string(&DispatcherJob {
-            job_id: Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
-            job_type: job_type,
-        })?;
-        program_context.broker_channel.send_service(dest, msg)?;
-        Ok(())
+        let destination = match dispatcher {
+            JobDispatcherType::Garbler => &program_context.components_config.garbler,
+            JobDispatcherType::Emulator => &program_context.components_config.emulator,
+            JobDispatcherType::ZKP => {
+                return Err(BitVMXError::InvalidParameter(
+                    "ZKP is not a program dispatcher".to_string(),
+                ))
+            }
+        };
+        program_context
+            .expected_jobs
+            .send_dispatcher_job(
+                &program_context.operation_timeouts,
+                &program_context.broker_channel,
+                dispatcher,
+                destination,
+                Context::ProgramStep(self.context().id, step.to_string()).to_string()?,
+                job_type,
+                execution_timeout,
+            )
+            .map(|_| ())
     }
 }
 
@@ -1182,7 +1197,7 @@ pub fn new_protocol_type(
     my_idx: usize,
     storage: Rc<Storage>,
 ) -> Result<ProtocolType, BitVMXError> {
-     // Also used as musig2's session id, which must be a single StorageKey
+    // Also used as musig2's session id, which must be a single StorageKey
     // segment, so `_` rather than `/`.
     let protocol_name = format!("{}_{}", name, id);
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);

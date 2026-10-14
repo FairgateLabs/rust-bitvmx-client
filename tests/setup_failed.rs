@@ -46,6 +46,7 @@ fn undeliverable_setup_message_is_reported_to_l2() -> Result<()> {
             vec![address, absent],
             None,
             1, // leader index
+            None,
         )
         .to_string()?,
     )?;

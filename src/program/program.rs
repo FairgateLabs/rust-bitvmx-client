@@ -7,18 +7,19 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    error_handling::{classify, send_error_report, Severity},
-    errors::{BitVMXError, ProgramError},
+    error_handling::{classify, try_send_error_report, Severity},
+    errors::{BitVMXError, DispatcherResultError, ProgramError},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
-        setup::{SetupEngine, SetupEngineState, StepState},
+        setup::{SetupEngine, SetupEngineState, SetupMessageState, StepState},
         state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
     types::{
-        ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType, MessageDisposition,
-        OutgoingBitVMXApiMessages, ProgramContext, SetupFailureReason,
+        DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport, ErrorReportKind,
+        ErrorScope, JobDispatcherType, MessageDisposition, NoOpReason, OutgoingBitVMXApiMessages,
+        ProgramContext, RetryReason, SetupFailureReason,
     },
 };
 use bitcoin::{Transaction, Txid};
@@ -26,7 +27,7 @@ use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 use storage_backend::{
     error::StorageError,
     key::StorageKey,
@@ -102,6 +103,30 @@ impl Program {
         Ok(())
     }
 
+    pub(crate) fn is_failed(&self) -> bool {
+        self.state == ProgramState::Failed
+    }
+
+    fn is_setup_complete(&self) -> bool {
+        self.state == ProgramState::Ready
+    }
+
+    fn is_stale_setup_result(&self, context: &Context) -> bool {
+        self.is_setup_complete() && matches!(context, Context::SetupStep(_, _, _, _))
+    }
+
+    /// Returns the no-op disposition for terminal setup states.
+    ///
+    /// This is used at the peer-input boundary before authentication or payload
+    /// processing so stale messages cannot mutate protocol or verification-key state.
+    pub(crate) fn peer_message_lifecycle_disposition(&self) -> Option<MessageDisposition> {
+        match self.state {
+            ProgramState::Ready => Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)),
+            ProgramState::Failed => Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)),
+            ProgramState::SettingUp | ProgramState::WaitingData => None,
+        }
+    }
+
     /// Reports an unrecoverable setup failure to the L2 channel and marks the program dead.
     /// Once the program is `Failed`, later calls do nothing.
     pub(crate) fn fail_setup<BC: BitcoinCoordinatorApi>(
@@ -129,8 +154,11 @@ impl Program {
 
         self.state = ProgramState::Failed;
         self.save()?;
+        program_context
+            .operation_timeouts
+            .cancel_setup(self.program_id)?;
 
-        send_error_report(
+        try_send_error_report(
             &program_context.broker_channel,
             &program_context.components_config.l2,
             ErrorReport::new(
@@ -142,7 +170,7 @@ impl Program {
                 },
                 None,
             ),
-        );
+        )?;
 
         info!(
             "Program: Sent SetupFailed for program {} at step '{}' (peer: {:?}): {:?}",
@@ -174,6 +202,7 @@ impl Program {
         program_type: &str,
         peers: Vec<CommsAddress>,
         leader: usize,
+        setup_timeout: Option<Duration>,
         context: &mut ProgramContext<BC>,
         storage: Rc<Storage>,
     ) -> Result<(), BitVMXError> {
@@ -190,7 +219,7 @@ impl Program {
             return Err(BitVMXError::InvalidMessageFormat);
         }
 
-        let my_pubkey_hash = context.comms.get_pubk_hash()?;
+        let my_pubkey_hash = context.comms.get_pubk_hash();
 
         let my_idx = peers
             .iter()
@@ -230,18 +259,24 @@ impl Program {
             storage: Some(storage.clone()),
         };
 
-        // Save the initial program and its separately serialized state.
+        // Save the program and its overall setup deadline together in the caller's
+        // transaction. Replayed setup requests do not renew the original budget.
         program.save()?;
+        context
+            .operation_timeouts
+            .register_setup(program_id, setup_timeout)?;
 
-        info!("Program: Setup complete for program {}", program_id);
+        info!("Program: Setup initialized for program {}", program_id);
         Ok(())
     }
 
-    /// Loads a Program from storage
-    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Self, BitVMXError> {
-        let mut program: Program = storage
-            .get(Self::key_program(program_id)?, None)?
-            .ok_or(BitVMXError::ProgramNotFound(*program_id))?;
+    /// Loads a program from storage, returning `None` when it does not exist.
+    pub fn load(storage: Rc<Storage>, program_id: &Uuid) -> Result<Option<Self>, BitVMXError> {
+        let Some(mut program): Option<Program> =
+            storage.get(Self::key_program(program_id)?, None)?
+        else {
+            return Ok(None);
+        };
 
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage.clone());
@@ -270,7 +305,7 @@ impl Program {
             engine.restore_state(saved_state.clone())?;
         }
 
-        Ok(program)
+        Ok(Some(program))
     }
 
     /// Saves the program to storage
@@ -315,7 +350,7 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
+            Err(e) if !self.is_setup_complete() => {
                 self.handle_setup_error(e, None, program_context)
             }
             other => other,
@@ -375,6 +410,9 @@ impl Program {
                     self.protocol.setup_complete(&program_context)?;
                     self.start_monitoring(program_context)?;
                     self.state = ProgramState::Ready;
+                    program_context
+                        .operation_timeouts
+                        .cancel_setup(self.program_id)?;
                     state_changed = true;
                     info!("Program: Setup finalized, transitioning to Ready state");
                 }
@@ -397,14 +435,13 @@ impl Program {
         Ok(())
     }
 
-    /// Decides what a setup-phase failure means for this program. A fatal error is handed
-    /// back to the caller, the only layer that can act on it. Everything else fails the
-    /// setup, except a bitcoin outage, which is left to retry.
+    /// Returns errors without persisting partial setup state. Terminal failures carry
+    /// the program and peer so the caller can record failure after rolling back.
     fn handle_setup_error<BC: BitcoinCoordinatorApi>(
         &mut self,
         error: BitVMXError,
         peer: Option<PubKeyHash>,
-        program_context: &mut ProgramContext<BC>,
+        _program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match classify(&error) {
             Severity::Fatal => Err(error),
@@ -413,13 +450,13 @@ impl Program {
                     "Program {} cannot advance while bitcoin is unreachable: {:?}",
                     self.program_id, error
                 );
-                Ok(())
+                Err(error)
             }
-            Severity::Other => self.fail_setup(
+            Severity::Other => Err(BitVMXError::SetupAttemptFailed {
+                program_id: self.program_id,
                 peer,
-                SetupFailureReason::StepError(error.to_string()),
-                program_context,
-            ),
+                source: Box::new(error),
+            }),
         }
     }
 
@@ -476,8 +513,141 @@ impl Program {
         Ok(())
     }
 
+    /// Validates the authenticated dispatcher against the job context before protocol
+    /// code is invoked.
+    fn dispatcher_result_preflight(
+        &self,
+        context: &Context,
+        dispatcher: JobDispatcherType,
+    ) -> Result<Option<DispatcherResultDisposition>, BitVMXError> {
+        if self.is_failed() {
+            return Ok(Some(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::SetupFailed,
+            )));
+        }
+
+        let route_is_valid = matches!(
+            (dispatcher, context),
+            (
+                JobDispatcherType::Garbler,
+                Context::SetupStep(_, _, _, _) | Context::ProgramStep(_, _)
+            ) | (JobDispatcherType::Emulator, Context::ProgramStep(_, _))
+        );
+
+        if !route_is_valid {
+            let reason = match dispatcher {
+                JobDispatcherType::Garbler => format!(
+                    "Invalid context for Garbler result: {context:?}. Expected SetupStep or ProgramStep."
+                ),
+                JobDispatcherType::Emulator => format!(
+                    "Invalid context for Emulator result: {context:?}. Expected ProgramStep."
+                ),
+                JobDispatcherType::ZKP => format!("Unknown dispatcher type: {dispatcher:?}"),
+            };
+
+            // During setup, an attributable dispatcher protocol violation uses the existing
+            // rollback-then-settle path so no partially staged setup effects can commit.
+            if !self.is_setup_complete() {
+                return Err(BitVMXError::SetupAttemptFailed {
+                    program_id: self.program_id,
+                    peer: None,
+                    source: Box::new(BitVMXError::InvalidMessage(reason)),
+                });
+            }
+
+            let expected_job_id = context.to_string()?;
+            let job_id = match context {
+                Context::ProgramStep(_, job_id) => job_id.clone(),
+                _ => expected_job_id.clone(),
+            };
+            return Ok(Some(DispatcherResultDisposition::JobFailed {
+                program_id: self.program_id,
+                expected_job_id,
+                job_id,
+                reason,
+            }));
+        }
+
+        if self.is_stale_setup_result(context) {
+            return Ok(Some(DispatcherResultDisposition::DiscardNoOp(
+                DispatcherNoOpReason::Stale,
+            )));
+        }
+
+        Ok(None)
+    }
+
+    /// Converts only errors attributable to dispatcher output into terminal setup
+    /// failures. Infrastructure errors must escape unchanged so the inbox transaction
+    /// rolls back and can be retried.
+    fn handle_setup_dispatcher_error(
+        &self,
+        error: BitVMXError,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        if matches!(&error, BitVMXError::DispatcherResultError(_)) {
+            Err(BitVMXError::SetupAttemptFailed {
+                program_id: self.program_id,
+                peer: None,
+                source: Box::new(error),
+            })
+        } else {
+            Err(error)
+        }
+    }
+
+    /// Converts only errors attributable to dispatcher output into a transaction-boundary
+    /// signal. The inbox transaction is rolled back before the expected job is moved to
+    /// its durable retry state, so protocol mutations staged before validation cannot
+    /// accidentally commit. Local and infrastructure errors escape unchanged for normal
+    /// inbox retry. The caller has already matched `Context::ProgramStep` to reach here.
+    fn handle_runtime_dispatcher_error(
+        &self,
+        expected_job_id: String,
+        job_id: &str,
+        error: BitVMXError,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        let BitVMXError::DispatcherResultError(error) = error else {
+            return Err(error);
+        };
+        Err(BitVMXError::RuntimeJobAttemptFailed {
+            program_id: self.program_id,
+            expected_job_id,
+            job_id: job_id.to_string(),
+            reason: error.to_string(),
+        })
+    }
+
+    /// Handles a dispatcher-declared failure without attempting to decode its plain-text
+    /// result. Setup failures use the existing rollback-then-settle path; runtime failures
+    /// are recorded centrally without changing the program lifecycle.
+    pub(crate) fn receive_dispatcher_failure(
+        &self,
+        context: &Context,
+        dispatcher: JobDispatcherType,
+        reason: String,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        if let Some(disposition) = self.dispatcher_result_preflight(context, dispatcher)? {
+            return Ok(disposition);
+        }
+
+        match context {
+            Context::SetupStep(_, _, _, _) => Err(BitVMXError::SetupAttemptFailed {
+                program_id: self.program_id,
+                peer: None,
+                source: Box::new(DispatcherResultError::DeclaredFailure(reason).into()),
+            }),
+            Context::ProgramStep(_, job_id) => Ok(DispatcherResultDisposition::JobFailed {
+                program_id: self.program_id,
+                expected_job_id: context.to_string()?,
+                job_id: job_id.clone(),
+                reason,
+            }),
+            _ => unreachable!("dispatcher preflight accepted an unsupported context"),
+        }
+    }
+
     /// Receives results from job dispatchers (Garbler, Emulator).
-    /// Errors during setup are reported to L2 rather than propagated; see
+    /// Terminal setup errors request failure recording after rollback; see
     /// `handle_setup_error`.
     pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
@@ -485,44 +655,38 @@ impl Program {
         context: Context,
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        match self.receive_dispatcher_result_inner(result, context, dispatcher, program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
-                self.handle_setup_error(e, None, program_context)
-            }
-            other => other,
+    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+        if let Some(disposition) = self.dispatcher_result_preflight(&context, dispatcher)? {
+            return Ok(disposition);
+        }
+        match self.receive_dispatcher_result_inner(result, &context, dispatcher, program_context) {
+            Ok(()) => Ok(DispatcherResultDisposition::Processed),
+            Err(error) => match &context {
+                Context::SetupStep(_, _, _, _) => self.handle_setup_dispatcher_error(error),
+                Context::ProgramStep(_, job_id) => {
+                    self.handle_runtime_dispatcher_error(context.to_string()?, job_id, error)
+                }
+                _ => unreachable!("dispatcher preflight accepted an unsupported context"),
+            },
         }
     }
 
     fn receive_dispatcher_result_inner<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
-        context: Context,
+        context: &Context,
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
-        // Setup dispatcher results may be delivered more than once or arrive after
-        // setup has completed. They are no longer actionable once the program is
-        // ready and must not turn an otherwise harmless replay into a fatal tick
-        // error. ProgramStep results remain valid after setup.
-        if matches!(&context, Context::SetupStep(_, _, _, _))
-            && matches!(self.state, ProgramState::Ready)
-        {
-            debug!(
-                "Program::receive_dispatcher_result() - Ignoring setup result for ready program"
-            );
-            return Ok(());
-        }
-
         match dispatcher {
             JobDispatcherType::Garbler => {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
-                match &context {
+                match context {
                     Context::SetupStep(_, _, _, _) => {
                         if let Some(engine) = &mut self.setup_engine {
                             if engine.receive_dispatcher_result(
                                 result,
-                                &context,
+                                context,
                                 self.my_idx,
                                 &self.program_id,
                                 self.leader,
@@ -545,7 +709,7 @@ impl Program {
                         //TODO: Connect with GC DRP
                         return self.protocol.gc_drp()?.execution_result(
                             result,
-                            &context,
+                            context,
                             program_context,
                         );
                     }
@@ -559,11 +723,10 @@ impl Program {
             }
             JobDispatcherType::Emulator => {
                 debug!("Program::receive_dispatcher_result() - Received result from Emulator");
-                return self.protocol.dispute()?.execution_result(
-                    result,
-                    &context,
-                    program_context,
-                );
+                return self
+                    .protocol
+                    .dispute()?
+                    .execution_result(result, context, program_context);
             }
             _ => {
                 return Err(BitVMXError::InvalidMessage(format!(
@@ -587,16 +750,15 @@ impl Program {
         from: &PubKeyHash,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
-        // Terminal: discard rather than requeue, since a retry can only exhaust and re-report.
-        if matches!(self.state, ProgramState::Failed) {
+        // Terminal lifecycle states make all subsequent setup messages stale.
+        if self.is_failed() {
             debug!("Program::receive_setup_data() - Program setup failed, discarding message");
-            return Ok(MessageDisposition::Processed);
+            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
         }
 
-        // Only handle setup data if we're in setup state
-        if matches!(self.state, ProgramState::Ready) {
-            debug!("Program::receive_setup_data() - Not in SettingUp state, ignoring");
-            return Ok(MessageDisposition::RetryLater);
+        if self.is_setup_complete() {
+            debug!("Program::receive_setup_data() - Setup complete, discarding stale message");
+            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete));
         }
 
         // Track state changes and completion status for save/log after borrow ends
@@ -614,7 +776,10 @@ impl Program {
             )?;
             (disposition, engine.state().current_step_state.clone())
         } else {
-            (MessageDisposition::RetryLater, StepState::Completed) // Preserve the previous Ok(false) behavior.
+            (
+                MessageDisposition::RetryLater(RetryReason::SetupNotReady),
+                StepState::Completed,
+            ) // Preserve the previous Ok(false) behavior.
         };
 
         // Preserve the previous behavior: save messages reported as processed.
@@ -640,19 +805,50 @@ impl Program {
     }
 
     /// Finds a participant's address by their pubkey hash
-    pub fn get_address_from_pubkey_hash(
+    pub fn get_address_from_pubkey_hash(&self, pubkey_hash: &PubKeyHash) -> Option<CommsAddress> {
+        get_comms_address_by_pubkey_hash(&self.participants, pubkey_hash)
+    }
+
+    /// Checks whether an authenticated participant is this program's leader.
+    ///
+    /// An invalid persisted leader index is local state corruption and is
+    /// therefore returned as an error rather than treated as a peer fault.
+    pub fn validate_leader_pubkey_hash(
         &self,
         pubkey_hash: &PubKeyHash,
-    ) -> Result<CommsAddress, BitVMXError> {
-        get_comms_address_by_pubkey_hash(&self.participants, pubkey_hash)
+    ) -> Result<bool, BitVMXError> {
+        let leader = self.participants.get(self.leader).ok_or_else(|| {
+            BitVMXError::InvalidMessage(format!(
+                "Program {} has invalid leader index {} for {} participants",
+                self.program_id,
+                self.leader,
+                self.participants.len()
+            ))
+        })?;
+        Ok(&leader.pubkey_hash == pubkey_hash)
+    }
+
+    /// Classifies a participant message against the current setup step before
+    /// payload validation.
+    pub fn classify_setup_message(
+        &self,
+        pubkey_hash: &PubKeyHash,
+        msg_type: CommsMessageType,
+    ) -> SetupMessageState {
+        match &self.setup_engine {
+            Some(engine) => {
+                engine.classify_participant_message(&self.participants, pubkey_hash, msg_type)
+            }
+            None => SetupMessageState::NotForCurrentStep,
+        }
     }
 
     /// Main entry point for processing incoming communication messages
     ///
     /// Routes SetupStepData messages to receive_setup_data().
     ///
-    /// A peer's message that fails verification fails the setup: L2 is told which peer sent it,
-    /// and the message is `Processed` rather than queued for a retry that cannot succeed.
+    /// Terminal setup errors propagate for rollback and separate failure recording.
+    /// Messages for a failed program are consumed without running setup again.
     pub fn process_comms_message<BC: BitcoinCoordinatorApi>(
         &mut self,
         comms_address: &PubKeyHash,
@@ -660,8 +856,11 @@ impl Program {
         data: Value,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<MessageDisposition, BitVMXError> {
+        if self.is_failed() {
+            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
+        }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
-            Err(e) if self.state != ProgramState::Ready => {
+            Err(e) if !self.is_setup_complete() => {
                 self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
                 Ok(MessageDisposition::Processed)
             }
@@ -789,7 +988,7 @@ mod tests {
     use crate::{
         program::variables::VariableTypes,
         test_utils::{TestProgramContextEnv, TestStorageDir},
-        types::PROGRAM_TYPE_AGGREGATED_KEY,
+        types::{FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY},
     };
     use bitcoin::{absolute::LockTime, transaction::Version};
 
@@ -813,6 +1012,49 @@ mod tests {
             setup_engine,
             storage: Some(storage),
         }
+    }
+
+    // Exercises failure reporting independently of the handler's failure request.
+    // Database rollback is covered by BitVMX transaction-helper tests.
+    fn record_failure_request(
+        program: &mut Program,
+        error: BitVMXError,
+        env: &mut TestProgramContextEnv,
+    ) {
+        let BitVMXError::SetupAttemptFailed {
+            program_id,
+            peer,
+            source,
+        } = error
+        else {
+            panic!("expected setup failure request, got {error:?}");
+        };
+        assert_eq!(program_id, program.program_id);
+        assert_ne!(program.state, ProgramState::Failed);
+        program
+            .fail_setup(
+                peer,
+                SetupFailureReason::StepError(source.to_string()),
+                &mut env.context,
+            )
+            .unwrap();
+    }
+
+    fn apply_peer_fault(
+        program: &mut Program,
+        disposition: MessageDisposition,
+        env: &mut TestProgramContextEnv,
+    ) {
+        let MessageDisposition::FailSetup(fault) = disposition else {
+            panic!("expected peer setup fault, got {disposition:?}");
+        };
+        program
+            .fail_setup(
+                Some(fault.peer),
+                SetupFailureReason::StepError(fault.reason.to_string()),
+                &mut env.context,
+            )
+            .unwrap();
     }
 
     #[test]
@@ -851,7 +1093,7 @@ mod tests {
         program.state = ProgramState::Ready;
         program.save().unwrap();
 
-        let loaded = Program::load(storage, &program_id).unwrap();
+        let loaded = Program::load(storage, &program_id).unwrap().unwrap();
 
         assert_eq!(loaded.program_id, program_id);
         assert_eq!(loaded.state, ProgramState::Ready);
@@ -883,13 +1125,10 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_program_and_storage_are_reported_explicitly() {
+    fn test_missing_program_and_storage_are_handled_explicitly() {
         let dir = TestStorageDir::new("program-missing");
         let missing_id = Uuid::new_v4();
-        assert!(matches!(
-            Program::load(dir.storage(), &missing_id),
-            Err(BitVMXError::ProgramNotFound(id)) if id == missing_id
-        ));
+        assert!(Program::load(dir.storage(), &missing_id).unwrap().is_none());
 
         let storage = dir.storage();
         let mut program = test_program(storage, Uuid::new_v4());
@@ -911,6 +1150,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![],
             0,
+            None,
             &mut env.context,
             dir.storage(),
         );
@@ -921,6 +1161,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address.clone()],
             1,
+            None,
             &mut env.context,
             dir.storage(),
         );
@@ -939,6 +1180,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![stranger],
             0,
+            None,
             &mut env.context,
             dir.storage(),
         );
@@ -961,12 +1203,13 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![self_address.clone()],
             0,
+            None,
             &mut env.context,
             storage.clone(),
         )
         .unwrap();
 
-        let loaded = Program::load(storage, &program_id).unwrap();
+        let loaded = Program::load(storage, &program_id).unwrap().unwrap();
         assert_eq!(loaded.program_id, program_id);
         assert_eq!(loaded.protocol_id(), program_id);
         assert_eq!(loaded.my_idx, 0);
@@ -1003,7 +1246,9 @@ mod tests {
                 .current_step_state,
             StepState::AllParticipantsCompleted
         );
-        let after_generation = Program::load(storage.clone(), &program_id).unwrap();
+        let after_generation = Program::load(storage.clone(), &program_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(after_generation.state, ProgramState::SettingUp);
         assert_eq!(
             after_generation
@@ -1021,13 +1266,13 @@ mod tests {
         assert!(env
             .context
             .globals
-            .get_var_or_err(&program_id, "final_aggregated_key")
+            .get_var_or_err(&program_id, FINAL_AGGREGATED_KEY)
             .unwrap()
             .pubkey()
             .is_ok());
         assert!(env.coordinator_mock().monitored().is_empty());
 
-        let completed = Program::load(storage, &program_id).unwrap();
+        let completed = Program::load(storage, &program_id).unwrap().unwrap();
         assert_eq!(completed.state, ProgramState::Ready);
         assert!(completed.setup_engine.as_ref().unwrap().is_complete());
 
@@ -1036,15 +1281,51 @@ mod tests {
     }
 
     #[test]
-    fn test_tick_reports_setup_failure_instead_of_propagating() {
+    fn test_setup_rpc_outage_propagates_without_failing_setup() {
+        use bitcoin_coordinator::errors::BitcoinCoordinatorError;
+        use bitcoincore_rpc::{jsonrpc, Error as BitcoinRpcError};
+        use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
+
+        let mut env = TestProgramContextEnv::new("program-setup-rpc-outage").unwrap();
+        let dir = TestStorageDir::new("program-setup-rpc-outage-storage");
+        let storage = dir.storage();
+        let mut program = test_program(storage.clone(), Uuid::new_v4());
+        program.save().unwrap();
+        let error = BitVMXError::BitcoinCoordinatorError(
+            BitcoinCoordinatorError::BitcoinClientError(BitcoinClientError::RpcError(
+                BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "connection refused",
+                )))),
+            )),
+        );
+
+        let error = program
+            .handle_setup_error(error, None, &mut env.context)
+            .unwrap_err();
+        assert_eq!(classify(&error), Severity::BitcoinNodeUnreachable);
+        assert_eq!(program.state, ProgramState::SettingUp);
+        assert_eq!(
+            Program::load(storage, &program.program_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            ProgramState::SettingUp
+        );
+        assert!(env.l2_messages().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_tick_requests_setup_failure_recording() {
         let mut env = TestProgramContextEnv::new("program-tick-no-engine").unwrap();
         let dir = TestStorageDir::new("program-tick-no-engine-storage");
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         let program_id = program.program_id;
         program.setup_engine = None;
 
-        // This error used to propagate, and main.rs treats a tick error as fatal.
-        program.tick(&mut env.context).unwrap();
+        let error = program.tick(&mut env.context).unwrap_err();
+        assert!(env.l2_messages().unwrap().is_empty());
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
 
         let messages = env.l2_messages().unwrap();
@@ -1082,12 +1363,14 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
-
-        // The message that killed the setup is not queued for a retry.
-        assert_eq!(disposition, MessageDisposition::Processed);
+        assert!(env.l2_messages().unwrap().is_empty());
+        apply_peer_fault(&mut program, disposition, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
         assert_eq!(
-            Program::load(storage.clone(), &program_id).unwrap().state,
+            Program::load(storage.clone(), &program_id)
+                .unwrap()
+                .unwrap()
+                .state,
             ProgramState::Failed
         );
         assert!(!is_active_program(&storage, &program_id).unwrap());
@@ -1102,13 +1385,36 @@ mod tests {
                         assert_eq!(step, "keys");
                         assert_eq!(peer.as_ref(), Some(&sender));
                         assert!(matches!(reason, SetupFailureReason::StepError(text)
-                            if text.contains("Failed to deserialize key declaration")));
+                            if text == "message was malformed"));
                     }
                     other => panic!("expected SetupFailed, got {other:?}"),
                 }
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_peer_message_lifecycle_gate_only_allows_setup_states() {
+        let dir = TestStorageDir::new("program-peer-lifecycle-gate");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+
+        assert_eq!(program.peer_message_lifecycle_disposition(), None);
+
+        program.state = ProgramState::WaitingData;
+        assert_eq!(program.peer_message_lifecycle_disposition(), None);
+
+        program.state = ProgramState::Ready;
+        assert_eq!(
+            program.peer_message_lifecycle_disposition(),
+            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete))
+        );
+
+        program.state = ProgramState::Failed;
+        assert_eq!(
+            program.peer_message_lifecycle_disposition(),
+            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed))
+        );
     }
 
     #[test]
@@ -1134,7 +1440,7 @@ mod tests {
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         let sender = program.participants[0].pubkey_hash.clone();
 
-        program
+        let disposition = program
             .process_comms_message(
                 &sender,
                 &CommsMessageType::Keys,
@@ -1142,6 +1448,7 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
+        apply_peer_fault(&mut program, disposition, &mut env);
         assert_eq!(env.l2_messages().unwrap().len(), 1);
 
         // Later messages for a dead program are discarded, not queued for retry.
@@ -1153,9 +1460,24 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
-        assert_eq!(disposition, MessageDisposition::Processed);
+        assert_eq!(
+            disposition,
+            MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)
+        );
 
-        // And ticking it again reports nothing further.
+        // Replayed dispatcher results and ticks cannot restart a failed setup.
+        let dispatcher_disposition = program
+            .receive_dispatcher_result(
+                serde_json::json!({}),
+                Context::ProgramId(program.program_id),
+                JobDispatcherType::Garbler,
+                &mut env.context,
+            )
+            .unwrap();
+        assert_eq!(
+            dispatcher_disposition,
+            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::SetupFailed)
+        );
         program.tick(&mut env.context).unwrap();
 
         assert_eq!(program.state, ProgramState::Failed);
@@ -1193,7 +1515,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ready_program_defers_setup_data_and_ignores_replayed_setup_job() {
+    fn test_ready_program_discards_setup_data_and_ignores_replayed_setup_job() {
         let mut env = TestProgramContextEnv::new("program-ready-replays").unwrap();
         let dir = TestStorageDir::new("program-ready-replays-storage");
         let mut program = test_program(dir.storage(), Uuid::new_v4());
@@ -1208,7 +1530,10 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
-        assert_eq!(disposition, MessageDisposition::RetryLater);
+        assert_eq!(
+            disposition,
+            MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)
+        );
 
         let context = Context::SetupStep(
             program.program_id,
@@ -1216,7 +1541,7 @@ mod tests {
             "".to_string(),
             CommsMessageType::Keys,
         );
-        program
+        let dispatcher_disposition = program
             .receive_dispatcher_result(
                 serde_json::json!({"stale": true}),
                 context,
@@ -1224,6 +1549,41 @@ mod tests {
                 &mut env.context,
             )
             .unwrap();
+        assert_eq!(
+            dispatcher_disposition,
+            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale)
+        );
+        assert_eq!(program.state, ProgramState::Ready);
+    }
+
+    #[test]
+    fn test_ready_program_rejects_cross_dispatcher_setup_context_as_job_failure() {
+        let mut env = TestProgramContextEnv::new("program-ready-cross-dispatcher").unwrap();
+        let dir = TestStorageDir::new("program-ready-cross-dispatcher-storage");
+        let mut program = test_program(dir.storage(), Uuid::new_v4());
+        program.state = ProgramState::Ready;
+        let context = Context::SetupStep(
+            program.program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        );
+
+        let disposition = program
+            .receive_dispatcher_result(
+                serde_json::json!({"must_not_reach_protocol": true}),
+                context,
+                JobDispatcherType::Emulator,
+                &mut env.context,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            disposition,
+            DispatcherResultDisposition::JobFailed { program_id, reason, .. }
+                if program_id == program.program_id
+                    && reason.contains("Invalid context for Emulator result")
+        ));
         assert_eq!(program.state, ProgramState::Ready);
     }
 
@@ -1236,14 +1596,15 @@ mod tests {
         let mut program = test_program(storage.clone(), program_id);
 
         // A Garbler result carrying a non-SetupStep context cannot be routed.
-        program
+        let error = program
             .receive_dispatcher_result(
                 serde_json::json!({}),
                 Context::ProgramId(program_id),
                 JobDispatcherType::Garbler,
                 &mut env.context,
             )
-            .unwrap();
+            .unwrap_err();
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
 
         let messages = env.l2_messages().unwrap();
@@ -1267,16 +1628,107 @@ mod tests {
         // program because the first one is already terminal.
         let other_id = Uuid::new_v4();
         let mut other_program = test_program(storage, other_id);
-        other_program
+        let error = other_program
             .receive_dispatcher_result(
                 serde_json::json!({}),
                 Context::ProgramId(other_id),
                 JobDispatcherType::Emulator,
                 &mut env.context,
             )
-            .unwrap();
+            .unwrap_err();
+        record_failure_request(&mut other_program, error, &mut env);
         assert_eq!(other_program.state, ProgramState::Failed);
         assert_eq!(env.l2_messages().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_setup_dispatcher_output_errors_are_terminal_but_infrastructure_retries() {
+        let dir = TestStorageDir::new("program-dispatcher-error-classification");
+        let program = test_program(dir.storage(), Uuid::new_v4());
+
+        let payload_error = program
+            .handle_setup_dispatcher_error(
+                DispatcherResultError::InvalidOutput("malformed garbler result".to_string()).into(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            payload_error,
+            BitVMXError::SetupAttemptFailed { source, .. }
+                if matches!(*source, BitVMXError::DispatcherResultError(
+                    DispatcherResultError::InvalidOutput(_)
+                ))
+        ));
+
+        let missing_artifact = program
+            .handle_setup_dispatcher_error(
+                DispatcherResultError::MissingArtifact {
+                    path: "missing.bin".to_string(),
+                    details: "not found".to_string(),
+                }
+                .into(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            missing_artifact,
+            BitVMXError::SetupAttemptFailed { source, .. }
+                if matches!(*source, BitVMXError::DispatcherResultError(
+                    DispatcherResultError::MissingArtifact { .. }
+                ))
+        ));
+
+        let infrastructure_error = program
+            .handle_setup_dispatcher_error(BitVMXError::IOError(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "temporary local I/O failure",
+            )))
+            .unwrap_err();
+        assert!(matches!(
+            infrastructure_error,
+            BitVMXError::IOError(error) if error.kind() == std::io::ErrorKind::Interrupted
+        ));
+    }
+
+    #[test]
+    fn test_runtime_dispatcher_output_errors_retry_job_but_infrastructure_retries_inbox() {
+        let dir = TestStorageDir::new("program-runtime-dispatcher-error-classification");
+        let program = test_program(dir.storage(), Uuid::new_v4());
+        let context = Context::ProgramStep(program.program_id, "evaluate-round-1".to_string());
+
+        let failure = program
+            .handle_runtime_dispatcher_error(
+                context.to_string().unwrap(),
+                "evaluate-round-1",
+                DispatcherResultError::InvalidOutput("malformed emulator result".to_string())
+                    .into(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            failure,
+            BitVMXError::RuntimeJobAttemptFailed {
+                program_id,
+                expected_job_id,
+                job_id,
+                reason,
+            } if program_id == program.program_id
+                && expected_job_id == context.to_string().unwrap()
+                && job_id == "evaluate-round-1"
+                && reason.contains("malformed emulator result")
+        ));
+
+        let infrastructure_error = program
+            .handle_runtime_dispatcher_error(
+                context.to_string().unwrap(),
+                "evaluate-round-1",
+                BitVMXError::IOError(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "temporary local I/O failure",
+                )),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            infrastructure_error,
+            BitVMXError::IOError(error) if error.kind() == std::io::ErrorKind::Interrupted
+        ));
     }
 
     #[test]
@@ -1344,17 +1796,26 @@ mod tests {
             .get_address_from_pubkey_hash(
                 &"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
             )
-            .is_err());
+            .is_none());
+        assert!(program
+            .validate_leader_pubkey_hash(&participant.pubkey_hash)
+            .unwrap());
+        assert!(!program
+            .validate_leader_pubkey_hash(
+                &"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
+            )
+            .unwrap());
 
-        // An unroutable dispatcher result is reported to L2 rather than propagated.
-        program
+        // An unroutable dispatcher result requests separate failure recording.
+        let error = program
             .receive_dispatcher_result(
                 serde_json::json!({}),
                 Context::ProgramId(program_id),
                 JobDispatcherType::ZKP,
                 &mut env.context,
             )
-            .unwrap();
+            .unwrap_err();
+        record_failure_request(&mut program, error, &mut env);
         assert_eq!(program.state, ProgramState::Failed);
 
         let messages = env.l2_messages().unwrap();

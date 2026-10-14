@@ -131,7 +131,7 @@ pub fn main() -> Result<()> {
 
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;
-    let pubk_hash = cert.get_pubk_hash()?;
+    let pubk_hash = cert.get_pubk_hash();
     let identifier = Identifier::new(pubk_hash, 2);
     lockservice(broker_channel, identifier)?;
 
@@ -208,8 +208,9 @@ pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> 
     info!("================================================");
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
-        .to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0, None)
+            .to_string()?;
 
     info!("Command to all: {:?}", command);
     send_all(&id_channel_pairs, &command)?;
@@ -253,9 +254,14 @@ pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> 
         } else {
             //aggregated for happy path
             let aggregation_id = Uuid::new_v4();
-            let command =
-                IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
-                    .to_string()?;
+            let command = IncomingBitVMXApiMessages::SetupKey(
+                aggregation_id,
+                addresses.clone(),
+                None,
+                0,
+                None,
+            )
+            .to_string()?;
             send_all(&id_channel_pairs, &command)?;
             let msgs = get_all(&channels)?;
             info!("Received AggregatedPubkey message from all channels");
@@ -507,7 +513,8 @@ pub fn set_speedup_funding(
     wallet.mine(1)?;
 
     let funds_utxo_0 = Utxo::new(funds.compute_txid(), 0, amount, pub_key);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
     id_channel_pair.channel.send(&id_channel_pair.id, command)?;
     Ok(())
 }

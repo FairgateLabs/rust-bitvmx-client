@@ -124,30 +124,41 @@ pub enum IncomingBitVMXApiMessages {
     Ping(Uuid),
     SetVar(Uuid, String, VariableTypes),
     SetWitness(Uuid, String, WitnessTypes),
-    SetFundingUtxo(Utxo),
+    SetFundingUtxo(Uuid, Utxo),
     GetVar(Uuid, String),
     GetWitness(Uuid, String),
     GetCommInfo(Uuid),
     GetTransaction(Uuid, Txid),
     GetTransactionInfoByName(Uuid, String),
     GetHashedMessage(Uuid, String, u32, u32),
-    Setup(ProgramId, String, Vec<CommsAddress>, u16),
+    /// Optional timeout is the overall setup budget in seconds.
+    Setup(ProgramId, String, Vec<CommsAddress>, u16, Option<u64>),
     SubscribeToTransaction(Uuid, Txid, Option<u32>),
     SubscribeToSpendingUTXO(Uuid, Txid, u32, Option<u32>), // id, txid, vout, confirmation_threshold
-    SubscribeToOutputPattern(OutputPatternFilter, Option<u32>),
-    SubscribeToRskPegin(Option<u32>),
-    GetSPVProof(Txid),
+    SubscribeToOutputPattern(Uuid, OutputPatternFilter, Option<u32>),
+    SubscribeToRskPegin(Uuid, Option<u32>),
+    GetSPVProof(Uuid, Txid),
     DispatchTransaction(Uuid, Transaction, Option<u32>, Option<u32>), // id, transaction, confirmation_threshold, stuck_in_mempool_blocks
     DispatchTransactionName(Uuid, String),
-    SetupKey(Uuid, Vec<CommsAddress>, Option<Vec<PublicKey>>, u16),
+    /// Optional timeout is the overall setup budget in seconds.
+    SetupKey(
+        Uuid,
+        Vec<CommsAddress>,
+        Option<Vec<PublicKey>>,
+        u16,
+        Option<u64>,
+    ),
     GetAggregatedPubkey(Uuid),
     GetKeyPair(Uuid),
     GetPubKey(Uuid, bool),
     GetEvenPubKey(Uuid),
     SignMessage(Uuid, Vec<u8>, PublicKey), // id, payload_to_sign, public_key_to_use
-    GenerateZKP(Uuid, Vec<u8>, String),
+    /// Optional timeout is the prover job execution budget in seconds.
+    GenerateZKP(Uuid, Vec<u8>, String, Option<u64>),
     ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
+    /// Stops automatic retries for an unresolved runtime dispatcher job.
+    DiscardDispatcherJob(Uuid, String, String), // request id, job id, reason
     Encrypt(Uuid, Vec<u8>, String),
     Decrypt(Uuid, Vec<u8>, String),
     #[serde(skip)]
@@ -162,7 +173,7 @@ pub enum IncomingBitVMXApiMessages {
     AddToAllowList(Uuid, PubkHash, Option<IpAddr>), // An absent address matches any source IP.
     RemoveFromAllowList(Uuid, PubkHash),
     SetAllowAll(Uuid, bool), // Blanket accept-everyone. Independent of the entries above.
-    Shutdown(),
+    Shutdown(Uuid),
 }
 impl IncomingBitVMXApiMessages {
     pub fn to_string(&self) -> Result<String, BitVMXError> {
@@ -208,8 +219,14 @@ pub enum ErrorReportKind {
     },
     JobDispatcherUnresponsive(JobDispatcherType),
     JobDispatcherRecovered(JobDispatcherType),
+    /// A runtime-job attempt failed and entered durable retry; the program stays active.
+    JobFailed {
+        job_id: String,
+        dispatcher: JobDispatcherType,
+    },
     /// Storage or the broker failed; the node is exiting. Best-effort: may not arrive.
     Fatal,
+    NonFatal,
     NodeStopping,
     BitcoinRpcUnavailable,
     BitcoinRpcRecovered,
@@ -294,6 +311,7 @@ pub enum OutgoingBitVMXApiMessages {
     ProofReady(Uuid),
     ProofNotReady(Uuid),
     ProofGenerationError(Uuid, String),
+    JobDiscarded(Uuid, String), // request id, job id
     SPVProof(Txid, Option<BtcTxSPVProof>),
     Encrypted(Uuid, Vec<u8>),
     Decrypted(Uuid, Vec<u8>),
@@ -311,6 +329,7 @@ pub enum OutgoingBitVMXApiMessages {
     // A mutation was applied. `false` means it could not be persisted and will
     // not survive a restart.
     AllowListUpdated(Uuid, bool),
+    ApiError(Uuid, String),
 }
 
 impl OutgoingBitVMXApiMessages {
@@ -459,6 +478,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::ProofGenerationError(_, _) => {
                 "ProofGenerationError".to_string()
             }
+            OutgoingBitVMXApiMessages::JobDiscarded(_, _) => "JobDiscarded".to_string(),
             OutgoingBitVMXApiMessages::SPVProof(_, _) => "SPVProof".to_string(),
             OutgoingBitVMXApiMessages::BackupResult(_, _, _) => "BackupResult".to_string(),
             OutgoingBitVMXApiMessages::Encrypted(_, _) => "Encrypted".to_string(),
@@ -475,6 +495,7 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::NewBlock(_, _) => "NewBlock".to_string(),
             OutgoingBitVMXApiMessages::AllowListEntries(_, _, _) => "AllowListEntries".to_string(),
             OutgoingBitVMXApiMessages::AllowListUpdated(_, _) => "AllowListUpdated".to_string(),
+            OutgoingBitVMXApiMessages::ApiError(_, _) => "ApiError".to_string(),
         }
     }
 }

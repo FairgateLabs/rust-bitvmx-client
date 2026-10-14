@@ -66,12 +66,14 @@ impl BitVMXClient {
         program_type: String,
         addresses: Vec<CommsAddress>,
         leader: u16,
+        setup_timeout_secs: Option<u64>,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::Setup(
             id,
             program_type,
             addresses,
             leader,
+            setup_timeout_secs,
         ))
     }
 
@@ -100,12 +102,14 @@ impl BitVMXClient {
         participants: Vec<CommsAddress>,
         participants_keys: Option<Vec<PublicKey>>,
         leader_idx: u16,
+        setup_timeout_secs: Option<u64>,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SetupKey(
             id,
             participants,
             participants_keys,
             leader_idx,
+            setup_timeout_secs,
         ))
     }
 
@@ -121,11 +125,18 @@ impl BitVMXClient {
         self.send_message(IncomingBitVMXApiMessages::GetCommInfo(id))
     }
 
-    pub fn generate_zkp(&self, id: Uuid, input: Vec<u8>, elf_file_path: String) -> Result<()> {
+    pub fn generate_zkp(
+        &self,
+        id: Uuid,
+        input: Vec<u8>,
+        elf_file_path: String,
+        execution_timeout_secs: Option<u64>,
+    ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GenerateZKP(
             id,
             input,
             elf_file_path,
+            execution_timeout_secs,
         ))
     }
 
@@ -179,23 +190,30 @@ impl BitVMXClient {
 
     pub fn subscribe_to_output_pattern(
         &self,
+        request_id: Uuid,
         filter: OutputPatternFilter,
         confirmation_threshold: Option<u32>,
     ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToOutputPattern(
+            request_id,
             filter,
             confirmation_threshold,
         ))
     }
 
-    pub fn subscribe_to_rsk_pegin(&self, confirmation_threshold: Option<u32>) -> Result<()> {
+    pub fn subscribe_to_rsk_pegin(
+        &self,
+        request_id: Uuid,
+        confirmation_threshold: Option<u32>,
+    ) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::SubscribeToRskPegin(
+            request_id,
             confirmation_threshold,
         ))
     }
 
-    pub fn get_spv_proof(&self, txid: Txid) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::GetSPVProof(txid))
+    pub fn get_spv_proof(&self, request_id: Uuid, txid: Txid) -> Result<()> {
+        self.send_message(IncomingBitVMXApiMessages::GetSPVProof(request_id, txid))
     }
 
     pub fn set_var(&self, program_id: Uuid, key: &str, value: VariableTypes) -> Result<()> {
@@ -306,7 +324,7 @@ impl BitVMXClient {
     }
 
     pub fn shutdown(&self) {
-        let _ = self.send_message(IncomingBitVMXApiMessages::Shutdown());
+        let _ = self.send_message(IncomingBitVMXApiMessages::Shutdown(Uuid::new_v4()));
     }
 
     fn serialize_key(s: &str) -> String {

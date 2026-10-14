@@ -22,6 +22,7 @@ use storage_backend::storage::Storage;
 use storage_backend::storage_config::StorageConfig;
 use uuid::Uuid;
 
+use crate::bitvmx::BitVMX;
 use crate::config::Config;
 use crate::errors::BitVMXError;
 use crate::leader_broadcast::LeaderBroadcastHelper;
@@ -29,6 +30,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::variables::{Globals, WitnessVars};
 use crate::types::{OutgoingBitVMXApiMessages, ProgramContext};
+use crate::{expected_job::ExpectedJobs, operation_timeout::OperationTimeouts};
 
 /// Temporary storage directory for unit tests. Creates a unique path under the
 /// system temp dir and removes it on drop.
@@ -238,6 +240,9 @@ pub struct BitcoinCoordinatorMock {
     acked: RefCell<Vec<AckNews>>,
     transactions: RefCell<HashMap<Txid, TransactionStatus>>,
     news: RefCell<News>,
+    next_monitor_error: RefCell<Option<BitcoinCoordinatorError>>,
+    next_dispatch_error: RefCell<Option<BitcoinCoordinatorError>>,
+    next_transaction_error: RefCell<Option<BitcoinCoordinatorError>>,
 }
 
 impl BitcoinCoordinatorMock {
@@ -255,6 +260,9 @@ impl BitcoinCoordinatorMock {
                 monitor_news: Vec::new(),
                 coordinator_news: Vec::new(),
             }),
+            next_monitor_error: RefCell::new(None),
+            next_dispatch_error: RefCell::new(None),
+            next_transaction_error: RefCell::new(None),
         }
     }
 
@@ -272,6 +280,21 @@ impl BitcoinCoordinatorMock {
     /// Stage the news returned by `get_news` (defaults to empty news).
     pub fn set_news(&self, news: News) {
         *self.news.borrow_mut() = news;
+    }
+
+    /// Make the next monitor registration fail.
+    pub fn fail_next_monitor(&self, error: BitcoinCoordinatorError) {
+        *self.next_monitor_error.borrow_mut() = Some(error);
+    }
+
+    /// Make the next transaction dispatch fail.
+    pub fn fail_next_dispatch(&self, error: BitcoinCoordinatorError) {
+        *self.next_dispatch_error.borrow_mut() = Some(error);
+    }
+
+    /// Make the next transaction query fail.
+    pub fn fail_next_get_transaction(&self, error: BitcoinCoordinatorError) {
+        *self.next_transaction_error.borrow_mut() = Some(error);
     }
 
     pub fn tick_count(&self) -> u32 {
@@ -317,6 +340,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
         confirmation_trigger: Option<u32>,
         stuck_in_mempool_blocks: Option<u32>,
     ) -> Result<(), BitcoinCoordinatorError> {
+        if let Some(error) = self.next_dispatch_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.dispatched.borrow_mut().push(MockDispatch {
             tx,
             speedup_data: None,
@@ -336,6 +362,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
         target_block_height: Option<u32>,
         confirmation_trigger: Option<u32>,
     ) -> Result<(), BitcoinCoordinatorError> {
+        if let Some(error) = self.next_dispatch_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.dispatched.borrow_mut().push(MockDispatch {
             tx,
             speedup_data: Some(speedup_data),
@@ -384,6 +413,9 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
     }
 
     fn get_transaction(&self, txid: Txid) -> Result<TransactionStatus, BitcoinCoordinatorError> {
+        if let Some(error) = self.next_transaction_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.transactions
             .borrow()
             .get(&txid)
@@ -406,8 +438,47 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
     }
 
     fn monitor(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError> {
+        if let Some(error) = self.next_monitor_error.borrow_mut().take() {
+            return Err(error);
+        }
         self.monitored.borrow_mut().push(data);
         Ok(())
+    }
+}
+
+/// Unit-test environment for the complete [`BitVMX`] runtime, backed by a
+/// [`BitcoinCoordinatorMock`] and with all persistent state isolated.
+pub struct TestBitVMXEnv {
+    pub bitvmx: BitVMX<BitcoinCoordinatorMock>,
+    _dir: TestStorageDir,
+}
+
+impl TestBitVMXEnv {
+    pub fn new(prefix: &str) -> Result<Self, BitVMXError> {
+        let dir = TestStorageDir::new(prefix);
+        fs::create_dir_all(dir.path()).map_err(|_| BitVMXError::SerializationError)?;
+
+        let mut config = Config::new(Some("config/development.yaml".to_string()))?;
+        config.storage.path = format!("{}/storage.db", dir.path());
+        config.key_storage.path = format!("{}/keys.db", dir.path());
+        config.comms.storage_path = format!("{}/comms.db", dir.path());
+        config.broker.storage.path = format!("{}/broker.db", dir.path());
+
+        static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(25100);
+        config
+            .comms
+            .address
+            .set_port(NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed));
+        config.broker.port = NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed);
+
+        Ok(Self {
+            bitvmx: BitVMX::new_mock(config)?,
+            _dir: dir,
+        })
+    }
+
+    pub fn coordinator_mock(&self) -> &BitcoinCoordinatorMock {
+        self.bitvmx.coordinator_mock()
     }
 }
 
@@ -454,6 +525,9 @@ impl TestProgramContextEnv {
             env.config.broker.settings.clone(),
         )?;
 
+        let operation_timeouts = OperationTimeouts::new(env.storage.clone());
+        let expected_jobs = ExpectedJobs::new(env.storage.clone());
+
         let context = ProgramContext::new(
             comms,
             env.key_manager.clone(),
@@ -464,6 +538,8 @@ impl TestProgramContextEnv {
             WitnessVars::new(env.storage.clone()),
             env.config.components.clone(),
             LeaderBroadcastHelper::new(env.storage.clone()),
+            operation_timeouts,
+            expected_jobs,
         );
 
         let peers = (0..peer_count)
@@ -495,7 +571,7 @@ impl TestProgramContextEnv {
     /// Comms address of peer `index` (its real address and pubkey hash).
     pub fn peer_address(&self, index: usize) -> Result<CommsAddress, BitVMXError> {
         let peer = &self.peers[index];
-        Ok(CommsAddress::new(peer.get_address(), peer.get_pubk_hash()?))
+        Ok(CommsAddress::new(peer.get_address(), peer.get_pubk_hash()))
     }
 
     /// Comms address of the context's own channel. Messages sent here are
@@ -503,7 +579,7 @@ impl TestProgramContextEnv {
     pub fn self_address(&self) -> Result<CommsAddress, BitVMXError> {
         Ok(CommsAddress::new(
             self.context.comms.get_address(),
-            self.context.comms.get_pubk_hash()?,
+            self.context.comms.get_pubk_hash(),
         ))
     }
 
@@ -538,6 +614,7 @@ mod tests {
     use bitcoin::transaction::Version;
     use bitcoin_coordinator::types::CoordinatorNews;
 
+    use crate::helper::compute_pubkey_hash;
     use crate::program::protocols::protocol_handler::{new_protocol_type, ProtocolHandler};
     use crate::program::setup::steps::{KeysStep, SetupStepEnum};
     use crate::program::setup::SetupStep;
@@ -550,6 +627,75 @@ mod tests {
             input: vec![],
             output: vec![],
         }
+    }
+
+    #[test]
+    fn test_bitvmx_env_uses_mock_and_registers_new_blocks() {
+        let env = TestBitVMXEnv::new("bitvmx-env").unwrap();
+        assert_eq!(env.coordinator_mock().monitored().len(), 1);
+        assert!(matches!(
+            env.coordinator_mock().monitored()[0],
+            TypesToMonitor::NewBlock
+        ));
+    }
+
+    #[test]
+    fn broker_and_client_fingerprints_match_for_the_same_rsa_key() {
+        let env = TestProgramContextEnv::new("broker-client-fingerprint").unwrap();
+
+        assert_eq!(
+            env.context.comms.get_pubk_hash(),
+            compute_pubkey_hash(&env.context.rsa_public_key).unwrap(),
+            "the TLS certificate SPKI and announced application key must use the same fingerprint",
+        );
+    }
+
+    #[test]
+    fn broker_delivery_reports_the_tls_authenticated_sender() {
+        let mut env =
+            TestProgramContextEnv::new_with_peers("broker-authenticated-sender", 1).unwrap();
+        let expected_sender = env.peers[0].get_pubk_hash();
+        let receiver_hash = env.context.comms.get_pubk_hash();
+        let receiver_address = env.context.comms.get_address();
+
+        env.peers[0]
+            .send_peer(
+                "identity-test",
+                &receiver_hash,
+                receiver_address,
+                "payload-with-no-sender-field".to_string(),
+            )
+            .unwrap();
+
+        let (sender, payload) =
+            TestCommsEnv::receive_via(&mut env.peers[0], &mut env.context.comms).unwrap();
+        assert_eq!(sender.pubkey_hash, expected_sender);
+        assert_eq!(payload, "payload-with-no-sender-field");
+    }
+
+    #[test]
+    fn broker_rejects_a_certificate_missing_from_the_allow_list() {
+        let mut env =
+            TestProgramContextEnv::new_with_peers("broker-reject-unlisted-peer", 1).unwrap();
+        let receiver_hash = env.context.comms.get_pubk_hash();
+        let receiver_address = env.context.comms.get_address();
+        {
+            let allow_list = env.context.comms.get_allow_list();
+            let mut allow_list = allow_list.lock().unwrap();
+            allow_list.set_allow_all(false);
+            allow_list.remove(&env.peers[0].get_pubk_hash());
+        }
+
+        env.peers[0]
+            .send_peer(
+                "allow-list-test",
+                &receiver_hash,
+                receiver_address,
+                "must-not-arrive".to_string(),
+            )
+            .unwrap();
+
+        TestCommsEnv::assert_no_delivery(&mut env.peers[0], &mut env.context.comms);
     }
 
     #[test]

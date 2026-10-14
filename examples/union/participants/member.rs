@@ -540,7 +540,7 @@ impl Member {
         );
 
         self.bitvmx
-            .setup_key(aggregation_id, addresses, public_keys, 0)?;
+            .setup_key(aggregation_id, addresses, public_keys, 0, None)?;
 
         let aggregated_key = wait_until_msg!(&self.bitvmx, AggregatedPubkey(_, _key) => _key);
         debug!(
@@ -656,7 +656,10 @@ impl Member {
 
     pub fn set_speedup_funding_utxo(&mut self, utxo: Utxo) -> Result<()> {
         self.bitvmx
-            .send_message(IncomingBitVMXApiMessages::SetFundingUtxo(utxo))?;
+            .send_message(IncomingBitVMXApiMessages::SetFundingUtxo(
+                Uuid::new_v4(),
+                utxo,
+            ))?;
 
         Ok(())
     }
@@ -724,7 +727,7 @@ impl Member {
         );
 
         info!("Waiting for SPV proof...",);
-        let _ = self.bitvmx.get_spv_proof(txid);
+        let _ = self.bitvmx.get_spv_proof(Uuid::new_v4(), txid);
         let spv_proof = wait_until_msg!(
             &self.bitvmx,
             SPVProof(_, Some(_spv_proof)) => _spv_proof

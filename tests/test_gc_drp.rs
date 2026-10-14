@@ -125,12 +125,14 @@ fn test_aux(
     // Set funding UTXOs for both participants
     info!("Setting funding UTXOs");
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount_0, &funding_key_0);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
     helper.id_channel_pairs[0]
         .channel
         .send(&helper.id_channel_pairs[0].id, command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount_1, &funding_key_1);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_1).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_1).to_string()?;
     helper.id_channel_pairs[1]
         .channel
         .send(&helper.id_channel_pairs[1].id, command)?;
@@ -139,7 +141,8 @@ fn test_aux(
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
     let pair_0_1_agg_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0);
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0, None);
     helper.id_channel_pairs[0]
         .channel
         .send(&helper.id_channel_pairs[0].id, command.to_string()?)?;

@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 use crate::{
     bitvmx::Context,
-    errors::BitVMXError,
+    errors::{BitVMXError, DispatcherResultError},
     program::{
         participant::{
             CommsAddress, ParticipantKeyDeclaration, ParticipantKeys,
@@ -54,7 +54,10 @@ use crate::{
         },
         variables::{Globals, PartialUtxo, VariableTypes, WitnessTypes},
     },
-    types::{IncomingBitVMXApiMessages, ParticipantChannel, ProgramContext, PROGRAM_TYPE_GC_DRP},
+    types::{
+        IncomingBitVMXApiMessages, JobDispatcherType, ParticipantChannel, ProgramContext,
+        PROGRAM_TYPE_GC_DRP,
+    },
 };
 
 use super::protocol_handler::{ProtocolContext, ProtocolHandler};
@@ -130,6 +133,7 @@ impl GCDisputeConfiguration {
                 PROGRAM_TYPE_GC_DRP.to_string(),
                 addresses,
                 leader,
+                None,
             )
             .to_string()?,
         ])
@@ -588,7 +592,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
 
                         self.execute_job(
                             program_context,
-                            &program_context.components_config.garbler,
+                            JobDispatcherType::Garbler,
                             GarbledJobType::Evaluate(
                                 config.circuit,
                                 commitments,
@@ -596,6 +600,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
                                 output_dir,
                             ),
                             "verifier_evaluate_circuit",
+                            None,
                         )?;
                     }
                     _ => {}
@@ -659,11 +664,25 @@ impl GCDisputeResolutionProtocol {
             None
         };
 
-        let result: GCJobEvaluationResult = serde_json::from_value(result)?;
+        let result: GCJobEvaluationResult = serde_json::from_value(result).map_err(|error| {
+            DispatcherResultError::InvalidOutput(format!(
+                "invalid garbler evaluation result: {error}"
+            ))
+        })?;
 
         // TODO: don't send if output is correct
-        // We assume there is a single output
-        let signature = LamportSignature::from_bytes(&result.output[0], 1, LamportType::SHA256)?;
+        // We assume there is a single output.
+        let output = result.output.first().ok_or_else(|| {
+            DispatcherResultError::InvalidOutput(
+                "garbler evaluation result contains no output".to_string(),
+            )
+        })?;
+        let signature =
+            LamportSignature::from_bytes(output, 1, LamportType::SHA256).map_err(|error| {
+                DispatcherResultError::InvalidOutput(format!(
+                    "invalid garbler output signature: {error}"
+                ))
+            })?;
         context.witness.set_witness(
             &self.ctx.id,
             "circuit_output",
