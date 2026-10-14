@@ -15,6 +15,10 @@ must follow the same ingress rules. The broker/TLS identity identifies the
 configured service; the payload still must be treated as fallible service
 output.
 
+The timeout portion of this plan also covers setup progress that does not involve a service
+message. In particular, a setup waiting indefinitely for a peer contribution must eventually
+reach the same terminal setup-failure path as a timed-out setup dispatcher job.
+
 ## Current transaction model
 
 One broker service message is removed and handled inside one shared-storage
@@ -55,6 +59,11 @@ Important current gaps are:
    required convention for every `ProgramStep` result handler until this is
    enforced in code (e.g. a validate-then-apply split, or staging mutations
    behind the same classification gate setup already has).
+8. there is no general durable deadline mechanism for long-running operations. A
+   dispatcher job can remain pending forever if no result arrives, and a setup can remain
+   active forever when one or more peers never send their required messages. Dispatcher
+   ping/liveness state is not an adequate substitute: it describes service health, not the
+   deadline of a particular job or setup process.
 
 ## Implementation status
 
@@ -124,8 +133,10 @@ rolled back before terminal state is recorded. `JobFailed` records the expected 
 retry-pending and emits a scoped notification, but never changes a ready program to
 `ProgramState::Failed`.
 
-Service delivery failure handling is still unresolved. Operator-driven discard is implemented
-for unresolved runtime Garbler and Emulator jobs through the authenticated L2 API route.
+Service delivery failure handling and operation deadlines are still unresolved.
+Operator-driven discard is implemented for unresolved runtime Garbler and Emulator jobs
+through the authenticated L2 API route. The next timeout work must be a global operation
+timeout handler, not direct coupling between dispatcher ping failures and expected jobs.
 Runtime Garbler and Emulator failures now retain the exact serialized dispatch envelope
 and destination, record durable exponential-backoff metadata, and are redispatched with
 the same correlation id by the main loop. Garbler and Emulator output is classified
@@ -349,6 +360,51 @@ metadata. The ZKP domain record owns requester correlation and optional proof/jo
 output. Queries combine them, treating a completed expected job without output as
 inconsistent state; result settlement updates both in the same transaction.
 
+## Planned global operation timeout handler
+
+Implement one general durable timeout facility for protocol operations rather than adding
+job-specific timeout checks to `PingHelper`. It must support at least these timeout owners:
+
+- **job execution timeout:** a dispatched Garbler, Emulator, or eventually ZKP job has a
+  durable deadline associated with its stable expected-job id;
+- **setup process timeout:** a setup has an overall durable deadline associated with its
+  program id, starting when setup is initiated. It expires even if no dispatcher job was
+  created and no peer message ever arrives. This covers, for example, a participant that
+  starts setup and then waits forever for an absent peer contribution.
+
+The timeout facility should store a typed operation id/owner, deadline, timeout kind, and
+failure policy in durable storage, with an iterable deadline index. Registration, renewal,
+and cancellation must be idempotent and committed atomically with the state transition that
+starts, retries, or completes the operation. The setup-process deadline is an overall deadline:
+ordinary peer messages and setup-step advancement do not silently grant a fresh full setup
+budget. A job retry may explicitly register its next attempt deadline. The main loop should
+process a bounded number of expired deadlines, each in its own transaction, so one failure
+cannot block other timeouts.
+
+Expiration is a trigger for the existing domain failure policy, not a new parallel lifecycle:
+
+- an expired setup-process deadline fails the active setup once through the existing
+  setup-failure persistence and notification path, regardless of whether it was waiting on a
+  peer contribution, local setup progress, or a setup Garbler result;
+- an expired setup-owned dispatcher job also fails that setup through the same path;
+- an expired runtime Garbler or Emulator job leaves the program active and moves the same
+  expected job into durable retry/backoff, preserving its correlation id and retained
+  dispatch envelope; operator discard remains the terminal escape hatch;
+- ZKP job expiration must follow whichever ZKP retry/manual-discard policy is adopted; it
+  must not be inferred from dispatcher liveness independently.
+
+Completing or terminally discarding an operation must cancel its timeout atomically. If an
+overall setup deadline and a setup-job deadline target the same program, the first terminal
+settlement cancels or makes all remaining setup-owned deadlines stale. A stale or duplicated
+timeout event must be a no-op after checking current setup/job state. Restarting the client
+must not reset elapsed deadlines or create a fresh timeout budget. Configuration
+should allow separate durations for setup processes and job executions; a retry may establish
+a new job-attempt deadline without changing the job's stable correlation id.
+
+Broker service dead letters and other explicit delivery-failure signals should feed this same
+failure-policy boundary (or accelerate the relevant deadline), rather than implementing a
+second timeout state machine.
+
 ## Liveness control-message caveat
 
 `PingHelper` mutates in-memory timestamps/latches while the broker input is
@@ -359,12 +415,17 @@ cleared; this is acceptable only if liveness reporting is explicitly
 observational. If delivery is required, return a fallible result and enqueue the
 state-change report before changing the latch, or persist liveness state.
 
+Dispatcher liveness remains node-level, observational health information. A missed Pong must
+not by itself fail every pending job or setup: operation deadlines are independently registered
+and may differ by operation type. Liveness can inform logging, alerts, or scheduling, while the
+global timeout handler authoritatively decides when a concrete operation has expired.
+
 Outbound job dispatch can also fail into a broker dead-letter path. Peer
 outbound dead letters are handled for setup, but service/job dead letters are
-not currently correlated to jobs. Add a service send-failure/dead-letter callback
-that applies the job-specific policy: terminal failure for Garbler setup jobs,
-and durable indefinite retry with backoff/manual discard for Garbler runtime
-`Evaluate`, Emulator, and later ZKP jobs.
+not currently correlated to jobs. Add a service send-failure/dead-letter callback that
+resolves the registered operation and invokes the same failure-policy boundary as timeout
+expiration: terminal failure for Garbler setup jobs, and durable indefinite retry with
+backoff/manual discard for Garbler runtime `Evaluate`, Emulator, and later ZKP jobs.
 
 ## Implementation plan
 
@@ -411,14 +472,19 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
    executions have distinct contexts; future repeatable operations must provide a new
    execution discriminator so expected-job registration and `job_done:<step>` do not
    alias executions.
-11. **Handle service delivery dead letters/timeouts** through expected-job state
-    and the dispatcher-specific terminal-or-indefinite-retry policy documented above.
-    **Partial:** result failures now durably schedule and redispatch the same envelope
-    with exponential backoff, and unresolved runtime jobs can be explicitly discarded through
-    the API. Broker delivery failures and liveness timeouts are not yet correlated to expected
-    jobs.
-12. **Document liveness semantics** and decide whether recovery/down reports are
-    best effort or durable.
+11. **Implement the global operation timeout handler.** Register durable, typed deadlines
+    for complete setup processes and individual dispatcher job executions; process expired
+    deadlines in bounded, independent transactions; cancel them atomically on completion or
+    terminal discard. Setup expiration must cover waiting forever for peer messages as well as
+    waiting for setup dispatcher output. Runtime job expiration must enter the existing
+    retry/backoff policy without failing the owning program. **Not implemented.**
+12. **Handle service delivery dead letters** through the same operation failure-policy
+    boundary. A dead letter may trigger or accelerate the registered operation timeout, but
+    must not introduce a separate lifecycle. **Not implemented:** the broker does not yet
+    correlate service delivery failures to expected jobs.
+13. **Document liveness semantics** and decide whether recovery/down reports are
+    best effort or durable. Dispatcher liveness must remain distinct from operation timeout
+    state.
 
 ## Required tests
 
@@ -446,10 +512,15 @@ and durable indefinite retry with backoff/manual discard for Garbler runtime
     future retry work replaces this with retry/manual-discard semantics.
 11. Missing ZKP correlation follows the chosen fatal/orphan policy without an
     endless retry.
-12. A service delivery dead letter or terminal liveness timeout applies the
-    documented dispatcher-specific setup-failure or indefinite-retry path.
-13. A commit failure after a Pong is fatal, preserving the in-memory-state
-    safety assumption.
+12. A setup-process deadline expires and fails setup when a required peer never sends any
+    message; restart does not grant the setup a fresh timeout budget.
+13. A job-execution deadline applies the documented setup-terminal or runtime-retry policy,
+    reusing the same stable job correlation id; completion/discard cancels the deadline and a
+    stale expiration is a no-op.
+14. A correlated service dead letter feeds the same failure-policy boundary as expiration.
+15. A missed dispatcher Pong reports node health but does not directly fail unrelated jobs or
+    setups.
+16. A commit failure after a Pong is fatal, preserving the in-memory-state safety assumption.
 
 ## Core invariant
 
