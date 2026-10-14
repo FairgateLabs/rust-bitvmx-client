@@ -159,10 +159,16 @@ the planned ZKP retry/manual-discard behavior remains future work. The policy is
   program. The failed result should be consumed, the job should remain unresolved,
   and dispatch should retry indefinitely with backoff until an operator fixes the
   underlying problem or explicitly discards the job;
-- ZKP dispatcher and payload failures remain terminal under the current policy. Prover execution
-  also has a caller-selected deadline, defaulting to 900 seconds when omitted; expiration persists
-  a terminal failure and sends `ProofGenerationError` to the saved requester. Indefinite
-  retry/manual-discard behavior remains possible future work.
+- ZKP dispatcher and payload failures remain terminal under the current policy. "Terminal" is
+  scoped to the individual ZKP request: the expected job is persisted as `Failed`,
+  `ProofGenerationError(request_id, reason)` is sent to the saved requester (normally L2), and the
+  job is not automatically retried. This does not fail the owning program or crash the BitVMX
+  client; the client continues processing other work. A delayed result for the failed job is
+  consumed as a duplicate. Prover execution also has a caller-selected deadline, defaulting to 900
+  seconds when omitted, and expiration follows the same request-terminal behavior. Independent
+  fatal infrastructure errors, such as an unrecoverable storage failure, remain subject to the
+  client's normal fatal-error policy. Indefinite retry/manual-discard behavior remains possible
+  future work.
 
 Indefinite retry is durable and does not retain the failed result at the front of the
 shared inbox. Expected-job state retains exponential-backoff metadata and the exact
@@ -201,12 +207,15 @@ pub enum DispatcherResultDisposition {
 Handlers return `Result<DispatcherResultDisposition, BitVMXError>`.
 
 - `Processed`: result effects were staged successfully;
-- `DiscardNoOp`: a stale, orphaned, or malformed uncorrelatable service message
-  is intentionally consumed; the `Duplicate` reason is defined but is not emitted
-  by a dispatcher path yet;
-- `Err`: processing rolls back. Until error classification is narrowed in later
-  steps, this still includes both infrastructure errors and some permanent
-  dispatcher-controlled errors.
+- `DiscardNoOp`: a stale, orphaned, malformed, uncorrelatable, or duplicate service message is
+  intentionally consumed. Dispatcher paths emit `Duplicate` for results whose expected-job record
+  is no longer pending, including delayed results received after completion or terminal failure;
+- `Err`: the current transaction rolls back. Typed dispatcher-output errors may cross this boundary
+  only as rollback-then-settle signals: setup output errors are settled through
+  `SetupAttemptFailed`, while runtime output errors are settled in a fresh transaction as
+  `RetryPending`. Other errors at this boundary are local/infrastructure failures and follow the
+  normal retry or fatal-error policy. Permanent malformed or invalid service input is represented
+  by a consumed disposition rather than an endless rollback loop.
 
 The setup path intentionally does not use an in-transaction `FailSetup` variant.
 It rolls back partial effects, records terminal setup state and the existing L2
@@ -215,10 +224,9 @@ failed-program lifecycle gate. `JobFailed` leaves the owning program active, mov
 expected job to `RetryPending`, emits a scoped L2 report, and consumes the input
 atomically.
 
-If setup failure still needs the existing two-transaction settlement, preserve
-`SetupAttemptFailed`: roll back partial result effects, record failed setup in a
-new transaction, and let the restored result be consumed by the failed-program
-lifecycle gate on its next delivery.
+Setup failure preserves the existing two-transaction `SetupAttemptFailed` settlement: partial
+result effects roll back, failed setup state is recorded in a new transaction, and the restored
+result is consumed by the failed-program lifecycle gate on its next delivery.
 
 ## Processing pipeline
 
