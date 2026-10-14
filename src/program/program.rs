@@ -595,12 +595,11 @@ impl Program {
         }
     }
 
-    /// Converts only errors attributable to dispatcher output into retryable runtime-job
-    /// failures. Local and infrastructure errors escape unchanged so inbox processing rolls
-    /// back rather than committing partially staged protocol effects. The caller has
-    /// already matched `Context::ProgramStep` to reach here, so `job_id` is taken
-    /// directly instead of re-destructuring the context and risking a dropped error on
-    /// an unreachable branch.
+    /// Converts only errors attributable to dispatcher output into a transaction-boundary
+    /// signal. The inbox transaction is rolled back before the expected job is moved to
+    /// its durable retry state, so protocol mutations staged before validation cannot
+    /// accidentally commit. Local and infrastructure errors escape unchanged for normal
+    /// inbox retry. The caller has already matched `Context::ProgramStep` to reach here.
     fn handle_runtime_dispatcher_error(
         &self,
         expected_job_id: String,
@@ -610,7 +609,7 @@ impl Program {
         let BitVMXError::DispatcherResultError(error) = error else {
             return Err(error);
         };
-        Ok(DispatcherResultDisposition::JobFailed {
+        Err(BitVMXError::RuntimeJobAttemptFailed {
             program_id: self.program_id,
             expected_job_id,
             job_id: job_id.to_string(),
@@ -1695,17 +1694,17 @@ mod tests {
         let program = test_program(dir.storage(), Uuid::new_v4());
         let context = Context::ProgramStep(program.program_id, "evaluate-round-1".to_string());
 
-        let disposition = program
+        let failure = program
             .handle_runtime_dispatcher_error(
                 context.to_string().unwrap(),
                 "evaluate-round-1",
                 DispatcherResultError::InvalidOutput("malformed emulator result".to_string())
                     .into(),
             )
-            .unwrap();
+            .unwrap_err();
         assert!(matches!(
-            disposition,
-            DispatcherResultDisposition::JobFailed {
+            failure,
+            BitVMXError::RuntimeJobAttemptFailed {
                 program_id,
                 expected_job_id,
                 job_id,

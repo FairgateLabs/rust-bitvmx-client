@@ -405,7 +405,8 @@ mod tests {
     #[test]
     fn registration_is_idempotent_for_every_existing_status() {
         let dir = TestStorageDir::new("expected-job-registration");
-        let jobs = expected_jobs(dir.storage());
+        let storage = dir.storage();
+        let jobs = expected_jobs(storage.clone());
         let job_id = Uuid::new_v4().to_string();
 
         assert_eq!(
@@ -419,7 +420,7 @@ mod tests {
             ExpectedJobRegistration::AlreadyExists(ExpectedJobStatus::Pending)
         );
 
-        jobs.complete(&OperationTimeouts::new(dir.storage()), &job_id)
+        jobs.complete(&OperationTimeouts::new(storage), &job_id)
             .unwrap();
         assert_eq!(
             jobs.register(job_id.clone(), JobDispatcherType::ZKP)
@@ -431,10 +432,11 @@ mod tests {
     #[test]
     fn updating_an_unknown_job_is_an_error() {
         let dir = TestStorageDir::new("unknown-expected-job");
-        let jobs = expected_jobs(dir.storage());
+        let storage = dir.storage();
+        let jobs = expected_jobs(storage.clone());
         assert!(matches!(
             jobs.complete(
-                &OperationTimeouts::new(dir.storage()),
+                &OperationTimeouts::new(storage),
                 &Uuid::new_v4().to_string(),
             ),
             Err(BitVMXError::InvalidState(_))
@@ -444,7 +446,8 @@ mod tests {
     #[test]
     fn runtime_failure_durably_schedules_the_same_envelope_with_backoff() {
         let dir = TestStorageDir::new("expected-job-retry");
-        let jobs = expected_jobs(dir.storage());
+        let storage = dir.storage();
+        let jobs = expected_jobs(storage.clone());
         let job_id = Context::ProgramStep(Uuid::new_v4(), "execute-round-1".to_string())
             .to_string()
             .unwrap();
@@ -452,7 +455,7 @@ mod tests {
         let message = format!(r#"{{"job_id":"{job_id}"}}"#);
 
         jobs.register_with_dispatch(
-            &OperationTimeouts::new(dir.storage()),
+            &OperationTimeouts::new(storage.clone()),
             job_id.clone(),
             JobDispatcherType::Emulator,
             Some(ExpectedJobDispatch {
@@ -464,7 +467,7 @@ mod tests {
         .unwrap();
         let before = bitvmx_broker::retry::now_ms().unwrap();
         jobs.retry_pending(
-            &OperationTimeouts::new(dir.storage()),
+            &OperationTimeouts::new(storage),
             &job_id,
             "dispatcher failed".to_string(),
         )

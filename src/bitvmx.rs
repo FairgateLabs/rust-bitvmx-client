@@ -1106,7 +1106,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         work: impl FnOnce(&mut Self) -> Result<T, BitVMXError>,
     ) -> Result<Option<T>, BitVMXError> {
         let result = work(self);
-        let result = self.settle_setup_attempt(result);
+        let result = self.settle_failed_attempt(result);
         Self::finish_step(
             name,
             result,
@@ -1116,9 +1116,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         .map(Option::flatten)
     }
 
-    /// Requires the attempt transaction to be closed. Restored inputs remain queued;
-    /// the persisted terminal state prevents setup from running on their next delivery.
-    fn settle_setup_attempt<T>(
+    /// Requires the attempt transaction to be closed. This records failure policy in a
+    /// fresh transaction only after all effects staged by the failed attempt were rolled
+    /// back. Restored dispatcher inputs are consumed as duplicates on redelivery.
+    fn settle_failed_attempt<T>(
         &mut self,
         result: Result<T, BitVMXError>,
     ) -> Result<Option<T>, BitVMXError> {
@@ -1134,6 +1135,42 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         &program_id,
                         peer,
                         SetupFailureReason::StepError(source.to_string()),
+                    )
+                })?;
+                Ok(None)
+            }
+            Err(BitVMXError::RuntimeJobAttemptFailed {
+                program_id,
+                expected_job_id,
+                job_id,
+                reason,
+            }) => {
+                let store = self.store.clone();
+                Self::run_transaction(&store, || {
+                    let expected = self
+                        .program_context
+                        .expected_jobs
+                        .get(&expected_job_id)?
+                        .ok_or_else(|| {
+                            BitVMXError::InvalidState(format!(
+                                "dispatcher job '{expected_job_id}' is not registered"
+                            ))
+                        })?;
+                    if expected.owner != ExpectedJobOwner::Program(program_id)
+                        || expected.kind != ExpectedJobKind::Program
+                    {
+                        return Err(BitVMXError::InvalidState(format!(
+                            "dispatcher job '{expected_job_id}' has incompatible runtime ownership"
+                        )));
+                    }
+                    self.apply_dispatcher_result_disposition(
+                        expected.dispatcher,
+                        DispatcherResultDisposition::JobFailed {
+                            program_id,
+                            expected_job_id,
+                            job_id,
+                            reason,
+                        },
                     )
                 })?;
                 Ok(None)
@@ -1610,6 +1647,59 @@ mod transaction_tests {
                 .unwrap()
                 .status,
             ExpectedJobStatus::RetryPending(_)
+        ));
+        assert!(!Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+    }
+
+    #[test]
+    fn runtime_dispatcher_failure_rolls_back_attempt_before_scheduling_retry() {
+        let mut env = TestBitVMXEnv::new("runtime-dispatcher-rollback-settlement").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        let context = Context::ProgramStep(program_id, "execute-round-1".to_string());
+        let expected_job_id = context.to_string().unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(
+                expected_job_id.clone(),
+                crate::types::JobDispatcherType::Emulator,
+            )
+            .unwrap();
+        let staged_key = test_key!("runtime-dispatcher-staged-effect");
+
+        let outcome = env
+            .bitvmx
+            .run_step(
+                "runtime dispatcher result",
+                |_this| -> Result<(), BitVMXError> {
+                    BitVMX::run_transaction(&store, || {
+                        store.set(&staged_key, "must roll back".to_string(), None)?;
+                        Err(BitVMXError::RuntimeJobAttemptFailed {
+                            program_id,
+                            expected_job_id: expected_job_id.clone(),
+                            job_id: "execute-round-1".to_string(),
+                            reason: "invalid emulator output".to_string(),
+                        })
+                    })
+                },
+            )
+            .unwrap();
+
+        assert!(outcome.is_none());
+        assert_eq!(store.get::<String>(&staged_key, None).unwrap(), None);
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&expected_job_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ExpectedJobStatus::RetryPending(ref reason) if reason == "invalid emulator output"
         ));
         assert!(!Program::load(store, &program_id)
             .unwrap()

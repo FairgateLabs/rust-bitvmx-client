@@ -172,6 +172,16 @@ pub enum BitVMXError {
         source: Box<BitVMXError>,
     },
 
+    /// Internal transaction-boundary signal. The failed result attempt must be rolled
+    /// back before the expected job is moved to its durable retry state.
+    #[error("Runtime dispatcher job {job_id} failed for program {program_id}: {reason}")]
+    RuntimeJobAttemptFailed {
+        program_id: Uuid,
+        expected_job_id: String,
+        job_id: String,
+        reason: String,
+    },
+
     #[error("Program {0} is not ready to run. Please install it first.")]
     ProgramNotReady(Uuid),
 
