@@ -146,7 +146,6 @@ fn format_bytes32_constant(name: &str, value: &str) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Formats an internal pure function returning `values` as a `sol_type` array named `var`
 fn format_array_function(fn_name: &str, sol_type: &str, var: &str, values: &[String]) -> String {
     let mut s = format!(
@@ -174,6 +173,7 @@ fn format_array_function(fn_name: &str, sol_type: &str, var: &str, values: &[Str
     s
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn format_solidity_data_file(
     committee_agg_key: &PublicKey,
     dispute_agg_key: &PublicKey,
