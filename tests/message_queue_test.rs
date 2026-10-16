@@ -12,10 +12,7 @@ use uuid::Uuid;
 #[test]
 fn test_message_queue_persistence() {
     let temp_dir = format!("/tmp/test_storage__{}", Uuid::new_v4());
-    let config = StorageConfig {
-        path: temp_dir.clone(),
-        password: None,
-    };
+    let config = StorageConfig::new(temp_dir.clone(), None);
 
     // Create storage and queue
     let storage = Rc::new(Storage::new(&config).unwrap());
@@ -64,10 +61,7 @@ fn test_message_queue_persistence() {
 #[test]
 fn test_queue_no_starvation() {
     let temp_dir = format!("/tmp/test_storage_{}", Uuid::new_v4());
-    let config = StorageConfig {
-        path: temp_dir.clone(),
-        password: None,
-    };
+    let config = StorageConfig::new(temp_dir.clone(), None);
 
     // Create storage and queue
     let storage = Rc::new(Storage::new(&config).unwrap());

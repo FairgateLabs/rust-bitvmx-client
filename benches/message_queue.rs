@@ -26,10 +26,7 @@ struct QueueFixture {
 impl QueueFixture {
     fn new() -> Self {
         let temp_dir = format!("/tmp/bitvmx_message_queue_bench_{}", Uuid::new_v4());
-        let config = StorageConfig {
-            path: temp_dir.clone(),
-            password: None,
-        };
+        let config = StorageConfig::new(temp_dir.clone(), None);
         let storage = Rc::new(Storage::new(&config).unwrap());
         let retry_policy = RetryPolicy::new(&BrokerNodeConfig::default()).unwrap();
         let queue = MessageQueue::new(storage.clone(), retry_policy);
