@@ -9,7 +9,7 @@ use protocol_builder::{
     types::{
         connection::{InputSpec, OutputSpec},
         input::{SighashType, SpendMode},
-        output::SpeedupData,
+        output::{MessageId, SpeedupData},
         OutputType,
     },
 };
@@ -302,37 +302,27 @@ impl UserTakeProtocol {
             .as_ref()
             .to_vec();
 
-        let nonces = program_context
-            .key_manager
-            .get_my_pub_nonces(&take_aggregated_key, &self.ctx.protocol_name)?;
-
-        if nonces.is_empty() {
-            return Err(BitVMXError::MissingPublicNonces(
-                take_aggregated_key.to_string(),
-                self.ctx.protocol_name.to_string(),
-            ));
-        }
-
-        let signatures = program_context
-            .key_manager
-            .get_my_partial_signatures(&take_aggregated_key, &self.ctx.protocol_name)?;
-
-        if signatures.is_empty() {
-            return Err(BitVMXError::MissingPartialSignatures(
-                take_aggregated_key.to_string(),
-                self.ctx.protocol_name.to_string(),
-            ));
-        }
+        // Input 0 key spend, the one whose sighash is sent (0 equals its scripts_len())
+        let message_id = MessageId::new_string_id(USER_TAKE_TX, 0, 0);
+        let user_take_nonce = program_context.key_manager.get_my_pub_nonce(
+            &take_aggregated_key,
+            &self.ctx.protocol_name,
+            &message_id,
+        )?;
+        let user_take_signature = program_context.key_manager.get_my_partial_signature(
+            &take_aggregated_key,
+            &self.ctx.protocol_name,
+            &message_id,
+        )?;
 
         let user_take_txid = protocol.transaction_by_name(USER_TAKE_TX)?.compute_txid();
 
-        // TODO: verify that the signature we are getting from the array of signatures is the proper one
         let pegout_accepted = PegOutAccepted {
             user_take_txid,
             committee_id: pegout_request.committee_id,
             user_take_sighash,
-            user_take_nonce: nonces[0].1.clone(),
-            user_take_signature: signatures[0].1.clone(),
+            user_take_nonce,
+            user_take_signature,
         };
 
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(

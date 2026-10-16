@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ### Fixed
 
 - Publish `FundsAdvanceSPV` only for `ADVANCE_FUNDS_TX`; funding-input notifications must not be submitted as the user payment proof.
+- `PegOutAccepted` now carries the nonce and partial signature for the `USER_TAKE_TX` key spend, looked up by message id instead of taking the first stored entry.
 
 ### Added
 
