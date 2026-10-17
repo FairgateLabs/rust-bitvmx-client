@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Fixed
 
+- Use keys-only setup for reject-pegin, retaining single-member script signing and automatic dispatch without requiring MuSig2 nonces.
+
 - Publish `FundsAdvanceSPV` only for `ADVANCE_FUNDS_TX`; funding-input notifications must not be submitted as the user payment proof.
 
 ### Added

@@ -185,3 +185,7 @@ pub fn test_union_reimbursement_parity_odd() -> Result<()> {
 pub fn test_union_reimbursement_parity_even() -> Result<()> {
     assert_reimbursement_parity_is_preserved(Parity::Even)
 }
+
+#[cfg(feature = "union")]
+#[path = "../src/program/protocols/union/tests/operational_reject_lookup.rs"]
+mod operational_reject_lookup;
