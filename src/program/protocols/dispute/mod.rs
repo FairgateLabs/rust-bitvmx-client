@@ -1753,6 +1753,88 @@ mod tests {
         }
     }
 
+    /// A full-duplex stage carries the digit and the dissection in one leaf,
+    /// where the asymmetric search spends a leaf on each. This measures what
+    /// that costs in script bytes, which is the side of the trade that the
+    /// transaction count does not show.
+    #[test]
+    fn measure_stage_leaf_against_the_pair_it_replaces() -> Result<(), crate::errors::BitVMXError> {
+        use crate::test_utils::TestProgramContextEnv;
+        use key_manager::winternitz::WinternitzType;
+        use protocol_builder::scripts;
+
+        let env = TestProgramContextEnv::new("full-duplex-script-size")?;
+        let km = &env.context.key_manager;
+        let aggregated = km.derive_keypair(BitcoinKeyType::P2tr, 0)?;
+
+        for (nary, bits) in [(2u8, 1u8), (4, 2), (8, 3)] {
+            let hashes = nary - 1;
+            let hash_keys = (0..hashes)
+                .map(|_| km.next_winternitz(20, WinternitzType::HASH160))
+                .collect::<Result<Vec<_>, _>>()?;
+            let digit_key = km.next_winternitz(1, WinternitzType::HASH160)?;
+            let hash_names: Vec<String> = (1..hashes + 1).map(|h| format!("hash_{}", h)).collect();
+
+            // Asymmetric: the dissection in one leaf, the digit in another.
+            // The dissection leaf drops the signed messages once verified.
+            let dissection_only: Vec<(&str, &_)> = hash_names
+                .iter()
+                .map(|n| n.as_str())
+                .zip(hash_keys.iter())
+                .collect();
+            let dissection = scripts::verify_winternitz_signatures_aux(
+                &aggregated,
+                &dissection_only,
+                SignMode::Aggregate,
+                false,
+                None,
+            )?;
+            let selection = scripts::verify_winternitz_signatures_aux(
+                &aggregated,
+                &vec![("selection_bits", &digit_key)],
+                SignMode::Aggregate,
+                true,
+                Some(vec![
+                    DisputeResolutionProtocol::get_validate_selection_bits_script((1 << bits) - 1),
+                ]),
+            )?;
+
+            // Full duplex: both in one leaf. Reaching the digit means keeping
+            // every signed message on the stack and reversing them into
+            // declaration order first, which is where the extra bytes go.
+            let mut together: Vec<(&str, &_)> = vec![("selection_bits", &digit_key)];
+            together.extend(hash_names.iter().map(|n| n.as_str()).zip(hash_keys.iter()));
+            let stage = scripts::verify_winternitz_signatures_aux(
+                &aggregated,
+                &together,
+                SignMode::Aggregate,
+                true,
+                Some(vec![
+                    DisputeResolutionProtocol::get_reverse_script(
+                        SELECTION_BITS_NIBBLES + hashes as u32 * STATE_HASH_NIBBLES,
+                    ),
+                    DisputeResolutionProtocol::get_validate_stage_selection_script(
+                        hashes,
+                        (1 << bits) - 1,
+                    ),
+                ]),
+            )?;
+
+            let pair = dissection.get_script().len() + selection.get_script().len();
+            let single = stage.get_script().len();
+            println!(
+                "n={}  asymmetric {:>6} B ({:>6} + {:>4})   full-duplex {:>6} B   delta {:+}",
+                nary,
+                pair,
+                dissection.get_script().len(),
+                selection.get_script().len(),
+                single,
+                single as i64 - pair as i64
+            );
+        }
+        Ok(())
+    }
+
     /// The asymmetric mode must keep its existing variable names, so that
     /// enabling the flag is the only thing that changes behaviour.
     #[test]
