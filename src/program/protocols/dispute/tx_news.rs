@@ -28,7 +28,12 @@ use bitcoin_coordinator::TransactionStatus;
 use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
-use emulator::{decision::nary_search::NArySearchType, executor::utils::FailConfiguration};
+use emulator::{
+    decision::nary_search::{NArySearchType, Party},
+    executor::utils::FailConfiguration,
+};
+
+use super::{selection_bits_var, stage_hash_var};
 use tracing::{info, warn};
 
 fn to_u8(bytes: &[u8]) -> Result<u8, BitVMXError> {
@@ -348,19 +353,16 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                         )?;
                         drp.dispatch(program_context, tx, Some(sp), None)?;
                     }
-                    name if name.starts_with("NARY_")
+                    name if (name == POST_COMMITMENT || name.starts_with("NARY_"))
                         && drp.full_duplex_search(program_context)? =>
                     {
-                        // The full-duplex transaction graph is built and its
-                        // scripts are in place, but the orchestration that
-                        // drives it -- selecting over the counterparty's
-                        // dissection and dissecting in the same message -- is
-                        // not implemented yet. Refuse rather than drive it half
-                        // way.
-                        return Err(BitVMXError::InvalidInput(format!(
-                            "full-duplex search is not yet drivable: {}",
-                            name
-                        )));
+                        handle_full_duplex_stage(
+                            name,
+                            drp,
+                            program_context,
+                            leaf,
+                            &fail_force_config,
+                        )?;
                     }
                     name if name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER") => {
                         let round = name
@@ -720,6 +722,119 @@ fn handle_nary_common<BC: BitcoinCoordinatorApi>(
     )?;
 
     Ok(fail_config)
+}
+
+/// Drives one stage of a full-duplex search.
+///
+/// Both parties run the same job, so unlike the asymmetric search there is a
+/// single handler. Seeing the transaction for stage `s` is the cue for
+/// whichever party acts at stage `s + 1` to select over the dissection it just
+/// saw and dissect the subinterval it selected, in one message.
+fn handle_full_duplex_stage<BC: BitcoinCoordinatorApi>(
+    name: &str,
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext<BC>,
+    leaf: u32,
+    fail_force_config: &ForceFailConfiguration,
+) -> Result<(), BitVMXError> {
+    let (program_definition, pdf) = drp.get_program_definition(program_context)?;
+    let nary = program_definition.nary_def();
+    let mode = program_definition.search_mode();
+    let rounds = nary.total_rounds();
+
+    // The stage whose transaction we just saw. The commitment that opens the
+    // search precedes stage 1.
+    let seen = if name == POST_COMMITMENT {
+        0
+    } else {
+        name.rsplit('_')
+            .next()
+            .and_then(|s| s.parse::<u8>().ok())
+            .ok_or_else(|| {
+                BitVMXError::InvalidState(format!("Cannot read a stage number from {}", name))
+            })?
+    };
+
+    if seen > 0 {
+        let params = program_context
+            .globals
+            .get_var_or_err(&drp.ctx.id, &timeout_input_tx(name))?
+            .vec_number()?;
+        if leaf == params[0] {
+            info!("The counterparty consumed the timeout input for {name}");
+            return Ok(());
+        }
+    }
+
+    let stage = seen + 1;
+    let me = match drp.role() {
+        ParticipantRole::Prover => Party::Prover,
+        ParticipantRole::Verifier => Party::Verifier,
+    };
+    if mode.dissector(rounds, stage) != me {
+        // The counterparty acts next.
+        return Ok(());
+    }
+
+    let fail_config = handle_nary_common(
+        drp,
+        program_context,
+        fail_force_config,
+        NArySearchType::ConflictStep,
+        stage as u32,
+    )?;
+
+    // The dissection published at the stage we just saw, and the digit that
+    // came with it. The digit is what lets us catch up on the counterparty's
+    // selection before making our own.
+    let mut counterparty_hashes = Vec::new();
+    let mut counterparty_decision = None;
+    if seen > 0 {
+        for h in 1..nary.hashes_for_round(seen) + 1 {
+            let var = stage_hash_var(mode, rounds, seen, h);
+            let bytes = program_context
+                .witness
+                .get_witness_or_err(&drp.ctx.id, &var)?
+                .winternitz()?
+                .message_bytes();
+            counterparty_hashes.push(hex::encode(bytes));
+        }
+        if seen > 1 {
+            let var = selection_bits_var(mode, rounds, seen - 1);
+            let bytes = program_context
+                .witness
+                .get_witness_or_err(&drp.ctx.id, &var)?
+                .winternitz()?
+                .message_bytes();
+            if bytes.len() != 1 {
+                return Err(BitVMXError::InvalidState(
+                    "Expected exactly one byte for selection bits".to_string(),
+                ));
+            }
+            counterparty_decision = Some(bytes[0] as u32);
+        }
+    }
+
+    let execution_path = drp.get_execution_path()?;
+    let job = EmulatorJobType::FullDuplexStage(
+        pdf,
+        execution_path.clone(),
+        me == Party::Prover,
+        stage,
+        counterparty_hashes,
+        counterparty_decision,
+        format!("{}/{}", execution_path, "execution.json"),
+        fail_config,
+    );
+
+    drp.execute_job(
+        program_context,
+        &program_context.components_config.emulator,
+        job,
+        &format!("full_duplex_stage_{}", stage),
+    )?;
+
+    Ok(())
 }
 
 fn handle_nary_verifier<BC: BitcoinCoordinatorApi>(

@@ -6,6 +6,8 @@ use bitvmx_cpu_definitions::challenge::{
     ChallengeType, EmulatorResultType, ProverFinalTraceType, ProverHashesAndStepType,
 };
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
+
+use super::{selection_bits_var, stage_hash_var};
 use emulator::constants::REGISTERS_BASE_ADDRESS;
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -137,6 +139,67 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
 
             info!("Dispatching tx {:?}", tx);
 
+            drp.dispatch(context, tx, Some(sp), None)?;
+        }
+        EmulatorResultType::FullDuplexStageResult {
+            decision,
+            hashes,
+            stage,
+        } => {
+            let (program_definition, pdf) = drp.get_program_definition(context)?;
+            let nary = program_definition.nary_def();
+            let mode = program_definition.search_mode();
+            let rounds = nary.total_rounds();
+
+            // The digit selects over the dissection published at the previous
+            // stage.
+            if let Some(d) = decision {
+                set_input_u8(
+                    id,
+                    context,
+                    &selection_bits_var(mode, rounds, *stage - 1),
+                    *d as u8,
+                )?;
+            }
+
+            if *stage > rounds {
+                // Past the last round only the trailing selection remains. It
+                // rides on the adjudication message, so hand straight over to
+                // the final trace rather than dispatching a stage of its own.
+                let execution_path = drp.get_execution_path()?;
+                let decision = decision.ok_or_else(|| {
+                    BitVMXError::InvalidState(
+                        "The trailing stage must produce a selection".to_string(),
+                    )
+                })?;
+                drp.execute_job(
+                    context,
+                    &context.components_config.emulator,
+                    EmulatorJobType::ProverFinalTrace(
+                        pdf,
+                        execution_path.clone(),
+                        decision + 1,
+                        format!("{}/{}", execution_path, "execution.json"),
+                        None,
+                    ),
+                    "prover_final_trace",
+                )?;
+                return Ok(());
+            }
+
+            for (i, h) in hashes.iter().enumerate() {
+                set_input_hex(
+                    id,
+                    context,
+                    &stage_hash_var(mode, rounds, *stage, i as u8 + 1),
+                    h,
+                )?;
+            }
+
+            let owner = mode.dissector(rounds, *stage);
+            let tx_name = format!("NARY_{}_{}", owner.prefix().to_uppercase(), stage);
+            let (tx, sp) = drp.get_tx_with_speedup_data(context, &tx_name, 0, 0, true)?;
+            info!("Dispatching full-duplex stage {} as {:?}", stage, tx);
             drp.dispatch(context, tx, Some(sp), None)?;
         }
         EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
