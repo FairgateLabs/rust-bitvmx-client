@@ -348,6 +348,19 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                         )?;
                         drp.dispatch(program_context, tx, Some(sp), None)?;
                     }
+                    name if name.starts_with("NARY_")
+                        && drp.full_duplex_search(program_context)? =>
+                    {
+                        // The full-duplex transaction graph can be built and
+                        // measured, but the orchestration that drives it --
+                        // selecting over the counterparty's dissection and
+                        // dissecting in the same message -- is not implemented
+                        // yet. Refuse rather than drive it half way.
+                        return Err(BitVMXError::InvalidInput(format!(
+                            "full-duplex search is not yet drivable: {}",
+                            name
+                        )));
+                    }
                     name if name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER") => {
                         let round = name
                             .strip_prefix("NARY_VERIFIER_")

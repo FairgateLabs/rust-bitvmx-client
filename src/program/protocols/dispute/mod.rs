@@ -20,7 +20,8 @@ use bitcoin_script_riscv::riscv::{
 };
 use bitcoin_script_stack::stack::StackTracker;
 use emulator::{
-    constants::REGISTERS_BASE_ADDRESS, decision::nary_search::NArySearchType,
+    constants::REGISTERS_BASE_ADDRESS,
+    decision::nary_search::{NArySearchType, Party, SearchMode},
     loader::program_definition::ProgramDefinition,
 };
 use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
@@ -80,12 +81,43 @@ pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
 pub static TRACE_VARS: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
+/// Nibble widths of the values committed by the search.
+const SELECTION_BITS_NIBBLES: u32 = 2;
+const STATE_HASH_NIBBLES: u32 = 40;
+/// Substring identifying a first-search selection digit variable. Deliberately
+/// does not match the second search's `_selection_bits2_` variables.
+const SELECTION_BITS_INFIX: &str = "_selection_bits_";
+
 pub static PROVER_CHALLENGE_STEP1: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
 
 pub static TK_2NARY: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
 pub static PROVER_CHALLENGE_STEP2: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
 
-fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
+/// Name of the variable carrying the digit that selects over the dissection
+/// published at `round`. The owning party is part of the name, which keeps the
+/// existing "prover_*/verifier_* identifies the signing key" convention working
+/// unchanged. In the asymmetric mode the selector is always the verifier, so
+/// this reproduces the previous names exactly.
+fn selection_bits_var(mode: SearchMode, rounds: u8, round: u8) -> String {
+    format!(
+        "{}_selection_bits_{}",
+        mode.selector(rounds, round).prefix(),
+        round
+    )
+}
+
+/// Name of the variable carrying the `index`-th state hash of the dissection
+/// published at `stage`.
+fn stage_hash_var(mode: SearchMode, rounds: u8, stage: u8, index: u8) -> String {
+    format!(
+        "{}_hash_{}_{}",
+        mode.dissector(rounds, stage).prefix(),
+        stage,
+        index
+    )
+}
+
+fn build_trace_vars(rounds: u8, mode: SearchMode) -> Vec<(String, usize)> {
     let mut vars = vec![
         ("prover_write_address".to_string(), 4),
         ("prover_write_value".to_string(), 4),
@@ -112,17 +144,17 @@ fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
     ];
 
     for i in 1..rounds + 1 {
-        vars.push((format!("verifier_selection_bits_{}", i), 1));
+        vars.push((selection_bits_var(mode, rounds, i), 1));
     }
 
     vars
 }
 
-fn build_challenge_step_vars(rounds: u8) -> Vec<(String, usize)> {
+fn build_challenge_step_vars(rounds: u8, mode: SearchMode) -> Vec<(String, usize)> {
     let mut vars = vec![("verifier_last_step_tk".to_string(), 8)];
 
     for i in 1..rounds + 1 {
-        vars.push((format!("verifier_selection_bits_{}", i), 1));
+        vars.push((selection_bits_var(mode, rounds, i), 1));
     }
 
     vars
@@ -143,11 +175,11 @@ fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
     vars
 }
 
-fn build_challenge_step_vars_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
+fn build_challenge_step_vars_2nd_nary(rounds: u8, mode: SearchMode) -> Vec<(String, usize)> {
     let mut vars = vec![];
 
     for i in 1..rounds + 1 {
-        vars.push((format!("verifier_selection_bits_{}", i), 1));
+        vars.push((selection_bits_var(mode, rounds, i), 1));
     }
 
     for i in 1..rounds + 1 {
@@ -157,70 +189,52 @@ fn build_challenge_step_vars_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
     vars
 }
 
-pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
+pub fn init_trace_vars(rounds: u8, mode: SearchMode) -> Result<(), BitVMXError> {
     let trace_lock = TRACE_VARS.get_or_init(|| RwLock::new(Vec::new()));
     let challenge_step_lock = PROVER_CHALLENGE_STEP1.get_or_init(|| RwLock::new(Vec::new()));
 
     let tk_lock = TK_2NARY.get_or_init(|| RwLock::new(Vec::new()));
     let challenge_step2_lock = PROVER_CHALLENGE_STEP2.get_or_init(|| RwLock::new(Vec::new()));
 
-    // Read both locks to check existing consistency //TODO: now there is no need for round parameter
-    let trace = trace_lock.read()?;
-    let challenge_step = challenge_step_lock.read()?;
+    let expected_trace = build_trace_vars(rounds, mode);
+    let expected_tk = build_translation_keys_2nd_nary(rounds);
+    let expected_step = build_challenge_step_vars(rounds, mode);
+    let expected_step2 = build_challenge_step_vars_2nd_nary(rounds, mode);
 
-    let tk = tk_lock.read()?;
-    let challenge_step2 = challenge_step2_lock.read()?;
+    // Compare the variable lists themselves rather than counting rounds: the
+    // names depend on the search mode as well as the round count, and a stale
+    // list would silently pair a variable with the wrong party's key.
+    {
+        let trace = trace_lock.read()?;
+        let challenge_step = challenge_step_lock.read()?;
+        let tk = tk_lock.read()?;
+        let challenge_step2 = challenge_step2_lock.read()?;
 
-    let existing_trace_rounds = trace
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
-        .count() as u8;
-
-    let existing_step_rounds = challenge_step
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
-        .count() as u8;
-
-    let existing_tk_rounds = tk
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits2_"))
-        .count() as u8;
-
-    let existing_step2_rounds = challenge_step2
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
-        .count() as u8;
-
-    let is_consistent = existing_trace_rounds == rounds
-        && existing_tk_rounds == rounds
-        && existing_step_rounds == rounds
-        && existing_step2_rounds == rounds;
-
-    if is_consistent {
-        return Ok(()); // already consistent
+        if *trace == expected_trace
+            && *tk == expected_tk
+            && *challenge_step == expected_step
+            && *challenge_step2 == expected_step2
+        {
+            return Ok(()); // already consistent
+        }
     }
-
-    drop(trace);
-    drop(challenge_step);
-    drop(tk);
-    drop(challenge_step2);
 
     // Rebuild all in a consistent state
     {
         let mut trace = trace_lock.write()?;
-        *trace = build_trace_vars(rounds);
+        *trace = expected_trace;
     }
     {
         let mut tk = tk_lock.write()?;
-        *tk = build_translation_keys_2nd_nary(rounds);
+        *tk = expected_tk;
     }
     {
         let mut challenge_step = challenge_step_lock.write()?;
-        *challenge_step = build_challenge_step_vars(rounds);
+        *challenge_step = expected_step;
     }
     {
         let mut challenge_step2 = challenge_step2_lock.write()?;
-        *challenge_step2 = build_challenge_step_vars_2nd_nary(rounds);
+        *challenge_step2 = expected_step2;
     }
     Ok(())
 }
@@ -293,7 +307,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
         let nary_def = program_def.nary_def();
-        init_trace_vars(nary_def.total_rounds())?;
+        init_trace_vars(nary_def.total_rounds(), program_def.search_mode())?;
 
         let aggregated_1 = program_context
             .key_manager
@@ -396,34 +410,53 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         //generate keys for the nary search
         let nary_def = program_def.nary_def();
-        info!("Nary def: {:?}", nary_def);
-        for i in 1..nary_def.total_rounds() + 1 {
-            if self.role() == ParticipantRole::Prover {
+        let mode = program_def.search_mode();
+        let rounds = nary_def.total_rounds();
+        let is_prover = self.role() == ParticipantRole::Prover;
+        let me = if is_prover {
+            Party::Prover
+        } else {
+            Party::Verifier
+        };
+        info!("Nary def: {:?} search mode: {:?}", nary_def, mode);
+        for i in 1..rounds + 1 {
+            // Ownership of the first search follows the search mode. The second
+            // search is always asymmetric, so its keys stay with the prover and
+            // the verifier respectively.
+            let i_dissect = mode.dissector(rounds, i) == me;
+            let i_select = mode.selector(rounds, i) == me;
+
+            if i_dissect || is_prover {
                 let hashes = nary_def.hashes_for_round(i);
                 for h in 1..hashes + 1 {
-                    let key = program_context
-                        .key_manager
-                        .next_winternitz(20, WinternitzType::HASH160)?;
-                    let key2 = program_context
-                        .key_manager
-                        .next_winternitz(20, WinternitzType::HASH160)?;
-                    keys.push((format!("prover_hash_{}_{}", i, h), key.into()));
-                    keys.push((format!("prover_hash2_{}_{}", i, h), key2.into()));
-                    // for the second n-ary search
+                    if i_dissect {
+                        let key = program_context
+                            .key_manager
+                            .next_winternitz(20, WinternitzType::HASH160)?;
+                        keys.push((stage_hash_var(mode, rounds, i, h), key.into()));
+                    }
+                    if is_prover {
+                        let key2 = program_context
+                            .key_manager
+                            .next_winternitz(20, WinternitzType::HASH160)?;
+                        keys.push((format!("prover_hash2_{}_{}", i, h), key2.into()));
+                        // for the second n-ary search
+                    }
                 }
-            } else {
+            }
+            if i_select {
                 let _bits = nary_def.bits_for_round(i);
                 let key = program_context
                     .key_manager
                     .next_winternitz(1, WinternitzType::HASH160)?;
-                keys.push((format!("verifier_selection_bits_{}", i), key.into()));
-                if i > 1 {
-                    // verifier_selection_bits2_1 is generated as part of READ_VALUE_NARY_SEARCH_CHALLENGE
-                    let key2 = program_context
-                        .key_manager
-                        .next_winternitz(1, WinternitzType::HASH160)?;
-                    keys.push((format!("verifier_selection_bits2_{}", i), key2.into()));
-                }
+                keys.push((selection_bits_var(mode, rounds, i), key.into()));
+            }
+            if !is_prover && i > 1 {
+                // verifier_selection_bits2_1 is generated as part of READ_VALUE_NARY_SEARCH_CHALLENGE
+                let key2 = program_context
+                    .key_manager
+                    .next_winternitz(1, WinternitzType::HASH160)?;
+                keys.push((format!("verifier_selection_bits2_{}", i), key2.into()));
                 // for the second n-ary search
             }
         }
@@ -736,37 +769,52 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         )?;
 
         let mut prev = POST_COMMITMENT.to_string();
-        for i in 1..nary_def.total_rounds() + 1 {
-            let next = format!("NARY_PROVER_{}", i);
-            let hashes = nary_def.hashes_for_round(i);
-            let vars = (1..hashes + 1)
-                .map(|h| format!("prover_hash_{}_{}", i, h))
-                .collect::<Vec<_>>();
+        let search_mode = program_def.0.search_mode();
+        let rounds = nary_def.total_rounds();
 
-            self.add_connection_with_scripts(
-                context,
-                aggregated,
-                &mut protocol,
-                timelock_blocks,
-                AmountType::Auto,
-                speedup_dust,
-                &prev,
-                &next,
-                &claim_verifier,
-                Self::winternitz_check(
-                    agg_or_prover,
-                    sign_mode,
+        for stage in 1..rounds + 1 {
+            let owner = search_mode.dissector(rounds, stage);
+            let hashes = nary_def.hashes_for_round(stage);
+
+            // In the full-duplex mode a stage also carries the digit selecting
+            // over the dissection published at the previous stage, so a single
+            // message advances the search by a whole level. Stage 1 has no
+            // predecessor to select over.
+            let carries_selection = search_mode == SearchMode::FullDuplex && stage > 1;
+
+            let mut vars = Vec::new();
+            if carries_selection {
+                vars.push(selection_bits_var(search_mode, rounds, stage - 1));
+            }
+            vars.extend((1..hashes + 1).map(|h| stage_hash_var(search_mode, rounds, stage, h)));
+
+            let extra = if carries_selection {
+                let bits = nary_def.bits_for_round(stage - 1);
+                Some(vec![
+                    Self::get_reverse_script(
+                        SELECTION_BITS_NIBBLES + hashes as u32 * STATE_HASH_NIBBLES,
+                    ),
+                    Self::get_validate_stage_selection_script(hashes, (1 << bits) - 1),
+                ])
+            } else {
+                None
+            };
+
+            let next = format!("NARY_{}_{}", owner.prefix().to_uppercase(), stage);
+            let (owner_keys, agg_or_owner, claim, speedups) = match owner {
+                Party::Prover => (
                     &keys[0],
-                    &vars.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                )?,
-                (&prover_speedup_pub, &verifier_speedup_pub),
-            )?;
-
-            prev = next;
-            let next = format!("NARY_VERIFIER_{}", i);
-            let bits = nary_def.bits_for_round(i);
-            let validate_selection_bits_script =
-                Self::get_validate_selection_bits_script((1 << bits) - 1);
+                    agg_or_prover,
+                    &claim_verifier,
+                    (prover_speedup_pub, verifier_speedup_pub),
+                ),
+                Party::Verifier => (
+                    &keys[1],
+                    agg_or_verifier,
+                    &claim_prover,
+                    (verifier_speedup_pub, prover_speedup_pub),
+                ),
+            };
 
             self.add_connection_with_scripts(
                 context,
@@ -777,17 +825,47 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 speedup_dust,
                 &prev,
                 &next,
-                &claim_prover,
+                claim,
                 Self::winternitz_check_extra_script(
-                    agg_or_verifier,
+                    agg_or_owner,
                     sign_mode,
-                    &keys[1],
-                    &vec![&format!("verifier_selection_bits_{}", i)],
-                    Some(vec![validate_selection_bits_script]),
+                    owner_keys,
+                    &vars,
+                    extra,
                 )?,
-                (&verifier_speedup_pub, &prover_speedup_pub),
+                speedups,
             )?;
             prev = next;
+
+            // The asymmetric search spends a second message on the selection,
+            // which carries nothing else.
+            if search_mode == SearchMode::Asymmetric {
+                let next = format!("NARY_VERIFIER_{}", stage);
+                let bits = nary_def.bits_for_round(stage);
+                let validate_selection_bits_script =
+                    Self::get_validate_selection_bits_script((1 << bits) - 1);
+
+                self.add_connection_with_scripts(
+                    context,
+                    aggregated,
+                    &mut protocol,
+                    timelock_blocks,
+                    AmountType::Auto,
+                    speedup_dust,
+                    &prev,
+                    &next,
+                    &claim_prover,
+                    Self::winternitz_check_extra_script(
+                        agg_or_verifier,
+                        sign_mode,
+                        &keys[1],
+                        &vec![selection_bits_var(search_mode, rounds, stage)],
+                        Some(vec![validate_selection_bits_script]),
+                    )?,
+                    (&verifier_speedup_pub, &prover_speedup_pub),
+                )?;
+                prev = next;
+            }
         }
 
         self.add_connection_with_scripts(
@@ -1031,6 +1109,14 @@ impl WithClaimGateConfig for DisputeResolutionProtocol {
 }
 
 impl DisputeResolutionProtocol {
+    /// Whether this dispute runs the full-duplex search.
+    pub fn full_duplex_search<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<bool, BitVMXError> {
+        Ok(self.get_program_definition(context)?.0.search_mode() == SearchMode::FullDuplex)
+    }
+
     pub fn new(context: ProtocolContext) -> Self {
         Self { ctx: context }
     }
@@ -1283,6 +1369,7 @@ impl DisputeResolutionProtocol {
 
         let program_def = self.get_program_definition(context)?.0;
         let rounds = program_def.nary_def().total_rounds();
+        let mode = program_def.search_mode();
         let nary = program_def.nary_def().nary;
         let nary_last_round = program_def.nary_def().nary_last_round;
         let total_size = challenge_step_vars
@@ -1295,10 +1382,10 @@ impl DisputeResolutionProtocol {
             let tables = &StackTables::new(&mut stack, false, false, 0b111, 0b111, 0);
 
             for i in 1..rounds + 1 {
-                let selection_bits_0 =
-                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                let name = selection_bits_var(mode, rounds, i);
+                let selection_bits_0 = stack.move_var_sub_n(stackvars[&name], 0);
                 stack.drop(selection_bits_0);
-                stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                stack.move_var_sub_n(stackvars[&name], 0);
             }
             let selection = stack.join_in_stack(rounds as u32, None, Some("selection_bits"));
 
@@ -1323,10 +1410,10 @@ impl DisputeResolutionProtocol {
             tables.drop(&mut stack);
         } else {
             for i in 1..rounds + 1 {
-                let selection_bits_0 =
-                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                let name = selection_bits_var(mode, rounds, i);
+                let selection_bits_0 = stack.move_var_sub_n(stackvars[&name], 0);
                 stack.drop(selection_bits_0);
-                stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                stack.move_var_sub_n(stackvars[&name], 0);
             }
 
             let selection_first_nary =
@@ -1391,7 +1478,7 @@ impl DisputeResolutionProtocol {
 
         let vars_names = vars
             .iter()
-            .filter(|(name, _)| name.starts_with("prover"))
+            .filter(|(name, _)| name.starts_with("prover") && !name.contains(SELECTION_BITS_INFIX))
             .map(|(name, _)| name.as_str())
             .collect::<Vec<&str>>();
 
@@ -1403,11 +1490,17 @@ impl DisputeResolutionProtocol {
 
         names_and_keys.extend(
             vars.iter()
-                .filter(|(name, _)| name.starts_with("verifier_selection_bits"))
+                .filter(|(name, _)| name.contains(SELECTION_BITS_INFIX))
                 .map(|(name, _)| {
-                    verifier_keys
-                        .get_winternitz(name)
-                        .map(|k| (name.as_str(), k))
+                    // In the full-duplex mode the digits alternate between the
+                    // parties, so the owning key is read from the variable name
+                    // rather than assumed to be the verifier's.
+                    let owner = if name.starts_with("prover") {
+                        prover_keys
+                    } else {
+                        verifier_keys
+                    };
+                    owner.get_winternitz(name).map(|k| (name.as_str(), k))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         );
@@ -1517,6 +1610,41 @@ impl DisputeResolutionProtocol {
         stack.get_script()
     }
 
+    /// Validates the selection digit carried by a full-duplex stage, where the
+    /// digit is followed on the stack by the `hashes` state hashes of the
+    /// sender's own dissection.
+    ///
+    /// Expects the values in declaration order, so the caller must prepend the
+    /// reverse script.
+    fn validate_stage_selection(stack: &mut StackTracker, hashes: u8, max_bits: u8) {
+        let selection_bits = stack.define(SELECTION_BITS_NIBBLES, "selection_bits");
+        let hash_vars = (0..hashes)
+            .map(|h| stack.define(STATE_HASH_NIBBLES, &format!("stage_hash_{}", h)))
+            .collect::<Vec<_>>();
+
+        // The dissection is authenticated by its one-time signatures alone;
+        // drop it from the top down to reach the digit underneath.
+        for var in hash_vars.into_iter().rev() {
+            stack.drop(var);
+        }
+
+        // In declaration order the most significant nibble is at position 0,
+        // and it must be zero for the digit to be in range.
+        stack.move_var_sub_n(selection_bits, 0);
+        stack.number(0);
+        stack.op_equalverify();
+
+        stack.number(max_bits as u32);
+        stack.op_lessthanorequal();
+        stack.op_verify();
+    }
+
+    fn get_validate_stage_selection_script(hashes: u8, max_bits: u8) -> ScriptBuf {
+        let mut stack = StackTracker::new();
+        Self::validate_stage_selection(&mut stack, hashes, max_bits);
+        stack.get_script()
+    }
+
     pub fn get_validate_selection_bits_script(max_bits: u8) -> ScriptBuf {
         let mut stack = StackTracker::new();
         let selection_bits = stack.define(2, "verifier_selection_bits");
@@ -1559,5 +1687,103 @@ impl DisputeResolutionProtocol {
         stack.equals(verifier_last_step, true, prover_last_step, true);
 
         stack.get_script()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pushes a full-duplex stage witness in declaration order -- the selection
+    /// digit followed by the sender's dissection -- and runs the validation
+    /// script over it.
+    fn validate(hashes: u8, max_bits: u8, high_nibble: u8, digit: u8) -> bool {
+        let mut stack = StackTracker::new();
+        stack.byte((high_nibble << 4) | digit);
+        for _ in 0..hashes {
+            stack.hexstr_as_nibbles(&"ab".repeat(20));
+        }
+        DisputeResolutionProtocol::validate_stage_selection(&mut stack, hashes, max_bits);
+        stack.op_true();
+        stack.run().success
+    }
+
+    /// The digit sits underneath the dissection on the stack, so the script has
+    /// to reach past a variable number of state hashes to find it.
+    #[test]
+    fn stage_selection_accepts_digits_in_range() {
+        for hashes in [1u8, 3, 7] {
+            for max_bits in [1u8, 3, 7] {
+                for digit in 0..max_bits + 1 {
+                    assert!(
+                        validate(hashes, max_bits, 0, digit),
+                        "hashes {} max_bits {} digit {}",
+                        hashes,
+                        max_bits,
+                        digit
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stage_selection_rejects_digits_out_of_range() {
+        for hashes in [1u8, 3, 7] {
+            for max_bits in [1u8, 3, 7] {
+                for digit in max_bits + 1..16 {
+                    assert!(
+                        !validate(hashes, max_bits, 0, digit),
+                        "hashes {} max_bits {} digit {}",
+                        hashes,
+                        max_bits,
+                        digit
+                    );
+                }
+            }
+        }
+    }
+
+    /// A digit smuggled into the high nibble must not widen the selection.
+    #[test]
+    fn stage_selection_rejects_a_nonzero_high_nibble() {
+        for high in 1u8..16 {
+            assert!(!validate(3, 7, high, 0), "high nibble {}", high);
+            assert!(!validate(3, 7, high, 1), "high nibble {}", high);
+        }
+    }
+
+    /// The asymmetric mode must keep its existing variable names, so that
+    /// enabling the flag is the only thing that changes behaviour.
+    #[test]
+    fn asymmetric_mode_keeps_the_legacy_variable_names() {
+        let rounds = 5;
+        for r in 1..rounds + 1 {
+            assert_eq!(
+                selection_bits_var(SearchMode::Asymmetric, rounds, r),
+                format!("verifier_selection_bits_{}", r)
+            );
+            for h in 1..4 {
+                assert_eq!(
+                    stage_hash_var(SearchMode::Asymmetric, rounds, r, h),
+                    format!("prover_hash_{}_{}", r, h)
+                );
+            }
+        }
+    }
+
+    /// Under full duplex a stage's dissection and the digit it selects with
+    /// belong to the same party, since that party acts at that stage.
+    #[test]
+    fn full_duplex_stage_commits_its_own_digit() {
+        for rounds in 1..10u8 {
+            for stage in 2..rounds + 1 {
+                let dissection = stage_hash_var(SearchMode::FullDuplex, rounds, stage, 1);
+                let digit = selection_bits_var(SearchMode::FullDuplex, rounds, stage - 1);
+                let owner = SearchMode::FullDuplex.dissector(rounds, stage).prefix();
+                assert!(dissection.starts_with(owner), "{}", dissection);
+                assert!(digit.starts_with(owner), "{}", digit);
+            }
+        }
     }
 }

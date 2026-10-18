@@ -9,7 +9,8 @@ use bitvmx_cpu_definitions::{
     constants::CHUNK_SIZE,
 };
 use emulator::{
-    decision::nary_search::NArySearchType, loader::program_definition::ProgramDefinition,
+    decision::nary_search::{NArySearchType, Party},
+    loader::program_definition::ProgramDefinition,
 };
 use protocol_builder::scripts::{self, ProtocolScript, SignMode};
 use tracing::info;
@@ -235,6 +236,7 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
 
     let nary_def = program_definitions.nary_def();
     let rounds = nary_def.total_rounds();
+    let search_mode = program_definitions.search_mode();
     let nary = nary_def.nary;
     let nary_last_round = nary_def.nary_last_round;
 
@@ -533,9 +535,26 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                     scripts.push(stack.get_script());
 
                                     let mut names_and_keys_copy = names_and_keys.clone();
-                                    let key_name = format!("prover_hash_{}_{}", round, h);
+                                    // The position may have been committed by
+                                    // either party under the full-duplex mode,
+                                    // so both the name and the key follow the
+                                    // stage's owner.
+                                    //
+                                    // TODO(full-duplex): when the owner is the
+                                    // counterparty and the position is the
+                                    // disputed boundary, this leaf must punish
+                                    // equality rather than inequality. Until
+                                    // that lands the full-duplex mode is
+                                    // refused at dispatch.
+                                    let owner = search_mode.dissector(rounds, round);
+                                    let key_name =
+                                        format!("{}_hash_{}_{}", owner.prefix(), round, h);
                                     let key_name_ref: &str = key_name.as_str();
-                                    let winternitz_key = keys[0].get_winternitz(&key_name)?;
+                                    let owner_keys = match owner {
+                                        Party::Prover => &keys[0],
+                                        Party::Verifier => &keys[1],
+                                    };
+                                    let winternitz_key = owner_keys.get_winternitz(&key_name)?;
                                     names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
 
                                     names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
