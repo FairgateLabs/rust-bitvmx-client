@@ -523,6 +523,13 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                 for h in 1..hashes + 1 {
                                     let mut scripts = vec![reverse_script.clone()];
                                     stack = StackTracker::new();
+                                    // The position may have been committed by
+                                    // either party under the full-duplex mode,
+                                    // so the name, the key and the sense of the
+                                    // leaf's comparison all follow the stage's
+                                    // owner.
+                                    let owner = search_mode.dissector(rounds, round);
+                                    let counterparty_committed = owner == Party::Verifier;
                                     equivocation_resign_challenge(
                                         &mut stack,
                                         kind.clone(),
@@ -531,22 +538,11 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                         rounds,
                                         nary,
                                         nary_last_round,
+                                        counterparty_committed,
                                     );
                                     scripts.push(stack.get_script());
 
                                     let mut names_and_keys_copy = names_and_keys.clone();
-                                    // The position may have been committed by
-                                    // either party under the full-duplex mode,
-                                    // so both the name and the key follow the
-                                    // stage's owner.
-                                    //
-                                    // TODO(full-duplex): when the owner is the
-                                    // counterparty and the position is the
-                                    // disputed boundary, this leaf must punish
-                                    // equality rather than inequality. Until
-                                    // that lands the full-duplex mode is
-                                    // refused at dispatch.
-                                    let owner = search_mode.dissector(rounds, round);
                                     let key_name =
                                         format!("{}_hash_{}_{}", owner.prefix(), round, h);
                                     let key_name_ref: &str = key_name.as_str();
@@ -710,6 +706,9 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                         rounds,
                                         nary,
                                         nary_last_round,
+                                        // the second search keeps the
+                                        // asymmetric roles
+                                        false,
                                     );
                                     scripts.push(stack.get_script());
 
@@ -949,6 +948,7 @@ pub fn get_challenge_leaf<BC: BitcoinCoordinatorApi>(
             expected_round,
             expected_index,
             rounds: _,
+            counterparty_committed: _,
             nary: _,
             nary_last_round: _,
         } => {

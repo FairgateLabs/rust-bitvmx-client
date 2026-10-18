@@ -351,11 +351,12 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                     name if name.starts_with("NARY_")
                         && drp.full_duplex_search(program_context)? =>
                     {
-                        // The full-duplex transaction graph can be built and
-                        // measured, but the orchestration that drives it --
-                        // selecting over the counterparty's dissection and
-                        // dissecting in the same message -- is not implemented
-                        // yet. Refuse rather than drive it half way.
+                        // The full-duplex transaction graph is built and its
+                        // scripts are in place, but the orchestration that
+                        // drives it -- selecting over the counterparty's
+                        // dissection and dissecting in the same message -- is
+                        // not implemented yet. Refuse rather than drive it half
+                        // way.
                         return Err(BitVMXError::InvalidInput(format!(
                             "full-duplex search is not yet drivable: {}",
                             name
