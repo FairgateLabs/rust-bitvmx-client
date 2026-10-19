@@ -7,6 +7,15 @@ introduce breaking changes between versions.
 
 ### Changed
 
+- Following rust-bitvmx-storage-backend PR #43, `StorageConfig` has a `sync_writes` option, on by
+  default, that fsyncs every write, including transaction commits. The `storage` and `key_storage`
+  sections of the client config accept `sync_writes: false` to turn it off. `StorageConfig` has a
+  new field, so direct storage-backend consumers must build it with `StorageConfig::new`.
+- Following the same PR, `StorageError::ReadError` carries the RocksDB message,
+  `StorageError::MissingCurrent` is returned when a database directory has no CURRENT file, and
+  `Storage::repair` returns a `RepairReport`. The storage-backend CLI exits with 2 when a repair
+  lost files and with 1 on errors.
+
 ## 0.8.7
 
 - Following [rust-bitvmx-storage-backend change `87f690e`](https://github.com/FairgateLabs/rust-bitvmx-storage-backend/commit/87f690e866bdea521dafdb7ed8b37044fc12df6a),
