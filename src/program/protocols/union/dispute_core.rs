@@ -69,6 +69,7 @@ const PEGOUT_ID_KEYS: &str = "PEGOUT_ID_KEYS";
 const MEMBERS_SLOT_ID_KEYS: &str = "MEMBERS_SLOT_ID_KEYS";
 const INIT_CHALLENGE_SLOT: &str = "INIT_CHALLENGE_SLOT";
 const CLAIM_INIT_MINED: &str = "CLAIM_INIT_MINED";
+const WT_START_ENABLER_DISPATCHED: &str = "WT_START_ENABLER_DISPATCHED";
 
 pub const OP_COSIGN_SLOT_KEY: &str = "OP_COSIGN_SLOT_KEY";
 pub const OP_COSIGN_PEGOUT_ID_KEY: &str = "OP_COSIGN_PEGOUT_ID_KEY";
@@ -107,7 +108,9 @@ const OP_COSIGN_TX_TIMELOCK_LEAF: usize = 0;
 const COSIGN_SLOT_SIZE: usize = 4;
 
 enum DisputeCoreTxType {
-    WtStartEnabler,
+    WtStartEnabler {
+        wt_index: usize,
+    },
     ProtocolFunding,
     OperatorDisablerDirectory {
         wt_index: usize,
@@ -148,6 +151,7 @@ enum DisputeCoreTxType {
     ClaimInit {
         wt_index: usize,
         op_index: usize,
+        block_height: Option<u32>,
     },
     RevealInput {
         slot_index: usize,
@@ -190,7 +194,7 @@ enum DisputeCoreTxType {
 impl DisputeCoreTxType {
     pub fn tx_name(&self) -> String {
         match self {
-            DisputeCoreTxType::WtStartEnabler => WT_START_ENABLER_TX.to_string(),
+            DisputeCoreTxType::WtStartEnabler { .. } => WT_START_ENABLER_TX.to_string(),
             DisputeCoreTxType::ProtocolFunding => PROTOCOL_FUNDING_TX.to_string(),
             DisputeCoreTxType::OperatorDisablerDirectory { wt_index, op_index } => {
                 double_indexed_name(OP_DISABLER_DIRECTORY_TX, *wt_index, *op_index)
@@ -216,9 +220,9 @@ impl DisputeCoreTxType {
             DisputeCoreTxType::OperatorCosign { wt_index, op_index } => {
                 double_indexed_name(OP_COSIGN_TX, *wt_index, *op_index)
             }
-            DisputeCoreTxType::ClaimInit { wt_index, op_index } => {
-                double_indexed_name(CLAIM_INIT_TX, *wt_index, *op_index)
-            }
+            DisputeCoreTxType::ClaimInit {
+                wt_index, op_index, ..
+            } => double_indexed_name(CLAIM_INIT_TX, *wt_index, *op_index),
             DisputeCoreTxType::RevealInput { slot_index } => {
                 indexed_name(REVEAL_INPUT_TX, *slot_index)
             }
@@ -282,6 +286,7 @@ impl DisputeCoreTxType {
             DisputeCoreTxType::WatchtowerNoChallenge { block_height, .. } => *block_height,
             DisputeCoreTxType::OperatorNoCosign { block_height, .. } => *block_height,
             DisputeCoreTxType::InputNotRevealed { block_height, .. } => *block_height,
+            DisputeCoreTxType::ClaimInit { block_height, .. } => *block_height,
             _ => None,
         }
     }
@@ -648,7 +653,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
                 slot_index,
                 DisputeTxType::InputNotRevealed,
             )?;
-            self.handle_input_not_revealed_tx(program_context, &tx_name)?;
+            self.handle_input_not_revealed_tx(program_context, &tx_name, &tx_status)?;
         } else if tx_name.starts_with(CLAIM_INIT_TX) {
             self.handle_claim_init_tx(program_context, &tx_name)?;
         } else if tx_name.starts_with(WT_INIT_CHALLENGE_TX) {
@@ -719,9 +724,8 @@ impl ProtocolHandler for DisputeCoreProtocol {
         // Automatically get and dispatch the PROTOCOL_FUNDING_TX transaction
         if self.is_my_dispute_core(program_context)? {
             self.dispatch(program_context, DisputeCoreTxType::ProtocolFunding)?;
-
-            // TODO: Dispatched it here, but it should be dispatched just when needed (challenge case)
-            self.dispatch(program_context, DisputeCoreTxType::WtStartEnabler)?;
+            // WT_START_ENABLER_TX is dispatched on demand, the first time this watchtower
+            // needs to spend one of its outputs (see dispatch_wt_start_enabler_if_needed).
         } else {
             info!(
                 id = self.ctx.my_idx,
@@ -2428,6 +2432,48 @@ impl DisputeCoreProtocol {
             .bool()?)
     }
 
+    fn is_wt_start_enabler_dispatched<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        wt_dispute_core_id: &Uuid,
+    ) -> Result<bool, BitVMXError> {
+        Ok(context
+            .globals
+            .get_var(wt_dispute_core_id, WT_START_ENABLER_DISPATCHED)?
+            .unwrap_or_else(|| VariableTypes::Bool(false))
+            .bool()?)
+    }
+
+    /// Dispatches this watchtower's WT_START_ENABLER_TX the first time one of its outputs is
+    /// needed. Returns the block height at which the spending transactions should be dispatched:
+    /// one block later when WT_START_ENABLER_TX was just dispatched, None (now) otherwise.
+    fn dispatch_wt_start_enabler_if_needed<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        wt_dispute_core_id: &Uuid,
+        tx_status: &TransactionStatus,
+    ) -> Result<Option<u32>, BitVMXError> {
+        if self.is_wt_start_enabler_dispatched(context, wt_dispute_core_id)? {
+            return Ok(None);
+        }
+
+        self.dispatch(
+            context,
+            DisputeCoreTxType::WtStartEnabler {
+                wt_index: self.ctx.my_idx,
+            },
+        )?;
+
+        context.globals.set_var(
+            wt_dispute_core_id,
+            WT_START_ENABLER_DISPATCHED,
+            VariableTypes::Bool(true),
+        )?;
+
+        // Delay one block to ensure WT_START_ENABLER_TX is dispatched first
+        Ok(Some(self.get_dispatch_height(tx_status, 1)?))
+    }
+
     fn handle_claim_init_tx<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
@@ -2528,6 +2574,7 @@ impl DisputeCoreProtocol {
                     DisputeCoreTxType::ClaimInit {
                         wt_index: data.member_index,
                         op_index,
+                        block_height: None,
                     },
                 )?;
             }
@@ -2805,6 +2852,7 @@ impl DisputeCoreProtocol {
         &self,
         context: &ProgramContext<BC>,
         tx_name: &str,
+        tx_status: &TransactionStatus,
     ) -> Result<(), BitVMXError> {
         // INPUT_NOT_REVEALED_TX belongs to the challenged operator's dispute core. Every other
         // committee member acts as a verifier and dispatches CLAIM_INIT_TX plus the STOPPER_TX
@@ -2821,7 +2869,17 @@ impl DisputeCoreProtocol {
             get_dispute_core_pid(data.committee_id, &committee.members[wt_index].take_key);
 
         if !self.is_claim_init_mined(context, &wt_dispute_core_id, op_index)? {
-            self.dispatch(context, DisputeCoreTxType::ClaimInit { wt_index, op_index })?;
+            // CLAIM_INIT_TX spends a WT_START_ENABLER_TX output
+            let block_height =
+                self.dispatch_wt_start_enabler_if_needed(context, &wt_dispute_core_id, tx_status)?;
+            self.dispatch(
+                context,
+                DisputeCoreTxType::ClaimInit {
+                    wt_index,
+                    op_index,
+                    block_height,
+                },
+            )?;
         }
 
         self.dispatch(
@@ -2881,12 +2939,17 @@ impl DisputeCoreProtocol {
             .witness
             .set_witness(&wt_dispute_core_id, &key_name, witness)?;
 
+        // CLAIM_INIT_TX and WT_INIT_CHALLENGE_TX spend WT_START_ENABLER_TX outputs
+        let block_height =
+            self.dispatch_wt_start_enabler_if_needed(context, &wt_dispute_core_id, tx_status)?;
+
         // Load wt dispute core and dispatch init challenge tx
         self.dispatch(
             context,
             DisputeCoreTxType::ClaimInit {
                 wt_index: self.ctx.my_idx,
                 op_index: data.member_index,
+                block_height,
             },
         )?;
 
@@ -2902,7 +2965,7 @@ impl DisputeCoreProtocol {
             &init_challenge_name,
             tx,
             speedup,
-            None,
+            block_height,
             wt_dispute_core_id,
         )?;
 
@@ -3383,13 +3446,13 @@ impl DisputeCoreProtocol {
         let mut program_id = self.ctx.id;
 
         let (tx, speedup) = match tx_type {
-            DisputeCoreTxType::WtStartEnabler => self.wt_start_enabler_tx(context)?,
             DisputeCoreTxType::ProtocolFunding => self.protocol_funding_tx(context)?,
             DisputeCoreTxType::Challenge { .. } => self.challenge_tx(&tx_name.clone(), context)?,
             DisputeCoreTxType::WatchtowerNoChallenge { .. } => self.wt_no_challenge_tx(&tx_name)?,
             DisputeCoreTxType::OperatorNoCosign { .. } => self.op_no_cosign_tx(&tx_name)?,
             DisputeCoreTxType::OperatorCosign { .. } => self.op_cosign_tx(&tx_name, context)?,
-            DisputeCoreTxType::ClaimInit { wt_index, .. } => {
+            DisputeCoreTxType::WtStartEnabler { wt_index }
+            | DisputeCoreTxType::ClaimInit { wt_index, .. } => {
                 let dispute_core_data = self.dispute_core_data(context)?;
                 let committee = self.committee(context)?;
                 let pid = get_dispute_core_pid(
