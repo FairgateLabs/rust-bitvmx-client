@@ -29,7 +29,7 @@ use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
 use emulator::{
-    decision::nary_search::{NArySearchType, Party},
+    decision::nary_search::{NArySearchType, Party, SearchMode},
     executor::utils::FailConfiguration,
 };
 
@@ -51,6 +51,7 @@ fn to_hex(bytes: &[u8]) -> String {
 
 fn create_ownership_table(
     rounds: u8,
+    mode: SearchMode,
     inputs: Vec<(usize, String)>,
 ) -> Result<TxOwnershipTable, BitVMXError> {
     if rounds == 0 || inputs.is_empty() {
@@ -84,10 +85,10 @@ fn create_ownership_table(
     table.add(PRE_COMMITMENT, Verifier);
     table.add(COMMITMENT, Prover);
     table.add(POST_COMMITMENT, Verifier);
-    add_nary_search(&mut table, "NARY", 1, rounds);
+    add_nary_search(&mut table, "NARY", 1, rounds, mode);
     table.add(EXECUTE, Prover);
     table.add(CHALLENGE, Verifier);
-    add_nary_search(&mut table, "NARY2", 2, rounds);
+    add_nary_search(&mut table, "NARY2", 2, rounds, SearchMode::Asymmetric);
     table.add(GET_HASHES_AND_STEP, Prover);
     table.add(CHALLENGE_READ, Verifier);
     table.add(VERIFIER_FINAL, Verifier);
@@ -99,12 +100,28 @@ fn add_nary_search(
     nary_type: &str,
     start_round: u8,
     total_rounds: u8,
+    mode: SearchMode,
 ) {
     for round in start_round..=total_rounds {
-        let prover = format!("{}_PROVER_{}", nary_type, round);
-        let verifier = format!("{}_VERIFIER_{}", nary_type, round);
-        table.add(&prover, Prover);
-        table.add(&verifier, Verifier);
+        match mode {
+            // One message per round from each party, in that order.
+            SearchMode::Asymmetric => {
+                table.add(&format!("{}_PROVER_{}", nary_type, round), Prover);
+                table.add(&format!("{}_VERIFIER_{}", nary_type, round), Verifier);
+            }
+            // One message per stage, alternating. The timeout chain is derived
+            // from this table, so it has to match the graph exactly: naming a
+            // transaction that was never built leaves the dispute unable to
+            // time out.
+            SearchMode::FullDuplex => {
+                let owner = mode.dissector(total_rounds, round);
+                let (name, role) = match owner {
+                    Party::Prover => (format!("{}_PROVER_{}", nary_type, round), Prover),
+                    Party::Verifier => (format!("{}_VERIFIER_{}", nary_type, round), Verifier),
+                };
+                table.add(&name, role);
+            }
+        }
     }
 }
 
@@ -155,7 +172,8 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
         .map(|(i, owner)| (i, owner.to_string()))
         .collect();
 
-    let ownership_table = create_ownership_table(rounds, inputs)?;
+    let mode = drp.get_program_definition(program_context)?.0.search_mode();
+    let ownership_table = create_ownership_table(rounds, mode, inputs)?;
 
     cancel_timeout(drp, &name, vout, program_context, &ownership_table)?;
 
@@ -816,6 +834,12 @@ fn handle_full_duplex_stage<BC: BitcoinCoordinatorApi>(
     }
 
     let execution_path = drp.get_execution_path()?;
+    // Past the last round only the trailing selection remains, and it rides on
+    // the adjudication message together with the expanded trace. Ask for both
+    // in one job: splitting them costs a round trip and leaves the dispute
+    // waiting on a result it does not need on its own.
+    let final_trace = stage > rounds;
+
     let job = EmulatorJobType::FullDuplexStage(
         pdf,
         execution_path.clone(),
@@ -823,6 +847,7 @@ fn handle_full_duplex_stage<BC: BitcoinCoordinatorApi>(
         stage,
         counterparty_hashes,
         counterparty_decision,
+        final_trace,
         format!("{}/{}", execution_path, "execution.json"),
         fail_config,
     );
@@ -831,7 +856,11 @@ fn handle_full_duplex_stage<BC: BitcoinCoordinatorApi>(
         program_context,
         &program_context.components_config.emulator,
         job,
-        &format!("full_duplex_stage_{}", stage),
+        &if final_trace {
+            "prover_final_trace".to_string()
+        } else {
+            format!("full_duplex_stage_{}", stage)
+        },
     )?;
 
     Ok(())
@@ -1030,7 +1059,9 @@ mod tests {
 
     #[test]
     fn test_tx_ownership_table() {
-        let table = create_ownership_table(4, vec![(0, "prover".to_string())]).unwrap();
+        let table =
+            create_ownership_table(4, SearchMode::Asymmetric, vec![(0, "prover".to_string())])
+                .unwrap();
 
         assert_eq!(
             table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap().0,

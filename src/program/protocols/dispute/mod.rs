@@ -370,7 +370,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 })?
                 .read()?;
             for (name, size) in trace.iter() {
-                if name.starts_with("prover") {
+                // The selection digits are owned by the search loop below,
+                // which knows whose turn each round is. Under the full-duplex
+                // mode some of them are the prover's, so they would be
+                // generated twice if claimed here as well.
+                if name.starts_with("prover") && !name.contains(SELECTION_BITS_INFIX) {
                     let key = program_context
                         .key_manager
                         .next_winternitz(*size, WinternitzType::HASH160)?;
@@ -1243,6 +1247,7 @@ impl DisputeResolutionProtocol {
         nary_search_type: NArySearchType,
     ) -> (ScriptBuf, ScriptBuf) {
         let rounds = program_definitions.nary_def().total_rounds();
+        let mode = program_definitions.search_mode();
         let nary = program_definitions.nary_def().nary;
         let nary_last_round = program_definitions.nary_def().nary_last_round;
         let total_size = vars.iter().map(|(_, size)| (*size as u32) * 2).sum();
@@ -1274,10 +1279,12 @@ impl DisputeResolutionProtocol {
                 let next_hash = stack.move_var(stackvars["prover_next_hash_tk"]);
                 stack.drop(next_hash);
                 for i in 1..rounds + 1 {
-                    let selection_bits_0 = stack
-                        .move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                    // The digits alternate between the parties under the
+                    // full-duplex mode, so the name follows the owner.
+                    let name = selection_bits_var(mode, rounds, i);
+                    let selection_bits_0 = stack.move_var_sub_n(stackvars[&name], 0);
                     stack.drop(selection_bits_0);
-                    stack.move_var_sub_n(stackvars[&format!("verifier_selection_bits_{}", i)], 0);
+                    stack.move_var_sub_n(stackvars[&name], 0);
                 }
                 let selection = stack.join_in_stack(rounds as u32, None, Some("selection_bits"));
                 verify_challenge_step(

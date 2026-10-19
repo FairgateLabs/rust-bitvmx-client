@@ -8,6 +8,8 @@ use bitvmx_cpu_definitions::{
     challenge::{ChallengeType, EquivocationKind},
     constants::CHUNK_SIZE,
 };
+use super::stage_hash_var;
+
 use emulator::{
     decision::nary_search::{NArySearchType, Party},
     loader::program_definition::ProgramDefinition,
@@ -713,13 +715,24 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                     scripts.push(stack.get_script());
 
                                     let mut names_and_keys_copy = names_and_keys.clone();
-                                    let key_name = if round == 1 {
-                                        format!("prover_hash_{}_{}", round, h) // Hashes from round 1 are the same from the first n-ary search
+                                    // Round 1 reuses the first search's hashes,
+                                    // which belong to whichever party dissected
+                                    // that round. Later rounds are the second
+                                    // search's own, and it stays asymmetric.
+                                    let (key_name, owner_keys) = if round == 1 {
+                                        let owner = search_mode.dissector(rounds, round);
+                                        (
+                                            stage_hash_var(search_mode, rounds, round, h),
+                                            match owner {
+                                                Party::Prover => &keys[0],
+                                                Party::Verifier => &keys[1],
+                                            },
+                                        )
                                     } else {
-                                        format!("prover_hash2_{}_{}", round, h)
+                                        (format!("prover_hash2_{}_{}", round, h), &keys[0])
                                     };
                                     let key_name_ref: &str = key_name.as_str();
-                                    let winternitz_key = keys[0].get_winternitz(&key_name)?;
+                                    let winternitz_key = owner_keys.get_winternitz(&key_name)?;
                                     names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
 
                                     names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
