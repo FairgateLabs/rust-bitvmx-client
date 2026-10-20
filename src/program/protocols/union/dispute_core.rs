@@ -607,7 +607,13 @@ impl ProtocolHandler for DisputeCoreProtocol {
         );
 
         if tx_name == WT_START_ENABLER_TX {
-            self.handle_wt_start_enabler_tx(program_context, tx_id)?;
+            self.send_owner_spv_notification(program_context, tx_id, UnionTxType::WtStartEnabler)?;
+        } else if tx_name == OP_INITIAL_DEPOSIT_TX {
+            self.send_owner_spv_notification(
+                program_context,
+                tx_id,
+                UnionTxType::OpInitialDeposit,
+            )?;
         } else if tx_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             self.handle_reimbursement_kickoff_transaction(
                 program_context,
@@ -2476,18 +2482,20 @@ impl DisputeCoreProtocol {
         Ok(Some(self.get_dispatch_height(tx_status, 1)?))
     }
 
-    fn handle_wt_start_enabler_tx<BC: BitcoinCoordinatorApi>(
+    /// Notifies the L2 about a mined transaction that is not bound to a slot
+    /// (e.g. WT_START_ENABLER_TX, OP_INITIAL_DEPOSIT_TX). Only the member owning this
+    /// dispute core sends the notification.
+    fn send_owner_spv_notification<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
         tx_id: Txid,
+        tx_type: UnionTxType,
     ) -> Result<(), BitVMXError> {
-        // Only the watchtower owning this dispute core notifies the L2
         if !self.is_my_dispute_core(context)? {
             return Ok(());
         }
 
-        // WT_START_ENABLER_TX is not bound to a slot
-        self.send_union_spv_notification(context, tx_id, 0, UnionTxType::WtStartEnabler)
+        self.send_union_spv_notification(context, tx_id, 0, tx_type)
     }
 
     fn handle_claim_init_tx<BC: BitcoinCoordinatorApi>(

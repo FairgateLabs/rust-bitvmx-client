@@ -300,6 +300,7 @@ pub enum UnionTxType {
     ReimbursementKickoff,
     OperatorTake,
     WtStartEnabler,
+    OpInitialDeposit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
