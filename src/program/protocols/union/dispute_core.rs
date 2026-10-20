@@ -606,7 +606,9 @@ impl ProtocolHandler for DisputeCoreProtocol {
             tx_name, tx_id, tx_status.confirmations, context
         );
 
-        if tx_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
+        if tx_name == WT_START_ENABLER_TX {
+            self.handle_wt_start_enabler_tx(program_context, tx_id)?;
+        } else if tx_name.starts_with(REIMBURSEMENT_KICKOFF_TX) {
             self.handle_reimbursement_kickoff_transaction(
                 program_context,
                 &tx_status,
@@ -2474,6 +2476,20 @@ impl DisputeCoreProtocol {
         Ok(Some(self.get_dispatch_height(tx_status, 1)?))
     }
 
+    fn handle_wt_start_enabler_tx<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+        tx_id: Txid,
+    ) -> Result<(), BitVMXError> {
+        // Only the watchtower owning this dispute core notifies the L2
+        if !self.is_my_dispute_core(context)? {
+            return Ok(());
+        }
+
+        // WT_START_ENABLER_TX is not bound to a slot
+        self.send_union_spv_notification(context, tx_id, 0, UnionTxType::WtStartEnabler)
+    }
+
     fn handle_claim_init_tx<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
@@ -3252,7 +3268,12 @@ impl DisputeCoreProtocol {
             }
         }
 
-        self.send_reimbursement_kickoff_spv(context, tx_id, slot_index)?;
+        self.send_union_spv_notification(
+            context,
+            tx_id,
+            slot_index,
+            UnionTxType::ReimbursementKickoff,
+        )?;
 
         Ok(())
     }
@@ -3364,16 +3385,23 @@ impl DisputeCoreProtocol {
         }
     }
 
-    fn send_reimbursement_kickoff_spv<BC: BitcoinCoordinatorApi>(
+    fn send_union_spv_notification<BC: BitcoinCoordinatorApi>(
         &self,
         context: &ProgramContext<BC>,
         txid: Txid,
         slot_index: usize,
+        tx_type: UnionTxType,
     ) -> Result<(), BitVMXError> {
         let tx_info = context.bitcoin_coordinator.get_transaction(txid);
 
         let proof = match tx_info {
-            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+            Ok(utx) => match utx.block_info {
+                Some(block_info) => Some(get_spv_proof(txid, block_info)?),
+                None => {
+                    warn!("Transaction {txid} has no block info yet, skipping SPV proof");
+                    None
+                }
+            },
             Err(e) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",
@@ -3388,7 +3416,7 @@ impl DisputeCoreProtocol {
             committee_id: self.dispute_core_data(context)?.committee_id,
             slot_index,
             spv_proof: proof,
-            tx_type: UnionTxType::ReimbursementKickoff,
+            tx_type: tx_type.clone(),
         };
 
         let data = serde_json::to_string(&OutgoingBitVMXApiMessages::Variable(
@@ -3399,7 +3427,7 @@ impl DisputeCoreProtocol {
 
         info!(
             id = self.ctx.my_idx,
-            "Sending reimbursement kickoff SPV data: {}", data
+            "Sending {:#?} SPV data: {}", tx_type, data
         );
 
         context

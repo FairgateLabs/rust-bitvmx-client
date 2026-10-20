@@ -299,6 +299,7 @@ pub enum UnionTxType {
     CancelUserTake,
     ReimbursementKickoff,
     OperatorTake,
+    WtStartEnabler,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
