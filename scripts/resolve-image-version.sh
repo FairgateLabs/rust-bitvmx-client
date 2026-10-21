@@ -7,9 +7,9 @@ if [[ $# -ne 1 ]]; then
 fi
 
 tag="$1"
-image_version="${tag#force-build-}"
+image_version="${tag#force/client/}"
 
-if [[ "$tag" != force-build-* ]]; then
+if [[ "$tag" != force/client/* ]]; then
   manifest_version="$(awk -F '"' '
     /^\[package\][[:space:]]*$/ { in_package = 1; next }
     /^\[/ { in_package = 0 }
