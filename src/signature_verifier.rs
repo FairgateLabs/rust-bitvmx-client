@@ -4,7 +4,7 @@ use crate::{
         VerificationKeyAnnouncement, VerificationKeyRequestPayload,
     },
     errors::BitVMXError,
-    helper::compute_pubkey_hash,
+    helper::{canonical_verification_key, compute_pubkey_hash},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::{
         participant::CommsAddress,
@@ -405,6 +405,15 @@ impl SignatureVerifier {
             ));
         }
 
+        let verification_key = match canonical_verification_key(&announcement.verification_key) {
+            Ok(verification_key) => verification_key,
+            Err(_) => {
+                return Ok(VerificationMessageOutcome::Rejected(
+                    VerificationMessageRejection::InvalidVerificationKey,
+                ));
+            }
+        };
+
         info!(
             "Verification key received and validated for peer: {}",
             pubkey_hash
@@ -413,7 +422,7 @@ impl SignatureVerifier {
         OperatorVerificationStore::store(
             &program_context.globals,
             &pubkey_hash,
-            &announcement.verification_key,
+            &verification_key,
         )?;
 
         Ok(VerificationMessageOutcome::Processed)
