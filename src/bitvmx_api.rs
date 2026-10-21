@@ -1151,8 +1151,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     elf_file_path,
                     execution_timeout_secs,
                 ) => {
-                    self.generate_zkp(from, id, input, elf_file_path, execution_timeout_secs)?;
-                    Ok(None)
+                    match self.generate_zkp(from, id, input, elf_file_path, execution_timeout_secs)
+                    {
+                        Err(error @ BitVMXError::DispatcherJobConflict(_)) => {
+                            Ok(Some(Self::api_error(id, error.to_string())))
+                        }
+                        result => result.map(|()| None),
+                    }
                 }
                 IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(id).map(Some),
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {

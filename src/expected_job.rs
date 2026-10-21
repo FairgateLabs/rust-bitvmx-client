@@ -168,10 +168,7 @@ impl ExpectedJobs {
             {
                 return Ok(ExpectedJobRegistration::AlreadyExists(existing.status));
             }
-            return Err(BitVMXError::InvalidState(format!(
-                "dispatcher job id '{}' is registered with incompatible metadata",
-                job.job_id
-            )));
+            return Err(BitVMXError::DispatcherJobConflict(job.job_id));
         }
         let mut ids: Vec<String> = self
             .storage
