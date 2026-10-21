@@ -1,5 +1,5 @@
 //! Tests for review findings 2, 3 and 4. Each finding test asserts what `docs/BITVMX_API_ERROR_HANDLING.md`
-//! asks for (a validation failure is answered or rejected, not returned as `Err`) and fails today.
+//! asks for (a validation failure is answered or rejected, not returned as `Err`).
 //! The test before it is a control: same sequence, valid input, passes.
 
 use crate::{
