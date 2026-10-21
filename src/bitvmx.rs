@@ -2,6 +2,9 @@
 mod bitvmx_api;
 #[path = "bitvmx_job_handler.rs"]
 mod bitvmx_job_handler;
+#[cfg(test)]
+#[path = "review_findings.rs"]
+mod review_findings;
 
 use crate::comms_allow_list;
 use crate::config::ComponentsConfig;
