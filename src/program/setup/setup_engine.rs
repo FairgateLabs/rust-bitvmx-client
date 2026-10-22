@@ -95,13 +95,6 @@ impl SetupEngineState {
     }
 }
 
-/// Result of a SetupEngine tick operation.
-#[derive(Debug)]
-pub struct SetupTickResult {
-    /// Whether the engine state changed during this tick
-    pub state_changed: bool,
-}
-
 /// Engine that orchestrates the setup process using SetupSteps.
 ///
 /// The SetupEngine manages the lifecycle of protocol setup by:
@@ -812,7 +805,7 @@ impl SetupEngine {
     /// - Broadcasting data
     /// - Marking participants as completed
     ///
-    /// Returns the data to send (if any) and whether state changed.
+    /// Returns whether the engine state changed during this tick.
     pub fn tick<BC: BitcoinCoordinatorApi>(
         &mut self,
         protocol: &mut ProtocolType,
@@ -821,12 +814,10 @@ impl SetupEngine {
         program_id: &Uuid,
         leader: usize,
         context: &mut ProgramContext<BC>,
-    ) -> Result<SetupTickResult, BitVMXError> {
+    ) -> Result<bool, BitVMXError> {
         if self.is_complete() {
             debug!("SetupEngine::tick() - Setup already complete");
-            return Ok(SetupTickResult {
-                state_changed: false,
-            });
+            return Ok(false);
         }
 
         let step_name = self.current_step_name().to_string();
@@ -935,7 +926,7 @@ impl SetupEngine {
             state_changed = true;
         }
 
-        Ok(SetupTickResult { state_changed })
+        Ok(state_changed)
     }
 
     fn process_produced_data<BC: BitcoinCoordinatorApi>(
@@ -1076,31 +1067,22 @@ mod tests {
         let mut engine = SetupEngine::new(vec![SetupStepName::Keys], 1).unwrap();
         set_optional_keys(&id, &env.context);
 
-        assert!(
-            engine
-                .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
-                .unwrap()
-                .state_changed
-        );
+        assert!(engine
+            .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+            .unwrap());
         assert_eq!(
             engine.state().current_step_state,
             StepState::AllParticipantsCompleted
         );
         assert_eq!(engine.state().participants_completed, vec![0]);
 
-        assert!(
-            engine
-                .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
-                .unwrap()
-                .state_changed
-        );
+        assert!(engine
+            .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+            .unwrap());
         assert!(engine.is_complete());
-        assert!(
-            !engine
-                .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
-                .unwrap()
-                .state_changed
-        );
+        assert!(!engine
+            .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
+            .unwrap());
 
         let completed_state = engine.state().clone();
         assert_eq!(
@@ -1291,12 +1273,12 @@ mod tests {
         let waiting = engine
             .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
             .unwrap();
-        assert!(!waiting.state_changed);
+        assert!(!waiting);
         engine.state_mut().current_step_state = StepState::Completed;
         let completed = engine
             .tick(&mut protocol, &participants, 0, &id, 0, &mut env.context)
             .unwrap();
-        assert!(!completed.state_changed);
+        assert!(!completed);
     }
 
     #[test]

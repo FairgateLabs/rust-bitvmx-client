@@ -367,14 +367,14 @@ impl Program {
             ProgramState::SettingUp => {
                 // Run the engine tick (uses block scope to avoid borrow conflict
                 // between setup_engine and other self fields)
-                let (tick_result, is_complete, engine_state) = {
+                let (setup_state_changed, is_complete, engine_state) = {
                     let engine = self.setup_engine.as_mut().ok_or_else(|| {
                         BitVMXError::InvalidMessage(
                             "Protocol must return setup steps for Program".to_string(),
                         )
                     })?;
 
-                    let tick_result = engine.tick(
+                    let setup_state_changed = engine.tick(
                         &mut self.protocol,
                         &self.participants,
                         self.my_idx,
@@ -392,10 +392,10 @@ impl Program {
                         engine.total_steps()
                     );
 
-                    (tick_result, is_complete, engine.state().clone())
+                    (setup_state_changed, is_complete, engine.state().clone())
                 };
 
-                if tick_result.state_changed {
+                if setup_state_changed {
                     state_changed = true;
                     if engine_state.current_step_state == StepState::WaitingForParticipants {
                         self.state = ProgramState::WaitingData;
