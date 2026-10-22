@@ -392,6 +392,17 @@ pub enum DispatcherResultError {
     MissingArtifact { path: String, details: String },
 }
 
+/// Adds dispatcher-output context to errors produced while decoding a result.
+pub trait DispatcherResultExt<T> {
+    fn invalid_output(self, context: impl std::fmt::Display) -> Result<T, DispatcherResultError>;
+}
+
+impl<T, E: std::fmt::Display> DispatcherResultExt<T> for Result<T, E> {
+    fn invalid_output(self, context: impl std::fmt::Display) -> Result<T, DispatcherResultError> {
+        self.map_err(|error| DispatcherResultError::InvalidOutput(format!("{context}: {error}")))
+    }
+}
+
 impl<T> From<PoisonError<T>> for BitVMXError {
     fn from(err: PoisonError<T>) -> Self {
         BitVMXError::PoisonedLockError(format!("Lock poisoned: {err}"))

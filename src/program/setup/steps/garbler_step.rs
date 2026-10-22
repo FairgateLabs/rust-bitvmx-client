@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
-    errors::{BitVMXError, DispatcherResultError},
+    errors::{BitVMXError, DispatcherResultError, DispatcherResultExt},
     program::{
         participant::{CommsAddress, ParticipantRole},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
@@ -182,13 +182,8 @@ impl SetupStep for GarblerStep {
         }
 
         if sub_step == GC_JOB_GENERATE_STEP {
-            let prove_result: GCJobProveResult =
-                serde_json::from_value(result.clone()).map_err(|e| {
-                    BitVMXError::from(DispatcherResultError::InvalidOutput(format!(
-                        "Failed to deserialize garbler data: {}",
-                        e
-                    )))
-                })?;
+            let prove_result: GCJobProveResult = serde_json::from_value(result.clone())
+                .invalid_output("Failed to deserialize garbler data")?;
 
             import_input_private_keys(&prove_result, &config, context)?;
 
@@ -198,12 +193,7 @@ impl SetupStep for GarblerStep {
             let encoded_commitments = read_dispatcher_artifact(commitments_path)?;
 
             let commitments: GCCommitmentsFile = serde_json::from_slice(&encoded_commitments)
-                .map_err(|e| {
-                    BitVMXError::from(DispatcherResultError::InvalidOutput(format!(
-                        "Failed to deserialize commitments data: {} ",
-                        e
-                    )))
-                })?;
+                .invalid_output("Failed to deserialize commitments data")?;
 
             let [public_input_pk, _, _] = match import_public_keys(
                 &commitments.input_commitment_indices,
@@ -260,13 +250,8 @@ impl SetupStep for GarblerStep {
         }
 
         if sub_step == GC_JOB_VERIFY_STEP {
-            let verify_result: GCJobVerifyResult =
-                serde_json::from_value(result.clone()).map_err(|e| {
-                    BitVMXError::from(DispatcherResultError::InvalidOutput(format!(
-                        "Failed to deserialize verification data: {}",
-                        e
-                    )))
-                })?;
+            let verify_result: GCJobVerifyResult = serde_json::from_value(result.clone())
+                .invalid_output("Failed to deserialize verification data")?;
 
             info!(" result[\"status\"]: {}", verify_result.status);
             info!(" result[\"type\"]: {}", verify_result.r#type);

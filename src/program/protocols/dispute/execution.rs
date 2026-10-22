@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     bitvmx::Context,
-    errors::{BitVMXError, DispatcherResultError},
+    errors::{BitVMXError, DispatcherResultError, DispatcherResultExt},
     program::{
         protocols::{
             dispute::{
@@ -33,11 +33,7 @@ use crate::{
 /// result forever instead of moving the job to `RetryPending`).
 fn decode_hex_input(field: &str, value: &str) -> Result<Vec<u8>, BitVMXError> {
     hex::decode(value)
-        .map_err(|error| {
-            DispatcherResultError::InvalidOutput(format!(
-                "invalid emulator hex value for '{field}': {error}"
-            ))
-        })
+        .invalid_output(format!("invalid emulator hex value for '{field}'"))
         .map_err(Into::into)
 }
 
@@ -60,9 +56,8 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
         None
     };
 
-    let result = EmulatorResultType::from_value(result).map_err(|error| {
-        DispatcherResultError::InvalidOutput(format!("invalid emulator result: {error}"))
-    })?;
+    let result =
+        EmulatorResultType::from_value(result).invalid_output("invalid emulator result")?;
     match &result {
         EmulatorResultType::ProverExecuteResult {
             last_step,
@@ -132,11 +127,7 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
             let decoded_hashes = hashes
                 .iter()
                 .map(|hash| {
-                    hex::decode(hash).map_err(|error| {
-                        DispatcherResultError::InvalidOutput(format!(
-                            "invalid emulator hash '{hash}': {error}"
-                        ))
-                    })
+                    hex::decode(hash).invalid_output(format!("invalid emulator hash '{hash}'"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             for (i, hash) in decoded_hashes.into_iter().enumerate() {
@@ -219,11 +210,7 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                 let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
                     prover_final_trace
                         .as_final_trace_with_hashes_and_step()
-                        .map_err(|error| {
-                            DispatcherResultError::InvalidOutput(format!(
-                                "invalid emulator final trace: {error}"
-                            ))
-                        })?;
+                        .invalid_output("invalid emulator final trace")?;
                 let instruction =
                     get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
                         .ok_or_else(|| {
@@ -334,11 +321,7 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
             } else {
                 let (resigned_step_hash, resigned_next_hash, write_step) = prover_hashes_and_step
                     .as_hashes_with_step()
-                    .map_err(|error| {
-                        DispatcherResultError::InvalidOutput(format!(
-                            "invalid emulator hashes-and-step result: {error}"
-                        ))
-                    })?;
+                    .invalid_output("invalid emulator hashes-and-step result")?;
 
                 info!(
                     "Prover got hashes and step result: {:?}, {:?}, {:?}",
