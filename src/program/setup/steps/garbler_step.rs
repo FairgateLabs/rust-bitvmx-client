@@ -25,9 +25,6 @@ use crate::{
     types::{FailureDetail, JobDispatcherType, ProgramContext, ResultDisposition, SuccessDetail},
 };
 
-#[cfg(test)]
-use crate::types::{NoOpReason, RetryReason};
-
 pub const GC_INPUT_PK: &str = "GC_INPUT_PK";
 pub const GC_OUTPUT_PK: &str = "GC_OUTPUT_PK";
 pub const GC_COMMITMENTS: &str = "GC_COMMITMENTS";
@@ -708,7 +705,7 @@ mod tests {
     use super::*;
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use crate::types::PROGRAM_TYPE_GC_GENERATION;
+    use crate::types::{NoOpReason, RetryReason, PROGRAM_TYPE_GC_GENERATION};
     use bitcoin::hashes::{sha256, Hash};
     use serde_json::json;
 

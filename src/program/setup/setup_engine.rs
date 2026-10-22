@@ -1,6 +1,4 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-#[cfg(test)]
-use crate::types::FailureDetail;
 use crate::{
     bitvmx::Context,
     comms_helper::{prepare_message, request, CommsMessageType},
@@ -992,7 +990,7 @@ mod tests {
     use crate::program::setup::MY_KEYS;
     use crate::program::variables::VariableTypes;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use crate::types::{PeerSetupFaultReason, PROGRAM_TYPE_AGGREGATED_KEY};
+    use crate::types::{FailureDetail, PeerSetupFaultReason, PROGRAM_TYPE_AGGREGATED_KEY};
 
     fn aggregated_key_protocol(id: Uuid, dir: &TestStorageDir) -> ProtocolType {
         new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap()

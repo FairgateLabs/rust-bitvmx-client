@@ -1,6 +1,4 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-#[cfg(test)]
-use crate::types::FailureDetail;
 /// Program — orchestrates protocol setup and lifecycle.
 ///
 /// - Uses SetupEngine for multi-step setup (keys, nonces, signatures)
@@ -990,7 +988,7 @@ mod tests {
     use crate::{
         program::variables::VariableTypes,
         test_utils::{TestProgramContextEnv, TestStorageDir},
-        types::{FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY},
+        types::{FailureDetail, FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY},
     };
     use bitcoin::{absolute::LockTime, transaction::Version};
 

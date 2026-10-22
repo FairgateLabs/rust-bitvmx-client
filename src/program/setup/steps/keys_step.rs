@@ -1,6 +1,4 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-#[cfg(test)]
-use crate::types::NoOpReason;
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
@@ -317,7 +315,7 @@ mod tests {
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::{
-        FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION,
+        NoOpReason, FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION,
     };
     use std::collections::HashSet;
 
