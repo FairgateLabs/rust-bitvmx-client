@@ -1,13 +1,15 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+#[cfg(test)]
+use crate::types::{NoOpReason, RetryReason};
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
         participant::CommsAddress,
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::{decode_contribution, SetupMessageOutcome, SetupRejectReason, SetupStep},
+        setup::{decode_contribution, SetupStep},
     },
-    types::ProgramContext,
+    types::{FailureDetail, ProgramContext, ResultDisposition, SuccessDetail},
 };
 use bitcoin::PublicKey;
 use key_manager::{
@@ -176,7 +178,7 @@ impl SetupStep for SignaturesStep {
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
         _your_data: bool,
-    ) -> Result<SetupMessageOutcome, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -191,8 +193,8 @@ impl SetupStep for SignaturesStep {
             Err(outcome) => return Ok(outcome),
         };
         if signatures.is_empty() {
-            return Ok(SetupMessageOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
+            return Ok(ResultDisposition::Fail(
+                FailureDetail::InvalidSetupContribution,
             ));
         }
 
@@ -210,8 +212,8 @@ impl SetupStep for SignaturesStep {
             Self::validate_received_signatures(&signatures, &expected_aggregated_keys)
         {
             info!("Rejecting invalid signature contribution: {}", error);
-            return Ok(SetupMessageOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
+            return Ok(ResultDisposition::Fail(
+                FailureDetail::InvalidSetupContribution,
             ));
         }
 
@@ -224,8 +226,8 @@ impl SetupStep for SignaturesStep {
             ) {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Ok(SetupMessageOutcome::Failed(
-                        SetupRejectReason::InvalidContribution,
+                    return Ok(ResultDisposition::Fail(
+                        FailureDetail::InvalidSetupContribution,
                     ));
                 }
                 Err(KeyManagerError::Musig2SignerError(
@@ -233,8 +235,8 @@ impl SetupStep for SignaturesStep {
                     | Musig2SignerError::InvalidMessageId
                     | Musig2SignerError::InvalidPartialSignature,
                 )) => {
-                    return Ok(SetupMessageOutcome::Failed(
-                        SetupRejectReason::InvalidContribution,
+                    return Ok(ResultDisposition::Fail(
+                        FailureDetail::InvalidSetupContribution,
                     ));
                 }
                 Err(error) => return Err(error.into()),
@@ -259,7 +261,7 @@ impl SetupStep for SignaturesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(SetupMessageOutcome::Processed(()))
+        Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -359,9 +361,7 @@ impl SetupStep for SignaturesStep {
 mod tests {
     use super::*;
     use crate::program::{
-        participant::ParticipantKeys,
-        protocols::protocol_handler::new_protocol_type,
-        setup::{SetupNoOpReason, SetupRetryReason},
+        participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type,
         variables::VariableTypes,
     };
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
@@ -573,7 +573,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -592,7 +592,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
         );
         assert_eq!(
             step.verify_received(
@@ -605,7 +605,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -768,7 +768,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
         );
 
         assert_eq!(
@@ -782,7 +782,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
+            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
         );
 
         assert_eq!(
@@ -796,7 +796,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Failed(SetupRejectReason::InvalidContribution)
+            ResultDisposition::Fail(FailureDetail::InvalidSetupContribution)
         );
 
         assert!(!step

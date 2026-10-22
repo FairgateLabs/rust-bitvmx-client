@@ -1,7 +1,7 @@
 mod shared;
 pub use shared::*;
 
-use std::{convert::Infallible, rc::Rc};
+use std::rc::Rc;
 
 use crate::config::ComponentsConfig;
 use bitcoin_coordinator::coordinator::BitcoinCoordinator;
@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::{
     expected_job::ExpectedJobs,
     leader_broadcast::LeaderBroadcastHelper,
+    message_queue::QueuedMessage,
     operation_timeout::OperationTimeouts,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::variables::{Globals, WitnessVars},
@@ -23,31 +24,82 @@ use crate::{
 
 /// The common result of handling externally supplied input.
 ///
-/// A handling outcome describes domain-controlled input that was processed,
-/// should be retried, can be consumed without an effect, or was rejected.
-/// Infrastructure and local-state failures remain regular `Result::Err` values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HandlingOutcome<Success, Retry, NoOp, Failure> {
-    /// The input was processed successfully, optionally producing a value.
-    Processed(Success),
-    /// A temporary prerequisite is absent, so the unchanged input should be retried.
-    RetryLater(Retry),
-    /// The input cannot change state and can safely be consumed.
-    DiscardNoOp(NoOp),
-    /// The input was permanently rejected for a domain-specific reason.
-    Failed(Failure),
+/// Domain-controlled outcomes are values so transaction owners can decide whether to
+/// consume, retry, or reject the input. Infrastructure and local-state failures remain
+/// regular `Result::Err` values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResultDisposition {
+    Success(SuccessDetail),
+    NoOp(NoOpReason),
+    Retry(RetryReason),
+    Fail(FailureDetail),
 }
 
-/// Outcome of handling an incoming peer message.
-pub type MessageDisposition = HandlingOutcome<(), RetryReason, NoOpReason, PeerSetupFault>;
+impl ResultDisposition {
+    pub fn fail_peer(fault: PeerSetupFault) -> Self {
+        Self::Fail(FailureDetail::PeerSetup(fault))
+    }
 
-/// Outcome of handling a result from an authenticated job dispatcher.
-///
-/// Returning a disposition (rather than using an error for terminal service output)
-/// lets the service-inbox transaction consume duplicates and terminal outcomes while
-/// reserving `Err` for local or infrastructure failures that must be retried.
-pub type DispatcherResultDisposition =
-    HandlingOutcome<(), Infallible, DispatcherNoOpReason, DispatcherJobFailure>;
+    pub fn fail_dispatcher(failure: DispatcherJobFailure) -> Self {
+        Self::Fail(FailureDetail::DispatcherJob(failure))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SuccessDetail {
+    Processed,
+    QueuedMessage(QueuedMessage),
+}
+
+impl PartialEq for SuccessDetail {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Processed, Self::Processed) => true,
+            (Self::QueuedMessage(left), Self::QueuedMessage(right)) => {
+                left.identifier == right.identifier && left.data == right.data
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for SuccessDetail {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureDetail {
+    PeerSetup(PeerSetupFault),
+    DispatcherJob(DispatcherJobFailure),
+    MessageReconstruction { reason: String },
+    MalformedSignature,
+    SignatureMismatch,
+    MalformedVerificationMessage,
+    InvalidVerificationKey,
+    VerificationKeyFingerprintMismatch,
+    MalformedSetupContribution,
+    InvalidSetupContribution,
+}
+
+impl FailureDetail {
+    pub fn peer_setup_fault_reason(&self) -> PeerSetupFaultReason {
+        match self {
+            Self::MalformedVerificationMessage | Self::MalformedSetupContribution => {
+                PeerSetupFaultReason::MalformedMessage
+            }
+            Self::InvalidVerificationKey => PeerSetupFaultReason::InvalidVerificationKey,
+            Self::VerificationKeyFingerprintMismatch => {
+                PeerSetupFaultReason::VerificationKeyFingerprintMismatch
+            }
+            Self::InvalidSetupContribution => PeerSetupFaultReason::InvalidSetupContribution,
+            Self::MessageReconstruction { .. }
+            | Self::MalformedSignature
+            | Self::SignatureMismatch => PeerSetupFaultReason::AuthenticationRejected,
+            Self::PeerSetup(fault) => fault.reason.clone(),
+            Self::DispatcherJob(_) => {
+                unreachable!("dispatcher failures are not peer setup failures")
+            }
+        }
+    }
+}
 
 /// A runtime job rejection reported by the dispatcher.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,20 +110,6 @@ pub struct DispatcherJobFailure {
     /// Human-readable protocol job name used in reports.
     pub job_id: String,
     pub reason: String,
-}
-
-/// Why consuming a dispatcher result without applying it is safe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatcherNoOpReason {
-    Duplicate,
-    Stale,
-    /// The owning program has already terminated during setup.
-    SetupFailed,
-    Orphaned,
-    /// The authenticated service sent neither a control message nor a result envelope.
-    MalformedEnvelope,
-    /// The envelope was valid but its job id could not identify a supported owner.
-    Uncorrelatable,
 }
 
 /// Why processing the unchanged message may succeed later.
@@ -85,6 +123,10 @@ pub enum RetryReason {
     ProgramNotInstalled,
     /// Setup has not reached the state that can consume this message.
     SetupNotReady,
+    /// The active setup step accepts a different message type.
+    UnexpectedSetupMessageType,
+    /// The active setup step is still waiting for a prerequisite.
+    MissingSetupPrerequisite,
 }
 
 /// Why consuming a message without applying it is safe.
@@ -94,6 +136,11 @@ pub enum NoOpReason {
     SetupComplete,
     SetupFailed,
     UnauthorizedSender,
+    Duplicate,
+    Stale,
+    Orphaned,
+    MalformedEnvelope,
+    Uncorrelatable,
 }
 
 /// A protocol violation attributable to an authenticated peer.

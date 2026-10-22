@@ -12,7 +12,7 @@ use enum_dispatch::enum_dispatch;
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::{SetupMessageOutcome, SetupStep};
+use super::SetupStep;
 use crate::comms_helper::CommsMessageType;
 use crate::errors::BitVMXError;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
@@ -20,6 +20,7 @@ use crate::program::participant::{CommsAddress, ParticipantKeys};
 use crate::program::protocols::protocol_handler::ProtocolType;
 use crate::program::variables::Globals;
 use crate::types::ProgramContext;
+use crate::types::ResultDisposition;
 
 /// Enum representing the available setup step types.
 ///

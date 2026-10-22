@@ -15,7 +15,7 @@ use crate::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{HandlingOutcome, NoOpReason, PeerSetupFaultReason, ProgramContext, RetryReason},
+    types::{FailureDetail, NoOpReason, ProgramContext, ResultDisposition, RetryReason},
 };
 
 /// Result of validating a contribution for the active setup step.
@@ -23,72 +23,25 @@ use crate::{
 /// Peer-controlled validation failures are values rather than errors so the
 /// caller can consume the message and fail setup. `Err` is reserved for local
 /// state, storage, and infrastructure failures.
-pub type SetupMessageOutcome =
-    HandlingOutcome<(), SetupRetryReason, SetupNoOpReason, SetupRejectReason>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SetupRetryReason {
-    UnexpectedMessageType,
-    MissingPrerequisite,
-}
-
-impl SetupRetryReason {
-    pub fn into_retry_reason(self) -> RetryReason {
-        match self {
-            Self::UnexpectedMessageType | Self::MissingPrerequisite => RetryReason::SetupNotReady,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SetupNoOpReason {
-    ContributionAlreadyAccepted,
-    UnauthorizedSender,
-}
-
-impl SetupNoOpReason {
-    pub fn into_no_op_reason(self) -> NoOpReason {
-        match self {
-            Self::ContributionAlreadyAccepted => NoOpReason::ContributionAlreadyAccepted,
-            Self::UnauthorizedSender => NoOpReason::UnauthorizedSender,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SetupRejectReason {
-    MalformedContribution,
-    InvalidContribution,
-}
-
-impl SetupRejectReason {
-    pub fn into_peer_fault_reason(self) -> PeerSetupFaultReason {
-        match self {
-            Self::MalformedContribution => PeerSetupFaultReason::MalformedMessage,
-            Self::InvalidContribution => PeerSetupFaultReason::InvalidSetupContribution,
-        }
-    }
-}
-
 /// Decodes a JSON setup contribution and classifies malformed peer data.
-pub(crate) fn decode_contribution<T>(data: Value) -> Result<T, SetupMessageOutcome>
+pub(crate) fn decode_contribution<T>(data: Value) -> Result<T, ResultDisposition>
 where
     T: DeserializeOwned,
 {
     serde_json::from_value(data).map_err(|error| {
         info!("Rejecting malformed setup contribution: {}", error);
-        SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
+        ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
     })
 }
 
 /// Decodes an encoded JSON value nested inside a setup contribution.
-pub(crate) fn decode_contribution_slice<T>(data: &[u8]) -> Result<T, SetupMessageOutcome>
+pub(crate) fn decode_contribution_slice<T>(data: &[u8]) -> Result<T, ResultDisposition>
 where
     T: DeserializeOwned,
 {
     serde_json::from_slice(data).map_err(|error| {
         info!("Rejecting malformed encoded setup contribution: {}", error);
-        SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
+        ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
     })
 }
 
@@ -141,7 +94,7 @@ pub trait SetupStep {
         participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
         your_data: bool,
-    ) -> Result<SetupMessageOutcome, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let Some(from_idx) = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)
         else {
             info!(
@@ -149,9 +102,7 @@ pub trait SetupStep {
                 self.step_name(),
                 from_participant.pubkey_hash
             );
-            return Ok(SetupMessageOutcome::DiscardNoOp(
-                SetupNoOpReason::UnauthorizedSender,
-            ));
+            return Ok(ResultDisposition::NoOp(NoOpReason::UnauthorizedSender));
         };
 
         let accepted = self.accepted_message_type();
@@ -162,8 +113,8 @@ pub trait SetupStep {
                 self.step_name(),
                 accepted
             );
-            return Ok(SetupMessageOutcome::RetryLater(
-                SetupRetryReason::UnexpectedMessageType,
+            return Ok(ResultDisposition::Retry(
+                RetryReason::UnexpectedSetupMessageType,
             ));
         }
 
@@ -192,7 +143,7 @@ pub trait SetupStep {
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
         your_data: bool,
-    ) -> Result<SetupMessageOutcome, BitVMXError>;
+    ) -> Result<ResultDisposition, BitVMXError>;
 
     /// **VERIFY ADVANCE** - Verifies if all participants have completed this step.
     ///
@@ -322,9 +273,9 @@ mod tests {
             _protocol: &ProtocolType,
             _context: &mut ProgramContext<BC>,
             _your_data: bool,
-        ) -> Result<SetupMessageOutcome, BitVMXError> {
-            Ok(SetupMessageOutcome::RetryLater(
-                SetupRetryReason::MissingPrerequisite,
+        ) -> Result<ResultDisposition, BitVMXError> {
+            Ok(ResultDisposition::Retry(
+                RetryReason::MissingSetupPrerequisite,
             ))
         }
 
@@ -414,7 +365,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::RetryLater(SetupRetryReason::MissingPrerequisite)
+            ResultDisposition::Retry(RetryReason::MissingSetupPrerequisite)
         );
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
@@ -455,7 +406,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
         );
 
         let mut outsider = participant;
@@ -471,7 +422,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
         );
     }
 }

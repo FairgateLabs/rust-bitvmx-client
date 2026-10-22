@@ -9,7 +9,6 @@ use key_manager::lamport::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::convert::Infallible;
 use tracing::info;
 use uuid::Uuid;
 
@@ -20,14 +19,14 @@ use crate::{
     program::{
         participant::{CommsAddress, ParticipantRole},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::{
-            decode_contribution, decode_contribution_slice, SetupMessageOutcome, SetupRejectReason,
-            SetupStep,
-        },
+        setup::{decode_contribution, decode_contribution_slice, SetupStep},
         variables::{Globals, VariableTypes},
     },
-    types::{HandlingOutcome, JobDispatcherType, ProgramContext},
+    types::{FailureDetail, JobDispatcherType, ProgramContext, ResultDisposition, SuccessDetail},
 };
+
+#[cfg(test)]
+use crate::types::{NoOpReason, RetryReason};
 
 pub const GC_INPUT_PK: &str = "GC_INPUT_PK";
 pub const GC_OUTPUT_PK: &str = "GC_OUTPUT_PK";
@@ -82,7 +81,7 @@ pub struct ProverGarblerData {
     pub public_input_signature: Vec<u8>,
 }
 
-type SetupValueOutcome<T> = HandlingOutcome<T, Infallible, Infallible, SetupRejectReason>;
+type SetupValueResult<T> = Result<T, FailureDetail>;
 
 #[derive(Debug, Clone, Default)]
 pub struct GarblerStep;
@@ -200,8 +199,8 @@ impl SetupStep for GarblerStep {
                 context,
                 &protocol_id,
             )? {
-                SetupValueOutcome::Processed(keys) => keys,
-                SetupValueOutcome::Failed(reason) => {
+                Ok(keys) => keys,
+                Err(reason) => {
                     return Err(DispatcherResultError::InvalidOutput(format!(
                         "Locally generated garbler public keys were rejected: {:?}",
                         reason
@@ -283,7 +282,7 @@ impl SetupStep for GarblerStep {
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
         your_data: bool,
-    ) -> Result<SetupMessageOutcome, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let protocol_id = protocol.context().id;
         let config = GCConfiguration::load(&protocol_id, &context.globals)?;
         let is_prover_data = (config.role == ParticipantRole::Prover && your_data)
@@ -297,8 +296,8 @@ impl SetupStep for GarblerStep {
         if !is_prover_data {
             if !&data.is_null() {
                 info!("Rejecting non-empty garbler contribution for non-prover role");
-                return Ok(SetupMessageOutcome::Failed(
-                    SetupRejectReason::InvalidContribution,
+                return Ok(ResultDisposition::Fail(
+                    FailureDetail::InvalidSetupContribution,
                 ));
             }
             info!("Received expected empty message from Garbler step for non-prover role. Protocol ID: {}", protocol_id);
@@ -314,7 +313,7 @@ impl SetupStep for GarblerStep {
                 )?;
             }
 
-            return Ok(SetupMessageOutcome::Processed(()));
+            return Ok(ResultDisposition::Success(SuccessDetail::Processed));
         }
 
         let ProverGarblerData {
@@ -339,9 +338,9 @@ impl SetupStep for GarblerStep {
             context,
             &protocol_id,
         )? {
-            SetupValueOutcome::Processed(keys) => keys,
-            SetupValueOutcome::Failed(reason) => {
-                return Ok(SetupMessageOutcome::Failed(reason));
+            Ok(keys) => keys,
+            Err(reason) => {
+                return Ok(ResultDisposition::Fail(reason));
             }
         };
 
@@ -354,7 +353,7 @@ impl SetupStep for GarblerStep {
             context,
             &protocol_id,
         )?;
-        if signature_outcome != SetupMessageOutcome::Processed(()) {
+        if signature_outcome != ResultDisposition::Success(SuccessDetail::Processed) {
             return Ok(signature_outcome);
         }
 
@@ -362,7 +361,7 @@ impl SetupStep for GarblerStep {
 
         dispatch_proof_verification(proof_blob, context, &config, protocol_id, self.step_name())?;
 
-        Ok(SetupMessageOutcome::Processed(()))
+        Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -397,7 +396,7 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
     public_input_pk: LamportPublicKey,
     context: &ProgramContext<BC>,
     protocol_id: &Uuid,
-) -> Result<SetupMessageOutcome, BitVMXError> {
+) -> Result<ResultDisposition, BitVMXError> {
     let circuit_public_input = &config.circuit_public_input;
     let signature = match LamportSignature::from_bytes(
         public_input_signature,
@@ -410,8 +409,8 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
                 "Rejecting malformed garbler public-input signature: {}",
                 error
             );
-            return Ok(SetupMessageOutcome::Failed(
-                SetupRejectReason::MalformedContribution,
+            return Ok(ResultDisposition::Fail(
+                FailureDetail::MalformedSetupContribution,
             ));
         }
     };
@@ -427,16 +426,16 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
                 "Rejecting invalid garbler public-input signature: {}",
                 error
             );
-            return Ok(SetupMessageOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
+            return Ok(ResultDisposition::Fail(
+                FailureDetail::InvalidSetupContribution,
             ));
         }
     };
 
     if !valid_signature {
         info!("Rejecting invalid garbler public-input signature");
-        return Ok(SetupMessageOutcome::Failed(
-            SetupRejectReason::InvalidContribution,
+        return Ok(ResultDisposition::Fail(
+            FailureDetail::InvalidSetupContribution,
         ));
     }
 
@@ -446,7 +445,7 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
         VariableTypes::Input(public_input_signature.clone()),
     )?;
 
-    Ok(SetupMessageOutcome::Processed(()))
+    Ok(ResultDisposition::Success(SuccessDetail::Processed))
 }
 
 fn import_public_keys<BC: BitcoinCoordinatorApi>(
@@ -456,7 +455,7 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
     config: &GCConfiguration,
     context: &mut ProgramContext<BC>,
     protocol_id: &Uuid,
-) -> Result<SetupValueOutcome<[LamportPublicKey; 3]>, BitVMXError> {
+) -> Result<SetupValueResult<[LamportPublicKey; 3]>, BitVMXError> {
     let public_input_size = config.circuit_public_input.len();
     let num_outputs = 1usize; // we assume only one output
 
@@ -465,16 +464,12 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
             "Rejecting garbler keys: public input size {} exceeds total input count {}",
             public_input_size, num_inputs
         );
-        return Ok(SetupValueOutcome::Failed(
-            SetupRejectReason::InvalidContribution,
-        ));
+        return Ok(Err(FailureDetail::InvalidSetupContribution));
     }
 
     let Some(expected) = num_inputs.checked_add(num_outputs) else {
         info!("Rejecting garbler keys: commitment count overflow");
-        return Ok(SetupValueOutcome::Failed(
-            SetupRejectReason::InvalidContribution,
-        ));
+        return Ok(Err(FailureDetail::InvalidSetupContribution));
     };
     if indices.len() != expected {
         info!(
@@ -482,9 +477,7 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
             expected,
             indices.len()
         );
-        return Ok(SetupValueOutcome::Failed(
-            SetupRejectReason::InvalidContribution,
-        ));
+        return Ok(Err(FailureDetail::InvalidSetupContribution));
     }
 
     let mut commitments = Vec::with_capacity(indices.len());
@@ -496,9 +489,7 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
                 position,
                 unordered_commitments.len()
             );
-            return Ok(SetupValueOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
-            ));
+            return Ok(Err(FailureDetail::InvalidSetupContribution));
         };
         commitments.push(commitment);
     }
@@ -511,8 +502,8 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
         &context,
         protocol_id,
     )? {
-        SetupValueOutcome::Processed(key) => key,
-        SetupValueOutcome::Failed(reason) => return Ok(SetupValueOutcome::Failed(reason)),
+        Ok(key) => key,
+        Err(reason) => return Ok(Err(reason)),
     };
 
     let input_pk = match import_public_lamport(
@@ -521,8 +512,8 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
         &context,
         protocol_id,
     )? {
-        SetupValueOutcome::Processed(key) => key,
-        SetupValueOutcome::Failed(reason) => return Ok(SetupValueOutcome::Failed(reason)),
+        Ok(key) => key,
+        Err(reason) => return Ok(Err(reason)),
     };
 
     let output_pk = match import_public_lamport(
@@ -531,15 +522,11 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
         &context,
         protocol_id,
     )? {
-        SetupValueOutcome::Processed(key) => key,
-        SetupValueOutcome::Failed(reason) => return Ok(SetupValueOutcome::Failed(reason)),
+        Ok(key) => key,
+        Err(reason) => return Ok(Err(reason)),
     };
 
-    Ok(SetupValueOutcome::Processed([
-        public_input_pk,
-        input_pk,
-        output_pk,
-    ]))
+    Ok(Ok([public_input_pk, input_pk, output_pk]))
 }
 
 fn read_dispatcher_artifact(path: &str) -> Result<Vec<u8>, BitVMXError> {
@@ -662,7 +649,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
     name: &str,
     context: &ProgramContext<BC>,
     protocol_id: &Uuid,
-) -> Result<SetupValueOutcome<LamportPublicKey>, BitVMXError> {
+) -> Result<SetupValueResult<LamportPublicKey>, BitVMXError> {
     let h0s = match commitments
         .iter()
         .map(|commitment| hex::decode(&commitment.h0))
@@ -671,9 +658,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
         Ok(values) => values.concat(),
         Err(error) => {
             info!("Rejecting malformed h0 garbler commitment: {}", error);
-            return Ok(SetupValueOutcome::Failed(
-                SetupRejectReason::MalformedContribution,
-            ));
+            return Ok(Err(FailureDetail::MalformedSetupContribution));
         }
     };
 
@@ -685,9 +670,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
         Ok(values) => values.concat(),
         Err(error) => {
             info!("Rejecting malformed h1 garbler commitment: {}", error);
-            return Ok(SetupValueOutcome::Failed(
-                SetupRejectReason::MalformedContribution,
-            ));
+            return Ok(Err(FailureDetail::MalformedSetupContribution));
         }
     };
 
@@ -705,9 +688,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
         Ok(public_key) => public_key,
         Err(error) => {
             info!("Rejecting invalid garbler commitment key: {}", error);
-            return Ok(SetupValueOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
-            ));
+            return Ok(Err(FailureDetail::InvalidSetupContribution));
         }
     };
 
@@ -719,14 +700,13 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
 
     info!("Lamport imported successfully ({:?})", name);
 
-    Ok(SetupValueOutcome::Processed(public_key))
+    Ok(Ok(public_key))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::program::protocols::protocol_handler::new_protocol_type;
-    use crate::program::setup::{SetupNoOpReason, SetupRetryReason};
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::PROGRAM_TYPE_GC_GENERATION;
     use bitcoin::hashes::{sha256, Hash};
@@ -892,7 +872,7 @@ mod tests {
                 .unwrap();
         assert!(matches!(
             result,
-            SetupValueOutcome::Failed(SetupRejectReason::InvalidContribution)
+            Err(FailureDetail::InvalidSetupContribution)
         ));
 
         let no_public_inputs = GCConfiguration::new(
@@ -906,7 +886,7 @@ mod tests {
             import_public_keys(&[0], &[], 0, &no_public_inputs, &mut env.context, &id).unwrap();
         assert!(matches!(
             result,
-            SetupValueOutcome::Failed(SetupRejectReason::InvalidContribution)
+            Err(FailureDetail::InvalidSetupContribution)
         ));
     }
 
@@ -934,8 +914,8 @@ mod tests {
             match import_public_keys(&[0, 1, 2], &commitments, 2, &config, &mut env.context, &id)
                 .unwrap()
             {
-                SetupValueOutcome::Processed(keys) => keys,
-                SetupValueOutcome::Failed(reason) => {
+                Ok(keys) => keys,
+                Err(reason) => {
                     panic!("valid public keys were rejected: {:?}", reason)
                 }
             };
@@ -949,7 +929,7 @@ mod tests {
         assert_eq!(
             import_public_input_signature(&signature, &config, public_input, &env.context, &id)
                 .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(env
             .context
@@ -984,7 +964,7 @@ mod tests {
             serde_json::from_value(json!({"h0": "not-hex", "h1": "00"})).unwrap();
         assert!(matches!(
             import_public_lamport(&[invalid], "bad", &env.context, &id).unwrap(),
-            SetupValueOutcome::Failed(SetupRejectReason::MalformedContribution)
+            Err(FailureDetail::MalformedSetupContribution)
         ));
     }
 
@@ -1010,7 +990,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
         );
 
         let mut outsider = participant.clone();
@@ -1026,7 +1006,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
         );
 
         assert_eq!(
@@ -1040,7 +1020,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
@@ -1056,7 +1036,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Failed(SetupRejectReason::InvalidContribution)
+            ResultDisposition::Fail(FailureDetail::InvalidSetupContribution)
         );
 
         assert!(matches!(
@@ -1096,7 +1076,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
     }
 

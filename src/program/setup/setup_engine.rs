@@ -1,4 +1,6 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+#[cfg(test)]
+use crate::types::FailureDetail;
 use crate::{
     bitvmx::Context,
     comms_helper::{prepare_message, request, CommsMessageType},
@@ -8,7 +10,9 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{MessageDisposition, NoOpReason, PeerSetupFault, ProgramContext, RetryReason},
+    types::{
+        NoOpReason, PeerSetupFault, ProgramContext, ResultDisposition, RetryReason, SuccessDetail,
+    },
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -18,7 +22,7 @@ use uuid::Uuid;
 
 use super::{
     steps::{create_setup_step, SetupStepEnum, SetupStepName},
-    SetupMessageOutcome, SetupStep,
+    SetupStep,
 };
 
 /// Current state of a setup step in the engine.
@@ -434,7 +438,7 @@ impl SetupEngine {
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         self.if_not_completed()?;
 
         let step_name = self.current_step_name().to_string();
@@ -444,29 +448,27 @@ impl SetupEngine {
         let Some(participant_idx) =
             get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)
         else {
-            return Ok(MessageDisposition::DiscardNoOp(
-                NoOpReason::UnauthorizedSender,
-            ));
+            return Ok(ResultDisposition::NoOp(NoOpReason::UnauthorizedSender));
         };
 
         // Future-step traffic must remain retryable even if this participant has
         // already contributed to the current step.
         if !self.current_step_accepts(msg_type) {
-            return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
+            return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
         }
 
         // Check if already received
         if self.state.has_participant_completed(participant_idx) {
             if participant_idx == my_idx {
                 warn!("Getting data from ourselves again for step '{}', ignoring since we already processed it.", step_name);
-                return Ok(MessageDisposition::Processed(()));
+                return Ok(ResultDisposition::Success(SuccessDetail::Processed));
             }
 
             info!(
                 "SetupEngine: Already received data from participant {} for step '{}'",
                 participant_idx, step_name
             );
-            return Ok(MessageDisposition::DiscardNoOp(
+            return Ok(ResultDisposition::NoOp(
                 NoOpReason::ContributionAlreadyAccepted,
             ));
         }
@@ -488,27 +490,28 @@ impl SetupEngine {
             context,
             false,
         )? {
-            SetupMessageOutcome::Processed(()) => {}
-            SetupMessageOutcome::RetryLater(reason) => {
+            ResultDisposition::Success(SuccessDetail::Processed) => {}
+            ResultDisposition::Retry(reason) => {
                 debug!(
                     "SetupEngine: Contribution from participant {} for step '{}' is not ready: {:?}",
                     participant_idx, step_name, reason
                 );
-                return Ok(MessageDisposition::RetryLater(reason.into_retry_reason()));
+                return Ok(ResultDisposition::Retry(reason));
             }
-            SetupMessageOutcome::DiscardNoOp(reason) => {
-                return Ok(MessageDisposition::DiscardNoOp(reason.into_no_op_reason()));
+            ResultDisposition::NoOp(reason) => {
+                return Ok(ResultDisposition::NoOp(reason));
             }
-            SetupMessageOutcome::Failed(reason) => {
+            ResultDisposition::Fail(reason) => {
                 warn!(
                     "SetupEngine: Rejecting contribution from participant {} for step '{}': {:?}",
                     participant_idx, step_name, reason
                 );
-                return Ok(MessageDisposition::Failed(PeerSetupFault {
+                return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                     peer: from_participant.pubkey_hash.clone(),
-                    reason: reason.into_peer_fault_reason(),
+                    reason: reason.peer_setup_fault_reason(),
                 }));
             }
+            _ => unreachable!("invalid setup-step disposition"),
         }
 
         // Mark participant as completed
@@ -527,7 +530,7 @@ impl SetupEngine {
             self.state.current_step_state
         );
 
-        Ok(MessageDisposition::Processed(()))
+        Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
     /// Checks if the current step can advance to the next step.
@@ -692,7 +695,7 @@ impl SetupEngine {
         participants: &[CommsAddress],
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         info!(
             "SetupEngine::receive_setup_data() - Received data of type {:?} from participant {}",
             msg_type, from
@@ -705,14 +708,12 @@ impl SetupEngine {
                 "SetupEngine::receive_setup_data() - Setup already complete, discarding stale message from {}",
                 from
             );
-            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
         }
 
         // The outer peer-message boundary normally establishes membership first.
         let Some(from_participant) = get_comms_address_by_pubkey_hash(participants, from) else {
-            return Ok(MessageDisposition::DiscardNoOp(
-                NoOpReason::UnauthorizedSender,
-            ));
+            return Ok(ResultDisposition::NoOp(NoOpReason::UnauthorizedSender));
         };
 
         let step_name = self.current_step_name().to_string();
@@ -735,7 +736,7 @@ impl SetupEngine {
             participants,
             context,
         )?;
-        if disposition != MessageDisposition::Processed(()) {
+        if disposition != ResultDisposition::Success(SuccessDetail::Processed) {
             debug!(
                 "SetupEngine::receive_setup_data() - Data from participant {} was not applied for step '{}': {:?}",
                 from, step_name, disposition
@@ -754,7 +755,7 @@ impl SetupEngine {
             self.send_broadcast_data_to_non_leaders(context, program_id, participants, msg_type)?;
         }
 
-        Ok(MessageDisposition::Processed(()))
+        Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
     fn send_broadcast_data_to_non_leaders<BC: BitcoinCoordinatorApi>(
@@ -865,7 +866,7 @@ impl SetupEngine {
                         context,
                         true,
                     )?;
-                    if own_outcome != SetupMessageOutcome::Processed(()) {
+                    if own_outcome != ResultDisposition::Success(SuccessDetail::Processed) {
                         return Err(BitVMXError::InvalidState(format!(
                             "Locally generated data for step '{}' was not accepted: {:?}",
                             step_name, own_outcome
@@ -1117,7 +1118,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)
+            ResultDisposition::NoOp(NoOpReason::SetupComplete)
         );
         assert_eq!(engine.state(), &completed_state);
         assert!(engine.if_not_completed().is_err());
@@ -1174,7 +1175,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::DiscardNoOp(NoOpReason::UnauthorizedSender)
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
         );
         assert_eq!(
             engine
@@ -1188,7 +1189,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::RetryLater(RetryReason::SetupNotReady)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
         assert!(matches!(
             engine
@@ -1202,10 +1203,10 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::Failed(PeerSetupFault {
+            ResultDisposition::Fail(FailureDetail::PeerSetup(PeerSetupFault {
                 peer: fault_peer,
                 reason: PeerSetupFaultReason::MalformedMessage,
-            }) if fault_peer == peer.pubkey_hash
+            })) if fault_peer == peer.pubkey_hash
         ));
         assert!(!engine.state().has_participant_completed(1));
 
@@ -1221,7 +1222,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert_eq!(
             engine
@@ -1235,7 +1236,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::DiscardNoOp(NoOpReason::ContributionAlreadyAccepted)
+            ResultDisposition::NoOp(NoOpReason::ContributionAlreadyAccepted)
         );
         assert_eq!(
             engine
@@ -1249,7 +1250,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::RetryLater(RetryReason::SetupNotReady)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
 
         engine.state_mut().mark_participant_completed(0);
@@ -1265,7 +1266,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
     }
 

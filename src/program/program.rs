@@ -1,4 +1,6 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+#[cfg(test)]
+use crate::types::FailureDetail;
 /// Program — orchestrates protocol setup and lifecycle.
 ///
 /// - Uses SetupEngine for multi-step setup (keys, nonces, signatures)
@@ -17,9 +19,9 @@ use crate::{
     },
     signature_verifier::OperatorVerificationStore,
     types::{
-        DispatcherJobFailure, DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport,
-        ErrorReportKind, ErrorScope, JobDispatcherType, MessageDisposition, NoOpReason,
-        OutgoingBitVMXApiMessages, ProgramContext, RetryReason, SetupFailureReason,
+        DispatcherJobFailure, ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType,
+        NoOpReason, OutgoingBitVMXApiMessages, ProgramContext, ResultDisposition, RetryReason,
+        SetupFailureReason, SuccessDetail,
     },
 };
 use bitcoin::{Transaction, Txid};
@@ -119,10 +121,10 @@ impl Program {
     ///
     /// This is used at the peer-input boundary before authentication or payload
     /// processing so stale messages cannot mutate protocol or verification-key state.
-    pub(crate) fn peer_message_lifecycle_disposition(&self) -> Option<MessageDisposition> {
+    pub(crate) fn peer_message_lifecycle_disposition(&self) -> Option<ResultDisposition> {
         match self.state {
-            ProgramState::Ready => Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)),
-            ProgramState::Failed => Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)),
+            ProgramState::Ready => Some(ResultDisposition::NoOp(NoOpReason::SetupComplete)),
+            ProgramState::Failed => Some(ResultDisposition::NoOp(NoOpReason::SetupFailed)),
             ProgramState::SettingUp | ProgramState::WaitingData => None,
         }
     }
@@ -519,11 +521,9 @@ impl Program {
         &self,
         context: &Context,
         dispatcher: JobDispatcherType,
-    ) -> Result<Option<DispatcherResultDisposition>, BitVMXError> {
+    ) -> Result<Option<ResultDisposition>, BitVMXError> {
         if self.is_failed() {
-            return Ok(Some(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::SetupFailed,
-            )));
+            return Ok(Some(ResultDisposition::NoOp(NoOpReason::SetupFailed)));
         }
 
         let route_is_valid = matches!(
@@ -560,7 +560,7 @@ impl Program {
                 Context::ProgramStep(_, job_id) => job_id.clone(),
                 _ => expected_job_id.clone(),
             };
-            return Ok(Some(DispatcherResultDisposition::Failed(
+            return Ok(Some(ResultDisposition::fail_dispatcher(
                 DispatcherJobFailure {
                     program_id: self.program_id,
                     expected_job_id,
@@ -571,9 +571,7 @@ impl Program {
         }
 
         if self.is_stale_setup_result(context) {
-            return Ok(Some(DispatcherResultDisposition::DiscardNoOp(
-                DispatcherNoOpReason::Stale,
-            )));
+            return Ok(Some(ResultDisposition::NoOp(NoOpReason::Stale)));
         }
 
         Ok(None)
@@ -585,7 +583,7 @@ impl Program {
     fn handle_setup_dispatcher_error(
         &self,
         error: BitVMXError,
-    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         if matches!(&error, BitVMXError::DispatcherResultError(_)) {
             Err(BitVMXError::SetupAttemptFailed {
                 program_id: self.program_id,
@@ -607,7 +605,7 @@ impl Program {
         expected_job_id: String,
         job_id: &str,
         error: BitVMXError,
-    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let BitVMXError::DispatcherResultError(error) = error else {
             return Err(error);
         };
@@ -627,7 +625,7 @@ impl Program {
         context: &Context,
         dispatcher: JobDispatcherType,
         reason: String,
-    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         if let Some(disposition) = self.dispatcher_result_preflight(context, dispatcher)? {
             return Ok(disposition);
         }
@@ -639,7 +637,7 @@ impl Program {
                 source: Box::new(DispatcherResultError::DeclaredFailure(reason).into()),
             }),
             Context::ProgramStep(_, job_id) => {
-                Ok(DispatcherResultDisposition::Failed(DispatcherJobFailure {
+                Ok(ResultDisposition::fail_dispatcher(DispatcherJobFailure {
                     program_id: self.program_id,
                     expected_job_id: context.to_string()?,
                     job_id: job_id.clone(),
@@ -659,12 +657,12 @@ impl Program {
         context: Context,
         dispatcher: JobDispatcherType,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<DispatcherResultDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         if let Some(disposition) = self.dispatcher_result_preflight(&context, dispatcher)? {
             return Ok(disposition);
         }
         match self.receive_dispatcher_result_inner(result, &context, dispatcher, program_context) {
-            Ok(()) => Ok(DispatcherResultDisposition::Processed(())),
+            Ok(()) => Ok(ResultDisposition::Success(SuccessDetail::Processed)),
             Err(error) => match &context {
                 Context::SetupStep(_, _, _, _) => self.handle_setup_dispatcher_error(error),
                 Context::ProgramStep(_, job_id) => {
@@ -753,16 +751,16 @@ impl Program {
         msg_type: CommsMessageType,
         from: &PubKeyHash,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         // Terminal lifecycle states make all subsequent setup messages stale.
         if self.is_failed() {
             debug!("Program::receive_setup_data() - Program setup failed, discarding message");
-            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupFailed));
         }
 
         if self.is_setup_complete() {
             debug!("Program::receive_setup_data() - Setup complete, discarding stale message");
-            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
         }
 
         // Track state changes and completion status for save/log after borrow ends
@@ -781,13 +779,13 @@ impl Program {
             (disposition, engine.state().current_step_state.clone())
         } else {
             (
-                MessageDisposition::RetryLater(RetryReason::SetupNotReady),
+                ResultDisposition::Retry(RetryReason::SetupNotReady),
                 StepState::Completed,
             ) // Preserve the previous Ok(false) behavior.
         };
 
         // Preserve the previous behavior: save messages reported as processed.
-        if disposition == MessageDisposition::Processed(()) {
+        if disposition == ResultDisposition::Success(SuccessDetail::Processed) {
             if engine_state == StepState::WaitingForParticipants {
                 self.state = ProgramState::WaitingData;
             } else {
@@ -859,14 +857,14 @@ impl Program {
         msg_type: &CommsMessageType,
         data: Value,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         if self.is_failed() {
-            return Ok(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupFailed));
         }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if !self.is_setup_complete() => {
                 self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
-                Ok(MessageDisposition::Processed(()))
+                Ok(ResultDisposition::Success(SuccessDetail::Processed))
             }
             other => other,
         }
@@ -878,7 +876,7 @@ impl Program {
         msg_type: &CommsMessageType,
         data: Value,
         program_context: &mut ProgramContext<BC>,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         debug!(
             "Program::process_comms_message() - Received {:?}  from {}",
             msg_type, comms_address
@@ -905,7 +903,7 @@ impl Program {
             }
         }
 
-        Ok(MessageDisposition::Processed(()))
+        Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
     /// Gets a transaction by name from the protocol
@@ -1046,10 +1044,10 @@ mod tests {
 
     fn apply_peer_fault(
         program: &mut Program,
-        disposition: MessageDisposition,
+        disposition: ResultDisposition,
         env: &mut TestProgramContextEnv,
     ) {
-        let MessageDisposition::Failed(fault) = disposition else {
+        let ResultDisposition::Fail(FailureDetail::PeerSetup(fault)) = disposition else {
             panic!("expected peer setup fault, got {disposition:?}");
         };
         program
@@ -1411,13 +1409,13 @@ mod tests {
         program.state = ProgramState::Ready;
         assert_eq!(
             program.peer_message_lifecycle_disposition(),
-            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete))
+            Some(ResultDisposition::NoOp(NoOpReason::SetupComplete))
         );
 
         program.state = ProgramState::Failed;
         assert_eq!(
             program.peer_message_lifecycle_disposition(),
-            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed))
+            Some(ResultDisposition::NoOp(NoOpReason::SetupFailed))
         );
     }
 
@@ -1466,7 +1464,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             disposition,
-            MessageDisposition::DiscardNoOp(NoOpReason::SetupFailed)
+            ResultDisposition::NoOp(NoOpReason::SetupFailed)
         );
 
         // Replayed dispatcher results and ticks cannot restart a failed setup.
@@ -1480,7 +1478,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             dispatcher_disposition,
-            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::SetupFailed)
+            ResultDisposition::NoOp(NoOpReason::SetupFailed)
         );
         program.tick(&mut env.context).unwrap();
 
@@ -1509,7 +1507,10 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap();
-            assert_eq!(disposition, MessageDisposition::Processed(()));
+            assert_eq!(
+                disposition,
+                ResultDisposition::Success(SuccessDetail::Processed)
+            );
         }
         assert_eq!(
             program.setup_engine.as_ref().unwrap().state(),
@@ -1536,7 +1537,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             disposition,
-            MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete)
+            ResultDisposition::NoOp(NoOpReason::SetupComplete)
         );
 
         let context = Context::SetupStep(
@@ -1555,7 +1556,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             dispatcher_disposition,
-            DispatcherResultDisposition::DiscardNoOp(DispatcherNoOpReason::Stale)
+            ResultDisposition::NoOp(NoOpReason::Stale)
         );
         assert_eq!(program.state, ProgramState::Ready);
     }
@@ -1584,9 +1585,9 @@ mod tests {
 
         assert!(matches!(
             disposition,
-            DispatcherResultDisposition::Failed(DispatcherJobFailure {
+            ResultDisposition::Fail(FailureDetail::DispatcherJob(DispatcherJobFailure {
                 program_id, reason, ..
-            }) if program_id == program.program_id
+            })) if program_id == program.program_id
                     && reason.contains("Invalid context for Emulator result")
         ));
         assert_eq!(program.state, ProgramState::Ready);

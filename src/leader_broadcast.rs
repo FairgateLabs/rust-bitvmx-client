@@ -3,10 +3,10 @@ use crate::errors::BitVMXError;
 use crate::message_queue::{MessageQueue, QueuedMessage};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::{participant::CommsAddress, program::Program, setup::SetupMessageState};
-use crate::signature_verifier::{AuthenticationOutcome, SignatureVerifier};
+use crate::signature_verifier::SignatureVerifier;
 use crate::types::{
-    HandlingOutcome, MessageDisposition, NoOpReason, PeerSetupFault, PeerSetupFaultReason,
-    ProgramContext,
+    FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
+    ResultDisposition, RetryReason, SuccessDetail,
 };
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use bitvmx_broker::settings::COMMS_ID;
@@ -166,10 +166,6 @@ fn get_original_message_key(
 ) -> Result<StorageKey, BitVMXError> {
     original_message_key(context_id, msg_type, [pub_key_hash.as_str()])
 }
-
-/// Explicit result of evaluating one embedded original message.
-pub type OriginalMessageOutcome =
-    HandlingOutcome<QueuedMessage, PubkHash, NoOpReason, PeerSetupFault>;
 
 /// Helper for managing leader broadcast functionality
 /// Encapsulates storage, communication, and message queue operations
@@ -370,7 +366,7 @@ impl LeaderBroadcastHelper {
         program_id: Uuid,
         data: Value,
         message_queue: &MessageQueue,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let broadcasted_msg: BroadcastedMessage = match serde_json::from_value(data) {
             Ok(message) => message,
             Err(error) => {
@@ -378,7 +374,7 @@ impl LeaderBroadcastHelper {
                     "Rejecting malformed BroadcastedMessage from leader {} for {}: {:?}",
                     leader_identifier.pubkey_hash, program_id, error
                 );
-                return Ok(MessageDisposition::Failed(PeerSetupFault {
+                return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                     peer: leader_identifier.pubkey_hash,
                     reason: PeerSetupFaultReason::MalformedMessage,
                 }));
@@ -395,7 +391,7 @@ impl LeaderBroadcastHelper {
         if broadcasted_msg.original_messages.is_empty()
             || !broadcasted_msg.original_msg_type.should_store()
         {
-            return Ok(MessageDisposition::Failed(PeerSetupFault {
+            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                 peer: leader_identifier.pubkey_hash,
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
             }));
@@ -408,7 +404,7 @@ impl LeaderBroadcastHelper {
                 || !original_msg.msg_type.should_store()
                 || !seen_senders.insert(&original_msg.sender_pubkey_hash)
             {
-                outcomes.push(OriginalMessageOutcome::Failed(PeerSetupFault {
+                outcomes.push(ResultDisposition::fail_peer(PeerSetupFault {
                     peer: leader_identifier.pubkey_hash.clone(),
                     reason: PeerSetupFaultReason::UnauthorizedMessage,
                 }));
@@ -427,10 +423,10 @@ impl LeaderBroadcastHelper {
         // A single invalid original makes the active setup untrustworthy. Do
         // not queue otherwise valid/deferred originals from the same envelope.
         if let Some(fault) = outcomes.iter().find_map(|outcome| match outcome {
-            OriginalMessageOutcome::Failed(fault) => Some(fault.clone()),
+            ResultDisposition::Fail(FailureDetail::PeerSetup(fault)) => Some(fault.clone()),
             _ => None,
         }) {
-            return Ok(MessageDisposition::Failed(fault));
+            return Ok(ResultDisposition::fail_peer(fault));
         }
 
         let mut queued_count = 0usize;
@@ -438,7 +434,7 @@ impl LeaderBroadcastHelper {
         let mut missing_peers = Vec::new();
         for outcome in outcomes {
             match outcome {
-                OriginalMessageOutcome::Processed(message) => {
+                ResultDisposition::Success(SuccessDetail::QueuedMessage(message)) => {
                     info!(
                         "Queueing verified embedded original from {}",
                         message.identifier.pubkey_hash
@@ -446,18 +442,19 @@ impl LeaderBroadcastHelper {
                     message_queue.push_new_unique(message.identifier, message.data)?;
                     queued_count += 1;
                 }
-                OriginalMessageOutcome::RetryLater(peer) => {
+                ResultDisposition::Retry(RetryReason::MissingVerificationKey { peer }) => {
                     info!(
                         "Deferring leader envelope until the verification key for {} arrives",
                         peer
                     );
                     missing_peers.push(peer);
                 }
-                OriginalMessageOutcome::DiscardNoOp(reason) => {
+                ResultDisposition::NoOp(reason) => {
                     debug!("Discarding redundant embedded original: {:?}", reason);
                     no_op_count += 1;
                 }
-                OriginalMessageOutcome::Failed(_) => unreachable!("handled before queueing"),
+                ResultDisposition::Fail(_) => unreachable!("handled before queueing"),
+                _ => unreachable!("invalid embedded-original disposition"),
             }
         }
 
@@ -473,15 +470,15 @@ impl LeaderBroadcastHelper {
             // independently fresh budget for every missing-key original. On a
             // retry, accepted originals are no-ops and pending verified ones are
             // deduplicated by MessageQueue.
-            Ok(MessageDisposition::RetryLater(
+            Ok(ResultDisposition::Retry(
                 crate::types::RetryReason::MissingVerificationKey { peer },
             ))
         } else if queued_count == 0 {
-            Ok(MessageDisposition::DiscardNoOp(
+            Ok(ResultDisposition::NoOp(
                 NoOpReason::ContributionAlreadyAccepted,
             ))
         } else {
-            Ok(MessageDisposition::Processed(()))
+            Ok(ResultDisposition::Success(SuccessDetail::Processed))
         }
     }
 
@@ -491,7 +488,7 @@ impl LeaderBroadcastHelper {
         leader_pubkey_hash: &PubkHash,
         program_id: &Uuid,
         original_msg: &OriginalMessage,
-    ) -> Result<OriginalMessageOutcome, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         if program
             .get_address_from_pubkey_hash(&original_msg.sender_pubkey_hash)
             .is_none()
@@ -500,7 +497,7 @@ impl LeaderBroadcastHelper {
                 "Leader {} forwarded an original claiming non-participant sender {}",
                 leader_pubkey_hash, original_msg.sender_pubkey_hash
             );
-            return Ok(OriginalMessageOutcome::Failed(PeerSetupFault {
+            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                 peer: leader_pubkey_hash.clone(),
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
             }));
@@ -510,14 +507,12 @@ impl LeaderBroadcastHelper {
             .classify_setup_message(&original_msg.sender_pubkey_hash, original_msg.msg_type)
         {
             SetupMessageState::ContributionAlreadyAccepted => {
-                return Ok(OriginalMessageOutcome::DiscardNoOp(
+                return Ok(ResultDisposition::NoOp(
                     NoOpReason::ContributionAlreadyAccepted,
                 ));
             }
             SetupMessageState::SetupComplete => {
-                return Ok(OriginalMessageOutcome::DiscardNoOp(
-                    NoOpReason::SetupComplete,
-                ));
+                return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
             }
             SetupMessageState::PendingCurrentContribution
             | SetupMessageState::NotForCurrentStep
@@ -534,7 +529,7 @@ impl LeaderBroadcastHelper {
             )
             .is_err()
         {
-            return Ok(OriginalMessageOutcome::Failed(PeerSetupFault {
+            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                 peer: original_msg.sender_pubkey_hash.clone(),
                 reason: PeerSetupFaultReason::MalformedMessage,
             }));
@@ -554,20 +549,21 @@ impl LeaderBroadcastHelper {
         )?;
 
         match authentication {
-            AuthenticationOutcome::Processed(()) => {}
-            AuthenticationOutcome::RetryLater(peer) => {
-                return Ok(OriginalMessageOutcome::RetryLater(peer));
+            ResultDisposition::Success(SuccessDetail::Processed) => {}
+            ResultDisposition::Retry(reason) => {
+                return Ok(ResultDisposition::Retry(reason));
             }
-            AuthenticationOutcome::Failed(rejection) => {
+            ResultDisposition::Fail(rejection) => {
                 warn!(
                     "Embedded original authentication rejected from {} (forwarded by {}): {:?}",
                     original_msg.sender_pubkey_hash, leader_pubkey_hash, rejection
                 );
-                return Ok(OriginalMessageOutcome::Failed(PeerSetupFault {
+                return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                     peer: original_msg.sender_pubkey_hash.clone(),
-                    reason: PeerSetupFaultReason::AuthenticationRejected,
+                    reason: rejection.peer_setup_fault_reason(),
                 }));
             }
+            _ => unreachable!("invalid authentication disposition"),
         };
 
         let full_message = serialize_msg(
@@ -583,7 +579,9 @@ impl LeaderBroadcastHelper {
             full_message,
         )?;
 
-        Ok(OriginalMessageOutcome::Processed(queued_message))
+        Ok(ResultDisposition::Success(SuccessDetail::QueuedMessage(
+            queued_message,
+        )))
     }
 }
 
@@ -1154,7 +1152,7 @@ mod tests {
 
         assert_eq!(
             disposition,
-            MessageDisposition::RetryLater(crate::types::RetryReason::MissingVerificationKey {
+            ResultDisposition::Retry(crate::types::RetryReason::MissingVerificationKey {
                 peer: unknown_peer,
             })
         );
@@ -1208,7 +1206,7 @@ mod tests {
                 &queue,
             )
             .unwrap();
-        assert!(matches!(disposition, MessageDisposition::Failed(_)));
+        assert!(matches!(disposition, ResultDisposition::Fail(_)));
 
         // All-or-nothing: the valid message must not have been queued either
         assert!(queue.is_empty().unwrap());
@@ -1240,7 +1238,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(matches!(disposition, MessageDisposition::Failed(_)));
+        assert!(matches!(disposition, ResultDisposition::Fail(_)));
         assert!(queue.is_empty().unwrap());
     }
 
@@ -1263,7 +1261,7 @@ mod tests {
                 &queue,
             )
             .unwrap();
-        assert!(matches!(disposition, MessageDisposition::Failed(_)));
+        assert!(matches!(disposition, ResultDisposition::Fail(_)));
         assert!(queue.is_empty().unwrap());
     }
 

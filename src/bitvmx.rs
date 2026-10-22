@@ -24,14 +24,12 @@ use crate::{
         setup::SetupMessageState,
         variables::{Globals, WitnessVars},
     },
-    signature_verifier::{
-        AuthenticationOutcome, OperatorVerificationStore, SignatureVerifier,
-        VerificationMessageOutcome,
-    },
+    signature_verifier::{OperatorVerificationStore, SignatureVerifier},
     types::{
-        DispatcherJobFailure, DispatcherResultDisposition, ErrorReportKind, MessageDisposition,
-        NoOpReason, OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason,
-        ProgramContext, ProgramStatus, RetryReason, SetupFailureReason, RSK_PEGIN_TAG,
+        DispatcherJobFailure, ErrorReportKind, FailureDetail, NoOpReason,
+        OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
+        ProgramStatus, ResultDisposition, RetryReason, SetupFailureReason, SuccessDetail,
+        RSK_PEGIN_TAG,
     },
 };
 use bitcoin::Txid;
@@ -335,7 +333,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         timestamp: i64,
         signature: Vec<u8>,
         version: String,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         debug!(
             "BitVMX::process_program_message() - Processing {:?} for program {} from {}",
             msg_type, program_id, peer_address.pubkey_hash
@@ -353,7 +351,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
                 program_id
             );
-            return Ok(MessageDisposition::RetryLater(
+            return Ok(ResultDisposition::Retry(
                 RetryReason::MissingParticipantVerificationKeys,
             ));
         }
@@ -379,7 +377,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         "There is a message already stored for program {}",
                         program_id
                     );
-                    return Ok(MessageDisposition::RetryLater(RetryReason::SetupNotReady));
+                    return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
                 }
             }
         }
@@ -420,18 +418,18 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         msg: QueuedMessage,
         program_id: &Uuid,
         msg_type: CommsMessageType,
-        disposition: MessageDisposition,
+        disposition: ResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            MessageDisposition::Processed(()) => Ok(()),
-            MessageDisposition::DiscardNoOp(reason) => {
+            ResultDisposition::Success(SuccessDetail::Processed) => Ok(()),
+            ResultDisposition::NoOp(reason) => {
                 debug!(
                     "Consuming no-op peer message {:?} for program {} from {}: {:?}",
                     msg_type, program_id, msg.identifier.pubkey_hash, reason
                 );
                 Ok(())
             }
-            MessageDisposition::RetryLater(reason) => {
+            ResultDisposition::Retry(reason) => {
                 info!(
                     "Pending message to back: {:?} for program {:?} from {:?}: {:?}",
                     msg_type, program_id, msg.identifier.pubkey_hash, reason,
@@ -465,7 +463,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 }
                 Ok(())
             }
-            MessageDisposition::Failed(PeerSetupFault { peer, reason }) => {
+            ResultDisposition::Fail(FailureDetail::PeerSetup(PeerSetupFault { peer, reason })) => {
                 warn!(
                     "Failing setup for program {} after peer fault from {}: {}",
                     program_id, peer, reason
@@ -476,6 +474,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     SetupFailureReason::StepError(reason.to_string()),
                 )
             }
+            _ => unreachable!("invalid peer-message disposition"),
         }
     }
 
@@ -509,14 +508,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         data: Value,
         timestamp: i64,
         signature: Vec<u8>,
-    ) -> Result<MessageDisposition, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         // Apply the lifecycle gate before authentication or message-specific
         // handling. Terminal setup traffic is stale and cannot mutate state.
         let Some(mut program) = self.load_program(&program_id)? else {
             debug!("Program {} not found", program_id);
-            return Ok(MessageDisposition::RetryLater(
-                RetryReason::ProgramNotInstalled,
-            ));
+            return Ok(ResultDisposition::Retry(RetryReason::ProgramNotInstalled));
         };
 
         if let Some(disposition) = program.peer_message_lifecycle_disposition() {
@@ -531,9 +528,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Consuming peer message {:?} for program {} from non-participant {}",
                     msg_type, program_id, sender_pubkey_hash
                 );
-                return Ok(MessageDisposition::DiscardNoOp(
-                    NoOpReason::UnauthorizedSender,
-                ));
+                return Ok(ResultDisposition::NoOp(NoOpReason::UnauthorizedSender));
             }
         };
 
@@ -548,7 +543,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "Rejecting Broadcasted message for program {} from non-leader participant {}",
                 program_id, sender_pubkey_hash
             );
-            return Ok(MessageDisposition::Failed(PeerSetupFault {
+            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                 peer: sender_pubkey_hash,
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
             }));
@@ -570,7 +565,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     let reason = no_op_state
                         .into_no_op_reason()
                         .expect("matched setup no-op state");
-                    return Ok(MessageDisposition::DiscardNoOp(reason));
+                    return Ok(ResultDisposition::NoOp(reason));
                 }
             }
 
@@ -587,26 +582,25 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &self.program_context.rsa_public_key,
                 &my_pubkey_hash,
             )? {
-                AuthenticationOutcome::Processed(()) => {}
-                AuthenticationOutcome::RetryLater(peer) => {
+                ResultDisposition::Success(SuccessDetail::Processed) => {}
+                ResultDisposition::Retry(reason) => {
                     info!(
                         "Buffering message due to missing verification key: {:?} {:?}",
                         program_id, msg_type
                     );
-                    return Ok(MessageDisposition::RetryLater(
-                        RetryReason::MissingVerificationKey { peer },
-                    ));
+                    return Ok(ResultDisposition::Retry(reason));
                 }
-                AuthenticationOutcome::Failed(rejection) => {
+                ResultDisposition::Fail(rejection) => {
                     warn!(
                         "Message authentication rejected from {} for {}: {:?}",
                         sender_pubkey_hash, program_id, rejection
                     );
-                    return Ok(MessageDisposition::Failed(PeerSetupFault {
+                    return Ok(ResultDisposition::fail_peer(PeerSetupFault {
                         peer: sender_pubkey_hash,
-                        reason: PeerSetupFaultReason::AuthenticationRejected,
+                        reason: rejection.peer_setup_fault_reason(),
                     }));
                 }
+                _ => unreachable!("invalid authentication disposition"),
             }
         }
 
@@ -639,17 +633,20 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &data,
                 &peer_address,
             )? {
-                VerificationMessageOutcome::Processed(()) => Ok(MessageDisposition::Processed(())),
-                VerificationMessageOutcome::Failed(rejection) => {
+                ResultDisposition::Success(SuccessDetail::Processed) => {
+                    Ok(ResultDisposition::Success(SuccessDetail::Processed))
+                }
+                ResultDisposition::Fail(rejection) => {
                     warn!(
                         "Verification bootstrap message rejected from {} for {}: {:?}",
                         sender_pubkey_hash, program_id, rejection
                     );
-                    Ok(MessageDisposition::Failed(PeerSetupFault {
+                    Ok(ResultDisposition::fail_peer(PeerSetupFault {
                         peer: sender_pubkey_hash,
-                        reason: rejection.into_peer_setup_fault_reason(),
+                        reason: rejection.peer_setup_fault_reason(),
                     }))
                 }
+                _ => unreachable!("invalid verification-message disposition"),
             };
         }
 
@@ -1165,7 +1162,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     }
                     self.apply_dispatcher_result_disposition(
                         expected.dispatcher,
-                        DispatcherResultDisposition::Failed(DispatcherJobFailure {
+                        ResultDisposition::fail_dispatcher(DispatcherJobFailure {
                             program_id,
                             expected_job_id,
                             job_id,
@@ -1447,7 +1444,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 }
                 self.apply_dispatcher_result_disposition(
                     job.dispatcher,
-                    DispatcherResultDisposition::Failed(DispatcherJobFailure {
+                    ResultDisposition::fail_dispatcher(DispatcherJobFailure {
                         program_id,
                         expected_job_id: job_id.clone(),
                         job_id,
@@ -1742,7 +1739,7 @@ mod transaction_tests {
         ready_program.tick(&mut env.bitvmx.program_context).unwrap();
         assert_eq!(
             ready_program.peer_message_lifecycle_disposition(),
-            Some(MessageDisposition::DiscardNoOp(NoOpReason::SetupComplete))
+            Some(ResultDisposition::NoOp(NoOpReason::SetupComplete))
         );
 
         // The invalid RSA signature would be rejected if authentication ran.

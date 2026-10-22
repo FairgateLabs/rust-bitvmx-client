@@ -1,13 +1,15 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+#[cfg(test)]
+use crate::types::{NoOpReason, RetryReason};
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
         participant::CommsAddress,
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::{decode_contribution, SetupMessageOutcome, SetupRejectReason, SetupStep},
+        setup::{decode_contribution, SetupStep},
     },
-    types::ProgramContext,
+    types::{FailureDetail, ProgramContext, ResultDisposition, SuccessDetail},
 };
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PubNonce};
@@ -168,7 +170,7 @@ impl SetupStep for NoncesStep {
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
         _your_data: bool,
-    ) -> Result<SetupMessageOutcome, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -183,8 +185,8 @@ impl SetupStep for NoncesStep {
             Err(outcome) => return Ok(outcome),
         };
         if nonces.is_empty() {
-            return Ok(SetupMessageOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
+            return Ok(ResultDisposition::Fail(
+                FailureDetail::InvalidSetupContribution,
             ));
         }
 
@@ -200,8 +202,8 @@ impl SetupStep for NoncesStep {
             .collect::<HashSet<_>>();
         if let Err(error) = Self::validate_received_nonces(&nonces, &expected_aggregated_keys) {
             info!("Rejecting invalid nonce contribution: {}", error);
-            return Ok(SetupMessageOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
+            return Ok(ResultDisposition::Fail(
+                FailureDetail::InvalidSetupContribution,
             ));
         }
 
@@ -220,7 +222,7 @@ impl SetupStep for NoncesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(SetupMessageOutcome::Processed(()))
+        Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -316,11 +318,7 @@ impl SetupStep for NoncesStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{
-        participant::ParticipantKeys,
-        setup::{SetupNoOpReason, SetupRetryReason},
-        variables::VariableTypes,
-    };
+    use crate::program::{participant::ParticipantKeys, variables::VariableTypes};
     use key_manager::key_type::BitcoinKeyType;
     use std::rc::Rc;
     use storage_backend::storage::Storage;
@@ -481,7 +479,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -498,7 +496,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -517,7 +515,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
         );
 
         assert_eq!(
@@ -531,7 +529,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -561,7 +559,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
+            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
         );
 
         assert_eq!(
@@ -575,7 +573,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Failed(SetupRejectReason::InvalidContribution)
+            ResultDisposition::Fail(FailureDetail::InvalidSetupContribution)
         );
 
         let err = step

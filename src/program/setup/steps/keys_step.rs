@@ -1,17 +1,16 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+#[cfg(test)]
+use crate::types::NoOpReason;
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
         participant::{CommsAddress, ParticipantKeyDeclaration, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::{
-            decode_contribution, SetupMessageOutcome, SetupRejectReason, SetupRetryReason,
-            SetupStep,
-        },
+        setup::{decode_contribution, SetupStep},
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{FailureDetail, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
 };
 use serde_json::Value;
 use tracing::{debug, info};
@@ -194,7 +193,7 @@ impl SetupStep for KeysStep {
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
         _your_data: bool,
-    ) -> Result<SetupMessageOutcome, BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -221,8 +220,8 @@ impl SetupStep for KeysStep {
                 serde_json::from_str::<ParticipantKeys>(&encoded)?
             }
             None => {
-                return Ok(SetupMessageOutcome::RetryLater(
-                    SetupRetryReason::MissingPrerequisite,
+                return Ok(ResultDisposition::Retry(
+                    RetryReason::MissingSetupPrerequisite,
                 ));
             }
         };
@@ -234,8 +233,8 @@ impl SetupStep for KeysStep {
                     .is_none()
             })
         {
-            return Ok(SetupMessageOutcome::Failed(
-                SetupRejectReason::InvalidContribution,
+            return Ok(ResultDisposition::Fail(
+                FailureDetail::InvalidSetupContribution,
             ));
         }
 
@@ -252,7 +251,7 @@ impl SetupStep for KeysStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(SetupMessageOutcome::Processed(()))
+        Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -322,7 +321,6 @@ mod tests {
     use uuid::Uuid;
 
     use crate::program::protocols::protocol_handler::new_protocol_type;
-    use crate::program::setup::SetupNoOpReason;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::{
         FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION,
@@ -405,7 +403,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Processed(())
+            ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(step
             .can_advance(&protocol, &participants, &env.context)
@@ -470,7 +468,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
         );
         assert!(!step
             .has_participant_data(&env.context.globals, &id, 0)
@@ -486,7 +484,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::RetryLater(SetupRetryReason::MissingPrerequisite)
+            ResultDisposition::Retry(RetryReason::MissingSetupPrerequisite)
         );
 
         assert_eq!(
@@ -500,7 +498,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
+            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
         );
 
         let injected_derived_key = serde_json::json!({
@@ -519,7 +517,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
+            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
         );
 
         let mut outsider = participant.clone();
@@ -535,7 +533,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
         );
     }
 
