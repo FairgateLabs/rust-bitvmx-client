@@ -83,6 +83,23 @@ class MirrorTest(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 mirror.run(client_dir, file_list, out_dir, "v0.0.1-test")
 
+    def test_types_release_preserves_source_tag_and_contract_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            client_dir, file_list, _, _ = self._make_source_tree(tmp)
+            out_dir = tmp / "out"
+            mirror.run(client_dir, file_list, out_dir, "v0.0.1")
+            hashes = mirror.read_hashes(out_dir / "mirror.toml")
+
+            mirror.run(client_dir, file_list, out_dir, "force/types/v9.9.9-rc.1")
+
+            manifest = (out_dir / "mirror.toml").read_text(encoding="utf-8")
+            generated = (out_dir / "src" / "c.rs").read_text(encoding="utf-8")
+            self.assertIn('source_tag = "force/types/v9.9.9-rc.1"', manifest)
+            self.assertIn("// Source: rust-bitvmx-client @ force/types/v9.9.9-rc.1", generated)
+            self.assertEqual(mirror.read_hashes(out_dir / "mirror.toml"), hashes)
+            self.assertEqual(mirror.check(out_dir), [])
+
     def test_comments_and_blank_lines_are_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
@@ -99,11 +116,11 @@ on-a-branch = { git = "https://github.com/FairgateLabs/on-a-branch.git", branch 
 serde = "1.0"
 """
 
-    def _sync(self, tmp: pathlib.Path, mirror_cargo: bytes) -> str:
+    def _sync(self, tmp: pathlib.Path, mirror_cargo: bytes, release_tag: str = "v9.9.9") -> str:
         _write(tmp / "client" / "Cargo.toml", self.CLIENT_CARGO)
         _write(tmp / "out" / "Cargo.toml", mirror_cargo)
         mirror.sync_dep_tags(
-            tmp / "client" / "Cargo.toml", tmp / "out" / "Cargo.toml", "v9.9.9"
+            tmp / "client" / "Cargo.toml", tmp / "out" / "Cargo.toml", release_tag
         )
         return (tmp / "out" / "Cargo.toml").read_text(encoding="utf-8")
 
@@ -181,6 +198,28 @@ serde = "1.0"
             )
             self.assertIn('serde = { version = "1.0", features = ["derive"] }', result)
             self.assertNotIn("tag", result)
+
+    def test_types_release_keeps_existing_client_dependency_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._sync(
+                pathlib.Path(tmp),
+                b'a = { git = "https://github.com/FairgateLabs/rust-bitvmx-broker.git", tag = "v0.8.0" }\n'
+                b'b = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", tag = "v0.5.0" }\n',
+                "force/types/v9.9.9-rc.1",
+            )
+            self.assertIn('rust-bitvmx-broker.git", tag = "v0.9.0"', result)
+            self.assertIn('rust-bitcoin-script/", tag = "v0.6.0"', result)
+            self.assertNotIn("9.9.9", result)
+
+    def test_types_release_rejects_dependencies_without_a_client_tag(self):
+        for repo in ("on-a-branch", "unknown"):
+            with self.subTest(repo=repo), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(ValueError, "types-only release requires a client tag"):
+                    self._sync(
+                        pathlib.Path(tmp),
+                        f'a = {{ git = "https://github.com/FairgateLabs/{repo}.git", tag = "v0.8.0" }}\n'.encode(),
+                        "force/types/v9.9.9-rc.1",
+                    )
 
 
 if __name__ == "__main__":
