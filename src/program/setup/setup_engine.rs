@@ -239,9 +239,9 @@ impl SetupEngine {
         }
     }
 
-    fn if_not_completed(&self) -> Result<(), BitVMXError> {
+    fn ensure_not_completed(&self) -> Result<(), BitVMXError> {
         if self.is_complete() {
-            Err(BitVMXError::InvalidMessage(
+            Err(BitVMXError::InvalidState(
                 "Setup is already complete".to_string(),
             ))
         } else {
@@ -260,7 +260,7 @@ impl SetupEngine {
         protocol: &mut ProtocolType,
         context: &mut ProgramContext<BC>,
     ) -> Result<Option<(serde_json::Value, CommsMessageType)>, BitVMXError> {
-        self.if_not_completed()?;
+        self.ensure_not_completed()?;
 
         let step_name = self.current_step_name().to_string();
 
@@ -430,7 +430,7 @@ impl SetupEngine {
         participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
     ) -> Result<ResultDisposition, BitVMXError> {
-        self.if_not_completed()?;
+        self.ensure_not_completed()?;
 
         let step_name = self.current_step_name().to_string();
 
@@ -536,7 +536,7 @@ impl SetupEngine {
         participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
     ) -> Result<bool, BitVMXError> {
-        self.if_not_completed()?;
+        self.ensure_not_completed()?;
 
         if self.state.current_step_state != StepState::AllParticipantsCompleted {
             return Ok(false);
@@ -1102,7 +1102,10 @@ mod tests {
             ResultDisposition::NoOp(NoOpReason::SetupComplete)
         );
         assert_eq!(engine.state(), &completed_state);
-        assert!(engine.if_not_completed().is_err());
+        assert!(matches!(
+            engine.ensure_not_completed(),
+            Err(BitVMXError::InvalidState(_))
+        ));
     }
 
     #[test]
