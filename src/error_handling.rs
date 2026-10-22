@@ -127,7 +127,10 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
         if let Some(error) = error.downcast_ref::<StorageError>() {
             if matches!(
                 error,
-                StorageError::WriteError | StorageError::ReadError | StorageError::CommitError
+                StorageError::WriteError
+                    | StorageError::ReadError
+                    | StorageError::CommitError
+                    | StorageError::TransactionRollbackFailed
             ) {
                 return Severity::Fatal;
             }
@@ -162,9 +165,7 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
             }
         }
 
-        if let Some(BitVMXError::PoisonedLockError(_) | BitVMXError::TransactionRollbackError(_)) =
-            error.downcast_ref::<BitVMXError>()
-        {
+        if let Some(BitVMXError::PoisonedLockError(_)) = error.downcast_ref::<BitVMXError>() {
             return Severity::Fatal;
         }
 

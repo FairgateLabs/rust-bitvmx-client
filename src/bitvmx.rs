@@ -1219,7 +1219,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         "Could not roll back transaction step after {:?}: {:?}",
                         error, rollback
                     );
-                    return Err(BitVMXError::TransactionRollbackError(rollback));
+                    return Err(rollback.into());
                 }
                 Err(error)
             }
@@ -2458,7 +2458,10 @@ mod transaction_tests {
             Err(BitVMXError::InvalidMessageFormat)
         });
         let error = result.unwrap_err();
-        assert!(matches!(error, BitVMXError::TransactionRollbackError(_)));
+        assert!(matches!(
+            error,
+            BitVMXError::StorageError(StorageError::TransactionRollbackFailed)
+        ));
         assert!(matches!(classify(&error), Severity::Fatal));
     }
 
