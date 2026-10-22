@@ -38,16 +38,11 @@ impl NoncesStep {
         Self
     }
 
-    fn validate_received_nonces(
+    /// Validates each entry in a contribution already known to be non-empty.
+    fn validate_received_nonce_entries(
         nonces: &PubNonceMessage,
         expected_aggregated_keys: &HashSet<PublicKey>,
     ) -> Result<(), BitVMXError> {
-        if nonces.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                "Received empty nonces from participant".to_string(),
-            ));
-        }
-
         let mut received_aggregated_keys = HashSet::new();
 
         for (aggregated, _, message_nonces) in nonces {
@@ -198,7 +193,9 @@ impl SetupStep for NoncesStep {
             .values()
             .copied()
             .collect::<HashSet<_>>();
-        if let Err(error) = Self::validate_received_nonces(&nonces, &expected_aggregated_keys) {
+        if let Err(error) =
+            Self::validate_received_nonce_entries(&nonces, &expected_aggregated_keys)
+        {
             info!("Rejecting invalid nonce contribution: {}", error);
             return Ok(ResultDisposition::Fail(
                 FailureDetail::InvalidSetupContribution,
