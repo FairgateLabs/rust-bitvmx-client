@@ -13,7 +13,6 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
         setup::{SetupEngine, SetupEngineState, SetupMessageState, StepState},
-        state::ProgramState,
     },
     signature_verifier::OperatorVerificationStore,
     types::{
@@ -37,6 +36,50 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::participant::CommsAddress;
+
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
+pub enum ProgramState {
+    /// Program is in setup phase using SetupEngine.
+    /// The actual setup flow is managed by SetupEngine.
+    SettingUp,
+
+    /// Waiting data
+    WaitingData,
+
+    /// Ready state after setup is completed and the transactions are being monitored
+    Ready,
+
+    /// Setup failed unrecoverably. Terminal: L2 has been told and the program is no longer driven.
+    Failed,
+}
+
+impl Default for ProgramState {
+    fn default() -> Self {
+        ProgramState::SettingUp
+    }
+}
+
+impl ProgramState {
+    pub fn is_active(&self) -> bool {
+        matches!(self, &ProgramState::SettingUp)
+    }
+
+    fn is_failed(&self) -> bool {
+        matches!(self, ProgramState::Failed)
+    }
+
+    fn is_setup_complete(&self) -> bool {
+        matches!(self, ProgramState::Ready)
+    }
+
+    fn peer_message_lifecycle_disposition(&self) -> Option<ResultDisposition> {
+        match self {
+            ProgramState::Ready => Some(ResultDisposition::NoOp(NoOpReason::SetupComplete)),
+            ProgramState::Failed => Some(ResultDisposition::NoOp(NoOpReason::SetupFailed)),
+            ProgramState::SettingUp | ProgramState::WaitingData => None,
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Program {
@@ -104,15 +147,11 @@ impl Program {
     }
 
     pub(crate) fn is_failed(&self) -> bool {
-        self.state == ProgramState::Failed
-    }
-
-    fn is_setup_complete(&self) -> bool {
-        self.state == ProgramState::Ready
+        self.state.is_failed()
     }
 
     fn is_stale_setup_result(&self, context: &Context) -> bool {
-        self.is_setup_complete() && matches!(context, Context::SetupStep(_, _, _, _))
+        self.state.is_setup_complete() && matches!(context, Context::SetupStep(_, _, _, _))
     }
 
     /// Returns the no-op disposition for terminal setup states.
@@ -120,11 +159,7 @@ impl Program {
     /// This is used at the peer-input boundary before authentication or payload
     /// processing so stale messages cannot mutate protocol or verification-key state.
     pub(crate) fn peer_message_lifecycle_disposition(&self) -> Option<ResultDisposition> {
-        match self.state {
-            ProgramState::Ready => Some(ResultDisposition::NoOp(NoOpReason::SetupComplete)),
-            ProgramState::Failed => Some(ResultDisposition::NoOp(NoOpReason::SetupFailed)),
-            ProgramState::SettingUp | ProgramState::WaitingData => None,
-        }
+        self.state.peer_message_lifecycle_disposition()
     }
 
     /// Reports an unrecoverable setup failure to the L2 channel and marks the program dead.
@@ -350,7 +385,7 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
-            Err(e) if !self.is_setup_complete() => {
+            Err(e) if !self.state.is_setup_complete() => {
                 self.handle_setup_error(e, None, program_context)
             }
             other => other,
@@ -545,7 +580,7 @@ impl Program {
 
             // During setup, an attributable dispatcher protocol violation uses the existing
             // rollback-then-settle path so no partially staged setup effects can commit.
-            if !self.is_setup_complete() {
+            if !self.state.is_setup_complete() {
                 return Err(BitVMXError::SetupAttemptFailed {
                     program_id: self.program_id,
                     peer: None,
@@ -756,7 +791,7 @@ impl Program {
             return Ok(ResultDisposition::NoOp(NoOpReason::SetupFailed));
         }
 
-        if self.is_setup_complete() {
+        if self.state.is_setup_complete() {
             debug!("Program::receive_setup_data() - Setup complete, discarding stale message");
             return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
         }
@@ -860,7 +895,7 @@ impl Program {
             return Ok(ResultDisposition::NoOp(NoOpReason::SetupFailed));
         }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
-            Err(e) if !self.is_setup_complete() => {
+            Err(e) if !self.state.is_setup_complete() => {
                 self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
                 Ok(ResultDisposition::Success(SuccessDetail::Processed))
             }
