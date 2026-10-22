@@ -276,7 +276,7 @@ pub enum BitVMXError {
      * Bitcoin / Transactions
      * ========================= */
     #[error("Error when using Bitcoin client: {0}")]
-    BitcoinError(#[from] BitcoinClientError),
+    BitcoinError(#[from] bitvmx_bitcoin_rpc::errors::BitcoinClientError),
 
     #[error("Failed to use Bitcoin Coordinator: {0}")]
     BitcoinCoordinatorError(#[from] BitcoinCoordinatorError),
@@ -450,39 +450,6 @@ pub enum ProgramError {
 
     #[error("Storage unavailable")]
     StorageUnavailable,
-}
-
-#[derive(Error, Debug)]
-pub enum BitcoinClientError {
-    #[error("Failed to fund address")]
-    FailedToFundAddress { error: String },
-
-    #[error("Failed to send transaction")]
-    FailedToSendTransaction { error: String },
-
-    #[error("Failed to create new wallet")]
-    FailedToCreateWallet { error: String },
-
-    #[error("Failed to get new address")]
-    FailedToGetNewAddress { error: String },
-
-    #[error("Failed to mine blocks")]
-    FailedToMineBlocks { error: String },
-
-    #[error("Failed to get transaction details")]
-    FailedToGetTransactionDetails { error: String },
-
-    #[error("Failed to create client")]
-    FailedToCreateClient { error: String },
-
-    #[error("Failed to load wallet")]
-    FailedToLoadWallet { error: String },
-
-    #[error("Failed to list wallets")]
-    FailedToListWallets { error: String },
-
-    #[error("Rpc error: {0}")]
-    RpcError(#[from] bitvmx_bitcoin_rpc::errors::BitcoinClientError),
 }
 
 #[derive(Error, Debug)]
