@@ -16,6 +16,7 @@ use crate::{
                 },
             },
         },
+        setup::steps::SetupStepName,
         variables::VariableTypes,
     },
     types::ProgramContext,
@@ -50,6 +51,13 @@ impl ProtocolHandler for RejectPegInProtocol {
 
     fn context_mut(&mut self) -> &mut ProtocolContext {
         &mut self.ctx
+    }
+
+    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+        // Rejection uses one member's existing dispute key, not MuSig2.
+        // KeysStep builds the graph and creates the speedup key. Program's
+        // finalization still signs the selected script leaf before dispatch.
+        Some(vec![SetupStepName::Keys])
     }
 
     fn generate_keys<BC: BitcoinCoordinatorApi>(
