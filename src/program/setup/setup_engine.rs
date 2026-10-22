@@ -168,7 +168,7 @@ impl SetupEngine {
     pub fn restore_state(&mut self, saved_state: SetupEngineState) -> Result<(), BitVMXError> {
         let total_steps = self.total_steps();
         if saved_state.current_step_index >= total_steps {
-            return Err(BitVMXError::InvalidMessage(format!(
+            return Err(BitVMXError::InvalidState(format!(
                 "Invalid step index {} for engine with {} steps",
                 saved_state.current_step_index, total_steps
             )));
@@ -182,13 +182,13 @@ impl SetupEngine {
             // advance_to_next_step leaves the final step in Completed state.
             (true, StepState::Completed) if is_final_step => {}
             (true, _) => {
-                return Err(BitVMXError::InvalidMessage(format!(
+                return Err(BitVMXError::InvalidState(format!(
                     "Completed setup has inconsistent state at step {}: {:?}",
                     saved_state.current_step_index, saved_state.current_step_state
                 )));
             }
             (false, StepState::Completed) => {
-                return Err(BitVMXError::InvalidMessage(format!(
+                return Err(BitVMXError::InvalidState(format!(
                     "Incomplete setup cannot have a Completed current step at index {}",
                     saved_state.current_step_index
                 )));
@@ -1343,7 +1343,10 @@ mod tests {
             let mut saved_state = SetupEngineState::new();
             saved_state.current_step_index = index;
 
-            assert!(engine.restore_state(saved_state).is_err());
+            assert!(matches!(
+                engine.restore_state(saved_state),
+                Err(BitVMXError::InvalidState(_))
+            ));
             assert_eq!(engine.state(), &SetupEngineState::new());
         }
     }
@@ -1356,7 +1359,10 @@ mod tests {
         saved_state.all_steps_completed = true;
         saved_state.current_step_state = StepState::Completed;
 
-        assert!(engine.restore_state(saved_state).is_err());
+        assert!(matches!(
+            engine.restore_state(saved_state),
+            Err(BitVMXError::InvalidState(_))
+        ));
         assert_eq!(engine.state(), &SetupEngineState::new());
     }
 
@@ -1366,7 +1372,10 @@ mod tests {
         let mut saved_state = SetupEngineState::new();
         saved_state.current_step_state = StepState::Completed;
 
-        assert!(engine.restore_state(saved_state).is_err());
+        assert!(matches!(
+            engine.restore_state(saved_state),
+            Err(BitVMXError::InvalidState(_))
+        ));
         assert_eq!(engine.state(), &SetupEngineState::new());
     }
 
