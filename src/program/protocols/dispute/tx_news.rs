@@ -28,7 +28,12 @@ use bitcoin_coordinator::TransactionStatus;
 use bitvmx_cpu_definitions::{memory::MemoryWitness, trace::*};
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use console::style;
-use emulator::{decision::nary_search::NArySearchType, executor::utils::FailConfiguration};
+use emulator::{
+    decision::nary_search::{NArySearchType, Party, SearchMode},
+    executor::utils::FailConfiguration,
+};
+
+use super::{selection_bits_var, stage_hash_var};
 use tracing::{info, warn};
 
 fn to_u8(bytes: &[u8]) -> Result<u8, BitVMXError> {
@@ -46,6 +51,7 @@ fn to_hex(bytes: &[u8]) -> String {
 
 fn create_ownership_table(
     rounds: u8,
+    mode: SearchMode,
     inputs: Vec<(usize, String)>,
 ) -> Result<TxOwnershipTable, BitVMXError> {
     if rounds == 0 || inputs.is_empty() {
@@ -79,10 +85,10 @@ fn create_ownership_table(
     table.add(PRE_COMMITMENT, Verifier);
     table.add(COMMITMENT, Prover);
     table.add(POST_COMMITMENT, Verifier);
-    add_nary_search(&mut table, "NARY", 1, rounds);
+    add_nary_search(&mut table, "NARY", 1, rounds, mode);
     table.add(EXECUTE, Prover);
     table.add(CHALLENGE, Verifier);
-    add_nary_search(&mut table, "NARY2", 2, rounds);
+    add_nary_search(&mut table, "NARY2", 2, rounds, SearchMode::Asymmetric);
     table.add(GET_HASHES_AND_STEP, Prover);
     table.add(CHALLENGE_READ, Verifier);
     table.add(VERIFIER_FINAL, Verifier);
@@ -94,12 +100,28 @@ fn add_nary_search(
     nary_type: &str,
     start_round: u8,
     total_rounds: u8,
+    mode: SearchMode,
 ) {
     for round in start_round..=total_rounds {
-        let prover = format!("{}_PROVER_{}", nary_type, round);
-        let verifier = format!("{}_VERIFIER_{}", nary_type, round);
-        table.add(&prover, Prover);
-        table.add(&verifier, Verifier);
+        match mode {
+            // One message per round from each party, in that order.
+            SearchMode::Asymmetric => {
+                table.add(&format!("{}_PROVER_{}", nary_type, round), Prover);
+                table.add(&format!("{}_VERIFIER_{}", nary_type, round), Verifier);
+            }
+            // One message per stage, alternating. The timeout chain is derived
+            // from this table, so it has to match the graph exactly: naming a
+            // transaction that was never built leaves the dispute unable to
+            // time out.
+            SearchMode::FullDuplex => {
+                let owner = mode.dissector(total_rounds, round);
+                let (name, role) = match owner {
+                    Party::Prover => (format!("{}_PROVER_{}", nary_type, round), Prover),
+                    Party::Verifier => (format!("{}_VERIFIER_{}", nary_type, round), Verifier),
+                };
+                table.add(&name, role);
+            }
+        }
     }
 }
 
@@ -150,7 +172,8 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
         .map(|(i, owner)| (i, owner.to_string()))
         .collect();
 
-    let ownership_table = create_ownership_table(rounds, inputs)?;
+    let mode = drp.get_program_definition(program_context)?.0.search_mode();
+    let ownership_table = create_ownership_table(rounds, mode, inputs)?;
 
     cancel_timeout(drp, &name, vout, program_context, &ownership_table)?;
 
@@ -347,6 +370,17 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                             true,
                         )?;
                         drp.dispatch(program_context, tx, Some(sp), None)?;
+                    }
+                    name if (name == POST_COMMITMENT || name.starts_with("NARY_"))
+                        && drp.full_duplex_search(program_context)? =>
+                    {
+                        handle_full_duplex_stage(
+                            name,
+                            drp,
+                            program_context,
+                            leaf,
+                            &fail_force_config,
+                        )?;
                     }
                     name if name == POST_COMMITMENT || name.starts_with("NARY_VERIFIER") => {
                         let round = name
@@ -708,6 +742,130 @@ fn handle_nary_common<BC: BitcoinCoordinatorApi>(
     Ok(fail_config)
 }
 
+/// Drives one stage of a full-duplex search.
+///
+/// Both parties run the same job, so unlike the asymmetric search there is a
+/// single handler. Seeing the transaction for stage `s` is the cue for
+/// whichever party acts at stage `s + 1` to select over the dissection it just
+/// saw and dissect the subinterval it selected, in one message.
+fn handle_full_duplex_stage<BC: BitcoinCoordinatorApi>(
+    name: &str,
+    drp: &DisputeResolutionProtocol,
+    program_context: &ProgramContext<BC>,
+    leaf: u32,
+    fail_force_config: &ForceFailConfiguration,
+) -> Result<(), BitVMXError> {
+    let (program_definition, pdf) = drp.get_program_definition(program_context)?;
+    let nary = program_definition.nary_def();
+    let mode = program_definition.search_mode();
+    let rounds = nary.total_rounds();
+
+    // The stage whose transaction we just saw. The commitment that opens the
+    // search precedes stage 1.
+    let seen = if name == POST_COMMITMENT {
+        0
+    } else {
+        name.rsplit('_')
+            .next()
+            .and_then(|s| s.parse::<u8>().ok())
+            .ok_or_else(|| {
+                BitVMXError::InvalidState(format!("Cannot read a stage number from {}", name))
+            })?
+    };
+
+    if seen > 0 {
+        let params = program_context
+            .globals
+            .get_var_or_err(&drp.ctx.id, &timeout_input_tx(name))?
+            .vec_number()?;
+        if leaf == params[0] {
+            info!("The counterparty consumed the timeout input for {name}");
+            return Ok(());
+        }
+    }
+
+    let stage = seen + 1;
+    let me = match drp.role() {
+        ParticipantRole::Prover => Party::Prover,
+        ParticipantRole::Verifier => Party::Verifier,
+    };
+    if mode.dissector(rounds, stage) != me {
+        // The counterparty acts next.
+        return Ok(());
+    }
+
+    let fail_config = handle_nary_common(
+        drp,
+        program_context,
+        fail_force_config,
+        NArySearchType::ConflictStep,
+        stage as u32,
+    )?;
+
+    // The dissection published at the stage we just saw, and the digit that
+    // came with it. The digit is what lets us catch up on the counterparty's
+    // selection before making our own.
+    let mut counterparty_hashes = Vec::new();
+    let mut counterparty_decision = None;
+    if seen > 0 {
+        for h in 1..nary.hashes_for_round(seen) + 1 {
+            let var = stage_hash_var(mode, rounds, seen, h);
+            let bytes = program_context
+                .witness
+                .get_witness_or_err(&drp.ctx.id, &var)?
+                .winternitz()?
+                .message_bytes();
+            counterparty_hashes.push(hex::encode(bytes));
+        }
+        if seen > 1 {
+            let var = selection_bits_var(mode, rounds, seen - 1);
+            let bytes = program_context
+                .witness
+                .get_witness_or_err(&drp.ctx.id, &var)?
+                .winternitz()?
+                .message_bytes();
+            if bytes.len() != 1 {
+                return Err(BitVMXError::InvalidState(
+                    "Expected exactly one byte for selection bits".to_string(),
+                ));
+            }
+            counterparty_decision = Some(bytes[0] as u32);
+        }
+    }
+
+    let execution_path = drp.get_execution_path()?;
+    // Past the last round only the trailing selection remains, and it rides on
+    // the adjudication message together with the expanded trace. Ask for both
+    // in one job: splitting them costs a round trip and leaves the dispute
+    // waiting on a result it does not need on its own.
+    let final_trace = stage > rounds;
+
+    let job = EmulatorJobType::FullDuplexStage(
+        pdf,
+        execution_path.clone(),
+        me == Party::Prover,
+        stage,
+        counterparty_hashes,
+        counterparty_decision,
+        final_trace,
+        format!("{}/{}", execution_path, "execution.json"),
+        fail_config,
+    );
+
+    drp.execute_job(
+        program_context,
+        &program_context.components_config.emulator,
+        job,
+        &if final_trace {
+            "prover_final_trace".to_string()
+        } else {
+            format!("full_duplex_stage_{}", stage)
+        },
+    )?;
+
+    Ok(())
+}
+
 fn handle_nary_verifier<BC: BitcoinCoordinatorApi>(
     name: &str,
     drp: &DisputeResolutionProtocol,
@@ -901,7 +1059,9 @@ mod tests {
 
     #[test]
     fn test_tx_ownership_table() {
-        let table = create_ownership_table(4, vec![(0, "prover".to_string())]).unwrap();
+        let table =
+            create_ownership_table(4, SearchMode::Asymmetric, vec![(0, "prover".to_string())])
+                .unwrap();
 
         assert_eq!(
             table.get_timeout_tx("START_CHALLENGE", Verifier).unwrap().0,

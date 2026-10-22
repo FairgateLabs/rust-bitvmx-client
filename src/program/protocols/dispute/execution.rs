@@ -6,6 +6,8 @@ use bitvmx_cpu_definitions::challenge::{
     ChallengeType, EmulatorResultType, ProverFinalTraceType, ProverHashesAndStepType,
 };
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
+
+use super::{selection_bits_var, stage_hash_var};
 use emulator::constants::REGISTERS_BASE_ADDRESS;
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -26,6 +28,74 @@ use crate::{
     },
     types::ProgramContext,
 };
+
+fn handle_final_trace<BC: BitcoinCoordinatorApi>(
+    id: &Uuid,
+    drp: &DisputeResolutionProtocol,
+    context: &ProgramContext<BC>,
+    prover_final_trace: &ProverFinalTraceType,
+) -> Result<(), BitVMXError> {
+
+            info!("Final trace: {:?}", prover_final_trace);
+            if let ProverFinalTraceType::ChallengeStep = prover_final_trace {
+                info!("Prover will challenge the selected step");
+                let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, 0, true)?;
+
+                drp.dispatch(context, tx, Some(sp), None)?;
+            } else {
+                let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
+                    prover_final_trace.as_final_trace_with_hashes_and_step()?;
+                let mut inputs: Vec<InputPair> = vec![
+                    ("prover_write_address", trace.trace_step.get_write().address).into(),
+                    ("prover_write_value", trace.trace_step.get_write().value).into(),
+                    ("prover_write_pc", trace.trace_step.get_pc().get_address()).into(),
+                    ("prover_write_micro", trace.trace_step.get_pc().get_micro()).into(),
+                    ("prover_mem_witness", trace.mem_witness.byte()).into(),
+                    ("prover_read_1_address", trace.read_1.address).into(),
+                    ("prover_read_1_value", trace.read_1.value).into(),
+                    ("prover_read_1_last_step", trace.read_1.last_step).into(),
+                    ("prover_read_2_address", trace.read_2.address).into(),
+                    ("prover_read_2_value", trace.read_2.value).into(),
+                    ("prover_read_2_last_step", trace.read_2.last_step).into(),
+                    ("prover_read_pc_address", trace.read_pc.pc.get_address()).into(),
+                    ("prover_read_pc_micro", trace.read_pc.pc.get_micro()).into(),
+                    ("prover_read_pc_opcode", trace.read_pc.opcode).into(),
+                    ("prover_step_number", trace.step_number).into(),
+                ];
+                if let Some(witness) = trace.witness {
+                    inputs.push(("prover_witness", witness).into());
+                }
+                inputs.extend([
+                    ("prover_step_hash_tk", resigned_step_hash.clone()).into(),
+                    ("prover_next_hash_tk", resigned_next_hash.clone()).into(),
+                    ("prover_conflict_step_tk", conflict_step).into(),
+                ]);
+                set_inputs(id, context, inputs)?;
+                let instruction =
+                    get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
+                        .ok_or_else(|| {
+                            BitVMXError::InstructionNotFound(format!(
+                                "{}_{}",
+                                trace.read_pc.opcode,
+                                trace.read_pc.pc.get_micro()
+                            ))
+                        })?;
+                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+                instruction_names.sort();
+                let index = instruction_names
+                    .iter()
+                    .position(|i| i == &instruction)
+                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
+                // first index leaf is the challenge_step, we have to skip it
+                let (tx, sp) =
+                    drp.get_tx_with_speedup_data(context, EXECUTE, 0, (index + 1) as u32, true)?;
+
+                drp.dispatch(context, tx, Some(sp), None)?;
+            }
+        
+    Ok(())
+}
 
 pub fn execution_result<BC: BitcoinCoordinatorApi>(
     id: &Uuid,
@@ -139,6 +209,43 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
 
             drp.dispatch(context, tx, Some(sp), None)?;
         }
+        EmulatorResultType::FullDuplexStageResult {
+            decision,
+            hashes,
+            stage,
+        } => {
+            let (program_definition, pdf) = drp.get_program_definition(context)?;
+            let nary = program_definition.nary_def();
+            let mode = program_definition.search_mode();
+            let rounds = nary.total_rounds();
+
+            // The digit selects over the dissection published at the previous
+            // stage.
+            if let Some(d) = decision {
+                set_input_u8(
+                    id,
+                    context,
+                    &selection_bits_var(mode, rounds, *stage - 1),
+                    *d as u8,
+                )?;
+            }
+
+
+            for (i, h) in hashes.iter().enumerate() {
+                set_input_hex(
+                    id,
+                    context,
+                    &stage_hash_var(mode, rounds, *stage, i as u8 + 1),
+                    h,
+                )?;
+            }
+
+            let owner = mode.dissector(rounds, *stage);
+            let tx_name = format!("NARY_{}_{}", owner.prefix().to_uppercase(), stage);
+            let (tx, sp) = drp.get_tx_with_speedup_data(context, &tx_name, 0, 0, true)?;
+            info!("Dispatching full-duplex stage {} as {:?}", stage, tx);
+            drp.dispatch(context, tx, Some(sp), None)?;
+        }
         EmulatorResultType::VerifierChooseSegmentResult { v_decision, round } => {
             let save_round = context
                 .globals
@@ -177,64 +284,26 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
 
             drp.dispatch(context, tx, Some(sp), None)?;
         }
+        EmulatorResultType::FullDuplexFinalTraceResult {
+            decision,
+            prover_final_trace,
+        } => {
+            // The trailing digit is computed by the same job that produced the
+            // trace, because both ride on the adjudication message. Record it
+            // before that message is built, or its witness is incomplete.
+            let program_definition = drp.get_program_definition(context)?.0;
+            let rounds = program_definition.nary_def().total_rounds();
+            let mode = program_definition.search_mode();
+            set_input_u8(
+                id,
+                context,
+                &selection_bits_var(mode, rounds, rounds),
+                *decision as u8,
+            )?;
+            handle_final_trace(id, drp, context, prover_final_trace)?;
+        }
         EmulatorResultType::ProverFinalTraceResult { prover_final_trace } => {
-            info!("Final trace: {:?}", prover_final_trace);
-            if let ProverFinalTraceType::ChallengeStep = prover_final_trace {
-                info!("Prover will challenge the selected step");
-                let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, 0, true)?;
-
-                drp.dispatch(context, tx, Some(sp), None)?;
-            } else {
-                let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
-                    prover_final_trace.as_final_trace_with_hashes_and_step()?;
-                let mut inputs: Vec<InputPair> = vec![
-                    ("prover_write_address", trace.trace_step.get_write().address).into(),
-                    ("prover_write_value", trace.trace_step.get_write().value).into(),
-                    ("prover_write_pc", trace.trace_step.get_pc().get_address()).into(),
-                    ("prover_write_micro", trace.trace_step.get_pc().get_micro()).into(),
-                    ("prover_mem_witness", trace.mem_witness.byte()).into(),
-                    ("prover_read_1_address", trace.read_1.address).into(),
-                    ("prover_read_1_value", trace.read_1.value).into(),
-                    ("prover_read_1_last_step", trace.read_1.last_step).into(),
-                    ("prover_read_2_address", trace.read_2.address).into(),
-                    ("prover_read_2_value", trace.read_2.value).into(),
-                    ("prover_read_2_last_step", trace.read_2.last_step).into(),
-                    ("prover_read_pc_address", trace.read_pc.pc.get_address()).into(),
-                    ("prover_read_pc_micro", trace.read_pc.pc.get_micro()).into(),
-                    ("prover_read_pc_opcode", trace.read_pc.opcode).into(),
-                    ("prover_step_number", trace.step_number).into(),
-                ];
-                if let Some(witness) = trace.witness {
-                    inputs.push(("prover_witness", witness).into());
-                }
-                inputs.extend([
-                    ("prover_step_hash_tk", resigned_step_hash.clone()).into(),
-                    ("prover_next_hash_tk", resigned_next_hash.clone()).into(),
-                    ("prover_conflict_step_tk", conflict_step).into(),
-                ]);
-                set_inputs(id, context, inputs)?;
-                let instruction =
-                    get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
-                        .ok_or_else(|| {
-                            BitVMXError::InstructionNotFound(format!(
-                                "{}_{}",
-                                trace.read_pc.opcode,
-                                trace.read_pc.pc.get_micro()
-                            ))
-                        })?;
-                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
-                instruction_names.sort();
-                let index = instruction_names
-                    .iter()
-                    .position(|i| i == &instruction)
-                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
-                // first index leaf is the challenge_step, we have to skip it
-                let (tx, sp) =
-                    drp.get_tx_with_speedup_data(context, EXECUTE, 0, (index + 1) as u32, true)?;
-
-                drp.dispatch(context, tx, Some(sp), None)?;
-            }
+            handle_final_trace(id, drp, context, prover_final_trace)?;
         }
         EmulatorResultType::VerifierChooseChallengeResult { challenge } => {
             info!("Verifier choose challenge result: {:?}", challenge);

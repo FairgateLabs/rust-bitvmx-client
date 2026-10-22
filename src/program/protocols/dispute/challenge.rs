@@ -8,8 +8,11 @@ use bitvmx_cpu_definitions::{
     challenge::{ChallengeType, EquivocationKind},
     constants::CHUNK_SIZE,
 };
+use super::stage_hash_var;
+
 use emulator::{
-    decision::nary_search::NArySearchType, loader::program_definition::ProgramDefinition,
+    decision::nary_search::{NArySearchType, Party},
+    loader::program_definition::ProgramDefinition,
 };
 use protocol_builder::scripts::{self, ProtocolScript, SignMode};
 use tracing::info;
@@ -235,6 +238,7 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
 
     let nary_def = program_definitions.nary_def();
     let rounds = nary_def.total_rounds();
+    let search_mode = program_definitions.search_mode();
     let nary = nary_def.nary;
     let nary_last_round = nary_def.nary_last_round;
 
@@ -521,6 +525,13 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                 for h in 1..hashes + 1 {
                                     let mut scripts = vec![reverse_script.clone()];
                                     stack = StackTracker::new();
+                                    // The position may have been committed by
+                                    // either party under the full-duplex mode,
+                                    // so the name, the key and the sense of the
+                                    // leaf's comparison all follow the stage's
+                                    // owner.
+                                    let owner = search_mode.dissector(rounds, round);
+                                    let counterparty_committed = owner == Party::Verifier;
                                     equivocation_resign_challenge(
                                         &mut stack,
                                         kind.clone(),
@@ -529,13 +540,19 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                         rounds,
                                         nary,
                                         nary_last_round,
+                                        counterparty_committed,
                                     );
                                     scripts.push(stack.get_script());
 
                                     let mut names_and_keys_copy = names_and_keys.clone();
-                                    let key_name = format!("prover_hash_{}_{}", round, h);
+                                    let key_name =
+                                        format!("{}_hash_{}_{}", owner.prefix(), round, h);
                                     let key_name_ref: &str = key_name.as_str();
-                                    let winternitz_key = keys[0].get_winternitz(&key_name)?;
+                                    let owner_keys = match owner {
+                                        Party::Prover => &keys[0],
+                                        Party::Verifier => &keys[1],
+                                    };
+                                    let winternitz_key = owner_keys.get_winternitz(&key_name)?;
                                     names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
 
                                     names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
@@ -691,17 +708,31 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                         rounds,
                                         nary,
                                         nary_last_round,
+                                        // the second search keeps the
+                                        // asymmetric roles
+                                        false,
                                     );
                                     scripts.push(stack.get_script());
 
                                     let mut names_and_keys_copy = names_and_keys.clone();
-                                    let key_name = if round == 1 {
-                                        format!("prover_hash_{}_{}", round, h) // Hashes from round 1 are the same from the first n-ary search
+                                    // Round 1 reuses the first search's hashes,
+                                    // which belong to whichever party dissected
+                                    // that round. Later rounds are the second
+                                    // search's own, and it stays asymmetric.
+                                    let (key_name, owner_keys) = if round == 1 {
+                                        let owner = search_mode.dissector(rounds, round);
+                                        (
+                                            stage_hash_var(search_mode, rounds, round, h),
+                                            match owner {
+                                                Party::Prover => &keys[0],
+                                                Party::Verifier => &keys[1],
+                                            },
+                                        )
                                     } else {
-                                        format!("prover_hash2_{}_{}", round, h)
+                                        (format!("prover_hash2_{}_{}", round, h), &keys[0])
                                     };
                                     let key_name_ref: &str = key_name.as_str();
-                                    let winternitz_key = keys[0].get_winternitz(&key_name)?;
+                                    let winternitz_key = owner_keys.get_winternitz(&key_name)?;
                                     names_and_keys_copy[0] = (&key_name_ref, winternitz_key);
 
                                     names_and_keys_copy[1] = if kind == EquivocationKind::StepHash {
@@ -930,6 +961,7 @@ pub fn get_challenge_leaf<BC: BitcoinCoordinatorApi>(
             expected_round,
             expected_index,
             rounds: _,
+            counterparty_committed: _,
             nary: _,
             nary_last_round: _,
         } => {

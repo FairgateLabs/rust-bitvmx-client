@@ -35,7 +35,59 @@ pub fn test_to() -> Result<()> {
     Ok(())
 }
 
+/// Writes a program definition that runs the full-duplex search, beside a copy
+/// of the program it refers to.
+///
+/// The definition has to sit next to its ELF, since the ELF path is resolved
+/// relative to it, so this cannot simply point at the committed fixture.
+/// Everything else matches `hello-world.yaml`: the only difference under test
+/// is the search mode.
+fn full_duplex_program_definition() -> Result<String> {
+    let fixtures = "../BitVMX-CPU/docker-riscv32/riscv32/build";
+    let dir = std::env::temp_dir().join(format!("bitvmx-full-duplex-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(
+        format!("{}/hello-world.elf", fixtures),
+        dir.join("hello-world.elf"),
+    )?;
+
+    let definition = dir.join("hello-world-full-duplex.yaml");
+    std::fs::write(
+        &definition,
+        "elf: hello-world.elf\n\
+         nary_search: 8\n\
+         search_mode: full-duplex\n\
+         max_steps: 2000\n\
+         input_section_name: .input\n\
+         inputs:\n\
+         \x20 - size: 4\n\
+         \x20   owner: prover\n",
+    )?;
+    Ok(definition.to_string_lossy().into_owned())
+}
+
+/// The same dispute as `test_drp`, resolved with the full-duplex search.
+///
+/// Worth running alongside it rather than instead of it: the two searches
+/// share the transaction graph, the key schedule and the timeout machinery,
+/// and a change that suits one can quietly break the other. Every defect found
+/// while bringing this path up was invisible to the unit tests.
+//cargo test --release  -- test_drp_full_duplex --ignored
+#[ignore]
+#[test]
+pub fn test_drp_full_duplex() -> Result<()> {
+    test_drp_aux_with_program(None, Some(full_duplex_program_definition()?))?;
+    Ok(())
+}
+
 fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
+    test_drp_aux_with_program(last_tx_to_dispatch, None)
+}
+
+fn test_drp_aux_with_program(
+    last_tx_to_dispatch: Option<&str>,
+    program_path: Option<String>,
+) -> Result<()> {
     config_trace();
 
     let (bitcoin_client, bitcoind, mut wallet) = prepare_bitcoin()?;
@@ -137,7 +189,7 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
         prover_win_utxo,
         prover_win_out_type,
         forced_challenge.clone(),
-        None,
+        program_path,
         Some(0),
     )?;
     let _msgs = get_all(&channels, &mut instances, false)?;
