@@ -191,7 +191,7 @@ impl SetupStep for SignaturesStep {
             Err(outcome) => return Ok(outcome),
         };
         if signatures.is_empty() {
-            return Ok(SetupMessageOutcome::Rejected(
+            return Ok(SetupMessageOutcome::Failed(
                 SetupRejectReason::InvalidContribution,
             ));
         }
@@ -210,7 +210,7 @@ impl SetupStep for SignaturesStep {
             Self::validate_received_signatures(&signatures, &expected_aggregated_keys)
         {
             info!("Rejecting invalid signature contribution: {}", error);
-            return Ok(SetupMessageOutcome::Rejected(
+            return Ok(SetupMessageOutcome::Failed(
                 SetupRejectReason::InvalidContribution,
             ));
         }
@@ -224,7 +224,7 @@ impl SetupStep for SignaturesStep {
             ) {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Ok(SetupMessageOutcome::Rejected(
+                    return Ok(SetupMessageOutcome::Failed(
                         SetupRejectReason::InvalidContribution,
                     ));
                 }
@@ -233,7 +233,7 @@ impl SetupStep for SignaturesStep {
                     | Musig2SignerError::InvalidMessageId
                     | Musig2SignerError::InvalidPartialSignature,
                 )) => {
-                    return Ok(SetupMessageOutcome::Rejected(
+                    return Ok(SetupMessageOutcome::Failed(
                         SetupRejectReason::InvalidContribution,
                     ));
                 }
@@ -259,7 +259,7 @@ impl SetupStep for SignaturesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(SetupMessageOutcome::Accepted)
+        Ok(SetupMessageOutcome::Processed(()))
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -573,7 +573,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Accepted
+            SetupMessageOutcome::Processed(())
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -592,7 +592,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NoOp(SetupNoOpReason::UnauthorizedSender)
+            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
         );
         assert_eq!(
             step.verify_received(
@@ -605,7 +605,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Accepted
+            SetupMessageOutcome::Processed(())
         );
         assert!(step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -768,7 +768,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NotReady(SetupRetryReason::UnexpectedMessageType)
+            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
         );
 
         assert_eq!(
@@ -782,7 +782,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Rejected(SetupRejectReason::MalformedContribution)
+            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
         );
 
         assert_eq!(
@@ -796,7 +796,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Rejected(SetupRejectReason::InvalidContribution)
+            SetupMessageOutcome::Failed(SetupRejectReason::InvalidContribution)
         );
 
         assert!(!step

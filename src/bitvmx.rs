@@ -29,9 +29,9 @@ use crate::{
         VerificationMessageOutcome,
     },
     types::{
-        DispatcherResultDisposition, ErrorReportKind, MessageDisposition, NoOpReason,
-        OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
-        ProgramStatus, RetryReason, SetupFailureReason, RSK_PEGIN_TAG,
+        DispatcherJobFailure, DispatcherResultDisposition, ErrorReportKind, MessageDisposition,
+        NoOpReason, OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason,
+        ProgramContext, ProgramStatus, RetryReason, SetupFailureReason, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::Txid;
@@ -423,7 +423,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: MessageDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            MessageDisposition::Processed => Ok(()),
+            MessageDisposition::Processed(()) => Ok(()),
             MessageDisposition::DiscardNoOp(reason) => {
                 debug!(
                     "Consuming no-op peer message {:?} for program {} from {}: {:?}",
@@ -465,7 +465,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 }
                 Ok(())
             }
-            MessageDisposition::FailSetup(PeerSetupFault { peer, reason }) => {
+            MessageDisposition::Failed(PeerSetupFault { peer, reason }) => {
                 warn!(
                     "Failing setup for program {} after peer fault from {}: {}",
                     program_id, peer, reason
@@ -548,7 +548,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "Rejecting Broadcasted message for program {} from non-leader participant {}",
                 program_id, sender_pubkey_hash
             );
-            return Ok(MessageDisposition::FailSetup(PeerSetupFault {
+            return Ok(MessageDisposition::Failed(PeerSetupFault {
                 peer: sender_pubkey_hash,
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
             }));
@@ -587,8 +587,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &self.program_context.rsa_public_key,
                 &my_pubkey_hash,
             )? {
-                AuthenticationOutcome::Verified => {}
-                AuthenticationOutcome::MissingKey { peer } => {
+                AuthenticationOutcome::Processed(()) => {}
+                AuthenticationOutcome::RetryLater(peer) => {
                     info!(
                         "Buffering message due to missing verification key: {:?} {:?}",
                         program_id, msg_type
@@ -597,12 +597,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         RetryReason::MissingVerificationKey { peer },
                     ));
                 }
-                AuthenticationOutcome::Rejected(rejection) => {
+                AuthenticationOutcome::Failed(rejection) => {
                     warn!(
                         "Message authentication rejected from {} for {}: {:?}",
                         sender_pubkey_hash, program_id, rejection
                     );
-                    return Ok(MessageDisposition::FailSetup(PeerSetupFault {
+                    return Ok(MessageDisposition::Failed(PeerSetupFault {
                         peer: sender_pubkey_hash,
                         reason: PeerSetupFaultReason::AuthenticationRejected,
                     }));
@@ -639,13 +639,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &data,
                 &peer_address,
             )? {
-                VerificationMessageOutcome::Processed => Ok(MessageDisposition::Processed),
-                VerificationMessageOutcome::Rejected(rejection) => {
+                VerificationMessageOutcome::Processed(()) => Ok(MessageDisposition::Processed(())),
+                VerificationMessageOutcome::Failed(rejection) => {
                     warn!(
                         "Verification bootstrap message rejected from {} for {}: {:?}",
                         sender_pubkey_hash, program_id, rejection
                     );
-                    Ok(MessageDisposition::FailSetup(PeerSetupFault {
+                    Ok(MessageDisposition::Failed(PeerSetupFault {
                         peer: sender_pubkey_hash,
                         reason: rejection.into_peer_setup_fault_reason(),
                     }))
@@ -1165,12 +1165,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     }
                     self.apply_dispatcher_result_disposition(
                         expected.dispatcher,
-                        DispatcherResultDisposition::JobFailed {
+                        DispatcherResultDisposition::Failed(DispatcherJobFailure {
                             program_id,
                             expected_job_id,
                             job_id,
                             reason,
-                        },
+                        }),
                     )
                 })?;
                 Ok(None)
@@ -1447,12 +1447,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 }
                 self.apply_dispatcher_result_disposition(
                     job.dispatcher,
-                    DispatcherResultDisposition::JobFailed {
+                    DispatcherResultDisposition::Failed(DispatcherJobFailure {
                         program_id,
                         expected_job_id: job_id.clone(),
                         job_id,
                         reason: "dispatcher job execution timed out".to_string(),
-                    },
+                    }),
                 )
             }
         }

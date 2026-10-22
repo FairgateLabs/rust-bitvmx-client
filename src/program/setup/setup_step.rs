@@ -15,7 +15,7 @@ use crate::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{NoOpReason, PeerSetupFaultReason, ProgramContext, RetryReason},
+    types::{HandlingOutcome, NoOpReason, PeerSetupFaultReason, ProgramContext, RetryReason},
 };
 
 /// Result of validating a contribution for the active setup step.
@@ -23,13 +23,8 @@ use crate::{
 /// Peer-controlled validation failures are values rather than errors so the
 /// caller can consume the message and fail setup. `Err` is reserved for local
 /// state, storage, and infrastructure failures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SetupMessageOutcome {
-    Accepted,
-    NotReady(SetupRetryReason),
-    NoOp(SetupNoOpReason),
-    Rejected(SetupRejectReason),
-}
+pub type SetupMessageOutcome =
+    HandlingOutcome<(), SetupRetryReason, SetupNoOpReason, SetupRejectReason>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupRetryReason {
@@ -82,7 +77,7 @@ where
 {
     serde_json::from_value(data).map_err(|error| {
         info!("Rejecting malformed setup contribution: {}", error);
-        SetupMessageOutcome::Rejected(SetupRejectReason::MalformedContribution)
+        SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
     })
 }
 
@@ -93,7 +88,7 @@ where
 {
     serde_json::from_slice(data).map_err(|error| {
         info!("Rejecting malformed encoded setup contribution: {}", error);
-        SetupMessageOutcome::Rejected(SetupRejectReason::MalformedContribution)
+        SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
     })
 }
 
@@ -154,7 +149,7 @@ pub trait SetupStep {
                 self.step_name(),
                 from_participant.pubkey_hash
             );
-            return Ok(SetupMessageOutcome::NoOp(
+            return Ok(SetupMessageOutcome::DiscardNoOp(
                 SetupNoOpReason::UnauthorizedSender,
             ));
         };
@@ -167,7 +162,7 @@ pub trait SetupStep {
                 self.step_name(),
                 accepted
             );
-            return Ok(SetupMessageOutcome::NotReady(
+            return Ok(SetupMessageOutcome::RetryLater(
                 SetupRetryReason::UnexpectedMessageType,
             ));
         }
@@ -328,7 +323,7 @@ mod tests {
             _context: &mut ProgramContext<BC>,
             _your_data: bool,
         ) -> Result<SetupMessageOutcome, BitVMXError> {
-            Ok(SetupMessageOutcome::NotReady(
+            Ok(SetupMessageOutcome::RetryLater(
                 SetupRetryReason::MissingPrerequisite,
             ))
         }
@@ -419,7 +414,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NotReady(SetupRetryReason::MissingPrerequisite)
+            SetupMessageOutcome::RetryLater(SetupRetryReason::MissingPrerequisite)
         );
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
@@ -460,7 +455,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NotReady(SetupRetryReason::UnexpectedMessageType)
+            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
         );
 
         let mut outsider = participant;
@@ -476,7 +471,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NoOp(SetupNoOpReason::UnauthorizedSender)
+            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
         );
     }
 }

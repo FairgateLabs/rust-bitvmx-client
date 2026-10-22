@@ -221,7 +221,7 @@ impl SetupStep for KeysStep {
                 serde_json::from_str::<ParticipantKeys>(&encoded)?
             }
             None => {
-                return Ok(SetupMessageOutcome::NotReady(
+                return Ok(SetupMessageOutcome::RetryLater(
                     SetupRetryReason::MissingPrerequisite,
                 ));
             }
@@ -234,7 +234,7 @@ impl SetupStep for KeysStep {
                     .is_none()
             })
         {
-            return Ok(SetupMessageOutcome::Rejected(
+            return Ok(SetupMessageOutcome::Failed(
                 SetupRejectReason::InvalidContribution,
             ));
         }
@@ -252,7 +252,7 @@ impl SetupStep for KeysStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(SetupMessageOutcome::Accepted)
+        Ok(SetupMessageOutcome::Processed(()))
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -405,7 +405,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Accepted
+            SetupMessageOutcome::Processed(())
         );
         assert!(step
             .can_advance(&protocol, &participants, &env.context)
@@ -470,7 +470,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NotReady(SetupRetryReason::UnexpectedMessageType)
+            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
         );
         assert!(!step
             .has_participant_data(&env.context.globals, &id, 0)
@@ -486,7 +486,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NotReady(SetupRetryReason::MissingPrerequisite)
+            SetupMessageOutcome::RetryLater(SetupRetryReason::MissingPrerequisite)
         );
 
         assert_eq!(
@@ -500,7 +500,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Rejected(SetupRejectReason::MalformedContribution)
+            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
         );
 
         let injected_derived_key = serde_json::json!({
@@ -519,7 +519,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Rejected(SetupRejectReason::MalformedContribution)
+            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
         );
 
         let mut outsider = participant.clone();
@@ -535,7 +535,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NoOp(SetupNoOpReason::UnauthorizedSender)
+            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
         );
     }
 

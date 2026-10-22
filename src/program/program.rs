@@ -17,9 +17,9 @@ use crate::{
     },
     signature_verifier::OperatorVerificationStore,
     types::{
-        DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport, ErrorReportKind,
-        ErrorScope, JobDispatcherType, MessageDisposition, NoOpReason, OutgoingBitVMXApiMessages,
-        ProgramContext, RetryReason, SetupFailureReason,
+        DispatcherJobFailure, DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport,
+        ErrorReportKind, ErrorScope, JobDispatcherType, MessageDisposition, NoOpReason,
+        OutgoingBitVMXApiMessages, ProgramContext, RetryReason, SetupFailureReason,
     },
 };
 use bitcoin::{Transaction, Txid};
@@ -560,12 +560,14 @@ impl Program {
                 Context::ProgramStep(_, job_id) => job_id.clone(),
                 _ => expected_job_id.clone(),
             };
-            return Ok(Some(DispatcherResultDisposition::JobFailed {
-                program_id: self.program_id,
-                expected_job_id,
-                job_id,
-                reason,
-            }));
+            return Ok(Some(DispatcherResultDisposition::Failed(
+                DispatcherJobFailure {
+                    program_id: self.program_id,
+                    expected_job_id,
+                    job_id,
+                    reason,
+                },
+            )));
         }
 
         if self.is_stale_setup_result(context) {
@@ -636,12 +638,14 @@ impl Program {
                 peer: None,
                 source: Box::new(DispatcherResultError::DeclaredFailure(reason).into()),
             }),
-            Context::ProgramStep(_, job_id) => Ok(DispatcherResultDisposition::JobFailed {
-                program_id: self.program_id,
-                expected_job_id: context.to_string()?,
-                job_id: job_id.clone(),
-                reason,
-            }),
+            Context::ProgramStep(_, job_id) => {
+                Ok(DispatcherResultDisposition::Failed(DispatcherJobFailure {
+                    program_id: self.program_id,
+                    expected_job_id: context.to_string()?,
+                    job_id: job_id.clone(),
+                    reason,
+                }))
+            }
             _ => unreachable!("dispatcher preflight accepted an unsupported context"),
         }
     }
@@ -660,7 +664,7 @@ impl Program {
             return Ok(disposition);
         }
         match self.receive_dispatcher_result_inner(result, &context, dispatcher, program_context) {
-            Ok(()) => Ok(DispatcherResultDisposition::Processed),
+            Ok(()) => Ok(DispatcherResultDisposition::Processed(())),
             Err(error) => match &context {
                 Context::SetupStep(_, _, _, _) => self.handle_setup_dispatcher_error(error),
                 Context::ProgramStep(_, job_id) => {
@@ -783,7 +787,7 @@ impl Program {
         };
 
         // Preserve the previous behavior: save messages reported as processed.
-        if disposition == MessageDisposition::Processed {
+        if disposition == MessageDisposition::Processed(()) {
             if engine_state == StepState::WaitingForParticipants {
                 self.state = ProgramState::WaitingData;
             } else {
@@ -862,7 +866,7 @@ impl Program {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if !self.is_setup_complete() => {
                 self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
-                Ok(MessageDisposition::Processed)
+                Ok(MessageDisposition::Processed(()))
             }
             other => other,
         }
@@ -901,7 +905,7 @@ impl Program {
             }
         }
 
-        Ok(MessageDisposition::Processed)
+        Ok(MessageDisposition::Processed(()))
     }
 
     /// Gets a transaction by name from the protocol
@@ -1045,7 +1049,7 @@ mod tests {
         disposition: MessageDisposition,
         env: &mut TestProgramContextEnv,
     ) {
-        let MessageDisposition::FailSetup(fault) = disposition else {
+        let MessageDisposition::Failed(fault) = disposition else {
             panic!("expected peer setup fault, got {disposition:?}");
         };
         program
@@ -1505,7 +1509,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap();
-            assert_eq!(disposition, MessageDisposition::Processed);
+            assert_eq!(disposition, MessageDisposition::Processed(()));
         }
         assert_eq!(
             program.setup_engine.as_ref().unwrap().state(),
@@ -1580,8 +1584,9 @@ mod tests {
 
         assert!(matches!(
             disposition,
-            DispatcherResultDisposition::JobFailed { program_id, reason, .. }
-                if program_id == program.program_id
+            DispatcherResultDisposition::Failed(DispatcherJobFailure {
+                program_id, reason, ..
+            }) if program_id == program.program_id
                     && reason.contains("Invalid context for Emulator result")
         ));
         assert_eq!(program.state, ProgramState::Ready);

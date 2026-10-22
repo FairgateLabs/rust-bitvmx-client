@@ -459,7 +459,7 @@ impl SetupEngine {
         if self.state.has_participant_completed(participant_idx) {
             if participant_idx == my_idx {
                 warn!("Getting data from ourselves again for step '{}', ignoring since we already processed it.", step_name);
-                return Ok(MessageDisposition::Processed);
+                return Ok(MessageDisposition::Processed(()));
             }
 
             info!(
@@ -488,23 +488,23 @@ impl SetupEngine {
             context,
             false,
         )? {
-            SetupMessageOutcome::Accepted => {}
-            SetupMessageOutcome::NotReady(reason) => {
+            SetupMessageOutcome::Processed(()) => {}
+            SetupMessageOutcome::RetryLater(reason) => {
                 debug!(
                     "SetupEngine: Contribution from participant {} for step '{}' is not ready: {:?}",
                     participant_idx, step_name, reason
                 );
                 return Ok(MessageDisposition::RetryLater(reason.into_retry_reason()));
             }
-            SetupMessageOutcome::NoOp(reason) => {
+            SetupMessageOutcome::DiscardNoOp(reason) => {
                 return Ok(MessageDisposition::DiscardNoOp(reason.into_no_op_reason()));
             }
-            SetupMessageOutcome::Rejected(reason) => {
+            SetupMessageOutcome::Failed(reason) => {
                 warn!(
                     "SetupEngine: Rejecting contribution from participant {} for step '{}': {:?}",
                     participant_idx, step_name, reason
                 );
-                return Ok(MessageDisposition::FailSetup(PeerSetupFault {
+                return Ok(MessageDisposition::Failed(PeerSetupFault {
                     peer: from_participant.pubkey_hash.clone(),
                     reason: reason.into_peer_fault_reason(),
                 }));
@@ -527,7 +527,7 @@ impl SetupEngine {
             self.state.current_step_state
         );
 
-        Ok(MessageDisposition::Processed)
+        Ok(MessageDisposition::Processed(()))
     }
 
     /// Checks if the current step can advance to the next step.
@@ -735,7 +735,7 @@ impl SetupEngine {
             participants,
             context,
         )?;
-        if disposition != MessageDisposition::Processed {
+        if disposition != MessageDisposition::Processed(()) {
             debug!(
                 "SetupEngine::receive_setup_data() - Data from participant {} was not applied for step '{}': {:?}",
                 from, step_name, disposition
@@ -754,7 +754,7 @@ impl SetupEngine {
             self.send_broadcast_data_to_non_leaders(context, program_id, participants, msg_type)?;
         }
 
-        Ok(MessageDisposition::Processed)
+        Ok(MessageDisposition::Processed(()))
     }
 
     fn send_broadcast_data_to_non_leaders<BC: BitcoinCoordinatorApi>(
@@ -865,7 +865,7 @@ impl SetupEngine {
                         context,
                         true,
                     )?;
-                    if own_outcome != SetupMessageOutcome::Accepted {
+                    if own_outcome != SetupMessageOutcome::Processed(()) {
                         return Err(BitVMXError::InvalidState(format!(
                             "Locally generated data for step '{}' was not accepted: {:?}",
                             step_name, own_outcome
@@ -1202,7 +1202,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::FailSetup(PeerSetupFault {
+            MessageDisposition::Failed(PeerSetupFault {
                 peer: fault_peer,
                 reason: PeerSetupFaultReason::MalformedMessage,
             }) if fault_peer == peer.pubkey_hash
@@ -1221,7 +1221,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::Processed
+            MessageDisposition::Processed(())
         );
         assert_eq!(
             engine
@@ -1265,7 +1265,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            MessageDisposition::Processed
+            MessageDisposition::Processed(())
         );
     }
 

@@ -183,7 +183,7 @@ impl SetupStep for NoncesStep {
             Err(outcome) => return Ok(outcome),
         };
         if nonces.is_empty() {
-            return Ok(SetupMessageOutcome::Rejected(
+            return Ok(SetupMessageOutcome::Failed(
                 SetupRejectReason::InvalidContribution,
             ));
         }
@@ -200,7 +200,7 @@ impl SetupStep for NoncesStep {
             .collect::<HashSet<_>>();
         if let Err(error) = Self::validate_received_nonces(&nonces, &expected_aggregated_keys) {
             info!("Rejecting invalid nonce contribution: {}", error);
-            return Ok(SetupMessageOutcome::Rejected(
+            return Ok(SetupMessageOutcome::Failed(
                 SetupRejectReason::InvalidContribution,
             ));
         }
@@ -220,7 +220,7 @@ impl SetupStep for NoncesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(SetupMessageOutcome::Accepted)
+        Ok(SetupMessageOutcome::Processed(()))
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -481,7 +481,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::NotReady(SetupRetryReason::UnexpectedMessageType)
+            SetupMessageOutcome::RetryLater(SetupRetryReason::UnexpectedMessageType)
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -498,7 +498,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            SetupMessageOutcome::Accepted
+            SetupMessageOutcome::Processed(())
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -517,7 +517,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::NoOp(SetupNoOpReason::UnauthorizedSender)
+            SetupMessageOutcome::DiscardNoOp(SetupNoOpReason::UnauthorizedSender)
         );
 
         assert_eq!(
@@ -531,7 +531,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Accepted
+            SetupMessageOutcome::Processed(())
         );
         assert!(step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -561,7 +561,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Rejected(SetupRejectReason::MalformedContribution)
+            SetupMessageOutcome::Failed(SetupRejectReason::MalformedContribution)
         );
 
         assert_eq!(
@@ -575,7 +575,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            SetupMessageOutcome::Rejected(SetupRejectReason::InvalidContribution)
+            SetupMessageOutcome::Failed(SetupRejectReason::InvalidContribution)
         );
 
         let err = step

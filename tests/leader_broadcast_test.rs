@@ -2,7 +2,7 @@
 // testnet (operator-03 stuck at 3/4 on the take-aggregated-key step). The
 // relevant path is `LeaderBroadcastHelper::process_broadcasted_message`: when
 // an embedded `OriginalMessage` is signed by a peer whose verification key has
-// not arrived yet, authentication returns `AuthenticationOutcome::MissingKey`.
+// not arrived yet, authentication returns `AuthenticationOutcome::RetryLater`.
 // The fixed behavior retains the authenticated outer envelope as the bounded
 // retry unit; it does not silently drop the original or give a reconstructed
 // message a fresh retry budget.

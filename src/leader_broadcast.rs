@@ -5,7 +5,8 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::{participant::CommsAddress, program::Program, setup::SetupMessageState};
 use crate::signature_verifier::{AuthenticationOutcome, SignatureVerifier};
 use crate::types::{
-    MessageDisposition, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
+    HandlingOutcome, MessageDisposition, NoOpReason, PeerSetupFault, PeerSetupFaultReason,
+    ProgramContext,
 };
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use bitvmx_broker::settings::COMMS_ID;
@@ -167,17 +168,8 @@ fn get_original_message_key(
 }
 
 /// Explicit result of evaluating one embedded original message.
-#[derive(Debug)]
-pub enum OriginalMessageOutcome {
-    /// The original signature was verified and the reconstructed message can be queued.
-    Verified(QueuedMessage),
-    /// The claimed sender is authorized, but its verification key has not arrived yet.
-    MissingKey { peer: PubkHash },
-    /// Setup state already contains this participant's contribution.
-    DiscardNoOp(NoOpReason),
-    /// The original is attributable but permanently invalid.
-    Rejected(PeerSetupFault),
-}
+pub type OriginalMessageOutcome =
+    HandlingOutcome<QueuedMessage, PubkHash, NoOpReason, PeerSetupFault>;
 
 /// Helper for managing leader broadcast functionality
 /// Encapsulates storage, communication, and message queue operations
@@ -386,7 +378,7 @@ impl LeaderBroadcastHelper {
                     "Rejecting malformed BroadcastedMessage from leader {} for {}: {:?}",
                     leader_identifier.pubkey_hash, program_id, error
                 );
-                return Ok(MessageDisposition::FailSetup(PeerSetupFault {
+                return Ok(MessageDisposition::Failed(PeerSetupFault {
                     peer: leader_identifier.pubkey_hash,
                     reason: PeerSetupFaultReason::MalformedMessage,
                 }));
@@ -403,7 +395,7 @@ impl LeaderBroadcastHelper {
         if broadcasted_msg.original_messages.is_empty()
             || !broadcasted_msg.original_msg_type.should_store()
         {
-            return Ok(MessageDisposition::FailSetup(PeerSetupFault {
+            return Ok(MessageDisposition::Failed(PeerSetupFault {
                 peer: leader_identifier.pubkey_hash,
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
             }));
@@ -416,7 +408,7 @@ impl LeaderBroadcastHelper {
                 || !original_msg.msg_type.should_store()
                 || !seen_senders.insert(&original_msg.sender_pubkey_hash)
             {
-                outcomes.push(OriginalMessageOutcome::Rejected(PeerSetupFault {
+                outcomes.push(OriginalMessageOutcome::Failed(PeerSetupFault {
                     peer: leader_identifier.pubkey_hash.clone(),
                     reason: PeerSetupFaultReason::UnauthorizedMessage,
                 }));
@@ -435,10 +427,10 @@ impl LeaderBroadcastHelper {
         // A single invalid original makes the active setup untrustworthy. Do
         // not queue otherwise valid/deferred originals from the same envelope.
         if let Some(fault) = outcomes.iter().find_map(|outcome| match outcome {
-            OriginalMessageOutcome::Rejected(fault) => Some(fault.clone()),
+            OriginalMessageOutcome::Failed(fault) => Some(fault.clone()),
             _ => None,
         }) {
-            return Ok(MessageDisposition::FailSetup(fault));
+            return Ok(MessageDisposition::Failed(fault));
         }
 
         let mut queued_count = 0usize;
@@ -446,7 +438,7 @@ impl LeaderBroadcastHelper {
         let mut missing_peers = Vec::new();
         for outcome in outcomes {
             match outcome {
-                OriginalMessageOutcome::Verified(message) => {
+                OriginalMessageOutcome::Processed(message) => {
                     info!(
                         "Queueing verified embedded original from {}",
                         message.identifier.pubkey_hash
@@ -454,7 +446,7 @@ impl LeaderBroadcastHelper {
                     message_queue.push_new_unique(message.identifier, message.data)?;
                     queued_count += 1;
                 }
-                OriginalMessageOutcome::MissingKey { peer } => {
+                OriginalMessageOutcome::RetryLater(peer) => {
                     info!(
                         "Deferring leader envelope until the verification key for {} arrives",
                         peer
@@ -465,7 +457,7 @@ impl LeaderBroadcastHelper {
                     debug!("Discarding redundant embedded original: {:?}", reason);
                     no_op_count += 1;
                 }
-                OriginalMessageOutcome::Rejected(_) => unreachable!("handled before queueing"),
+                OriginalMessageOutcome::Failed(_) => unreachable!("handled before queueing"),
             }
         }
 
@@ -489,7 +481,7 @@ impl LeaderBroadcastHelper {
                 NoOpReason::ContributionAlreadyAccepted,
             ))
         } else {
-            Ok(MessageDisposition::Processed)
+            Ok(MessageDisposition::Processed(()))
         }
     }
 
@@ -508,7 +500,7 @@ impl LeaderBroadcastHelper {
                 "Leader {} forwarded an original claiming non-participant sender {}",
                 leader_pubkey_hash, original_msg.sender_pubkey_hash
             );
-            return Ok(OriginalMessageOutcome::Rejected(PeerSetupFault {
+            return Ok(OriginalMessageOutcome::Failed(PeerSetupFault {
                 peer: leader_pubkey_hash.clone(),
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
             }));
@@ -542,7 +534,7 @@ impl LeaderBroadcastHelper {
             )
             .is_err()
         {
-            return Ok(OriginalMessageOutcome::Rejected(PeerSetupFault {
+            return Ok(OriginalMessageOutcome::Failed(PeerSetupFault {
                 peer: original_msg.sender_pubkey_hash.clone(),
                 reason: PeerSetupFaultReason::MalformedMessage,
             }));
@@ -562,16 +554,16 @@ impl LeaderBroadcastHelper {
         )?;
 
         match authentication {
-            AuthenticationOutcome::Verified => {}
-            AuthenticationOutcome::MissingKey { peer } => {
-                return Ok(OriginalMessageOutcome::MissingKey { peer });
+            AuthenticationOutcome::Processed(()) => {}
+            AuthenticationOutcome::RetryLater(peer) => {
+                return Ok(OriginalMessageOutcome::RetryLater(peer));
             }
-            AuthenticationOutcome::Rejected(rejection) => {
+            AuthenticationOutcome::Failed(rejection) => {
                 warn!(
                     "Embedded original authentication rejected from {} (forwarded by {}): {:?}",
                     original_msg.sender_pubkey_hash, leader_pubkey_hash, rejection
                 );
-                return Ok(OriginalMessageOutcome::Rejected(PeerSetupFault {
+                return Ok(OriginalMessageOutcome::Failed(PeerSetupFault {
                     peer: original_msg.sender_pubkey_hash.clone(),
                     reason: PeerSetupFaultReason::AuthenticationRejected,
                 }));
@@ -591,7 +583,7 @@ impl LeaderBroadcastHelper {
             full_message,
         )?;
 
-        Ok(OriginalMessageOutcome::Verified(queued_message))
+        Ok(OriginalMessageOutcome::Processed(queued_message))
     }
 }
 
@@ -1216,7 +1208,7 @@ mod tests {
                 &queue,
             )
             .unwrap();
-        assert!(matches!(disposition, MessageDisposition::FailSetup(_)));
+        assert!(matches!(disposition, MessageDisposition::Failed(_)));
 
         // All-or-nothing: the valid message must not have been queued either
         assert!(queue.is_empty().unwrap());
@@ -1248,7 +1240,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(matches!(disposition, MessageDisposition::FailSetup(_)));
+        assert!(matches!(disposition, MessageDisposition::Failed(_)));
         assert!(queue.is_empty().unwrap());
     }
 
@@ -1271,7 +1263,7 @@ mod tests {
                 &queue,
             )
             .unwrap();
-        assert!(matches!(disposition, MessageDisposition::FailSetup(_)));
+        assert!(matches!(disposition, MessageDisposition::Failed(_)));
         assert!(queue.is_empty().unwrap());
     }
 

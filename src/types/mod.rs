@@ -1,7 +1,7 @@
 mod shared;
 pub use shared::*;
 
-use std::rc::Rc;
+use std::{convert::Infallible, rc::Rc};
 
 use crate::config::ComponentsConfig;
 use bitcoin_coordinator::coordinator::BitcoinCoordinator;
@@ -21,40 +21,43 @@ use crate::{
     program::variables::{Globals, WitnessVars},
 };
 
-/// Outcome of handling an incoming peer message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageDisposition {
-    /// The message was processed and should not be retried.
-    Processed,
-    /// A temporary prerequisite is absent, so the message should be retried.
-    RetryLater(RetryReason),
-    /// The message cannot change protocol state and should be consumed.
-    DiscardNoOp(NoOpReason),
-    /// An attributable peer fault must terminate setup without retrying the input.
-    FailSetup(PeerSetupFault),
+/// The common result of handling externally supplied input.
+///
+/// A handling outcome describes domain-controlled input that was processed,
+/// should be retried, can be consumed without an effect, or was rejected.
+/// Infrastructure and local-state failures remain regular `Result::Err` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlingOutcome<Success, Retry, NoOp, Failure> {
+    /// The input was processed successfully, optionally producing a value.
+    Processed(Success),
+    /// A temporary prerequisite is absent, so the unchanged input should be retried.
+    RetryLater(Retry),
+    /// The input cannot change state and can safely be consumed.
+    DiscardNoOp(NoOp),
+    /// The input was permanently rejected for a domain-specific reason.
+    Failed(Failure),
 }
+
+/// Outcome of handling an incoming peer message.
+pub type MessageDisposition = HandlingOutcome<(), RetryReason, NoOpReason, PeerSetupFault>;
 
 /// Outcome of handling a result from an authenticated job dispatcher.
 ///
 /// Returning a disposition (rather than using an error for terminal service output)
 /// lets the service-inbox transaction consume duplicates and terminal outcomes while
 /// reserving `Err` for local or infrastructure failures that must be retried.
+pub type DispatcherResultDisposition =
+    HandlingOutcome<(), Infallible, DispatcherNoOpReason, DispatcherJobFailure>;
+
+/// A runtime job rejection reported by the dispatcher.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DispatcherResultDisposition {
-    /// Result effects were staged successfully.
-    Processed,
-    /// The result cannot change durable state and should be consumed.
-    DiscardNoOp(DispatcherNoOpReason),
-    /// The dispatcher rejected a runtime job. Applying this disposition records and
-    /// reports the job failure without changing the owning program's lifecycle.
-    JobFailed {
-        program_id: Uuid,
-        /// Exact wire id used to retrieve the durable expected-job record.
-        expected_job_id: String,
-        /// Human-readable protocol job name used in reports.
-        job_id: String,
-        reason: String,
-    },
+pub struct DispatcherJobFailure {
+    pub program_id: Uuid,
+    /// Exact wire id used to retrieve the durable expected-job record.
+    pub expected_job_id: String,
+    /// Human-readable protocol job name used in reports.
+    pub job_id: String,
+    pub reason: String,
 }
 
 /// Why consuming a dispatcher result without applying it is safe.

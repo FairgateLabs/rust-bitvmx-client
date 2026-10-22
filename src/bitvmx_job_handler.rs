@@ -5,8 +5,8 @@ use crate::{
     expected_job::{ExpectedJob, ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     types::{
-        DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport, ErrorReportKind,
-        ErrorScope, JobDispatcherType, OutgoingBitVMXApiMessages, ZKPExecution,
+        DispatcherJobFailure, DispatcherNoOpReason, DispatcherResultDisposition, ErrorReport,
+        ErrorReportKind, ErrorScope, JobDispatcherType, OutgoingBitVMXApiMessages, ZKPExecution,
     },
 };
 use bitvmx_broker::{identification::identifier::Identifier, ReceivedMessage};
@@ -49,7 +49,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &self.config.components,
             );
             return Ok(DispatcherIngress::Settled(
-                DispatcherResultDisposition::Processed,
+                DispatcherResultDisposition::Processed(()),
             ));
         }
 
@@ -150,7 +150,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             job_id,
             status,
         )?;
-        Ok(DispatcherResultDisposition::Processed)
+        Ok(DispatcherResultDisposition::Processed(()))
     }
 
     fn handle_prover_message(
@@ -233,7 +233,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )?;
         let response = self.proof_ready(id)?;
         self.reply(from, response)?;
-        Ok(DispatcherResultDisposition::Processed)
+        Ok(DispatcherResultDisposition::Processed(()))
     }
 
     fn settle_program_result_disposition(
@@ -242,7 +242,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: &DispatcherResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            DispatcherResultDisposition::Processed => self
+            DispatcherResultDisposition::Processed(()) => self
                 .program_context
                 .expected_jobs
                 .complete(&self.program_context.operation_timeouts, job_id),
@@ -340,7 +340,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: DispatcherResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            DispatcherResultDisposition::Processed => Ok(()),
+            DispatcherResultDisposition::Processed(()) => Ok(()),
             DispatcherResultDisposition::DiscardNoOp(reason) => {
                 debug!(
                     "Consuming no-op result from {:?} dispatcher: {:?}",
@@ -348,12 +348,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 );
                 Ok(())
             }
-            DispatcherResultDisposition::JobFailed {
+            DispatcherResultDisposition::Failed(DispatcherJobFailure {
                 program_id,
                 expected_job_id,
                 job_id,
                 reason,
-            } => {
+            }) => {
                 self.program_context.expected_jobs.retry_pending(
                     &self.program_context.operation_timeouts,
                     &expected_job_id,
@@ -496,7 +496,7 @@ mod tests {
                 |_| -> Result<ExpectedJobCorrelation<()>, String> { unreachable!() }
             ),
             Ok(DispatcherIngress::Settled(
-                DispatcherResultDisposition::Processed
+                DispatcherResultDisposition::Processed(())
             ))
         ));
         assert!(matches!(
@@ -645,7 +645,7 @@ mod tests {
 
         assert_eq!(
             env.bitvmx.handle_prover_message(&message).unwrap(),
-            DispatcherResultDisposition::Processed
+            DispatcherResultDisposition::Processed(())
         );
         let expected = env
             .bitvmx
@@ -751,7 +751,7 @@ mod tests {
 
         assert_eq!(
             env.bitvmx.handle_prover_message(&message).unwrap(),
-            DispatcherResultDisposition::Processed
+            DispatcherResultDisposition::Processed(())
         );
         let expected = env
             .bitvmx
@@ -811,7 +811,7 @@ mod tests {
 
         assert_eq!(
             env.bitvmx.handle_prover_message(&message).unwrap(),
-            DispatcherResultDisposition::Processed
+            DispatcherResultDisposition::Processed(())
         );
         assert!(matches!(
             env.bitvmx
