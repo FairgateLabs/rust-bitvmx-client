@@ -989,6 +989,7 @@ mod tests {
     use super::*;
     use crate::program::participant::{ParticipantKeyDeclaration, ParticipantKeys};
     use crate::program::protocols::protocol_handler::new_protocol_type;
+    use crate::program::setup::MY_KEYS;
     use crate::program::variables::VariableTypes;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::{PeerSetupFaultReason, PROGRAM_TYPE_AGGREGATED_KEY};
@@ -1139,7 +1140,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(
                     serde_json::to_string(&ParticipantKeys::empty().unwrap()).unwrap(),
                 ),

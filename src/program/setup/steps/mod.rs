@@ -12,7 +12,7 @@ use enum_dispatch::enum_dispatch;
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::SetupStep;
+use super::{SetupStep, MY_KEYS};
 use crate::comms_helper::CommsMessageType;
 use crate::errors::BitVMXError;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
@@ -59,13 +59,22 @@ pub fn create_setup_step(name: &SetupStepName) -> SetupStepEnum {
 fn load_my_keys<BC: BitcoinCoordinatorApi>(
     protocol_id: &Uuid,
     context: &ProgramContext<BC>,
+) -> Result<Option<ParticipantKeys>, BitVMXError> {
+    context
+        .globals
+        .get_var(protocol_id, MY_KEYS)?
+        .map(|value| {
+            let keys_json = value.string()?;
+            Ok(serde_json::from_str(&keys_json)?)
+        })
+        .transpose()
+}
+
+fn require_my_keys<BC: BitcoinCoordinatorApi>(
+    protocol_id: &Uuid,
+    context: &ProgramContext<BC>,
     missing_message: &str,
 ) -> Result<ParticipantKeys, BitVMXError> {
-    let keys_json = context
-        .globals
-        .get_var(protocol_id, "my_keys")?
-        .ok_or_else(|| BitVMXError::InvalidMessage(missing_message.to_string()))?
-        .string()?;
-
-    Ok(serde_json::from_str(&keys_json)?)
+    load_my_keys(protocol_id, context)?
+        .ok_or_else(|| BitVMXError::InvalidMessage(missing_message.to_string()))
 }

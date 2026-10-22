@@ -7,7 +7,7 @@ use crate::{
     program::{
         participant::{CommsAddress, ParticipantKeyDeclaration, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::{decode_contribution, SetupStep},
+        setup::{decode_contribution, SetupStep, MY_KEYS},
         variables::VariableTypes,
     },
     types::{FailureDetail, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
@@ -136,7 +136,7 @@ impl KeysStep {
     ) -> Result<(), BitVMXError> {
         context.globals.set_var(
             protocol_id,
-            "my_keys",
+            MY_KEYS,
             VariableTypes::String(serde_json::to_string(my_keys)?),
         )
     }
@@ -214,16 +214,10 @@ impl SetupStep for KeysStep {
             keys.aggregated.len()
         );
 
-        let my_keys = match context.globals.get_var(&protocol_id, "my_keys")? {
-            Some(value) => {
-                let encoded = value.string()?;
-                serde_json::from_str::<ParticipantKeys>(&encoded)?
-            }
-            None => {
-                return Ok(ResultDisposition::Retry(
-                    RetryReason::MissingSetupPrerequisite,
-                ));
-            }
+        let Some(my_keys) = super::load_my_keys(&protocol_id, context)? else {
+            return Ok(ResultDisposition::Retry(
+                RetryReason::MissingSetupPrerequisite,
+            ));
         };
         if keys.aggregated != my_keys.aggregated
             || keys.aggregated.iter().any(|name| {
@@ -292,7 +286,7 @@ impl SetupStep for KeysStep {
 
         let all_keys = self.collect_participant_keys(&protocol_id, participants, context)?;
         let mut my_keys =
-            super::load_my_keys(&protocol_id, context, "my_keys not found in globals")?;
+            super::require_my_keys(&protocol_id, context, "my_keys not found in globals")?;
         let mut computed_aggregated = Self::compute_aggregated_keys(&my_keys, &all_keys, context)?;
 
         computed_aggregated.extend(protocol.get_pregenerated_aggregated_keys(context)?);
@@ -385,7 +379,7 @@ mod tests {
         assert_eq!(generated.mapping.len(), 1);
         assert_eq!(generated.aggregated, HashSet::from([id.to_string()]));
         assert_eq!(
-            stored_keys(&id, "my_keys", &env.context),
+            stored_keys(&id, MY_KEYS, &env.context),
             generated.clone().into()
         );
 
@@ -412,7 +406,7 @@ mod tests {
         step.on_step_complete(&protocol, &participants, &mut env.context)
             .unwrap();
 
-        let completed = stored_keys(&id, "my_keys", &env.context);
+        let completed = stored_keys(&id, MY_KEYS, &env.context);
         let aggregate = completed.computed_aggregated[&id.to_string()];
         assert_eq!(
             aggregate,
@@ -644,7 +638,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&my_keys).unwrap()),
             )
             .unwrap();

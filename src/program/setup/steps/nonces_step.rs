@@ -1,6 +1,4 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-#[cfg(test)]
-use crate::types::{NoOpReason, RetryReason};
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
@@ -107,7 +105,7 @@ impl SetupStep for NoncesStep {
         debug!("NoncesStep: Generating nonces for protocol {}", protocol_id);
 
         // Get the participant's keys from the previous KeysStep
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before nonces (KeysStep must complete first)",
@@ -190,7 +188,7 @@ impl SetupStep for NoncesStep {
             ));
         }
 
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before nonces can be verified",
@@ -318,7 +316,8 @@ impl SetupStep for NoncesStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{participant::ParticipantKeys, variables::VariableTypes};
+    use crate::program::{participant::ParticipantKeys, setup::MY_KEYS, variables::VariableTypes};
+    use crate::types::{NoOpReason, RetryReason};
     use key_manager::key_type::BitcoinKeyType;
     use std::rc::Rc;
     use storage_backend::storage::Storage;
@@ -344,7 +343,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&keys).unwrap()),
             )
             .unwrap();
@@ -372,7 +371,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&empty_keys).unwrap()),
             )
             .unwrap();

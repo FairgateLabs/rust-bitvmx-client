@@ -1,6 +1,4 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-#[cfg(test)]
-use crate::types::{NoOpReason, RetryReason};
 use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
@@ -113,7 +111,7 @@ impl SetupStep for SignaturesStep {
         );
 
         // Get the participant's keys from the previous KeysStep
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before signatures (KeysStep must complete first)",
@@ -198,7 +196,7 @@ impl SetupStep for SignaturesStep {
             ));
         }
 
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before signatures can be verified",
@@ -362,10 +360,11 @@ mod tests {
     use super::*;
     use crate::program::{
         participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type,
-        variables::VariableTypes,
+        setup::MY_KEYS, variables::VariableTypes,
     };
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+    use crate::types::{NoOpReason, RetryReason};
     use key_manager::{key_type::BitcoinKeyType, musig2::musig::MuSig2SignerApi};
     use uuid::Uuid;
 
@@ -381,7 +380,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&keys).unwrap()),
             )
             .unwrap();
@@ -410,7 +409,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&empty_keys).unwrap()),
             )
             .unwrap();

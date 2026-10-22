@@ -7,3 +7,5 @@ pub use setup_engine::{
 };
 pub use setup_step::SetupStep;
 pub(crate) use setup_step::{decode_contribution, decode_contribution_slice};
+
+pub(crate) const MY_KEYS: &str = "my_keys";
