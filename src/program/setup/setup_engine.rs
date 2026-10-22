@@ -281,7 +281,7 @@ impl SetupEngine {
         );
 
         // Now get the step and generate data
-        let step = &self.steps[self.state.current_step_index];
+        let step = self.current_step();
         let data_and_type = step.generate_data(protocol, context)?;
 
         if (self.total_participants == 1
@@ -362,7 +362,7 @@ impl SetupEngine {
             )));
         }
 
-        let step = &self.steps[self.state.current_step_index];
+        let step = self.current_step();
 
         let data = step.receive_dispatcher_result(
             result,
@@ -390,7 +390,7 @@ impl SetupEngine {
     }
 
     fn current_step_accepts(&self, msg_type: CommsMessageType) -> bool {
-        self.steps[self.state.current_step_index].accepted_message_type() == msg_type
+        self.current_step().accepted_message_type() == msg_type
     }
 
     /// Classifies a participant message against the active setup step without
@@ -471,7 +471,7 @@ impl SetupEngine {
 
         // Verify and store the data. Setup steps return explicit control-flow
         // outcomes; only local and infrastructure failures use `Err`.
-        let step = &self.steps[self.state.current_step_index];
+        let step = self.current_step();
         match step.verify_received(
             data,
             msg_type,
@@ -545,7 +545,7 @@ impl SetupEngine {
         let step_name = self.current_step_name().to_string();
 
         // Check if we can advance
-        let step = &self.steps[self.state.current_step_index];
+        let step = self.current_step();
         let can_advance = step.can_advance(protocol, participants, context)?;
 
         if !can_advance {
