@@ -102,9 +102,6 @@ pub enum BitVMXError {
         program_id: String,
     },
 
-    #[error("Missing verification key for sender {peer}")]
-    MissingVerificationKey { peer: String },
-
     #[error("Participant key '{name}' not found (expected {expected_type})")]
     ParticipantKeyNotFound {
         name: String,
@@ -117,9 +114,6 @@ pub enum BitVMXError {
         expected_type: &'static str,
         actual_type: &'static str,
     },
-
-    #[error("Failed to extract verification key from VerificationKey message: {reason}")]
-    VerificationKeyExtractionError { reason: String },
 
     #[error("Failed to reconstruct message for signature verification: {reason}")]
     MessageReconstructionError { reason: String },
