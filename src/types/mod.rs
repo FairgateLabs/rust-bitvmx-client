@@ -107,8 +107,8 @@ pub enum RetryReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoOpReason {
     ContributionAlreadyAccepted,
-    SetupComplete,
-    SetupFailed,
+    SetupAlreadyComplete,
+    SetupAlreadyFailed,
     UnauthorizedSender,
     Duplicate,
     Stale,

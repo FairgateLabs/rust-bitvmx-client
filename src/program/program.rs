@@ -74,8 +74,8 @@ impl ProgramState {
 
     fn peer_message_lifecycle_disposition(&self) -> Option<ResultDisposition> {
         match self {
-            ProgramState::Ready => Some(ResultDisposition::NoOp(NoOpReason::SetupComplete)),
-            ProgramState::Failed => Some(ResultDisposition::NoOp(NoOpReason::SetupFailed)),
+            ProgramState::Ready => Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete)),
+            ProgramState::Failed => Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed)),
             ProgramState::SettingUp | ProgramState::WaitingData => None,
         }
     }
@@ -563,7 +563,9 @@ impl Program {
         dispatcher: JobDispatcherType,
     ) -> Result<Option<ResultDisposition>, BitVMXError> {
         if self.is_failed() {
-            return Ok(Some(ResultDisposition::NoOp(NoOpReason::SetupFailed)));
+            return Ok(Some(ResultDisposition::NoOp(
+                NoOpReason::SetupAlreadyFailed,
+            )));
         }
 
         let route_is_valid = matches!(
@@ -793,12 +795,12 @@ impl Program {
         // Terminal lifecycle states make all subsequent setup messages stale.
         if self.is_failed() {
             debug!("Program::receive_setup_data() - Program setup failed, discarding message");
-            return Ok(ResultDisposition::NoOp(NoOpReason::SetupFailed));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed));
         }
 
         if self.state.is_setup_complete() {
             debug!("Program::receive_setup_data() - Setup complete, discarding stale message");
-            return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete));
         }
 
         let disposition = self.setup_engine.receive_setup_data(
@@ -886,7 +888,7 @@ impl Program {
         program_context: &mut ProgramContext<BC>,
     ) -> Result<ResultDisposition, BitVMXError> {
         if self.is_failed() {
-            return Ok(ResultDisposition::NoOp(NoOpReason::SetupFailed));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed));
         }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if !self.state.is_setup_complete() => {
@@ -1396,13 +1398,13 @@ mod tests {
         program.state = ProgramState::Ready;
         assert_eq!(
             program.peer_message_lifecycle_disposition(),
-            Some(ResultDisposition::NoOp(NoOpReason::SetupComplete))
+            Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete))
         );
 
         program.state = ProgramState::Failed;
         assert_eq!(
             program.peer_message_lifecycle_disposition(),
-            Some(ResultDisposition::NoOp(NoOpReason::SetupFailed))
+            Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed))
         );
     }
 
@@ -1451,7 +1453,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             disposition,
-            ResultDisposition::NoOp(NoOpReason::SetupFailed)
+            ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed)
         );
 
         // Replayed dispatcher results and ticks cannot restart a failed setup.
@@ -1465,7 +1467,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             dispatcher_disposition,
-            ResultDisposition::NoOp(NoOpReason::SetupFailed)
+            ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed)
         );
         program.tick(&mut env.context).unwrap();
 
@@ -1521,7 +1523,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             disposition,
-            ResultDisposition::NoOp(NoOpReason::SetupComplete)
+            ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete)
         );
 
         let context = Context::SetupStep(

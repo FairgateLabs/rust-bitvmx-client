@@ -51,7 +51,7 @@ impl SetupMessageState {
         match self {
             Self::ContributionAlreadyAccepted => Some(NoOpReason::ContributionAlreadyAccepted),
             Self::UnauthorizedSender => Some(NoOpReason::UnauthorizedSender),
-            Self::SetupComplete => Some(NoOpReason::SetupComplete),
+            Self::SetupComplete => Some(NoOpReason::SetupAlreadyComplete),
             Self::PendingCurrentContribution | Self::NotForCurrentStep => None,
         }
     }
@@ -677,7 +677,7 @@ impl SetupEngine {
                 "SetupEngine::receive_setup_data() - Setup already complete, discarding stale message from {}",
                 from
             );
-            return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
+            return Ok(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete));
         }
 
         // The outer peer-message boundary normally establishes membership first.
@@ -1079,7 +1079,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            ResultDisposition::NoOp(NoOpReason::SetupComplete)
+            ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete)
         );
         assert_eq!(engine.state(), &completed_state);
         assert!(matches!(

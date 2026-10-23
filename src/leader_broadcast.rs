@@ -512,7 +512,7 @@ impl LeaderBroadcastHelper {
                 ));
             }
             SetupMessageState::SetupComplete => {
-                return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
+                return Ok(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete));
             }
             SetupMessageState::PendingCurrentContribution
             | SetupMessageState::NotForCurrentStep

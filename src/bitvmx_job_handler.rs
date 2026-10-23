@@ -243,7 +243,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "stale dispatcher result".to_string(),
                 )
             }
-            ResultDisposition::NoOp(NoOpReason::SetupFailed) => {
+            ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed) => {
                 self.program_context.expected_jobs.fail(
                     &self.program_context.operation_timeouts,
                     job_id,

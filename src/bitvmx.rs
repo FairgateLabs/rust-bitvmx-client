@@ -1713,7 +1713,7 @@ mod transaction_tests {
         ready_program.tick(&mut env.bitvmx.program_context).unwrap();
         assert_eq!(
             ready_program.peer_message_lifecycle_disposition(),
-            Some(ResultDisposition::NoOp(NoOpReason::SetupComplete))
+            Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete))
         );
 
         // The invalid RSA signature would be rejected if authentication ran.

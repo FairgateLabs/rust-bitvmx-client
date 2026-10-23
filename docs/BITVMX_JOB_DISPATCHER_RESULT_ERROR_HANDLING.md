@@ -59,7 +59,7 @@ The first control-flow foundation is implemented:
 - `BitVMX::process_one_api_message` applies service dispositions centrally while
   the inbox transaction is active;
 - a result for a missing program is consumed as `Orphaned`;
-- results for setup-failed programs are consumed as `SetupFailed`, while setup results
+- results for setup-failed programs are consumed as `SetupAlreadyFailed`, while setup results
   delivered after setup completion are consumed as `Stale`; these typed dispositions
   drive expected-job settlement without a separate handler-side lifecycle check;
 - results for non-pending expected jobs are consumed as `Duplicate`;
