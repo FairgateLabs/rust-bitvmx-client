@@ -193,15 +193,6 @@ impl ProgramStatus {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
-pub struct RequestId(Uuid);
-
-impl RequestId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
 /// ZKP-specific API correlation and output. Dispatcher lifecycle and failure
 /// state are owned by the corresponding expected-job record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
