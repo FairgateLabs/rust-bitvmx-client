@@ -237,73 +237,6 @@ impl SignatureVerifier {
         }
     }
 
-    /// Gets the verification key of the sender
-    ///
-    /// Search strategy in priority order:
-    /// 1. If it's VerificationKey: extracts the key from the message (first contact)
-    /// 2. If it's our own message: uses our own RSA key
-    /// 3. If it exists in storage (Globals): uses the previously stored key
-    /// 4. Error if not found
-    ///
-    /// # Parameters
-    /// - `msg_type`: Type of message received
-    /// - `data`: Message data (to extract VerificationKey if applicable)
-    /// - `sender_pubkey_hash`: Hash of the sender's public key
-    /// - `rsa_public_key`: rsa_public_key to get our own key
-    /// - `my_pubkey_hash`: pubkey hash of the local operator (to detect self-messages)
-    ///
-    /// # Returns
-    /// - `Ok(String)` with the RSA public key in PEM format
-    /// - `Err` if the key cannot be obtained
-    ///
-    /// # Note about storage:
-    /// - Keys are stored through `Globals` under `operator_verification_key_{pubkey_hash}`
-    /// - They are stored when a `VerificationKey` message is received and verified in `process_comms_message`
-    /// - `VerificationKeyAnnouncement` is only temporary (DTO) for deserialization, NOT stored
-    /// - Only `announcement.verification_key` (String) is extracted and stored via `OperatorVerificationStore`
-    pub fn get_verification_key(
-        msg_type: &CommsMessageType,
-        data: &Value,
-        sender_pubkey_hash: &PubkHash,
-        globals: &Globals,
-        rsa_public_key: &str,
-        my_pubkey_hash: &PubkHash,
-    ) -> Result<String, BitVMXError> {
-        match msg_type {
-            CommsMessageType::VerificationKey => {
-                // First contact: the key comes in the message itself
-                // VerificationKeyAnnouncement is only temporary for deserialization
-                let announcement = VerificationKeyAnnouncement::from_value(data).map_err(|e| {
-                    BitVMXError::VerificationKeyExtractionError {
-                        reason: format!("Failed to extract verification key from message: {}", e),
-                    }
-                })?;
-                // Return the key to verify this message
-                // It will be stored via OperatorVerificationStore in process_comms_message
-                Ok(announcement.verification_key)
-            }
-            _ => {
-                // Check if it's our own message first
-                if sender_pubkey_hash == my_pubkey_hash {
-                    return Ok(rsa_public_key.to_string());
-                }
-
-                match OperatorVerificationStore::get(globals, sender_pubkey_hash)? {
-                    Some(key) => Ok(key),
-                    None => {
-                        warn!(
-                            "No verification key found for sender: {}",
-                            sender_pubkey_hash
-                        );
-                        Err(BitVMXError::MissingVerificationKey {
-                            peer: sender_pubkey_hash.clone(),
-                        })
-                    }
-                }
-            }
-        }
-    }
-
     /// Handles verification messages without deciding setup lifecycle policy.
     /// Peer-controlled bootstrap failures are returned as typed rejections;
     /// infrastructure and persistence failures remain errors.
@@ -532,93 +465,6 @@ mod tests {
     }
 
     #[test]
-    fn get_verification_key_from_announcement() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
-        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
-        let sender = "peer-1".to_string();
-        let my_pubkey_hash = "self".to_string();
-        let verification_key = rsa_public_key.clone();
-
-        let data = json!({
-            "pubkey_hash": sender.clone(),
-            "verification_key": verification_key.clone()
-        });
-
-        let key = SignatureVerifier::get_verification_key(
-            &CommsMessageType::VerificationKey,
-            &data,
-            &sender,
-            &globals,
-            &rsa_public_key,
-            &my_pubkey_hash,
-        )?;
-        assert_eq!(key, verification_key);
-        Ok(())
-    }
-
-    #[test]
-    fn get_verification_key_for_self_message() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
-        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
-        let my_pubkey_hash = "self".to_string();
-        let data = json!({});
-
-        let key = SignatureVerifier::get_verification_key(
-            &CommsMessageType::Keys,
-            &data,
-            &my_pubkey_hash,
-            &globals,
-            &rsa_public_key,
-            &my_pubkey_hash,
-        )?;
-        assert_eq!(&key, rsa_public_key);
-        Ok(())
-    }
-
-    #[test]
-    fn get_verification_key_from_shared_map() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
-        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
-        let sender = "peer-2".to_string();
-        let my_pubkey_hash = "self".to_string();
-        let verification_key = "peer-2-key".to_string();
-        OperatorVerificationStore::store(&globals, &sender, &verification_key)?;
-
-        let key = SignatureVerifier::get_verification_key(
-            &CommsMessageType::Keys,
-            &json!({}),
-            &sender,
-            &globals,
-            &rsa_public_key,
-            &my_pubkey_hash,
-        )?;
-        assert_eq!(key, verification_key);
-        Ok(())
-    }
-
-    #[test]
-    fn get_verification_key_missing_entry_errors() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
-        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
-        let sender = "peer-3".to_string();
-        let my_pubkey_hash = "self".to_string();
-
-        let result = SignatureVerifier::get_verification_key(
-            &CommsMessageType::Keys,
-            &json!({}),
-            &sender,
-            &globals,
-            &rsa_public_key,
-            &my_pubkey_hash,
-        );
-        assert!(matches!(
-            result,
-            Err(BitVMXError::MissingVerificationKey { .. })
-        ));
-        Ok(())
-    }
-
-    #[test]
     fn authenticate_message_reports_missing_key_as_outcome() -> Result<(), BitVMXError> {
         let env = build_test_env()?;
         let peer = "peer-without-key".to_string();
@@ -727,28 +573,6 @@ mod tests {
                 PeerSetupFaultReason::AuthenticationRejected,
             )
         );
-        Ok(())
-    }
-
-    #[test]
-    fn get_verification_key_rejects_malformed_announcement() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
-        let (rsa_public_key, globals) = (&env.context.rsa_public_key, &env.context.globals);
-        let sender = "peer-bad".to_string();
-        let my_pubkey_hash = "self".to_string();
-
-        let result = SignatureVerifier::get_verification_key(
-            &CommsMessageType::VerificationKey,
-            &json!({ "unexpected": "shape" }),
-            &sender,
-            &globals,
-            &rsa_public_key,
-            &my_pubkey_hash,
-        );
-        assert!(matches!(
-            result,
-            Err(BitVMXError::VerificationKeyExtractionError { .. })
-        ));
         Ok(())
     }
 
