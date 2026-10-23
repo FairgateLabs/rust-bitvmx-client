@@ -15,7 +15,7 @@ use crate::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{FailureDetail, NoOpReason, ProgramContext, ResultDisposition, RetryReason},
+    types::{NoOpReason, PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason},
 };
 
 /// Result of validating a contribution for the active setup step.
@@ -24,24 +24,36 @@ use crate::{
 /// caller can consume the message and fail setup. `Err` is reserved for local
 /// state, storage, and infrastructure failures.
 /// Decodes a JSON setup contribution and classifies malformed peer data.
-pub(crate) fn decode_contribution<T>(data: Value) -> Result<T, ResultDisposition>
+pub(crate) fn decode_contribution<T>(
+    data: Value,
+    from_participant: &CommsAddress,
+) -> Result<T, ResultDisposition>
 where
     T: DeserializeOwned,
 {
     serde_json::from_value(data).map_err(|error| {
         info!("Rejecting malformed setup contribution: {}", error);
-        ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
+        ResultDisposition::fail_peer_reason(
+            from_participant.pubkey_hash.clone(),
+            PeerSetupFaultReason::MalformedMessage,
+        )
     })
 }
 
 /// Decodes an encoded JSON value nested inside a setup contribution.
-pub(crate) fn decode_contribution_slice<T>(data: &[u8]) -> Result<T, ResultDisposition>
+pub(crate) fn decode_contribution_slice<T>(
+    data: &[u8],
+    from_participant: &CommsAddress,
+) -> Result<T, ResultDisposition>
 where
     T: DeserializeOwned,
 {
     serde_json::from_slice(data).map_err(|error| {
         info!("Rejecting malformed encoded setup contribution: {}", error);
-        ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
+        ResultDisposition::fail_peer_reason(
+            from_participant.pubkey_hash.clone(),
+            PeerSetupFaultReason::MalformedMessage,
+        )
     })
 }
 

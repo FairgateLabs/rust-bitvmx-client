@@ -1086,7 +1086,7 @@ mod tests {
         program
             .fail_setup(
                 Some(fault.peer),
-                SetupFailureReason::StepError(fault.reason.to_string()),
+                SetupFailureReason::StepError(format!("{:?}", fault.reason)),
                 &mut env.context,
             )
             .unwrap();
@@ -1420,7 +1420,7 @@ mod tests {
                         assert_eq!(step, "keys");
                         assert_eq!(peer.as_ref(), Some(&sender));
                         assert!(matches!(reason, SetupFailureReason::StepError(text)
-                            if text == "message was malformed"));
+                            if text == "MalformedMessage"));
                     }
                     other => panic!("expected SetupFailed, got {other:?}"),
                 }

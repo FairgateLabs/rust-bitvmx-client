@@ -40,6 +40,10 @@ impl ResultDisposition {
         Self::Fail(FailureDetail::PeerSetup(fault))
     }
 
+    pub fn fail_peer_reason(peer: PubkHash, reason: PeerSetupFaultReason) -> Self {
+        Self::fail_peer(PeerSetupFault { peer, reason })
+    }
+
     pub fn fail_dispatcher(failure: DispatcherJobFailure) -> Self {
         Self::Fail(FailureDetail::DispatcherJob(failure))
     }
@@ -69,36 +73,6 @@ impl Eq for SuccessDetail {}
 pub enum FailureDetail {
     PeerSetup(PeerSetupFault),
     DispatcherJob(DispatcherJobFailure),
-    MessageReconstruction { reason: String },
-    MalformedSignature,
-    SignatureMismatch,
-    MalformedVerificationMessage,
-    InvalidVerificationKey,
-    VerificationKeyFingerprintMismatch,
-    MalformedSetupContribution,
-    InvalidSetupContribution,
-}
-
-impl FailureDetail {
-    pub fn peer_setup_fault_reason(&self) -> PeerSetupFaultReason {
-        match self {
-            Self::MalformedVerificationMessage | Self::MalformedSetupContribution => {
-                PeerSetupFaultReason::MalformedMessage
-            }
-            Self::InvalidVerificationKey => PeerSetupFaultReason::InvalidVerificationKey,
-            Self::VerificationKeyFingerprintMismatch => {
-                PeerSetupFaultReason::VerificationKeyFingerprintMismatch
-            }
-            Self::InvalidSetupContribution => PeerSetupFaultReason::InvalidSetupContribution,
-            Self::MessageReconstruction { .. }
-            | Self::MalformedSignature
-            | Self::SignatureMismatch => PeerSetupFaultReason::AuthenticationRejected,
-            Self::PeerSetup(fault) => fault.reason.clone(),
-            Self::DispatcherJob(_) => {
-                unreachable!("dispatcher failures are not peer setup failures")
-            }
-        }
-    }
 }
 
 /// A runtime job rejection reported by the dispatcher.
@@ -159,22 +133,6 @@ pub enum PeerSetupFaultReason {
     VerificationKeyFingerprintMismatch,
     UnauthorizedMessage,
     InvalidSetupContribution,
-}
-
-impl std::fmt::Display for PeerSetupFaultReason {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let description = match self {
-            Self::AuthenticationRejected => "message authentication was rejected",
-            Self::MalformedMessage => "message was malformed",
-            Self::InvalidVerificationKey => "verification key was invalid",
-            Self::VerificationKeyFingerprintMismatch => {
-                "verification key fingerprint did not match the authenticated peer"
-            }
-            Self::UnauthorizedMessage => "message was not authorized",
-            Self::InvalidSetupContribution => "setup contribution was invalid",
-        };
-        formatter.write_str(description)
-    }
 }
 
 // The coordinator is statically dispatched: production code uses the default

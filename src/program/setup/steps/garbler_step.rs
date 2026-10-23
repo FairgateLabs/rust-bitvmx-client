@@ -22,7 +22,9 @@ use crate::{
         setup::{decode_contribution, decode_contribution_slice, SetupStep},
         variables::{Globals, VariableTypes},
     },
-    types::{FailureDetail, JobDispatcherType, ProgramContext, ResultDisposition, SuccessDetail},
+    types::{
+        JobDispatcherType, PeerSetupFaultReason, ProgramContext, ResultDisposition, SuccessDetail,
+    },
 };
 
 pub const GC_INPUT_PK: &str = "GC_INPUT_PK";
@@ -77,8 +79,6 @@ pub struct ProverGarblerData {
     pub proof_blob: ProofBlob,
     pub public_input_signature: Vec<u8>,
 }
-
-type SetupValueResult<T> = Result<T, FailureDetail>;
 
 #[derive(Debug, Clone, Default)]
 pub struct GarblerStep;
@@ -274,7 +274,7 @@ impl SetupStep for GarblerStep {
     fn verify_received_impl<BC: BitcoinCoordinatorApi>(
         &self,
         data: Value,
-        _from_participant: &CommsAddress,
+        from_participant: &CommsAddress,
         _from_idx: usize,
         protocol: &ProtocolType,
         context: &mut ProgramContext<BC>,
@@ -293,8 +293,9 @@ impl SetupStep for GarblerStep {
         if !is_prover_data {
             if !&data.is_null() {
                 info!("Rejecting non-empty garbler contribution for non-prover role");
-                return Ok(ResultDisposition::Fail(
-                    FailureDetail::InvalidSetupContribution,
+                return Ok(ResultDisposition::fail_peer_reason(
+                    from_participant.pubkey_hash.clone(),
+                    PeerSetupFaultReason::InvalidSetupContribution,
                 ));
             }
             info!("Received expected empty message from Garbler step for non-prover role. Protocol ID: {}", protocol_id);
@@ -316,16 +317,17 @@ impl SetupStep for GarblerStep {
         let ProverGarblerData {
             proof_blob,
             public_input_signature,
-        } = match decode_contribution(data) {
+        } = match decode_contribution(data, from_participant) {
             Ok(data) => data,
             Err(outcome) => return Ok(outcome),
         };
 
         let encoded_commitments = &proof_blob.commitments;
-        let commitments: GCCommitmentsFile = match decode_contribution_slice(encoded_commitments) {
-            Ok(commitments) => commitments,
-            Err(outcome) => return Ok(outcome),
-        };
+        let commitments: GCCommitmentsFile =
+            match decode_contribution_slice(encoded_commitments, from_participant) {
+                Ok(commitments) => commitments,
+                Err(outcome) => return Ok(outcome),
+            };
 
         let [public_input_pk, _, _] = match import_public_keys(
             &commitments.input_commitment_indices,
@@ -337,7 +339,10 @@ impl SetupStep for GarblerStep {
         )? {
             Ok(keys) => keys,
             Err(reason) => {
-                return Ok(ResultDisposition::Fail(reason));
+                return Ok(ResultDisposition::fail_peer_reason(
+                    from_participant.pubkey_hash.clone(),
+                    reason,
+                ));
             }
         };
 
@@ -347,6 +352,7 @@ impl SetupStep for GarblerStep {
             &public_input_signature,
             &config,
             public_input_pk,
+            from_participant,
             context,
             &protocol_id,
         )?;
@@ -391,6 +397,7 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
     public_input_signature: &Vec<u8>,
     config: &GCConfiguration,
     public_input_pk: LamportPublicKey,
+    from_participant: &CommsAddress,
     context: &ProgramContext<BC>,
     protocol_id: &Uuid,
 ) -> Result<ResultDisposition, BitVMXError> {
@@ -406,8 +413,9 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
                 "Rejecting malformed garbler public-input signature: {}",
                 error
             );
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::MalformedSetupContribution,
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::MalformedMessage,
             ));
         }
     };
@@ -423,16 +431,18 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
                 "Rejecting invalid garbler public-input signature: {}",
                 error
             );
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::InvalidSetupContribution,
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
     };
 
     if !valid_signature {
         info!("Rejecting invalid garbler public-input signature");
-        return Ok(ResultDisposition::Fail(
-            FailureDetail::InvalidSetupContribution,
+        return Ok(ResultDisposition::fail_peer_reason(
+            from_participant.pubkey_hash.clone(),
+            PeerSetupFaultReason::InvalidSetupContribution,
         ));
     }
 
@@ -452,7 +462,7 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
     config: &GCConfiguration,
     context: &mut ProgramContext<BC>,
     protocol_id: &Uuid,
-) -> Result<SetupValueResult<[LamportPublicKey; 3]>, BitVMXError> {
+) -> Result<Result<[LamportPublicKey; 3], PeerSetupFaultReason>, BitVMXError> {
     let public_input_size = config.circuit_public_input.len();
     let num_outputs = 1usize; // we assume only one output
 
@@ -461,12 +471,12 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
             "Rejecting garbler keys: public input size {} exceeds total input count {}",
             public_input_size, num_inputs
         );
-        return Ok(Err(FailureDetail::InvalidSetupContribution));
+        return Ok(Err(PeerSetupFaultReason::InvalidSetupContribution));
     }
 
     let Some(expected) = num_inputs.checked_add(num_outputs) else {
         info!("Rejecting garbler keys: commitment count overflow");
-        return Ok(Err(FailureDetail::InvalidSetupContribution));
+        return Ok(Err(PeerSetupFaultReason::InvalidSetupContribution));
     };
     if indices.len() != expected {
         info!(
@@ -474,7 +484,7 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
             expected,
             indices.len()
         );
-        return Ok(Err(FailureDetail::InvalidSetupContribution));
+        return Ok(Err(PeerSetupFaultReason::InvalidSetupContribution));
     }
 
     let mut commitments = Vec::with_capacity(indices.len());
@@ -486,7 +496,7 @@ fn import_public_keys<BC: BitcoinCoordinatorApi>(
                 position,
                 unordered_commitments.len()
             );
-            return Ok(Err(FailureDetail::InvalidSetupContribution));
+            return Ok(Err(PeerSetupFaultReason::InvalidSetupContribution));
         };
         commitments.push(commitment);
     }
@@ -646,7 +656,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
     name: &str,
     context: &ProgramContext<BC>,
     protocol_id: &Uuid,
-) -> Result<SetupValueResult<LamportPublicKey>, BitVMXError> {
+) -> Result<Result<LamportPublicKey, PeerSetupFaultReason>, BitVMXError> {
     let h0s = match commitments
         .iter()
         .map(|commitment| hex::decode(&commitment.h0))
@@ -655,7 +665,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
         Ok(values) => values.concat(),
         Err(error) => {
             info!("Rejecting malformed h0 garbler commitment: {}", error);
-            return Ok(Err(FailureDetail::MalformedSetupContribution));
+            return Ok(Err(PeerSetupFaultReason::MalformedMessage));
         }
     };
 
@@ -667,7 +677,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
         Ok(values) => values.concat(),
         Err(error) => {
             info!("Rejecting malformed h1 garbler commitment: {}", error);
-            return Ok(Err(FailureDetail::MalformedSetupContribution));
+            return Ok(Err(PeerSetupFaultReason::MalformedMessage));
         }
     };
 
@@ -685,7 +695,7 @@ fn import_public_lamport<BC: BitcoinCoordinatorApi>(
         Ok(public_key) => public_key,
         Err(error) => {
             info!("Rejecting invalid garbler commitment key: {}", error);
-            return Ok(Err(FailureDetail::InvalidSetupContribution));
+            return Ok(Err(PeerSetupFaultReason::InvalidSetupContribution));
         }
     };
 
@@ -705,7 +715,9 @@ mod tests {
     use super::*;
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use crate::types::{NoOpReason, RetryReason, PROGRAM_TYPE_GC_GENERATION};
+    use crate::types::{
+        NoOpReason, PeerSetupFault, PeerSetupFaultReason, RetryReason, PROGRAM_TYPE_GC_GENERATION,
+    };
     use bitcoin::hashes::{sha256, Hash};
     use serde_json::json;
 
@@ -869,7 +881,7 @@ mod tests {
                 .unwrap();
         assert!(matches!(
             result,
-            Err(FailureDetail::InvalidSetupContribution)
+            Err(PeerSetupFaultReason::InvalidSetupContribution)
         ));
 
         let no_public_inputs = GCConfiguration::new(
@@ -883,7 +895,7 @@ mod tests {
             import_public_keys(&[0], &[], 0, &no_public_inputs, &mut env.context, &id).unwrap();
         assert!(matches!(
             result,
-            Err(FailureDetail::InvalidSetupContribution)
+            Err(PeerSetupFaultReason::InvalidSetupContribution)
         ));
     }
 
@@ -923,9 +935,17 @@ mod tests {
             .sign_lamport_message_by_pubkey(&config.circuit_public_input, &public_input)
             .unwrap()
             .to_bytes();
+        let participant = env.self_address().unwrap();
         assert_eq!(
-            import_public_input_signature(&signature, &config, public_input, &env.context, &id)
-                .unwrap(),
+            import_public_input_signature(
+                &signature,
+                &config,
+                public_input,
+                &participant,
+                &env.context,
+                &id,
+            )
+            .unwrap(),
             ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(env
@@ -961,7 +981,7 @@ mod tests {
             serde_json::from_value(json!({"h0": "not-hex", "h1": "00"})).unwrap();
         assert!(matches!(
             import_public_lamport(&[invalid], "bad", &env.context, &id).unwrap(),
-            Err(FailureDetail::MalformedSetupContribution)
+            Err(PeerSetupFaultReason::MalformedMessage)
         ));
     }
 
@@ -1033,7 +1053,10 @@ mod tests {
                 true,
             )
             .unwrap(),
-            ResultDisposition::Fail(FailureDetail::InvalidSetupContribution)
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::InvalidSetupContribution,
+            })
         );
 
         assert!(matches!(

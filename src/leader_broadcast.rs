@@ -550,20 +550,7 @@ impl LeaderBroadcastHelper {
 
         match authentication {
             ResultDisposition::Success(SuccessDetail::Processed) => {}
-            ResultDisposition::Retry(reason) => {
-                return Ok(ResultDisposition::Retry(reason));
-            }
-            ResultDisposition::Fail(rejection) => {
-                warn!(
-                    "Embedded original authentication rejected from {} (forwarded by {}): {:?}",
-                    original_msg.sender_pubkey_hash, leader_pubkey_hash, rejection
-                );
-                return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: original_msg.sender_pubkey_hash.clone(),
-                    reason: rejection.peer_setup_fault_reason(),
-                }));
-            }
-            _ => unreachable!("invalid authentication disposition"),
+            disposition => return Ok(disposition),
         };
 
         let full_message = serialize_msg(

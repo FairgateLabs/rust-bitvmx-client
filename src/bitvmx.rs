@@ -465,13 +465,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }
             ResultDisposition::Fail(FailureDetail::PeerSetup(PeerSetupFault { peer, reason })) => {
                 warn!(
-                    "Failing setup for program {} after peer fault from {}: {}",
+                    "Failing setup for program {} after peer fault from {}: {:?}",
                     program_id, peer, reason
                 );
                 self.fail_program_setup(
                     program_id,
                     Some(peer),
-                    SetupFailureReason::StepError(reason.to_string()),
+                    SetupFailureReason::StepError(format!("{reason:?}")),
                 )
             }
             _ => unreachable!("invalid peer-message disposition"),
@@ -583,24 +583,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &my_pubkey_hash,
             )? {
                 ResultDisposition::Success(SuccessDetail::Processed) => {}
-                ResultDisposition::Retry(reason) => {
-                    info!(
-                        "Buffering message due to missing verification key: {:?} {:?}",
-                        program_id, msg_type
-                    );
-                    return Ok(ResultDisposition::Retry(reason));
-                }
-                ResultDisposition::Fail(rejection) => {
-                    warn!(
-                        "Message authentication rejected from {} for {}: {:?}",
-                        sender_pubkey_hash, program_id, rejection
-                    );
-                    return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                        peer: sender_pubkey_hash,
-                        reason: rejection.peer_setup_fault_reason(),
-                    }));
-                }
-                _ => unreachable!("invalid authentication disposition"),
+                disposition => return Ok(disposition),
             }
         }
 
@@ -636,16 +619,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 ResultDisposition::Success(SuccessDetail::Processed) => {
                     Ok(ResultDisposition::Success(SuccessDetail::Processed))
                 }
-                ResultDisposition::Fail(rejection) => {
-                    warn!(
-                        "Verification bootstrap message rejected from {} for {}: {:?}",
-                        sender_pubkey_hash, program_id, rejection
-                    );
-                    Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                        peer: sender_pubkey_hash,
-                        reason: rejection.peer_setup_fault_reason(),
-                    }))
-                }
+                failure @ ResultDisposition::Fail(FailureDetail::PeerSetup(_)) => Ok(failure),
                 _ => unreachable!("invalid verification-message disposition"),
             };
         }

@@ -10,7 +10,7 @@ use crate::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes},
     },
-    types::{FailureDetail, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
 };
 use bitvmx_broker::{identification::identifier::PubkHash, BrokerNode};
 use key_manager::key_manager::KeyManager;
@@ -174,8 +174,8 @@ impl SignatureVerifier {
                 Some(key) => key,
                 None => {
                     warn!(
-                        "No verification key found for sender: {}",
-                        sender_pubkey_hash
+                        "No verification key found for sender {} while authenticating {:?} in program {}",
+                        sender_pubkey_hash, msg_type, program_id
                     );
                     return Ok(ResultDisposition::Retry(
                         RetryReason::MissingVerificationKey {
@@ -189,18 +189,28 @@ impl SignatureVerifier {
         let message = match construct_message(program_id, version, *msg_type, data, timestamp) {
             Ok(message) => message,
             Err(error) => {
-                return Ok(ResultDisposition::Fail(
-                    FailureDetail::MessageReconstruction {
-                        reason: error.to_string(),
-                    },
+                warn!(
+                    "Could not reconstruct message from peer {} for type {:?} in program {}: {}",
+                    sender_pubkey_hash, msg_type, program_id, error
+                );
+                return Ok(ResultDisposition::fail_peer_reason(
+                    sender_pubkey_hash.clone(),
+                    PeerSetupFaultReason::AuthenticationRejected,
                 ));
             }
         };
 
         let rsa_signature = match key_manager::rsa::Signature::try_from(signature) {
             Ok(signature) => signature,
-            Err(_) => {
-                return Ok(ResultDisposition::Fail(FailureDetail::MalformedSignature));
+            Err(error) => {
+                warn!(
+                    "Malformed RSA signature from peer {} for message type {:?} in program {}: {}",
+                    sender_pubkey_hash, msg_type, program_id, error
+                );
+                return Ok(ResultDisposition::fail_peer_reason(
+                    sender_pubkey_hash.clone(),
+                    PeerSetupFaultReason::AuthenticationRejected,
+                ));
             }
         };
         let verified = key_manager::verifier::SignatureVerifier::new().verify_rsa_signature(
@@ -220,7 +230,10 @@ impl SignatureVerifier {
                 "Invalid RSA signature from peer: {} for message type: {:?} in program: {}",
                 sender_pubkey_hash, msg_type, program_id
             );
-            Ok(ResultDisposition::Fail(FailureDetail::SignatureMismatch))
+            Ok(ResultDisposition::fail_peer_reason(
+                sender_pubkey_hash.clone(),
+                PeerSetupFaultReason::AuthenticationRejected,
+            ))
         }
     }
 
@@ -325,9 +338,14 @@ impl SignatureVerifier {
         let pubkey_hash = peer_address.pubkey_hash.clone();
         let announcement = match VerificationKeyAnnouncement::from_value(data) {
             Ok(announcement) => announcement,
-            Err(_) => {
-                return Ok(ResultDisposition::Fail(
-                    FailureDetail::MalformedVerificationMessage,
+            Err(error) => {
+                warn!(
+                    "Malformed verification key announcement from peer {}: {}",
+                    pubkey_hash, error
+                );
+                return Ok(ResultDisposition::fail_peer_reason(
+                    pubkey_hash.clone(),
+                    PeerSetupFaultReason::MalformedMessage,
                 ));
             }
         };
@@ -338,9 +356,14 @@ impl SignatureVerifier {
         // transport-authenticated peer rather than to a caller-supplied identity.
         let computed_hash = match compute_pubkey_hash(&announcement.verification_key) {
             Ok(computed_hash) => computed_hash,
-            Err(_) => {
-                return Ok(ResultDisposition::Fail(
-                    FailureDetail::InvalidVerificationKey,
+            Err(error) => {
+                warn!(
+                    "Invalid verification key announced by peer {}: {}",
+                    pubkey_hash, error
+                );
+                return Ok(ResultDisposition::fail_peer_reason(
+                    pubkey_hash.clone(),
+                    PeerSetupFaultReason::InvalidVerificationKey,
                 ));
             }
         };
@@ -349,8 +372,9 @@ impl SignatureVerifier {
                 "Verification key fingerprint mismatch for peer {}",
                 pubkey_hash
             );
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::VerificationKeyFingerprintMismatch,
+            return Ok(ResultDisposition::fail_peer_reason(
+                pubkey_hash,
+                PeerSetupFaultReason::VerificationKeyFingerprintMismatch,
             ));
         }
 
@@ -499,7 +523,10 @@ mod tests {
         )?;
         assert_eq!(
             outcome,
-            ResultDisposition::Fail(FailureDetail::SignatureMismatch)
+            ResultDisposition::fail_peer_reason(
+                sender_pubkey_hash,
+                PeerSetupFaultReason::AuthenticationRejected,
+            )
         );
         Ok(())
     }
@@ -665,10 +692,13 @@ mod tests {
             &rsa_public_key,
             &my_pubkey_hash,
         )?;
-        assert!(matches!(
+        assert_eq!(
             outcome,
-            ResultDisposition::Fail(FailureDetail::MessageReconstruction { .. })
-        ));
+            ResultDisposition::fail_peer_reason(
+                my_pubkey_hash,
+                PeerSetupFaultReason::AuthenticationRejected,
+            )
+        );
         Ok(())
     }
 
@@ -690,12 +720,13 @@ mod tests {
             &rsa_public_key,
             &my_pubkey_hash,
         )?;
-        assert!(matches!(
+        assert_eq!(
             outcome,
-            ResultDisposition::Fail(
-                FailureDetail::MalformedSignature | FailureDetail::SignatureMismatch
+            ResultDisposition::fail_peer_reason(
+                my_pubkey_hash,
+                PeerSetupFaultReason::AuthenticationRejected,
             )
-        ));
+        );
         Ok(())
     }
 
@@ -867,7 +898,10 @@ mod tests {
         )?;
         assert_eq!(
             outcome,
-            ResultDisposition::Fail(FailureDetail::SignatureMismatch)
+            ResultDisposition::fail_peer_reason(
+                my_hash,
+                PeerSetupFaultReason::AuthenticationRejected,
+            )
         );
         Ok(())
     }
@@ -922,7 +956,10 @@ mod tests {
         );
         assert_eq!(
             result?,
-            ResultDisposition::Fail(FailureDetail::VerificationKeyFingerprintMismatch)
+            ResultDisposition::fail_peer_reason(
+                peer_address.pubkey_hash.clone(),
+                PeerSetupFaultReason::VerificationKeyFingerprintMismatch,
+            )
         );
         assert!(!OperatorVerificationStore::has(
             &env.context.globals,
@@ -948,7 +985,10 @@ mod tests {
                 &json!({"wrong_field": true}),
                 &peer_address,
             )?,
-            ResultDisposition::Fail(FailureDetail::MalformedVerificationMessage)
+            ResultDisposition::fail_peer_reason(
+                peer_address.pubkey_hash.clone(),
+                PeerSetupFaultReason::MalformedMessage,
+            )
         );
         assert_eq!(
             SignatureVerifier::handle_verification_messages(
@@ -958,7 +998,10 @@ mod tests {
                 &json!({"verification_key": "not a PEM key"}),
                 &peer_address,
             )?,
-            ResultDisposition::Fail(FailureDetail::InvalidVerificationKey)
+            ResultDisposition::fail_peer_reason(
+                peer_address.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidVerificationKey,
+            )
         );
         Ok(())
     }

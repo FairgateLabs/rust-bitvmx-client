@@ -8,9 +8,7 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{
-        NoOpReason, PeerSetupFault, ProgramContext, ResultDisposition, RetryReason, SuccessDetail,
-    },
+    types::{NoOpReason, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -482,27 +480,7 @@ impl SetupEngine {
             false,
         )? {
             ResultDisposition::Success(SuccessDetail::Processed) => {}
-            ResultDisposition::Retry(reason) => {
-                debug!(
-                    "SetupEngine: Contribution from participant {} for step '{}' is not ready: {:?}",
-                    participant_idx, step_name, reason
-                );
-                return Ok(ResultDisposition::Retry(reason));
-            }
-            ResultDisposition::NoOp(reason) => {
-                return Ok(ResultDisposition::NoOp(reason));
-            }
-            ResultDisposition::Fail(reason) => {
-                warn!(
-                    "SetupEngine: Rejecting contribution from participant {} for step '{}': {:?}",
-                    participant_idx, step_name, reason
-                );
-                return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: from_participant.pubkey_hash.clone(),
-                    reason: reason.peer_setup_fault_reason(),
-                }));
-            }
-            _ => unreachable!("invalid setup-step disposition"),
+            disposition => return Ok(disposition),
         }
 
         // Mark participant as completed
@@ -981,7 +959,9 @@ mod tests {
     use crate::program::setup::MY_KEYS;
     use crate::program::variables::VariableTypes;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use crate::types::{FailureDetail, PeerSetupFaultReason, PROGRAM_TYPE_AGGREGATED_KEY};
+    use crate::types::{
+        FailureDetail, PeerSetupFault, PeerSetupFaultReason, PROGRAM_TYPE_AGGREGATED_KEY,
+    };
 
     fn aggregated_key_protocol(id: Uuid, dir: &TestStorageDir) -> ProtocolType {
         new_protocol_type(id, PROGRAM_TYPE_AGGREGATED_KEY, 0, dir.storage()).unwrap()

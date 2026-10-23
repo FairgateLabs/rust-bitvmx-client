@@ -7,7 +7,7 @@ use crate::{
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::{decode_contribution, SetupStep},
     },
-    types::{FailureDetail, ProgramContext, ResultDisposition, SuccessDetail},
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, SuccessDetail},
 };
 use bitcoin::PublicKey;
 use key_manager::{
@@ -186,13 +186,15 @@ impl SetupStep for SignaturesStep {
 
         // Deserialize the received signatures. Wire-format failures are peer
         // rejections rather than retryable local errors.
-        let signatures: PartialSignatureMessage = match decode_contribution(data) {
+        let signatures: PartialSignatureMessage = match decode_contribution(data, from_participant)
+        {
             Ok(signatures) => signatures,
             Err(outcome) => return Ok(outcome),
         };
         if signatures.is_empty() {
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::InvalidSetupContribution,
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
 
@@ -210,8 +212,9 @@ impl SetupStep for SignaturesStep {
             Self::validate_received_signatures(&signatures, &expected_aggregated_keys)
         {
             info!("Rejecting invalid signature contribution: {}", error);
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::InvalidSetupContribution,
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
 
@@ -224,8 +227,9 @@ impl SetupStep for SignaturesStep {
             ) {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Ok(ResultDisposition::Fail(
-                        FailureDetail::InvalidSetupContribution,
+                    return Ok(ResultDisposition::fail_peer_reason(
+                        from_participant.pubkey_hash.clone(),
+                        PeerSetupFaultReason::InvalidSetupContribution,
                     ));
                 }
                 Err(KeyManagerError::Musig2SignerError(
@@ -233,8 +237,9 @@ impl SetupStep for SignaturesStep {
                     | Musig2SignerError::InvalidMessageId
                     | Musig2SignerError::InvalidPartialSignature,
                 )) => {
-                    return Ok(ResultDisposition::Fail(
-                        FailureDetail::InvalidSetupContribution,
+                    return Ok(ResultDisposition::fail_peer_reason(
+                        from_participant.pubkey_hash.clone(),
+                        PeerSetupFaultReason::InvalidSetupContribution,
                     ));
                 }
                 Err(error) => return Err(error.into()),
@@ -364,7 +369,7 @@ mod tests {
     };
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
-    use crate::types::{NoOpReason, RetryReason};
+    use crate::types::{NoOpReason, PeerSetupFault, PeerSetupFaultReason, RetryReason};
     use key_manager::{key_type::BitcoinKeyType, musig2::musig::MuSig2SignerApi};
     use uuid::Uuid;
 
@@ -781,7 +786,10 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
         );
 
         assert_eq!(
@@ -795,7 +803,10 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Fail(FailureDetail::InvalidSetupContribution)
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::InvalidSetupContribution,
+            })
         );
 
         assert!(!step

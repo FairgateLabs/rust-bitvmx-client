@@ -7,7 +7,7 @@ use crate::{
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::{decode_contribution, SetupStep},
     },
-    types::{FailureDetail, ProgramContext, ResultDisposition, SuccessDetail},
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, SuccessDetail},
 };
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PubNonce};
@@ -173,13 +173,14 @@ impl SetupStep for NoncesStep {
 
         // Deserialize the received nonces. Wire-format failures are attributable
         // to the participant, not local processing failures.
-        let nonces: PubNonceMessage = match decode_contribution(data) {
+        let nonces: PubNonceMessage = match decode_contribution(data, from_participant) {
             Ok(nonces) => nonces,
             Err(outcome) => return Ok(outcome),
         };
         if nonces.is_empty() {
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::InvalidSetupContribution,
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
 
@@ -197,8 +198,9 @@ impl SetupStep for NoncesStep {
             Self::validate_received_nonce_entries(&nonces, &expected_aggregated_keys)
         {
             info!("Rejecting invalid nonce contribution: {}", error);
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::InvalidSetupContribution,
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
 
@@ -314,7 +316,7 @@ impl SetupStep for NoncesStep {
 mod tests {
     use super::*;
     use crate::program::{participant::ParticipantKeys, setup::MY_KEYS, variables::VariableTypes};
-    use crate::types::{NoOpReason, RetryReason};
+    use crate::types::{NoOpReason, PeerSetupFault, PeerSetupFaultReason, RetryReason};
     use key_manager::key_type::BitcoinKeyType;
     use std::rc::Rc;
     use storage_backend::storage::Storage;
@@ -555,7 +557,10 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
         );
 
         assert_eq!(
@@ -569,7 +574,10 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Fail(FailureDetail::InvalidSetupContribution)
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::InvalidSetupContribution,
+            })
         );
 
         let err = step

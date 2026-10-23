@@ -8,7 +8,7 @@ use crate::{
         setup::{decode_contribution, SetupStep, MY_KEYS},
         variables::VariableTypes,
     },
-    types::{FailureDetail, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
 };
 use serde_json::Value;
 use tracing::{debug, info};
@@ -201,7 +201,7 @@ impl SetupStep for KeysStep {
 
         // Deserialize only the wire-safe declaration. In particular, reject
         // peer-supplied locally derived fields such as computed_aggregated.
-        let keys: ParticipantKeyDeclaration = match decode_contribution(data) {
+        let keys: ParticipantKeyDeclaration = match decode_contribution(data, from_participant) {
             Ok(keys) => keys,
             Err(outcome) => return Ok(outcome),
         };
@@ -225,8 +225,9 @@ impl SetupStep for KeysStep {
                     .is_none()
             })
         {
-            return Ok(ResultDisposition::Fail(
-                FailureDetail::InvalidSetupContribution,
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
 
@@ -315,7 +316,8 @@ mod tests {
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::{
-        NoOpReason, FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION,
+        NoOpReason, PeerSetupFault, PeerSetupFaultReason, FINAL_AGGREGATED_KEY,
+        PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION,
     };
     use std::collections::HashSet;
 
@@ -490,7 +492,10 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
         );
 
         let injected_derived_key = serde_json::json!({
@@ -509,7 +514,10 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Fail(FailureDetail::MalformedSetupContribution)
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
         );
 
         let mut outsider = participant.clone();
