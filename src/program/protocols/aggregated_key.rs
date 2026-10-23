@@ -135,8 +135,8 @@ impl ProtocolHandler for AggregatedKeyProtocol {
 
     // Override setup_steps to only use KeysStep
     // No Nonces or Signatures needed - we're only generating a key, not signing
-    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
-        Some(vec![SetupStepName::Keys])
+    fn setup_steps(&self) -> Vec<SetupStepName> {
+        vec![SetupStepName::Keys]
     }
 }
 
@@ -193,7 +193,7 @@ mod tests {
         );
         assert_eq!(declaration.aggregated, HashSet::from([id.to_string()]));
         assert!(!protocol.send_setup_completed());
-        assert_eq!(protocol.setup_steps(), Some(vec![SetupStepName::Keys]));
+        assert_eq!(protocol.setup_steps(), vec![SetupStepName::Keys]);
     }
 
     #[test]

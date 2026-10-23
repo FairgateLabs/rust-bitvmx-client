@@ -51,9 +51,8 @@ impl ProtocolHandler for GCGenerationProtocol {
         true
     }
 
-    // Override setup_steps to only use KeysStep
-    // No Nonces or Signatures needed - we're only generating a key, not signing
-    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
-        Some(vec![SetupStepName::Garbler])
+    // Override setup_steps to only use GarblerStep
+    fn setup_steps(&self) -> Vec<SetupStepName> {
+        vec![SetupStepName::Garbler]
     }
 }

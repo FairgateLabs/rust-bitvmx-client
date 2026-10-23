@@ -17,14 +17,14 @@ use crate::{
     signature_verifier::OperatorVerificationStore,
     types::{
         DispatcherJobFailure, ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType,
-        NoOpReason, OutgoingBitVMXApiMessages, ProgramContext, ResultDisposition, RetryReason,
+        NoOpReason, OutgoingBitVMXApiMessages, ProgramContext, ResultDisposition,
         SetupFailureReason, SuccessDetail,
     },
 };
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::{rc::Rc, time::Duration};
 use storage_backend::{
@@ -81,7 +81,7 @@ impl ProgramState {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct Program {
     pub program_id: Uuid,
     pub my_idx: usize,
@@ -92,12 +92,51 @@ pub struct Program {
     #[serde(skip)]
     state: ProgramState,
     /// Serializable snapshot embedded in the program since SetupEngine contains trait objects.
-    setup_engine_state: Option<SetupEngineState>,
-    /// All participant keys collected during setup (populated by build_protocol)
+    setup_engine_state: SetupEngineState,
+    /// Runtime setup engine, reconstructed when the program is deserialized.
     #[serde(skip)]
-    pub setup_engine: Option<SetupEngine>,
+    pub setup_engine: SetupEngine,
     #[serde(skip)]
     storage: Option<Rc<Storage>>,
+}
+
+#[derive(Deserialize)]
+struct SerializedProgram {
+    program_id: Uuid,
+    my_idx: usize,
+    participants: Vec<CommsAddress>,
+    leader: usize,
+    protocol: ProtocolType,
+    setup_engine_state: SetupEngineState,
+}
+
+impl<'de> Deserialize<'de> for Program {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let serialized = SerializedProgram::deserialize(deserializer)?;
+        let mut setup_engine = SetupEngine::new(
+            serialized.protocol.setup_steps(),
+            serialized.participants.len(),
+        )
+        .map_err(D::Error::custom)?;
+        setup_engine
+            .restore_state(serialized.setup_engine_state.clone())
+            .map_err(D::Error::custom)?;
+
+        Ok(Self {
+            program_id: serialized.program_id,
+            my_idx: serialized.my_idx,
+            participants: serialized.participants,
+            leader: serialized.leader,
+            protocol: serialized.protocol,
+            state: ProgramState::default(),
+            setup_engine_state: serialized.setup_engine_state,
+            setup_engine,
+            storage: None,
+        })
+    }
 }
 
 impl Program {
@@ -181,11 +220,7 @@ impl Program {
             return Ok(());
         }
 
-        let step = self
-            .setup_engine
-            .as_ref()
-            .map(|engine| engine.current_step_name().to_string())
-            .unwrap_or_default();
+        let step = self.setup_engine.current_step_name().to_string();
 
         self.state = ProgramState::Failed;
         self.save()?;
@@ -215,20 +250,13 @@ impl Program {
     }
 
     /// Creates a SetupEngine for the protocol using its setup_steps() method.
-    fn try_create_setup_engine(
+    fn create_setup_engine(
         protocol: &ProtocolType,
         total_participants: usize,
-    ) -> Result<Option<SetupEngine>, BitVMXError> {
-        if let Some(step_names) = protocol.setup_steps() {
-            debug!(
-                "Protocol supports SetupEngine with {} steps",
-                step_names.len()
-            );
-            Ok(Some(SetupEngine::new(step_names, total_participants)?))
-        } else {
-            debug!("Protocol does not use SetupEngine");
-            Ok(None)
-        }
+    ) -> Result<SetupEngine, BitVMXError> {
+        let step_names = protocol.setup_steps();
+        debug!("Creating SetupEngine with {} steps", step_names.len());
+        SetupEngine::new(step_names, total_participants)
     }
 
     /// Creates and initializes a new Program instance
@@ -279,8 +307,8 @@ impl Program {
         let mut protocol = new_protocol_type(program_id, program_type, my_idx, storage.clone())?;
         protocol.set_storage(storage.clone());
 
-        // Try to create SetupEngine if protocol supports it
-        let setup_engine = Self::try_create_setup_engine(&protocol, peers.len())?;
+        let setup_engine = Self::create_setup_engine(&protocol, peers.len())?;
+        let setup_engine_state = setup_engine.state().clone();
 
         let mut program = Program {
             program_id,
@@ -289,7 +317,7 @@ impl Program {
             leader,
             protocol,
             state: ProgramState::SettingUp,
-            setup_engine_state: None, // Will be set when saving
+            setup_engine_state,
             setup_engine,
             storage: Some(storage.clone()),
         };
@@ -316,10 +344,6 @@ impl Program {
         program.storage = Some(storage.clone());
         program.protocol.set_storage(storage.clone());
 
-        // Recreate SetupEngine if protocol supports it
-        program.setup_engine =
-            Self::try_create_setup_engine(&program.protocol, program.participants.len())?;
-
         program.state = storage
             .get(Self::key_program_state(program_id)?, None)?
             .unwrap_or_default();
@@ -328,17 +352,6 @@ impl Program {
             "Program::load() - Loaded program {} with state: {:?}",
             program_id, program.state
         );
-
-        // Restore SetupEngine state if it was saved
-        if let (Some(engine), Some(saved_state)) =
-            (&mut program.setup_engine, &program.setup_engine_state)
-        {
-            debug!(
-                "Program::load() - Restoring SetupEngine state for program {}",
-                program_id
-            );
-            engine.restore_state(saved_state.clone())?;
-        }
 
         Ok(Some(program))
     }
@@ -358,9 +371,7 @@ impl Program {
             .ok_or(ProgramError::StorageUnavailable)?;
 
         // Save SetupEngine state before serializing (since SetupEngine itself can't be serialized)
-        if let Some(engine) = &self.setup_engine {
-            self.setup_engine_state = Some(engine.state().clone());
-        }
+        self.setup_engine_state = self.setup_engine.state().clone();
 
         info!(
             "Program::save() - Saving program {} with state: {:?}",
@@ -403,11 +414,7 @@ impl Program {
                 // Run the engine tick (uses block scope to avoid borrow conflict
                 // between setup_engine and other self fields)
                 let (setup_state_changed, is_complete, engine_state) = {
-                    let engine = self.setup_engine.as_mut().ok_or_else(|| {
-                        BitVMXError::InvalidMessage(
-                            "Protocol must return setup steps for Program".to_string(),
-                        )
-                    })?;
+                    let engine = &mut self.setup_engine;
 
                     let setup_state_changed = engine.tick(
                         &mut self.protocol,
@@ -718,26 +725,24 @@ impl Program {
                 info!("Program::receive_dispatcher_result() - Received result from Garbler");
                 match context {
                     Context::SetupStep(_, _, _, _) => {
-                        if let Some(engine) = &mut self.setup_engine {
-                            if engine.receive_dispatcher_result(
-                                result,
-                                context,
-                                self.my_idx,
-                                &self.program_id,
-                                self.leader,
-                                &self.participants,
-                                program_context,
-                            )? {
-                                if engine.state().current_step_state.clone()
-                                    == StepState::WaitingForParticipants
-                                {
-                                    self.state = ProgramState::WaitingData;
-                                } else {
-                                    self.state = ProgramState::SettingUp;
-                                }
-                                self.save()?;
-                                info!("Program::receive_dispatcher_result() - SetupEngine state changed, saved program with state {:?}", self.state);
+                        if self.setup_engine.receive_dispatcher_result(
+                            result,
+                            context,
+                            self.my_idx,
+                            &self.program_id,
+                            self.leader,
+                            &self.participants,
+                            program_context,
+                        )? {
+                            if self.setup_engine.state().current_step_state.clone()
+                                == StepState::WaitingForParticipants
+                            {
+                                self.state = ProgramState::WaitingData;
+                            } else {
+                                self.state = ProgramState::SettingUp;
                             }
+                            self.save()?;
+                            info!("Program::receive_dispatcher_result() - SetupEngine state changed, saved program with state {:?}", self.state);
                         }
                     }
                     Context::ProgramStep(_, _) => {
@@ -796,30 +801,23 @@ impl Program {
             return Ok(ResultDisposition::NoOp(NoOpReason::SetupComplete));
         }
 
-        // Track state changes and completion status for save/log after borrow ends
-        let (disposition, engine_state) = if let Some(engine) = &mut self.setup_engine {
-            let disposition = engine.receive_setup_data(
-                data,
-                msg_type,
-                from,
-                &self.program_id,
-                self.my_idx,
-                self.leader,
-                &self.participants,
-                &self.protocol,
-                program_context,
-            )?;
-            (disposition, engine.state().current_step_state.clone())
-        } else {
-            (
-                ResultDisposition::Retry(RetryReason::SetupNotReady),
-                StepState::Completed,
-            ) // Preserve the previous Ok(false) behavior.
-        };
+        let disposition = self.setup_engine.receive_setup_data(
+            data,
+            msg_type,
+            from,
+            &self.program_id,
+            self.my_idx,
+            self.leader,
+            &self.participants,
+            &self.protocol,
+            program_context,
+        )?;
 
         // Preserve the previous behavior: save messages reported as processed.
         if disposition == ResultDisposition::Success(SuccessDetail::Processed) {
-            if engine_state == StepState::WaitingForParticipants {
+            let is_waiting_for_participants =
+                self.setup_engine.state().current_step_state == StepState::WaitingForParticipants;
+            if is_waiting_for_participants {
                 self.state = ProgramState::WaitingData;
             } else {
                 self.state = ProgramState::SettingUp;
@@ -870,12 +868,8 @@ impl Program {
         pubkey_hash: &PubKeyHash,
         msg_type: CommsMessageType,
     ) -> SetupMessageState {
-        match &self.setup_engine {
-            Some(engine) => {
-                engine.classify_participant_message(&self.participants, pubkey_hash, msg_type)
-            }
-            None => SetupMessageState::NotForCurrentStep,
-        }
+        self.setup_engine
+            .classify_participant_message(&self.participants, pubkey_hash, msg_type)
     }
 
     /// Main entry point for processing incoming communication messages
@@ -1034,7 +1028,8 @@ mod tests {
         )];
         let protocol =
             new_protocol_type(program_id, PROGRAM_TYPE_AGGREGATED_KEY, 0, storage.clone()).unwrap();
-        let setup_engine = Program::try_create_setup_engine(&protocol, participants.len()).unwrap();
+        let setup_engine = Program::create_setup_engine(&protocol, participants.len()).unwrap();
+        let setup_engine_state = setup_engine.state().clone();
 
         Program {
             program_id,
@@ -1043,7 +1038,7 @@ mod tests {
             leader: 0,
             protocol,
             state: ProgramState::SettingUp,
-            setup_engine_state: None,
+            setup_engine_state,
             setup_engine,
             storage: Some(storage),
         }
@@ -1116,7 +1111,10 @@ mod tests {
         assert_eq!(serialized_program.state, ProgramState::SettingUp);
         assert_eq!(serialized_state, ProgramState::WaitingData);
         assert_eq!(serialized_program.program_id, program_id);
-        assert!(serialized_program.setup_engine_state.is_some());
+        assert_eq!(
+            serialized_program.setup_engine.state(),
+            &serialized_program.setup_engine_state
+        );
     }
 
     #[test]
@@ -1134,10 +1132,7 @@ mod tests {
         assert_eq!(loaded.state, ProgramState::Ready);
         assert!(loaded.storage.is_some());
         assert!(loaded.protocol.context().storage.is_some());
-        assert_eq!(
-            loaded.setup_engine.as_ref().unwrap().state(),
-            loaded.setup_engine_state.as_ref().unwrap()
-        );
+        assert_eq!(loaded.setup_engine.state(), &loaded.setup_engine_state);
     }
 
     #[test]
@@ -1251,7 +1246,7 @@ mod tests {
         assert_eq!(loaded.leader, 0);
         assert_eq!(loaded.participants, vec![self_address]);
         assert_eq!(loaded.state, ProgramState::SettingUp);
-        assert!(loaded.setup_engine.is_some());
+        assert_eq!(loaded.setup_engine.state().current_step_index, 0);
     }
 
     #[test]
@@ -1273,12 +1268,7 @@ mod tests {
         program.tick(&mut env.context).unwrap();
         assert_eq!(program.state, ProgramState::SettingUp);
         assert_eq!(
-            program
-                .setup_engine
-                .as_ref()
-                .unwrap()
-                .state()
-                .current_step_state,
+            program.setup_engine.state().current_step_state,
             StepState::AllParticipantsCompleted
         );
         let after_generation = Program::load(storage.clone(), &program_id)
@@ -1286,18 +1276,13 @@ mod tests {
             .unwrap();
         assert_eq!(after_generation.state, ProgramState::SettingUp);
         assert_eq!(
-            after_generation
-                .setup_engine
-                .as_ref()
-                .unwrap()
-                .state()
-                .current_step_state,
+            after_generation.setup_engine.state().current_step_state,
             StepState::AllParticipantsCompleted
         );
 
         program.tick(&mut env.context).unwrap();
         assert_eq!(program.state, ProgramState::Ready);
-        assert!(program.setup_engine.as_ref().unwrap().is_complete());
+        assert!(program.setup_engine.is_complete());
         assert!(env
             .context
             .globals
@@ -1309,7 +1294,7 @@ mod tests {
 
         let completed = Program::load(storage, &program_id).unwrap().unwrap();
         assert_eq!(completed.state, ProgramState::Ready);
-        assert!(completed.setup_engine.as_ref().unwrap().is_complete());
+        assert!(completed.setup_engine.is_complete());
 
         program.tick(&mut env.context).unwrap();
         assert_eq!(program.state, ProgramState::Ready);
@@ -1348,37 +1333,6 @@ mod tests {
             ProgramState::SettingUp
         );
         assert!(env.l2_messages().unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_tick_requests_setup_failure_recording() {
-        let mut env = TestProgramContextEnv::new("program-tick-no-engine").unwrap();
-        let dir = TestStorageDir::new("program-tick-no-engine-storage");
-        let mut program = test_program(dir.storage(), Uuid::new_v4());
-        let program_id = program.program_id;
-        program.setup_engine = None;
-
-        let error = program.tick(&mut env.context).unwrap_err();
-        assert!(env.l2_messages().unwrap().is_empty());
-        record_failure_request(&mut program, error, &mut env);
-        assert_eq!(program.state, ProgramState::Failed);
-
-        let messages = env.l2_messages().unwrap();
-        assert_eq!(messages.len(), 1);
-        match &messages[0] {
-            OutgoingBitVMXApiMessages::Error(report) => {
-                assert_eq!(report.scope, ErrorScope::Program(program_id));
-                match &report.kind {
-                    ErrorReportKind::SetupFailed { peer, reason, .. } => {
-                        assert!(peer.is_none());
-                        assert!(matches!(reason, SetupFailureReason::StepError(text)
-                            if text.contains("Protocol must return setup steps")));
-                    }
-                    other => panic!("expected SetupFailed, got {other:?}"),
-                }
-            }
-            other => panic!("expected Error, got {other:?}"),
-        }
     }
 
     #[test]
@@ -1525,7 +1479,7 @@ mod tests {
         let dir = TestStorageDir::new("program-control-storage");
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         let sender = program.participants[0].pubkey_hash.clone();
-        let initial_engine_state = program.setup_engine.as_ref().unwrap().state().clone();
+        let initial_engine_state = program.setup_engine.state().clone();
 
         for message_type in [
             CommsMessageType::VerificationKey,
@@ -1545,10 +1499,7 @@ mod tests {
                 ResultDisposition::Success(SuccessDetail::Processed)
             );
         }
-        assert_eq!(
-            program.setup_engine.as_ref().unwrap().state(),
-            &initial_engine_state
-        );
+        assert_eq!(program.setup_engine.state(), &initial_engine_state);
         assert_eq!(program.state, ProgramState::SettingUp);
     }
 

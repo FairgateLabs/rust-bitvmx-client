@@ -277,8 +277,8 @@ impl ProtocolHandler for AdvanceFundsProtocol {
     }
 
     // Override setup_steps to only use KeysStep
-    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
-        Some(vec![SetupStepName::Keys])
+    fn setup_steps(&self) -> Vec<SetupStepName> {
+        vec![SetupStepName::Keys]
     }
 }
 

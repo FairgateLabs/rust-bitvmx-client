@@ -775,16 +775,13 @@ pub trait ProtocolHandler {
     /// By default, returns the standard steps: keys, nonces, signatures.
     /// Protocols can override this method to customize their setup flow.
     ///
-    /// Returns None if the protocol doesn't use the SetupEngine system.
-    /// Protocols using Program MUST override this to return their required steps.
-    ///
     /// The steps will be created by the factory when needed.
-    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
-        Some(vec![
+    fn setup_steps(&self) -> Vec<SetupStepName> {
+        vec![
             SetupStepName::Keys,
             SetupStepName::Nonces,
             SetupStepName::Signatures,
-        ])
+        ]
     }
 
     fn add_connection_with_scripts<

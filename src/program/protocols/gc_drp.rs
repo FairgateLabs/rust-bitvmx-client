@@ -618,13 +618,13 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         Ok(())
     }
 
-    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
-        Some(vec![
+    fn setup_steps(&self) -> Vec<SetupStepName> {
+        vec![
             SetupStepName::Garbler,
             SetupStepName::Keys,
             SetupStepName::Nonces,
             SetupStepName::Signatures,
-        ])
+        ]
     }
 }
 
