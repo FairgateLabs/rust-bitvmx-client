@@ -24,7 +24,9 @@ use crate::{
 use bitcoin::{Transaction, Txid};
 use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use serde::{
+    de::Error as _, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer,
+};
 use serde_json::Value;
 use std::{rc::Rc, time::Duration};
 use storage_backend::{
@@ -81,7 +83,6 @@ impl ProgramState {
     }
 }
 
-#[derive(Serialize)]
 pub struct Program {
     pub program_id: Uuid,
     pub my_idx: usize,
@@ -89,19 +90,14 @@ pub struct Program {
     pub leader: usize,
     pub protocol: ProtocolType,
     /// Stored separately so program states can be queried without loading whole programs.
-    #[serde(skip)]
     state: ProgramState,
-    /// Serializable snapshot embedded in the program since SetupEngine contains trait objects.
-    setup_engine_state: SetupEngineState,
     /// Runtime setup engine, reconstructed when the program is deserialized.
-    #[serde(skip)]
     pub setup_engine: SetupEngine,
-    #[serde(skip)]
     storage: Option<Rc<Storage>>,
 }
 
 #[derive(Deserialize)]
-struct SerializedProgram {
+struct StoredProgram {
     program_id: Uuid,
     my_idx: usize,
     participants: Vec<CommsAddress>,
@@ -110,29 +106,42 @@ struct SerializedProgram {
     setup_engine_state: SetupEngineState,
 }
 
+impl Serialize for Program {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut program = serializer.serialize_struct("Program", 6)?;
+        program.serialize_field("program_id", &self.program_id)?;
+        program.serialize_field("my_idx", &self.my_idx)?;
+        program.serialize_field("participants", &self.participants)?;
+        program.serialize_field("leader", &self.leader)?;
+        program.serialize_field("protocol", &self.protocol)?;
+        program.serialize_field("setup_engine_state", self.setup_engine.state())?;
+        program.end()
+    }
+}
+
 impl<'de> Deserialize<'de> for Program {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let serialized = SerializedProgram::deserialize(deserializer)?;
-        let mut setup_engine = SetupEngine::new(
-            serialized.protocol.setup_steps(),
-            serialized.participants.len(),
-        )
-        .map_err(D::Error::custom)?;
+        let stored = StoredProgram::deserialize(deserializer)?;
+        let mut setup_engine =
+            SetupEngine::new(stored.protocol.setup_steps(), stored.participants.len())
+                .map_err(D::Error::custom)?;
         setup_engine
-            .restore_state(serialized.setup_engine_state.clone())
+            .restore_state(stored.setup_engine_state)
             .map_err(D::Error::custom)?;
 
         Ok(Self {
-            program_id: serialized.program_id,
-            my_idx: serialized.my_idx,
-            participants: serialized.participants,
-            leader: serialized.leader,
-            protocol: serialized.protocol,
+            program_id: stored.program_id,
+            my_idx: stored.my_idx,
+            participants: stored.participants,
+            leader: stored.leader,
+            protocol: stored.protocol,
             state: ProgramState::default(),
-            setup_engine_state: serialized.setup_engine_state,
             setup_engine,
             storage: None,
         })
@@ -308,16 +317,14 @@ impl Program {
         protocol.set_storage(storage.clone());
 
         let setup_engine = Self::create_setup_engine(&protocol, peers.len())?;
-        let setup_engine_state = setup_engine.state().clone();
 
-        let mut program = Program {
+        let program = Program {
             program_id,
             my_idx,
             participants: peers,
             leader,
             protocol,
             state: ProgramState::SettingUp,
-            setup_engine_state,
             setup_engine,
             storage: Some(storage.clone()),
         };
@@ -359,19 +366,13 @@ impl Program {
     /// Saves the program to storage
     ///
     /// This method:
-    /// 1. Snapshots the non-serializable SetupEngine into `setup_engine_state`.
-    /// 2. Saves the program without its runtime-only fields or state.
-    /// 3. Saves the state separately so it can be queried without loading the whole program.
-    ///
-    /// Fields marked with `#[serde(skip)]` are excluded from program serialization.
-    pub fn save(&mut self) -> Result<(), ProgramError> {
+    /// 1. Saves the program with the SetupEngine's current state.
+    /// 2. Saves the program state separately so it can be queried without loading the whole program.
+    pub fn save(&self) -> Result<(), ProgramError> {
         let storage = self
             .storage
             .clone()
             .ok_or(ProgramError::StorageUnavailable)?;
-
-        // Save SetupEngine state before serializing (since SetupEngine itself can't be serialized)
-        self.setup_engine_state = self.setup_engine.state().clone();
 
         info!(
             "Program::save() - Saving program {} with state: {:?}",
@@ -1031,7 +1032,6 @@ mod tests {
         let protocol =
             new_protocol_type(program_id, PROGRAM_TYPE_AGGREGATED_KEY, 0, storage.clone()).unwrap();
         let setup_engine = Program::create_setup_engine(&protocol, participants.len()).unwrap();
-        let setup_engine_state = setup_engine.state().clone();
 
         Program {
             program_id,
@@ -1040,7 +1040,6 @@ mod tests {
             leader: 0,
             protocol,
             state: ProgramState::SettingUp,
-            setup_engine_state,
             setup_engine,
             storage: Some(storage),
         }
@@ -1115,7 +1114,7 @@ mod tests {
         assert_eq!(serialized_program.program_id, program_id);
         assert_eq!(
             serialized_program.setup_engine.state(),
-            &serialized_program.setup_engine_state
+            program.setup_engine.state()
         );
     }
 
@@ -1134,7 +1133,7 @@ mod tests {
         assert_eq!(loaded.state, ProgramState::Ready);
         assert!(loaded.storage.is_some());
         assert!(loaded.protocol.context().storage.is_some());
-        assert_eq!(loaded.setup_engine.state(), &loaded.setup_engine_state);
+        assert_eq!(loaded.setup_engine.state(), program.setup_engine.state());
     }
 
     #[test]
