@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::errors::BitVMXError;
+use crate::helper::{compute_pubkey_hash, rsa_public_key_pem};
 use crate::leader_broadcast::LeaderBroadcastHelper;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
@@ -70,6 +71,22 @@ impl Drop for TestStorageDir {
 /// with the development comms RSA key imported, and can build a `BrokerNode`
 /// for tests that exercise the comms send path.
 ///
+/// Development comms key of remote peer `index` (`op_{index + 2}`).
+fn peer_key_path(index: usize) -> String {
+    format!("config/keys/op_{}.key", index + 2)
+}
+
+/// Validated comms address for a development key, e.g. `config/keys/op_10.key`.
+pub fn dev_comms_address(address: &str, key_path: &str) -> Result<CommsAddress, BitVMXError> {
+    let pem = rsa_public_key_pem(&settings::decrypt_or_read_file(key_path)?)?;
+    CommsAddress::try_new(
+        address.parse().map_err(|_| BitVMXError::InvalidMessageFormat)?,
+        compute_pubkey_hash(&pem)?,
+        pem,
+    )
+    .map_err(BitVMXError::InvalidMessage)
+}
+
 /// Internal building block of [`TestProgramContextEnv`] — write tests against
 /// that instead; the context env costs barely more and provides everything
 /// this does plus globals, broker channel and the coordinator mock.
@@ -185,7 +202,7 @@ impl TestCommsEnv {
         Ok(BrokerNode::new_peers_with_paths(
             &name,
             address,
-            &format!("config/keys/op_{}.key", index + 2),
+            &peer_key_path(index),
             self.storage.clone(),
             &format!("{}/comms-{}.db", self._dir.path(), name),
             &self.config.comms.allow_list,
@@ -489,10 +506,15 @@ impl TestProgramContextEnv {
             .collect()
     }
 
-    /// Comms address of peer `index` (its real address and pubkey hash).
+    /// Comms address of peer `index` (its real address, pubkey hash and pubkey).
     pub fn peer_address(&self, index: usize) -> Result<CommsAddress, BitVMXError> {
         let peer = &self.peers[index];
-        Ok(CommsAddress::new(peer.get_address(), peer.get_pubk_hash()?))
+        let private_key = settings::decrypt_or_read_file(&peer_key_path(index))?;
+        Ok(CommsAddress::new(
+            peer.get_address(),
+            peer.get_pubk_hash()?,
+            rsa_public_key_pem(&private_key)?,
+        ))
     }
 
     /// Comms address of the context's own channel. Messages sent here are
@@ -501,6 +523,7 @@ impl TestProgramContextEnv {
         Ok(CommsAddress::new(
             self.context.comms.get_address(),
             self.context.comms.get_pubk_hash()?,
+            self.context.rsa_public_key.clone(),
         ))
     }
 

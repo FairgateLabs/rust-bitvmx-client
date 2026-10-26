@@ -788,16 +788,14 @@ mod tests {
     use super::*;
     use crate::{
         program::variables::VariableTypes,
-        test_utils::{TestProgramContextEnv, TestStorageDir},
+        test_utils::{dev_comms_address, TestProgramContextEnv, TestStorageDir},
         types::PROGRAM_TYPE_AGGREGATED_KEY,
     };
     use bitcoin::{absolute::LockTime, transaction::Version};
 
     fn test_program(storage: Rc<Storage>, program_id: Uuid) -> Program {
-        let participants = vec![CommsAddress::new(
-            "127.0.0.1:10000".parse().unwrap(),
-            "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f".to_string(),
-        )];
+        let participants =
+            vec![dev_comms_address("127.0.0.1:10000", "config/keys/op_10.key").unwrap()];
         let protocol =
             new_protocol_type(program_id, PROGRAM_TYPE_AGGREGATED_KEY, 0, storage.clone()).unwrap();
         let setup_engine = Program::try_create_setup_engine(&protocol, participants.len()).unwrap();
@@ -929,11 +927,7 @@ mod tests {
             Err(BitVMXError::InvalidMessageFormat)
         ));
 
-        let stranger = CommsAddress::try_new(
-            "127.0.0.1:29999".parse().unwrap(),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-        )
-        .unwrap();
+        let stranger = dev_comms_address("127.0.0.1:29999", "config/keys/op_10.key").unwrap();
         let missing_local_result = Program::new(
             Uuid::new_v4(),
             PROGRAM_TYPE_AGGREGATED_KEY,

@@ -249,6 +249,15 @@ impl BitVMX {
         Ok(self.program_context.comms.get_pubk_hash()?)
     }
 
+    pub fn comms_address(&self) -> Result<CommsAddress, BitVMXError> {
+        CommsAddress::try_new(
+            self.address(),
+            self.pubkey_hash()?,
+            self.program_context.rsa_public_key.clone(),
+        )
+        .map_err(BitVMXError::InvalidMessage)
+    }
+
     pub fn get_components_config(&self) -> &ComponentsConfig {
         &self.config.components
     }
@@ -1632,13 +1641,7 @@ impl BitVMX {
                 )?;
             }
             IncomingBitVMXApiMessages::GetCommInfo(uuid) => {
-                let comm_info = OutgoingBitVMXApiMessages::CommInfo(
-                    uuid,
-                    CommsAddress {
-                        address: self.program_context.comms.get_address(),
-                        pubkey_hash: self.program_context.comms.get_pubk_hash()?,
-                    },
-                );
+                let comm_info = OutgoingBitVMXApiMessages::CommInfo(uuid, self.comms_address()?);
                 self.reply(from, comm_info)?;
             }
             IncomingBitVMXApiMessages::Ping(uuid) => {

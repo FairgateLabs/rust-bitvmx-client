@@ -782,9 +782,12 @@ mod tests {
 
     #[test]
     fn get_non_leader_participants_filters_out_leader() {
-        let leader = CommsAddress::new("127.0.0.1:1000".parse().unwrap(), "leader".into());
-        let bob = CommsAddress::new("127.0.0.1:1001".parse().unwrap(), "bob".into());
-        let carol = CommsAddress::new("127.0.0.1:1002".parse().unwrap(), "carol".into());
+        let address = |port: &str, hash: &str| {
+            CommsAddress::new(port.parse().unwrap(), hash.into(), String::new())
+        };
+        let leader = address("127.0.0.1:1000", "leader");
+        let bob = address("127.0.0.1:1001", "bob");
+        let carol = address("127.0.0.1:1002", "carol");
 
         let non_leaders = get_non_leader_participants(
             &[leader.clone(), bob.clone(), carol.clone()],

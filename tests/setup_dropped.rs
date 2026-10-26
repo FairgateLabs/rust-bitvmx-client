@@ -6,6 +6,7 @@ use bitvmx_client::bitvmx::{BitVMX, Context};
 use bitvmx_client::comms_allow_list;
 use bitvmx_client::comms_helper::{deserialize_msg, serialize_msg, CommsMessageType};
 use bitvmx_client::config::Config;
+use bitvmx_client::helper::rsa_public_key_pem;
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::types::{
     ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
@@ -43,17 +44,22 @@ impl RawPeer {
         common::clear_db(&config.storage.path);
 
         let store = Rc::new(Storage::new(&config.storage)?);
+        let private_key = settings::decrypt_or_read_file(&config.comms.priv_key)?;
         let node = BrokerNode::new_peers(
             "comms",
             config.comms.address,
-            &settings::decrypt_or_read_file(&config.comms.priv_key)?,
+            &private_key,
             store.clone(),
             &config.comms.storage_path,
             comms_allow_list::build(&store, &config.comms.allow_list)?,
             config.broker.settings.clone(),
         )?;
 
-        let address = CommsAddress::new(node.get_address(), node.get_pubk_hash()?);
+        let address = CommsAddress::new(
+            node.get_address(),
+            node.get_pubk_hash()?,
+            rsa_public_key_pem(&private_key)?,
+        );
         info!("Raw peer listening as {:?}", address);
         Ok(Self { node, address })
     }
@@ -134,7 +140,7 @@ fn start_program(
     leader: u16,
 ) -> Result<Uuid> {
     let program_id = Uuid::new_v4();
-    let me = CommsAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?);
+    let me = bitvmx.comms_address()?;
 
     channel.send(
         &bitvmx.get_components_config().bitvmx,
@@ -220,7 +226,7 @@ fn dropped_setup_messages_are_reported_to_l2() -> Result<()> {
     info!("Phase 1: setup data that can never be verified");
     let program_id = start_program(&mut bitvmx, &mut peer, &channel, 0)?;
     peer.send(
-        &CommsAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?),
+        &bitvmx.comms_address()?,
         &program_id,
         CommsMessageType::Keys,
         json!({ "keys": [] }),
@@ -241,7 +247,7 @@ fn dropped_setup_messages_are_reported_to_l2() -> Result<()> {
     info!("Phase 2: a verification key the client cannot accept");
     let program_id = start_program(&mut bitvmx, &mut peer, &channel, 0)?;
     peer.send(
-        &CommsAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?),
+        &bitvmx.comms_address()?,
         &program_id,
         CommsMessageType::VerificationKey,
         json!({ "verification_key": "-----BEGIN PUBLIC KEY-----\nnot this peer's key\n-----END PUBLIC KEY-----" }),
