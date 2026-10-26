@@ -2,7 +2,7 @@ use super::{BitVMX, Context, StoreKey};
 use crate::comms_allow_list;
 use crate::error_handling::is_fatal;
 use crate::errors::BitVMXError;
-use crate::expected_job::{ExpectedJobRegistration, ExpectedJobStatus};
+use crate::expected_job::{ExpectedJobRegistration, ExpectedJobStatus, JOB_TIMEOUT_REASON};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::participant::CommsAddress;
 use crate::program::program::Program;
@@ -551,7 +551,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     }
 
     pub(super) fn fail_zkp_timeout(&mut self, id: Uuid, job_id: &str) -> Result<(), BitVMXError> {
-        let reason = "dispatcher job execution timed out".to_string();
+        let reason = JOB_TIMEOUT_REASON.to_string();
         let execution: Option<ZKPExecution> = self
             .store
             .get(StoreKey::ZKPExecution(id).get_key()?, None)?;

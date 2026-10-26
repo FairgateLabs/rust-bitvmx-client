@@ -24,6 +24,62 @@ static EXPECTED_JOB_IDS_KEY: LazyLock<StorageKey> = LazyLock::new(|| {
 const RETRY_MIN_DELAY_MS: u64 = 1_000;
 const RETRY_MAX_DELAY_MS: u64 = 300_000;
 
+/// Failure reason recorded when a dispatcher job exceeds its execution timeout.
+pub(crate) const JOB_TIMEOUT_REASON: &str = "dispatcher job execution timed out";
+
+/// What a dispatcher job id refers to. Derived from the wire id, so registration and
+/// result ingress apply the same source-specific contract.
+#[derive(Debug)]
+pub(crate) enum JobTarget {
+    Request(Uuid),
+    Setup(Uuid, Context),
+    Program(Uuid, Context),
+}
+
+impl JobTarget {
+    pub fn derive(dispatcher: JobDispatcherType, job_id: &str) -> Result<Self, BitVMXError> {
+        match dispatcher {
+            JobDispatcherType::ZKP => {
+                Ok(Self::Request(Uuid::parse_str(job_id).map_err(|error| {
+                    BitVMXError::InvalidMessage(format!("invalid ZKP job id '{job_id}': {error}"))
+                })?))
+            }
+            JobDispatcherType::Garbler | JobDispatcherType::Emulator => {
+                match Context::from_string(job_id)? {
+                    context @ Context::SetupStep(program_id, _, _, _)
+                        if dispatcher == JobDispatcherType::Garbler =>
+                    {
+                        Ok(Self::Setup(program_id, context))
+                    }
+                    context @ Context::ProgramStep(program_id, _) => {
+                        Ok(Self::Program(program_id, context))
+                    }
+                    context => Err(BitVMXError::InvalidMessage(format!(
+                        "unsupported {dispatcher:?} job context: {context:?}"
+                    ))),
+                }
+            }
+        }
+    }
+
+    pub fn owner(&self) -> ExpectedJobOwner {
+        match self {
+            Self::Request(id) => ExpectedJobOwner::Request(*id),
+            Self::Setup(program_id, _) | Self::Program(program_id, _) => {
+                ExpectedJobOwner::Program(*program_id)
+            }
+        }
+    }
+
+    pub fn kind(&self) -> ExpectedJobKind {
+        match self {
+            Self::Request(_) => ExpectedJobKind::Zkp,
+            Self::Setup(_, _) => ExpectedJobKind::Setup,
+            Self::Program(_, _) => ExpectedJobKind::Program,
+        }
+    }
+}
+
 /// Durable description of a job issued to an authenticated dispatcher.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ExpectedJob {
@@ -117,35 +173,8 @@ impl ExpectedJobs {
         dispatch: Option<ExpectedJobDispatch>,
         execution_timeout: Option<Duration>,
     ) -> Result<ExpectedJobRegistration, BitVMXError> {
-        let (owner, kind) = match dispatcher {
-            JobDispatcherType::ZKP => (
-                ExpectedJobOwner::Request(Uuid::parse_str(&job_id).map_err(|error| {
-                    BitVMXError::InvalidMessage(format!("invalid ZKP job id '{job_id}': {error}"))
-                })?),
-                ExpectedJobKind::Zkp,
-            ),
-            JobDispatcherType::Garbler | JobDispatcherType::Emulator => {
-                match Context::from_string(&job_id)? {
-                    Context::SetupStep(program_id, _, _, _)
-                        if dispatcher == JobDispatcherType::Garbler =>
-                    {
-                        (
-                            ExpectedJobOwner::Program(program_id),
-                            ExpectedJobKind::Setup,
-                        )
-                    }
-                    Context::ProgramStep(program_id, _) => (
-                        ExpectedJobOwner::Program(program_id),
-                        ExpectedJobKind::Program,
-                    ),
-                    context => {
-                        return Err(BitVMXError::InvalidMessage(format!(
-                            "unsupported {dispatcher:?} job context: {context:?}"
-                        )))
-                    }
-                }
-            }
-        };
+        let target = JobTarget::derive(dispatcher, &job_id)?;
+        let (owner, kind) = (target.owner(), target.kind());
         let timeout = execution_timeout.unwrap_or(DEFAULT_JOB_TIMEOUT);
         let execution_timeout_ms = Some(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX));
         let job = ExpectedJob {

@@ -2,7 +2,7 @@ use super::{BitVMX, Context, StoreKey};
 use crate::{
     error_handling::try_send_error_report,
     errors::BitVMXError,
-    expected_job::{ExpectedJob, ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus},
+    expected_job::{ExpectedJob, ExpectedJobStatus, JobTarget, JOB_TIMEOUT_REASON},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     types::{
         DispatcherJobFailure, ErrorReport, ErrorReportKind, ErrorScope, FailureDetail,
@@ -20,28 +20,125 @@ use uuid::Uuid;
 use zk_result::ResultType as ProverResultType;
 
 /// Outcome of decoding a message from an authenticated dispatcher route. Result
-/// payloads remain encoded until the dispatcher-specific handler validates them.
+/// payloads remain encoded until the target-specific handler validates them.
 #[derive(Debug)]
-enum DispatcherIngress<C> {
-    Result(ResultMessage, C),
+enum DispatcherIngress {
+    Result(ResultMessage, JobTarget),
     Settled(ResultDisposition),
 }
 
-struct ExpectedJobCorrelation<C> {
-    context: C,
-    owner: ExpectedJobOwner,
-    kind: ExpectedJobKind,
+/// Checks correlation shared by all result handlers: the result must come from the
+/// dispatcher the job was issued to and the job must still be awaiting a result.
+fn rejection(expected: &ExpectedJob, dispatcher: JobDispatcherType) -> Option<NoOpReason> {
+    if expected.dispatcher != dispatcher {
+        warn!(
+            "Ignoring result for job '{}' from {dispatcher:?}; expected {:?}",
+            expected.job_id, expected.dispatcher
+        );
+        return Some(NoOpReason::Uncorrelatable);
+    }
+    match &expected.status {
+        ExpectedJobStatus::Pending => None,
+        status => {
+            if let ExpectedJobStatus::Failed(reason) = status {
+                if reason.contains(JOB_TIMEOUT_REASON) {
+                    error!(
+                        "Discarding late result from {dispatcher:?} for timed-out job '{}': {}",
+                        expected.job_id, reason
+                    );
+                }
+            }
+            Some(NoOpReason::Duplicate)
+        }
+    }
+}
+
+/// Validates a prover result, returning the seal and journal or the failure reason
+/// reported to the requester.
+fn parse_zkp_output(message: &ResultMessage) -> Result<(Vec<u8>, Vec<u8>), String> {
+    if message.is_error {
+        return Err(message.result.clone());
+    }
+    let ProverResultType::ProveResult {
+        seal,
+        journal,
+        status,
+    } = serde_json::from_str::<ProverResultType>(&message.result).map_err(|error| {
+        warn!(
+            "Invalid ZKP result payload. Raw result: {}; error: {error}",
+            message.result
+        );
+        format!("invalid successful result payload: {error}")
+    })?;
+    if status != "OK" {
+        return Err(format!("prover returned unsuccessful status: {status}"));
+    }
+    Ok((seal, journal))
+}
+
+/// Dispatcher-declared failures contain plain text, while labelled successes must
+/// contain JSON. Both are attributable output failures.
+fn parse_program_payload(message: &ResultMessage) -> Result<serde_json::Value, String> {
+    if message.is_error {
+        return Err(message.result.clone());
+    }
+    message
+        .result_as_value()
+        .map_err(|error| format!("invalid successful result payload: {error}"))
 }
 
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
+    fn complete_job(&self, job_id: &str) -> Result<(), BitVMXError> {
+        self.program_context
+            .expected_jobs
+            .complete(&self.program_context.operation_timeouts, job_id)
+    }
+
+    fn fail_job(&self, job_id: &str, reason: String) -> Result<(), BitVMXError> {
+        self.program_context.expected_jobs.fail(
+            &self.program_context.operation_timeouts,
+            job_id,
+            reason,
+        )
+    }
+
+    fn discard_job(&self, job_id: &str, reason: String) -> Result<(), BitVMXError> {
+        self.program_context.expected_jobs.discard(
+            &self.program_context.operation_timeouts,
+            job_id,
+            reason,
+        )
+    }
+
+    fn retry_job(&self, job_id: &str, reason: String) -> Result<(), BitVMXError> {
+        self.program_context.expected_jobs.retry_pending(
+            &self.program_context.operation_timeouts,
+            job_id,
+            reason,
+        )
+    }
+
+    /// Maps an authenticated sender to the dispatcher route it owns, if any.
+    fn dispatcher_for(&self, from: &Identifier) -> Option<JobDispatcherType> {
+        let components = &self.config.components;
+        if *from == components.garbler {
+            Some(JobDispatcherType::Garbler)
+        } else if *from == components.emulator {
+            Some(JobDispatcherType::Emulator)
+        } else if *from == components.prover {
+            Some(JobDispatcherType::ZKP)
+        } else {
+            None
+        }
+    }
+
     /// Applies common envelope and control-message handling for every authenticated
-    /// dispatcher route, leaving only encoded result payloads to source-specific handlers.
-    fn dispatcher_result_message<C>(
+    /// dispatcher route, leaving only encoded result payloads to target-specific handlers.
+    fn decode_dispatcher_message(
         &mut self,
         dispatcher: JobDispatcherType,
         msg: &str,
-        correlate: impl FnOnce(&ExpectedJob) -> Result<ExpectedJobCorrelation<C>, String>,
-    ) -> Result<DispatcherIngress<C>, BitVMXError> {
+    ) -> Result<DispatcherIngress, BitVMXError> {
         if let Ok(message) = serde_json::from_str::<PingMessage>(msg) {
             self.ping_helper.received_message(
                 dispatcher,
@@ -72,11 +169,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 NoOpReason::Orphaned,
             )));
         };
-        if let Err(disposition) = self.pending_expected_job(&expected, dispatcher)? {
-            return Ok(DispatcherIngress::Settled(disposition));
+        if let Some(reason) = rejection(&expected, dispatcher) {
+            return Ok(DispatcherIngress::Settled(ResultDisposition::NoOp(reason)));
         }
-        let correlation = match correlate(&expected) {
-            Ok(correlation) => correlation,
+        let target = match JobTarget::derive(dispatcher, &message.job_id) {
+            Ok(target) => target,
             Err(error) => {
                 warn!(
                     "Ignoring {dispatcher:?} result with uncorrelatable job id '{}': {error}",
@@ -87,7 +184,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 )));
             }
         };
-        if expected.owner != correlation.owner || expected.kind != correlation.kind {
+        if expected.owner != target.owner() || expected.kind != target.kind() {
             warn!(
                 "Expected-job metadata does not match result '{}'",
                 message.job_id
@@ -96,36 +193,25 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 NoOpReason::Uncorrelatable,
             )));
         }
-        Ok(DispatcherIngress::Result(message, correlation.context))
+        Ok(DispatcherIngress::Result(message, target))
     }
 
-    /// Checks correlation shared by all result handlers. Dispatcher compatibility is
-    /// returned to the caller because program jobs and request jobs settle a wrong
-    /// authenticated source differently.
-    fn pending_expected_job(
-        &self,
-        expected: &ExpectedJob,
+    /// Decodes one dispatcher message and routes its result to the owning request or program.
+    fn handle_job_result(
+        &mut self,
         dispatcher: JobDispatcherType,
-    ) -> Result<Result<(), ResultDisposition>, BitVMXError> {
-        if expected.dispatcher != dispatcher {
-            warn!(
-                "Ignoring result for job '{}' from {dispatcher:?}; expected {:?}",
-                expected.job_id, expected.dispatcher
-            );
-            return Ok(Err(ResultDisposition::NoOp(NoOpReason::Uncorrelatable)));
-        }
-        if !matches!(expected.status, ExpectedJobStatus::Pending) {
-            if let ExpectedJobStatus::Failed(reason) = &expected.status {
-                if reason.contains("dispatcher job execution timed out") {
-                    error!(
-                        "Discarding late result from {dispatcher:?} for timed-out job '{}': {}",
-                        expected.job_id, reason
-                    );
-                }
+        msg: &str,
+    ) -> Result<ResultDisposition, BitVMXError> {
+        let (message, target) = match self.decode_dispatcher_message(dispatcher, msg)? {
+            DispatcherIngress::Result(message, target) => (message, target),
+            DispatcherIngress::Settled(disposition) => return Ok(disposition),
+        };
+        match target {
+            JobTarget::Request(id) => self.handle_zkp_result(id, message),
+            JobTarget::Setup(program_id, context) | JobTarget::Program(program_id, context) => {
+                self.handle_program_result(dispatcher, program_id, context, message)
             }
-            return Ok(Err(ResultDisposition::NoOp(NoOpReason::Duplicate)));
         }
-        Ok(Ok(()))
     }
 
     pub(super) fn fail_zkp_result(
@@ -140,30 +226,15 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             requester,
             OutgoingBitVMXApiMessages::ProofGenerationError(id, status.clone()),
         )?;
-        self.program_context.expected_jobs.fail(
-            &self.program_context.operation_timeouts,
-            job_id,
-            status,
-        )?;
+        self.fail_job(job_id, status)?;
         Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
-    fn handle_prover_message(&mut self, msg: &str) -> Result<ResultDisposition, BitVMXError> {
-        let (result_message, id) =
-            match self.dispatcher_result_message(JobDispatcherType::ZKP, msg, |expected| {
-                let ExpectedJobOwner::Request(id) = expected.owner else {
-                    return Err("ZKP job does not have a request owner".to_string());
-                };
-                Ok(ExpectedJobCorrelation {
-                    context: id,
-                    owner: ExpectedJobOwner::Request(id),
-                    kind: ExpectedJobKind::Zkp,
-                })
-            })? {
-                DispatcherIngress::Result(result, id) => (result, id),
-                DispatcherIngress::Settled(disposition) => return Ok(disposition),
-            };
-
+    fn handle_zkp_result(
+        &mut self,
+        id: Uuid,
+        message: ResultMessage,
+    ) -> Result<ResultDisposition, BitVMXError> {
         // Correlate before recording either success or failure. An unknown request
         // cannot be answered and must not poison the shared inbox.
         let execution: Option<ZKPExecution> = self
@@ -172,152 +243,72 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let Some(execution) = execution else {
             let reason = format!("Missing requester correlation for ZKP job {id}");
             warn!("{reason}");
-            self.program_context.expected_jobs.fail(
-                &self.program_context.operation_timeouts,
-                &result_message.job_id,
-                reason,
-            )?;
+            self.fail_job(&message.job_id, reason)?;
             return Ok(ResultDisposition::NoOp(NoOpReason::Orphaned));
         };
-        let from = execution.requester().clone();
+        let requester = execution.requester().clone();
 
-        if result_message.is_error {
-            return self.fail_zkp_result(id, &result_message.job_id, from, result_message.result);
-        }
-
-        let ProverResultType::ProveResult {
-            seal,
-            journal,
-            status,
-        } = match serde_json::from_str::<ProverResultType>(&result_message.result) {
-            Ok(result) => result,
-            Err(error) => {
-                warn!("Invalid ZKP result payload. Raw message: {msg}; error: {error}");
-                return self.fail_zkp_result(
-                    id,
-                    &result_message.job_id,
-                    from,
-                    format!("invalid successful result payload: {error}"),
-                );
-            }
+        let (seal, journal) = match parse_zkp_output(&message) {
+            Ok(output) => output,
+            Err(reason) => return self.fail_zkp_result(id, &message.job_id, requester, reason),
         };
-
-        if status != "OK" {
-            return self.fail_zkp_result(
-                id,
-                &result_message.job_id,
-                from,
-                format!("prover returned unsuccessful status: {status}"),
-            );
-        }
-
         self.store.set(
             StoreKey::ZKPExecution(id).get_key()?,
-            ZKPExecution::with_output(from.clone(), seal, journal),
+            ZKPExecution::with_output(requester.clone(), seal, journal),
             None,
         )?;
-
-        self.program_context.expected_jobs.complete(
-            &self.program_context.operation_timeouts,
-            &result_message.job_id,
-        )?;
+        self.complete_job(&message.job_id)?;
         let response = self.proof_ready(id)?;
-        self.reply(from, response)?;
+        self.reply(requester, response)?;
         Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
-    fn settle_program_result_disposition(
+    fn handle_program_result(
+        &mut self,
+        dispatcher: JobDispatcherType,
+        program_id: Uuid,
+        context: Context,
+        message: ResultMessage,
+    ) -> Result<ResultDisposition, BitVMXError> {
+        let Some(mut program) = self.load_program(&program_id)? else {
+            let reason = format!("Program {program_id} not found for dispatcher result");
+            error!("{reason}");
+            self.fail_job(&message.job_id, reason)?;
+            return Ok(ResultDisposition::NoOp(NoOpReason::Orphaned));
+        };
+
+        let disposition = match parse_program_payload(&message) {
+            Ok(parsed) => {
+                info!("Received result from dispatcher {}", parsed);
+                program.receive_dispatcher_result(
+                    parsed,
+                    context,
+                    dispatcher,
+                    &mut self.program_context,
+                )?
+            }
+            Err(reason) => program.receive_dispatcher_failure(&context, dispatcher, reason)?,
+        };
+        self.settle_program_job(&message.job_id, &disposition)?;
+        Ok(disposition)
+    }
+
+    /// Records the expected-job outcome implied by a program's result disposition.
+    fn settle_program_job(
         &self,
         job_id: &str,
         disposition: &ResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            ResultDisposition::Success(SuccessDetail::Processed) => self
-                .program_context
-                .expected_jobs
-                .complete(&self.program_context.operation_timeouts, job_id),
+            ResultDisposition::Success(SuccessDetail::Processed) => self.complete_job(job_id),
             ResultDisposition::NoOp(NoOpReason::Stale) => {
-                self.program_context.expected_jobs.discard(
-                    &self.program_context.operation_timeouts,
-                    job_id,
-                    "stale dispatcher result".to_string(),
-                )
+                self.discard_job(job_id, "stale dispatcher result".to_string())
             }
-            ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed) => {
-                self.program_context.expected_jobs.fail(
-                    &self.program_context.operation_timeouts,
-                    job_id,
-                    "owning setup failed before the dispatcher result settled".to_string(),
-                )
-            }
+            ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed) => self.fail_job(
+                job_id,
+                "owning setup failed before the dispatcher result settled".to_string(),
+            ),
             _ => Ok(()),
-        }
-    }
-
-    fn handle_dispatcher_message(
-        &mut self,
-        dispatcher: JobDispatcherType,
-        msg: &str,
-    ) -> Result<ResultDisposition, BitVMXError> {
-        let (result_message, (context, program_id)) =
-            match self.dispatcher_result_message(dispatcher, msg, |expected| {
-                let context =
-                    Context::from_string(&expected.job_id).map_err(|error| error.to_string())?;
-                let (program_id, kind) = match &context {
-                    Context::SetupStep(program_id, _, _, _) => {
-                        (*program_id, ExpectedJobKind::Setup)
-                    }
-                    Context::ProgramStep(program_id, _) => (*program_id, ExpectedJobKind::Program),
-                    _ => return Err(format!("unsupported dispatcher context: {context:?}")),
-                };
-                Ok(ExpectedJobCorrelation {
-                    context: (context, program_id),
-                    owner: ExpectedJobOwner::Program(program_id),
-                    kind,
-                })
-            })? {
-                DispatcherIngress::Result(result, context) => (result, context),
-                DispatcherIngress::Settled(disposition) => return Ok(disposition),
-            };
-
-        if let Some(mut program) = self.load_program(&program_id)? {
-            // Dispatcher-declared failures contain plain text, while labelled successes
-            // must contain JSON. Both are attributable output failures and use the same
-            // setup/runtime lifecycle classification.
-            let parsed_result = if result_message.is_error {
-                Err(result_message.result.clone())
-            } else {
-                result_message
-                    .result_as_value()
-                    .map_err(|error| format!("invalid successful result payload: {error}"))
-            };
-            let parsed: serde_json::Value = match parsed_result {
-                Ok(parsed) => parsed,
-                Err(reason) => {
-                    let disposition =
-                        program.receive_dispatcher_failure(&context, dispatcher, reason)?;
-                    self.settle_program_result_disposition(&result_message.job_id, &disposition)?;
-                    return Ok(disposition);
-                }
-            };
-            info!("Received result from dispatcher {}", parsed);
-            let disposition = program.receive_dispatcher_result(
-                parsed,
-                context,
-                dispatcher,
-                &mut self.program_context,
-            )?;
-            self.settle_program_result_disposition(&result_message.job_id, &disposition)?;
-            return Ok(disposition);
-        } else {
-            let reason = format!("Program {program_id} not found for dispatcher result");
-            error!("{reason}");
-            self.program_context.expected_jobs.fail(
-                &self.program_context.operation_timeouts,
-                &result_message.job_id,
-                reason,
-            )?;
-            return Ok(ResultDisposition::NoOp(NoOpReason::Orphaned));
         }
     }
 
@@ -342,11 +333,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 job_id,
                 reason,
             })) => {
-                self.program_context.expected_jobs.retry_pending(
-                    &self.program_context.operation_timeouts,
-                    &expected_job_id,
-                    reason.clone(),
-                )?;
+                self.retry_job(&expected_job_id, reason.clone())?;
                 try_send_error_report(
                     &self.program_context.broker_channel,
                     &self.program_context.components_config.l2,
@@ -380,37 +367,18 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     fn process_one_api_message(&mut self) -> Result<bool, BitVMXError> {
         // Receive one input so rollback restores it without consuming unvisited messages.
         let messages = self.program_context.broker_channel.check_receive(Some(1))?;
-        let processed = !messages.is_empty();
-        for message in messages {
-            let (from, msg) = match message {
-                ReceivedMessage::Msg(identifier, msg) => (identifier, msg),
-            };
+        let Some(ReceivedMessage::Msg(from, msg)) = messages.into_iter().next() else {
+            return Ok(false);
+        };
 
-            match from {
-                identifier if identifier == self.config.components.garbler => {
-                    let disposition =
-                        self.handle_dispatcher_message(JobDispatcherType::Garbler, &msg)?;
-                    self.apply_dispatcher_result_disposition(
-                        JobDispatcherType::Garbler,
-                        disposition,
-                    )?;
-                }
-                identifier if identifier == self.config.components.emulator => {
-                    let disposition =
-                        self.handle_dispatcher_message(JobDispatcherType::Emulator, &msg)?;
-                    self.apply_dispatcher_result_disposition(
-                        JobDispatcherType::Emulator,
-                        disposition,
-                    )?;
-                }
-                identifier if identifier == self.config.components.prover => {
-                    let disposition = self.handle_prover_message(&msg)?;
-                    self.apply_dispatcher_result_disposition(JobDispatcherType::ZKP, disposition)?;
-                }
-                _ => self.handle_api_message(msg, from)?,
-            };
+        match self.dispatcher_for(&from) {
+            Some(dispatcher) => {
+                let disposition = self.handle_job_result(dispatcher, &msg)?;
+                self.apply_dispatcher_result_disposition(dispatcher, disposition)?;
+            }
+            None => self.handle_api_message(msg, from)?,
         }
-        Ok(processed)
+        Ok(true)
     }
 }
 
@@ -460,17 +428,9 @@ mod tests {
 
         match env
             .bitvmx
-            .dispatcher_result_message(JobDispatcherType::ZKP, &result, |expected| {
-                let ExpectedJobOwner::Request(id) = expected.owner else {
-                    return Err("ZKP job does not have a request owner".to_string());
-                };
-                Ok(ExpectedJobCorrelation {
-                    context: id,
-                    owner: ExpectedJobOwner::Request(id),
-                    kind: ExpectedJobKind::Zkp,
-                })
-            }) {
-            Ok(DispatcherIngress::Result(result, context_id)) => {
+            .decode_dispatcher_message(JobDispatcherType::ZKP, &result)
+        {
+            Ok(DispatcherIngress::Result(result, JobTarget::Request(context_id))) => {
                 assert_eq!(context_id, id);
                 assert_eq!(result.job_id, id.to_string());
                 assert_eq!(result.result, "plain-text dispatcher failure");
@@ -479,21 +439,17 @@ mod tests {
             other => panic!("expected result envelope, got {other:?}"),
         }
         assert!(matches!(
-            env.bitvmx.dispatcher_result_message(
+            env.bitvmx.decode_dispatcher_message(
                 JobDispatcherType::Emulator,
                 &serde_json::to_string(&PingMessage::Pong).unwrap(),
-                |_| -> Result<ExpectedJobCorrelation<()>, String> { unreachable!() }
             ),
             Ok(DispatcherIngress::Settled(ResultDisposition::Success(
                 SuccessDetail::Processed
             )))
         ));
         assert!(matches!(
-            env.bitvmx.dispatcher_result_message(
-                JobDispatcherType::Emulator,
-                "not JSON",
-                |_| -> Result<ExpectedJobCorrelation<()>, String> { unreachable!() }
-            ),
+            env.bitvmx
+                .decode_dispatcher_message(JobDispatcherType::Emulator, "not JSON"),
             Ok(DispatcherIngress::Settled(ResultDisposition::NoOp(
                 NoOpReason::MalformedEnvelope
             )))
@@ -584,7 +540,7 @@ mod tests {
 
         assert_eq!(
             env.bitvmx
-                .handle_dispatcher_message(JobDispatcherType::Emulator, &message)
+                .handle_job_result(JobDispatcherType::Emulator, &message)
                 .unwrap(),
             ResultDisposition::NoOp(NoOpReason::Uncorrelatable)
         );
@@ -633,7 +589,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            env.bitvmx.handle_prover_message(&message).unwrap(),
+            env.bitvmx
+                .handle_job_result(JobDispatcherType::ZKP, &message)
+                .unwrap(),
             ResultDisposition::Success(SuccessDetail::Processed)
         );
         let expected = env
@@ -648,7 +606,9 @@ mod tests {
         };
         assert_eq!(status, "FAILED: prover process exited with status 1");
         assert_eq!(
-            env.bitvmx.handle_prover_message(&message).unwrap(),
+            env.bitvmx
+                .handle_job_result(JobDispatcherType::ZKP, &message)
+                .unwrap(),
             ResultDisposition::NoOp(NoOpReason::Duplicate)
         );
 
@@ -701,7 +661,9 @@ mod tests {
             .to_string()
             .unwrap();
         assert_eq!(
-            env.bitvmx.handle_prover_message(&late_result).unwrap(),
+            env.bitvmx
+                .handle_job_result(JobDispatcherType::ZKP, &late_result)
+                .unwrap(),
             ResultDisposition::NoOp(NoOpReason::Duplicate)
         );
     }
@@ -739,7 +701,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            env.bitvmx.handle_prover_message(&message).unwrap(),
+            env.bitvmx
+                .handle_job_result(JobDispatcherType::ZKP, &message)
+                .unwrap(),
             ResultDisposition::Success(SuccessDetail::Processed)
         );
         let expected = env
@@ -799,7 +763,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            env.bitvmx.handle_prover_message(&message).unwrap(),
+            env.bitvmx
+                .handle_job_result(JobDispatcherType::ZKP, &message)
+                .unwrap(),
             ResultDisposition::Success(SuccessDetail::Processed)
         );
         assert!(matches!(
@@ -829,7 +795,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            env.bitvmx.handle_prover_message(&message).unwrap(),
+            env.bitvmx
+                .handle_job_result(JobDispatcherType::ZKP, &message)
+                .unwrap(),
             ResultDisposition::NoOp(NoOpReason::Orphaned)
         );
         let execution: Option<ZKPExecution> = env
@@ -981,10 +949,7 @@ mod tests {
                     .to_string()
                     .unwrap();
 
-            let disposition = env
-                .bitvmx
-                .handle_dispatcher_message(dispatcher, &message)
-                .unwrap();
+            let disposition = env.bitvmx.handle_job_result(dispatcher, &message).unwrap();
             env.bitvmx
                 .apply_dispatcher_result_disposition(dispatcher, disposition)
                 .unwrap();

@@ -15,7 +15,9 @@ use crate::{
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
-    expected_job::{ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus, ExpectedJobs},
+    expected_job::{
+        ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus, ExpectedJobs, JOB_TIMEOUT_REASON,
+    },
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::{MessageQueue, PushOutcome, QueuedMessage},
     operation_timeout::{OperationTimeoutId, OperationTimeouts, TimeoutFailurePolicy},
@@ -1379,7 +1381,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     self.program_context.expected_jobs.fail(
                         &self.program_context.operation_timeouts,
                         &job_id,
-                        "dispatcher job execution timed out".to_string(),
+                        JOB_TIMEOUT_REASON.to_string(),
                     )?;
                 }
                 self.fail_program_setup(
@@ -1422,7 +1424,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         program_id,
                         expected_job_id: job_id.clone(),
                         job_id,
-                        reason: "dispatcher job execution timed out".to_string(),
+                        reason: JOB_TIMEOUT_REASON.to_string(),
                     }),
                 )
             }
