@@ -297,6 +297,15 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(self.program_context.comms.get_pubk_hash())
     }
 
+    pub fn comms_address(&self) -> Result<CommsAddress, BitVMXError> {
+        CommsAddress::try_new(
+            self.address(),
+            self.pubkey_hash()?,
+            self.program_context.rsa_public_key.clone(),
+        )
+        .map_err(BitVMXError::InvalidMessage)
+    }
+
     pub fn get_components_config(&self) -> &ComponentsConfig {
         &self.config.components
     }

@@ -203,7 +203,7 @@ impl RawPeer {
     }
 
     fn address(&self) -> CommsAddress {
-        CommsAddress::new(self.node.get_address(), self.node.get_pubk_hash())
+        bitvmx_client::test_utils::dev_comms_address(&self.node.get_address().to_string(), PEER_KEY_PATH).unwrap()
     }
 
     fn send(
@@ -255,7 +255,7 @@ fn replies_after_bad_signature_from_peer(announce_pkcs1: bool) -> Result<(Replie
         "the peer's TLS identity must be the fingerprint of the key it announces"
     );
 
-    let node_address = CommsAddress::new(env.bitvmx.address(), env.bitvmx.pubkey_hash()?);
+    let node_address = env.bitvmx.comms_address()?;
     let program_id = Uuid::new_v4();
     l2.send(
         &env.bitvmx.get_components_config().bitvmx,

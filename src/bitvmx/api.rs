@@ -979,10 +979,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 IncomingBitVMXApiMessages::GetCommInfo(id) => {
                     Ok(Some(OutgoingBitVMXApiMessages::CommInfo(
                         id,
-                        CommsAddress {
-                            address: self.program_context.comms.get_address(),
-                            pubkey_hash: self.program_context.comms.get_pubk_hash(),
-                        },
+                        self.comms_address()?,
                     )))
                 }
                 IncomingBitVMXApiMessages::Ping(id) => Ok(Some(Self::ping(id))),
@@ -1434,10 +1431,9 @@ mod tests {
     fn rejected_setup_key_does_not_keep_optional_keys() {
         let mut env = TestBitVMXEnv::new("api-setup-rejected-keys").unwrap();
         let id = Uuid::new_v4();
-        let stranger = CommsAddress {
-            address: env.bitvmx.program_context.comms.get_address(),
-            pubkey_hash: "ab".repeat(32),
-        };
+        let stranger = crate::test_utils::dev_comms_address(
+            &env.bitvmx.address().to_string(), "config/keys/op_10.key",
+        ).unwrap();
 
         send_api(
             &mut env.bitvmx,
@@ -1470,10 +1466,7 @@ mod tests {
         let empty_id = Uuid::new_v4();
         let leader_id = Uuid::new_v4();
         let duplicate_id = Uuid::new_v4();
-        let participant = CommsAddress {
-            address: env.bitvmx.program_context.comms.get_address(),
-            pubkey_hash: env.bitvmx.program_context.comms.get_pubk_hash(),
-        };
+        let participant = env.bitvmx.comms_address().unwrap();
 
         send_api(
             &mut env.bitvmx,

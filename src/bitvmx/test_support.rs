@@ -25,6 +25,7 @@ pub(super) fn self_address(env: &TestBitVMXEnv) -> CommsAddress {
     CommsAddress::new(
         env.bitvmx.program_context.comms.get_address(),
         env.bitvmx.program_context.comms.get_pubk_hash(),
+        env.bitvmx.program_context.rsa_public_key.clone(),
     )
 }
 

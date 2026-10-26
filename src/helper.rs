@@ -3,8 +3,8 @@ use bitvmx_broker::identification::identifier::PubkHash;
 use crate::errors::BitVMXError;
 use rsa::{
     pkcs1::DecodeRsaPublicKey,
-    pkcs8::{DecodePublicKey, EncodePublicKey, LineEnding},
-    RsaPublicKey,
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePublicKey, LineEnding},
+    RsaPrivateKey, RsaPublicKey,
 };
 use sha2::{Digest, Sha256};
 
@@ -34,4 +34,14 @@ pub fn canonical_verification_key(verification_key: &str) -> Result<String, BitV
     parse_rsa_public_key(verification_key)?
         .to_public_key_pem(LineEnding::default())
         .map_err(|_| invalid_rsa_public_key(verification_key))
+}
+
+/// PEM public key of a PKCS#8 PEM private key (e.g. a comms key file).
+pub fn rsa_public_key_pem(private_key: &str) -> Result<String, BitVMXError> {
+    let invalid = || BitVMXError::InvalidMessage("Invalid RSA private key".to_string());
+    RsaPrivateKey::from_pkcs8_pem(private_key)
+        .map_err(|_| invalid())?
+        .to_public_key()
+        .to_public_key_pem(LineEnding::LF)
+        .map_err(|_| invalid())
 }
