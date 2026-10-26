@@ -329,7 +329,8 @@ fn validate_pubkey_hash(pubkey_hash: &str) -> Result<(), String> {
 pub struct CommsAddress {
     pub address: SocketAddr,
     pub pubkey_hash: PubkHash,
-    /// Full comms RSA public key (PEM); hashes to `pubkey_hash`.
+    /// Full comms RSA public key (PEM). Must hash to `pubkey_hash`; the node checks it
+    /// when a program is created, since this crate carries no crypto dependencies.
     pub pubkey_pem: String,
 }
 
@@ -346,17 +347,6 @@ impl TryFrom<UncheckedCommsAddress> for CommsAddress {
     fn try_from(value: UncheckedCommsAddress) -> Result<Self, Self::Error> {
         CommsAddress::try_new(value.address, value.pubkey_hash, value.pubkey_pem)
     }
-}
-
-/// Hex SHA-256 of the SPKI DER, same scheme the broker uses for `PubkHash`.
-fn pubkey_hash_from_pem(pubkey: &str) -> Result<PubkHash, String> {
-    use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
-    use sha2::{Digest, Sha256};
-
-    let der = rsa::RsaPublicKey::from_public_key_pem(pubkey)
-        .and_then(|key| key.to_public_key_der())
-        .map_err(|e| format!("Invalid public key: {e}"))?;
-    Ok(hex::encode(Sha256::digest(der.as_bytes())))
 }
 
 impl CommsAddress {
@@ -376,9 +366,6 @@ impl CommsAddress {
         pubkey_pem: String,
     ) -> Result<Self, String> {
         validate_pubkey_hash(&pubkey_hash)?;
-        if pubkey_hash_from_pem(&pubkey_pem)? != pubkey_hash {
-            return Err("Public key does not match public-key hash".to_string());
-        }
         Ok(Self::new(address, pubkey_hash, pubkey_pem))
     }
 }
@@ -453,21 +440,6 @@ mod tests {
         )
     }
 
-    /// (pubkey_hash, pubkey_pem) of a development comms key, hashed by the broker itself.
-    fn identity(name: &str) -> (PubkHash, String) {
-        use bitvmx_broker::rpc::tls_helper::Cert;
-        use rsa::pkcs8::{DecodePrivateKey, EncodePublicKey, LineEnding};
-
-        let privk = std::fs::read_to_string(format!("config/keys/{name}.key")).unwrap();
-        let pem = rsa::RsaPrivateKey::from_pkcs8_pem(&privk)
-            .unwrap()
-            .to_public_key()
-            .to_public_key_pem(LineEnding::LF)
-            .unwrap();
-        let hash = Cert::new_with_privk(&privk).unwrap().get_pubk_hash().unwrap();
-        (hash, pem)
-    }
-
     #[test]
     fn rejects_empty_participant_list() {
         assert!(matches!(
@@ -517,7 +489,6 @@ mod tests {
 
     #[test]
     fn rejects_malformed_comms_address_hashes() {
-        let (_, pem) = identity("op_1");
         for hash in [
             "",
             "abc123",
@@ -528,7 +499,7 @@ mod tests {
             assert!(CommsAddress::try_new(
                 "127.0.0.1:1000".parse().unwrap(),
                 hash.to_string(),
-                pem.clone()
+                String::new()
             )
             .is_err());
         }
@@ -539,7 +510,7 @@ mod tests {
         let value = serde_json::json!({
             "address": "127.0.0.1:1000",
             "pubkey_hash": "not-a-fingerprint",
-            "pubkey_pem": identity("op_1").1
+            "pubkey_pem": "pem"
         });
 
         assert!(serde_json::from_value::<CommsAddress>(value).is_err());
@@ -732,24 +703,9 @@ mod tests {
     }
 
     #[test]
-    fn pubkey_pem_must_match_pubkey_hash() {
-        let (hash_1, pem_1) = identity("op_1");
-        let (_, pem_2) = identity("op_2");
-        let addr = "127.0.0.1:1000".parse().unwrap();
-
-        let address = CommsAddress::try_new(addr, hash_1.clone(), pem_1).unwrap();
-        let json = serde_json::to_string(&address).unwrap();
-        assert_eq!(serde_json::from_str::<CommsAddress>(&json).unwrap(), address);
-
-        assert!(CommsAddress::try_new(addr, hash_1.clone(), pem_2.clone()).is_err());
-        assert!(CommsAddress::try_new(addr, hash_1.clone(), "not a pem".to_string()).is_err());
-        let forged = serde_json::json!({
-            "address": "127.0.0.1:1000",
-            "pubkey_hash": hash_1,
-            "pubkey_pem": pem_2,
-        });
-        assert!(serde_json::from_value::<CommsAddress>(forged).is_err());
-        let missing = serde_json::json!({ "address": "127.0.0.1:1000", "pubkey_hash": hash_1 });
+    fn serde_requires_pubkey_pem() {
+        let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
+        let missing = serde_json::json!({ "address": "127.0.0.1:1000", "pubkey_hash": hash });
         assert!(serde_json::from_value::<CommsAddress>(missing).is_err());
     }
 }

@@ -8,6 +8,7 @@ use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
     error_handling::{classify, send_error_report, Severity},
+    helper::compute_pubkey_hash,
     errors::{BitVMXError, ProgramError},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
@@ -184,6 +185,14 @@ impl Program {
 
         // Participant public-key hashes define protocol indices and must be unique.
         validate_participants(&peers)?;
+        for peer in &peers {
+            if compute_pubkey_hash(&peer.pubkey_pem)? != peer.pubkey_hash {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Public key does not match public-key hash: {}",
+                    peer.pubkey_hash
+                )));
+            }
+        }
 
         // Validate leader index
         if leader >= peers.len() {
@@ -939,6 +948,23 @@ mod tests {
         assert!(matches!(
             missing_local_result,
             Err(BitVMXError::InvalidMessage(message)) if message.contains("Peer not found")
+        ));
+
+        let mut forged = self_address.clone();
+        forged.pubkey_pem = dev_comms_address("127.0.0.1:29999", "config/keys/op_10.key")
+            .unwrap()
+            .pubkey_pem;
+        let forged_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![forged],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            forged_result,
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("does not match")
         ));
     }
 
