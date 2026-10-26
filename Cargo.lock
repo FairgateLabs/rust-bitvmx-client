@@ -4131,7 +4131,7 @@ dependencies = [
 [[package]]
 name = "rust-bitvmx-storage-backend"
 version = "0.8.7"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7#26b26b488006c0c205523aa4064efb1527c41652"
+source = "git+https://www.github.com/FairgateLabs/rust-bitvmx-storage-backend.git?branch=dev#e2702e2d8b1edd1bbc9d6ac3001b6253d5a017a5"
 dependencies = [
  "age",
  "clap",
