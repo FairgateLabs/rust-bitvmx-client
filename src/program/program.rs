@@ -1240,6 +1240,21 @@ mod tests {
             forged_result,
             Err(BitVMXError::InvalidMessage(message)) if message.contains("does not match")
         ));
+
+        let mut garbage = self_address.clone();
+        garbage.pubkey_pem = "not a pem".to_string();
+        let garbage_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![garbage],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            garbage_result,
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("Invalid RSA public key")
+        ));
     }
 
     #[test]
