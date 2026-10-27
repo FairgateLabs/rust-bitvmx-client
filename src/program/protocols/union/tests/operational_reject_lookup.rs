@@ -93,6 +93,7 @@ fn rejection_setup_and_lookup(early_lookup: bool) -> Result<()> {
             &storage_backend::storage_config::StorageConfig {
                 path: aggregate_path.to_string_lossy().into_owned(),
                 password: None,
+                sync_writes: true,
             },
         )?;
         key_manager::musig2::musig::MuSig2Signer::new(std::rc::Rc::new(storage))
