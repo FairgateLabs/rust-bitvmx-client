@@ -487,13 +487,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         message: Vec<u8>,
         public_key: String,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        let result = self
-            .program_context
-            .key_manager
-            .decrypt_rsa_message(&message, &public_key);
-        Self::key_manager_response(id, result, "Failed to decrypt message", |decrypted| {
-            OutgoingBitVMXApiMessages::Decrypted(id, decrypted)
-        })
+        Ok(super::decrypt_reply(&self.program_context.key_manager, id, &message, &public_key))
     }
 
     fn get_aggregated_pubkey(

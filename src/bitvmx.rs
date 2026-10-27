@@ -20,11 +20,12 @@ use crate::{
     ping_helper::PingHelper,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::{
+        participant::CommsAddress,
         program::{is_active_program, Program},
         variables::{Globals, WitnessVars},
     },
     throttle::Throttle,
-    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
+    types::{ErrorReport, ErrorReportKind, ErrorScope, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TypesToMonitor};
 use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, BrokerNode};
@@ -113,6 +114,27 @@ impl StoreKey {
                 id.to_string().as_str(),
                 "execution",
             ])?),
+        }
+    }
+}
+
+/// Answers a `Decrypt` request. The ciphertext comes from other parties, so a bad one is
+/// answered to the requester instead of failing the tick and stopping the node.
+fn decrypt_reply(
+    key_manager: &KeyManager,
+    id: Uuid,
+    message: &[u8],
+    pub_key: &str,
+) -> OutgoingBitVMXApiMessages {
+    match key_manager.decrypt_rsa_message(message, pub_key) {
+        Ok(decrypted) => OutgoingBitVMXApiMessages::Decrypted(id, decrypted),
+        Err(e) => {
+            warn!("Failed to decrypt message for request {}: {:?}", id, e);
+            OutgoingBitVMXApiMessages::Error(ErrorReport::new(
+                ErrorScope::Request(id),
+                ErrorReportKind::DecryptFailed,
+                Some(e.to_string()),
+            ))
         }
     }
 }
@@ -492,6 +514,73 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         info!("Starting wallet sync...");
         wallet.sync_wallet()?;
         info!("Wallet sync completed.");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestProgramContextEnv;
+
+    fn assert_decrypt_failed(reply: OutgoingBitVMXApiMessages, id: Uuid) {
+        match reply {
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Request(id));
+                assert_eq!(report.kind, ErrorReportKind::DecryptFailed);
+                assert!(report.detail.is_some());
+            }
+            other => panic!("expected DecryptFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decrypt_answers_the_plaintext() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("decrypt-ok")?;
+        let key_manager = &env.context.key_manager;
+        let pub_key = &env.context.rsa_public_key;
+        let ciphertext = key_manager.encrypt_rsa_message(b"203.0.113.7:61180", pub_key)?;
+        let id = Uuid::new_v4();
+
+        match decrypt_reply(key_manager, id, &ciphertext, pub_key) {
+            OutgoingBitVMXApiMessages::Decrypted(reply_id, plaintext) => {
+                assert_eq!(reply_id, id);
+                assert_eq!(plaintext, b"203.0.113.7:61180");
+            }
+            other => panic!("expected Decrypted, got {:?}", other),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn undecryptable_ciphertext_is_answered_with_an_error() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("decrypt-bad-ciphertext")?;
+        let id = Uuid::new_v4();
+
+        let reply = decrypt_reply(
+            &env.context.key_manager,
+            id,
+            &[7u8; 256],
+            &env.context.rsa_public_key,
+        );
+
+        assert_decrypt_failed(reply, id);
+        Ok(())
+    }
+
+    #[test]
+    fn decrypt_for_a_key_this_node_lacks_is_answered_with_an_error() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new_with_peers("decrypt-unknown-key", 1)?;
+        let peer_key = env.peer_address(0)?.pubkey_pem;
+        let ciphertext = env
+            .context
+            .key_manager
+            .encrypt_rsa_message(b"addr", &peer_key)?;
+        let id = Uuid::new_v4();
+
+        let reply = decrypt_reply(&env.context.key_manager, id, &ciphertext, &peer_key);
+
+        assert_decrypt_failed(reply, id);
         Ok(())
     }
 }
