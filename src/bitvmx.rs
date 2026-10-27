@@ -20,9 +20,9 @@ use crate::{
     },
     signature_verifier::SignatureVerifier,
     types::{
-        ErrorReportKind, IncomingBitVMXApiMessages, JobDispatcherType, MessageDisposition,
-        OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus, SetupFailureReason,
-        PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
+        ErrorReport, ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, JobDispatcherType,
+        MessageDisposition, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus,
+        SetupFailureReason, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
     },
 };
 use bitcoin::secp256k1::Message;
@@ -40,6 +40,7 @@ use bitvmx_broker::{BrokerNode, ReceivedMessage};
 use bitvmx_dispatcher_utils::PingMessage;
 use bitvmx_settings::settings;
 use key_manager::create_key_manager_from_config;
+use key_manager::key_manager::KeyManager;
 use key_manager::key_type::BitcoinKeyType;
 use protocol_builder::graph::graph::GraphOptions;
 
@@ -123,6 +124,27 @@ impl StoreKey {
             StoreKey::ZKPStatus(id) => zkp_key(id, ["status"]),
             StoreKey::ZKPFrom(id) => zkp_key(id, ["from"]),
             StoreKey::ZKPJournal(id) => zkp_key(id, ["journal"]),
+        }
+    }
+}
+
+/// Answers a `Decrypt` request. The ciphertext comes from other parties, so a bad one is
+/// answered to the requester instead of failing the tick and stopping the node.
+fn decrypt_reply(
+    key_manager: &KeyManager,
+    id: Uuid,
+    message: &[u8],
+    pub_key: &str,
+) -> OutgoingBitVMXApiMessages {
+    match key_manager.decrypt_rsa_message(message, pub_key) {
+        Ok(decrypted) => OutgoingBitVMXApiMessages::Decrypted(id, decrypted),
+        Err(e) => {
+            warn!("Failed to decrypt message for request {}: {:?}", id, e);
+            OutgoingBitVMXApiMessages::Error(ErrorReport::new(
+                ErrorScope::Request(id),
+                ErrorReportKind::DecryptFailed,
+                Some(e.to_string()),
+            ))
         }
     }
 }
@@ -1924,11 +1946,9 @@ impl BitVMX {
                 self.reply(from, OutgoingBitVMXApiMessages::Encrypted(id, encrypted))?;
             }
             IncomingBitVMXApiMessages::Decrypt(id, message, pub_key) => {
-                let decrypted = self
-                    .program_context
-                    .key_manager
-                    .decrypt_rsa_message(&message, &pub_key)?;
-                self.reply(from, OutgoingBitVMXApiMessages::Decrypted(id, decrypted))?;
+                let reply =
+                    decrypt_reply(&self.program_context.key_manager, id, &message, &pub_key);
+                self.reply(from, reply)?;
             }
             IncomingBitVMXApiMessages::Backup(id, backup_path, dek_path, password) => {
                 let message = match self.store.backup(&backup_path, &dek_path, password) {
@@ -2017,5 +2037,72 @@ impl Context {
     pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
         let msg: Context = serde_json::from_str(msg)?;
         Ok(msg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestProgramContextEnv;
+
+    fn assert_decrypt_failed(reply: OutgoingBitVMXApiMessages, id: Uuid) {
+        match reply {
+            OutgoingBitVMXApiMessages::Error(report) => {
+                assert_eq!(report.scope, ErrorScope::Request(id));
+                assert_eq!(report.kind, ErrorReportKind::DecryptFailed);
+                assert!(report.detail.is_some());
+            }
+            other => panic!("expected DecryptFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decrypt_answers_the_plaintext() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("decrypt-ok")?;
+        let key_manager = &env.context.key_manager;
+        let pub_key = &env.context.rsa_public_key;
+        let ciphertext = key_manager.encrypt_rsa_message(b"203.0.113.7:61180", pub_key)?;
+        let id = Uuid::new_v4();
+
+        match decrypt_reply(key_manager, id, &ciphertext, pub_key) {
+            OutgoingBitVMXApiMessages::Decrypted(reply_id, plaintext) => {
+                assert_eq!(reply_id, id);
+                assert_eq!(plaintext, b"203.0.113.7:61180");
+            }
+            other => panic!("expected Decrypted, got {:?}", other),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn undecryptable_ciphertext_is_answered_with_an_error() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("decrypt-bad-ciphertext")?;
+        let id = Uuid::new_v4();
+
+        let reply = decrypt_reply(
+            &env.context.key_manager,
+            id,
+            &[7u8; 256],
+            &env.context.rsa_public_key,
+        );
+
+        assert_decrypt_failed(reply, id);
+        Ok(())
+    }
+
+    #[test]
+    fn decrypt_for_a_key_this_node_lacks_is_answered_with_an_error() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new_with_peers("decrypt-unknown-key", 1)?;
+        let peer_key = env.peer_address(0)?.pubkey_pem;
+        let ciphertext = env
+            .context
+            .key_manager
+            .encrypt_rsa_message(b"addr", &peer_key)?;
+        let id = Uuid::new_v4();
+
+        let reply = decrypt_reply(&env.context.key_manager, id, &ciphertext, &peer_key);
+
+        assert_decrypt_failed(reply, id);
+        Ok(())
     }
 }

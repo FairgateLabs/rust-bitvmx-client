@@ -176,7 +176,7 @@ This table shows the mapping between request messages and their expected respons
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
 | `Encrypt(uuid, payload_to_encrypt, public_key_to_use)` | `Encrypted(uuid, encrypted_message)` | Encrypt a message |
-| `Decrypt(uuid, payload_to_decrypt)` | `Decrypted(uuid, decrypted_message)` | Decrypt a message |
+| `Decrypt(uuid, payload_to_decrypt)` | `Decrypted(uuid, decrypted_message)` | Decrypt a message. If it can't be decrypted: `Error` scoped to `Request(uuid)` with kind `DecryptFailed` |
 
 #### Zero-Knowledge Proofs
 
@@ -234,6 +234,7 @@ A `Request`-scoped report is delivered to whoever issued that request, not to L2
 | `InsufficientFunds { available, required }` | A funding UTXO could not cover a speedup fee. |
 | `FundingNotAvailable` | No funding UTXO is available at all. |
 | `InvalidFundingUtxo { amount, min_required }` | A funding UTXO was provided but is unusable. |
+| `DecryptFailed` | A `Decrypt` request could not be decrypted (bad ciphertext, or no key for the given public key). Scoped to that request. |
 
 `detail` is optional free text for logs and operators; never match on it.
 
