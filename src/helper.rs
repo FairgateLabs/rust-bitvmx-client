@@ -8,19 +8,13 @@ use rsa::{
 };
 use sha2::{Digest, Sha256};
 
+// The key is peer/L2 input of arbitrary size, so it is never echoed in errors.
 pub fn compute_pubkey_hash(verification_key: &str) -> Result<PubkHash, BitVMXError> {
+    let invalid = || BitVMXError::InvalidMessage("Invalid RSA public key".to_string());
     let rsa_pubkey = RsaPublicKey::from_public_key_pem(verification_key)
         .or_else(|_| RsaPublicKey::from_pkcs1_pem(verification_key))
-        .map_err(|_| {
-            BitVMXError::InvalidMessage(
-                format!("Invalid RSA public key: {}", verification_key).to_string(),
-            )
-        })?;
-    let der = rsa_pubkey.to_public_key_der().map_err(|_| {
-        BitVMXError::InvalidMessage(
-            format!("Invalid RSA public key: {}", verification_key).to_string(),
-        )
-    })?;
+        .map_err(|_| invalid())?;
+    let der = rsa_pubkey.to_public_key_der().map_err(|_| invalid())?;
     let digest = Sha256::digest(der.as_bytes());
     Ok(hex::encode(digest))
 }

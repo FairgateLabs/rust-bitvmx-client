@@ -186,7 +186,13 @@ impl Program {
         // Participant public-key hashes define protocol indices and must be unique.
         validate_participants(&peers)?;
         for peer in &peers {
-            if compute_pubkey_hash(&peer.pubkey_pem)? != peer.pubkey_hash {
+            let hash = compute_pubkey_hash(&peer.pubkey_pem).map_err(|_| {
+                BitVMXError::InvalidMessage(format!(
+                    "Invalid RSA public key for public-key hash: {}",
+                    peer.pubkey_hash
+                ))
+            })?;
+            if hash != peer.pubkey_hash {
                 return Err(BitVMXError::InvalidMessage(format!(
                     "Public key does not match public-key hash: {}",
                     peer.pubkey_hash
@@ -967,20 +973,23 @@ mod tests {
             Err(BitVMXError::InvalidMessage(message)) if message.contains("does not match")
         ));
 
-        let mut garbage = self_address.clone();
-        garbage.pubkey_pem = "not a pem".to_string();
-        let garbage_result = Program::new(
-            Uuid::new_v4(),
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![garbage],
-            0,
-            &mut env.context,
-            dir.storage(),
-        );
-        assert!(matches!(
-            garbage_result,
-            Err(BitVMXError::InvalidMessage(message)) if message.contains("Invalid RSA public key")
-        ));
+        // "" is what a payload without `pubkey_pem` deserializes to.
+        for pem in ["not a pem", ""] {
+            let mut garbage = self_address.clone();
+            garbage.pubkey_pem = pem.to_string();
+            let garbage_result = Program::new(
+                Uuid::new_v4(),
+                PROGRAM_TYPE_AGGREGATED_KEY,
+                vec![garbage],
+                0,
+                &mut env.context,
+                dir.storage(),
+            );
+            assert!(matches!(
+                garbage_result,
+                Err(BitVMXError::InvalidMessage(message)) if message.contains("Invalid RSA public key")
+            ));
+        }
     }
 
     #[test]

@@ -66,11 +66,6 @@ impl Drop for TestStorageDir {
     }
 }
 
-/// Comms test environment built from `config/development.yaml` with all storage
-/// redirected to a unique temp dir (removed on drop). Provides a `KeyManager`
-/// with the development comms RSA key imported, and can build a `BrokerNode`
-/// for tests that exercise the comms send path.
-///
 /// Development comms key of remote peer `index` (`op_{index + 2}`).
 fn peer_key_path(index: usize) -> String {
     format!("config/keys/op_{}.key", index + 2)
@@ -89,6 +84,11 @@ pub fn dev_comms_address(address: &str, key_path: &str) -> Result<CommsAddress, 
     .map_err(BitVMXError::InvalidMessage)
 }
 
+/// Comms test environment built from `config/development.yaml` with all storage
+/// redirected to a unique temp dir (removed on drop). Provides a `KeyManager`
+/// with the development comms RSA key imported, and can build a `BrokerNode`
+/// for tests that exercise the comms send path.
+///
 /// Internal building block of [`TestProgramContextEnv`] — write tests against
 /// that instead; the context env costs barely more and provides everything
 /// this does plus globals, broker channel and the coordinator mock.

@@ -6,6 +6,7 @@ use bitvmx_client::types::{
     ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
     SetupFailureReason,
 };
+use bitvmx_settings::settings;
 use uuid::Uuid;
 
 mod common;
@@ -36,7 +37,7 @@ fn undeliverable_setup_message_is_reported_to_l2() -> Result<()> {
             node.retry_max_delay_msecs = 200;
         })?;
 
-    let absent_pem = rsa_public_key_pem(&std::fs::read_to_string(ABSENT_PEER_KEY)?)?;
+    let absent_pem = rsa_public_key_pem(&settings::decrypt_or_read_file(ABSENT_PEER_KEY)?)?;
     let absent = CommsAddress::new(
         ABSENT_ADDRESS.parse()?,
         compute_pubkey_hash(&absent_pem)?,

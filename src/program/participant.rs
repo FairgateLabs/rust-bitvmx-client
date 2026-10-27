@@ -331,6 +331,8 @@ pub struct CommsAddress {
     pub pubkey_hash: PubkHash,
     /// Full comms RSA public key (PEM). Must hash to `pubkey_hash`; the node checks it
     /// when a program is created, since this crate carries no crypto dependencies.
+    /// Empty when deserialized without it (programs stored before this field existed);
+    /// `Program::new` rejects an empty key, so new setups still must provide it.
     pub pubkey_pem: String,
 }
 
@@ -338,6 +340,7 @@ pub struct CommsAddress {
 struct UncheckedCommsAddress {
     address: SocketAddr,
     pubkey_hash: PubkHash,
+    #[serde(default)]
     pubkey_pem: String,
 }
 
@@ -703,10 +706,11 @@ mod tests {
     }
 
     #[test]
-    fn serde_requires_pubkey_pem() {
+    fn serde_defaults_missing_pubkey_pem() {
         let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
         let missing = serde_json::json!({ "address": "127.0.0.1:1000", "pubkey_hash": hash });
-        assert!(serde_json::from_value::<CommsAddress>(missing).is_err());
+        let legacy: CommsAddress = serde_json::from_value(missing).unwrap();
+        assert!(legacy.pubkey_pem.is_empty());
 
         let address = CommsAddress::new(
             "127.0.0.1:1000".parse().unwrap(),
