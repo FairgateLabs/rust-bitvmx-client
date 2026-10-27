@@ -84,6 +84,3 @@ required-features = ["cardinal"]
 [[bench]]
 name = "message_queue"
 harness = false
-
-[patch."https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git"]
-rust-bitvmx-storage-backend = { git = "https://www.github.com/FairgateLabs/rust-bitvmx-storage-backend.git", branch = "dev" }

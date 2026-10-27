@@ -535,7 +535,7 @@ dependencies = [
  "ctrlc",
  "hex",
  "rand 0.10.3",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -556,7 +556,7 @@ dependencies = [
  "bitvmx-bitcoin-rpc",
  "bitvmx-settings",
  "hex",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -769,7 +769,7 @@ dependencies = [
  "rcgen",
  "ring",
  "rsa",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -825,7 +825,7 @@ dependencies = [
  "redact",
  "reqwest",
  "rsa",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?branch=dev)",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -877,7 +877,7 @@ dependencies = [
  "ctrlc",
  "env",
  "hex",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -919,7 +919,7 @@ dependencies = [
  "musig2",
  "redact",
  "rsa",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -953,7 +953,7 @@ dependencies = [
  "musig2",
  "petgraph",
  "redact",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "serde",
  "serde_yaml",
  "thiserror 2.0.21",
@@ -989,7 +989,7 @@ dependencies = [
  "bitvmx-settings",
  "hex",
  "mockall",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1014,7 +1014,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "reqwest",
- "rust-bitvmx-storage-backend",
+ "rust-bitvmx-storage-backend 0.8.7 (git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7)",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -4131,7 +4131,25 @@ dependencies = [
 [[package]]
 name = "rust-bitvmx-storage-backend"
 version = "0.8.7"
-source = "git+https://www.github.com/FairgateLabs/rust-bitvmx-storage-backend.git?branch=dev#e2702e2d8b1edd1bbc9d6ac3001b6253d5a017a5"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.7#26b26b488006c0c205523aa4064efb1527c41652"
+dependencies = [
+ "age",
+ "clap",
+ "cocoon",
+ "hex",
+ "rand 0.10.3",
+ "redact",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
+name = "rust-bitvmx-storage-backend"
+version = "0.8.7"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?branch=dev#e2702e2d8b1edd1bbc9d6ac3001b6253d5a017a5"
 dependencies = [
  "age",
  "clap",
