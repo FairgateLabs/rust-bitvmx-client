@@ -28,6 +28,39 @@ cargo build --profile release-with-debug
 ```
 
 
+## Client image releases
+
+Normal `vX.Y.Z` tags build the client image and must match the version in
+`Cargo.toml`. To force an image build with a different version, push a
+`force/client/vX.Y.Z` tag (prerelease suffixes are supported). It publishes the
+image with tag `vX.Y.Z` and does not trigger a types release.
+
+## Types releases
+
+The `mirror` workflow exports the wire contract to
+[`rust-bitvmx-client-types`](https://github.com/FairgateLabs/rust-bitvmx-client-types).
+Normal `v*` client release tags publish types only when the exported files change.
+
+To force a types release independently of the client version, push a
+`force/types/vX.Y.Z` tag (prerelease suffixes such as `-rc.1` are supported):
+
+```bash
+git tag force/types/v0.8.8-rc.1
+git push origin refs/tags/force/types/v0.8.8-rc.1
+```
+
+This publishes `v0.8.8-rc.1` on the types repo's `release/v0.8.8-rc.1` branch,
+with crate version `0.8.8-rc.1`, even if the exported files are unchanged.
+The source tag remains `force/types/v0.8.8-rc.1` in generated headers and `mirror.toml`
+so the types repo can verify against the original source. The client image build
+does not run for `force/types/*` tags, and the client's `Cargo.toml` version stays as is.
+Mirrored git dependencies keep the client's existing tags; types-only releases
+require those dependencies to be tag-pinned in the client's manifest.
+
+Manual runs also accept a `force/types/vX.Y.Z` tag input to force publication.
+Select the matching source tag with `--ref` and set `publish=true` to publish,
+or `publish=false` to regenerate and test. Existing output tags are never replaced.
+
 ## Security
 To use encrypted configuration files read the setting [README.md](https://github.com/FairgateLabs/rust-bitvmx-settings/blob/bb216227310a714293aa60dc84107304b336b83f/README.md#security)
 
