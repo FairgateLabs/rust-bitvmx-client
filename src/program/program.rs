@@ -8,8 +8,8 @@ use crate::{
     bitvmx::Context,
     comms_helper::CommsMessageType,
     error_handling::{classify, send_error_report, Severity},
-    helper::compute_pubkey_hash,
     errors::{BitVMXError, ProgramError},
+    helper::compute_pubkey_hash,
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -965,6 +965,21 @@ mod tests {
         assert!(matches!(
             forged_result,
             Err(BitVMXError::InvalidMessage(message)) if message.contains("does not match")
+        ));
+
+        let mut garbage = self_address.clone();
+        garbage.pubkey_pem = "not a pem".to_string();
+        let garbage_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![garbage],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            garbage_result,
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("Invalid RSA public key")
         ));
     }
 

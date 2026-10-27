@@ -34,3 +34,37 @@ pub fn rsa_public_key_pem(private_key: &str) -> Result<String, BitVMXError> {
         .to_public_key_pem(LineEnding::LF)
         .map_err(|_| invalid())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestProgramContextEnv;
+    use bitvmx_settings::settings;
+
+    // Program::new checks peers' `pubkey_pem` against their `pubkey_hash`, so
+    // our hash must equal the broker's PubkHash for the same key.
+    #[test]
+    fn pubkey_hash_matches_broker_identity() {
+        let env = TestProgramContextEnv::new_with_peers("helper-pubkey-hash", 1).unwrap();
+
+        assert_eq!(
+            compute_pubkey_hash(&env.context.rsa_public_key).unwrap(),
+            env.context.comms.get_pubk_hash().unwrap()
+        );
+
+        let private_key = settings::decrypt_or_read_file("config/keys/op_2.key").unwrap();
+        let pem = rsa_public_key_pem(&private_key).unwrap();
+        assert_eq!(
+            compute_pubkey_hash(&pem).unwrap(),
+            env.peers[0].get_pubk_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn rsa_public_key_pem_rejects_invalid_private_key() {
+        assert!(matches!(
+            rsa_public_key_pem("not a key"),
+            Err(BitVMXError::InvalidMessage(_))
+        ));
+    }
+}

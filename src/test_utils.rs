@@ -80,7 +80,9 @@ fn peer_key_path(index: usize) -> String {
 pub fn dev_comms_address(address: &str, key_path: &str) -> Result<CommsAddress, BitVMXError> {
     let pem = rsa_public_key_pem(&settings::decrypt_or_read_file(key_path)?)?;
     CommsAddress::try_new(
-        address.parse().map_err(|_| BitVMXError::InvalidMessageFormat)?,
+        address
+            .parse()
+            .map_err(|_| BitVMXError::InvalidMessageFormat)?,
         compute_pubkey_hash(&pem)?,
         pem,
     )

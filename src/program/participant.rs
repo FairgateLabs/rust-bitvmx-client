@@ -707,5 +707,15 @@ mod tests {
         let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
         let missing = serde_json::json!({ "address": "127.0.0.1:1000", "pubkey_hash": hash });
         assert!(serde_json::from_value::<CommsAddress>(missing).is_err());
+
+        let address = CommsAddress::new(
+            "127.0.0.1:1000".parse().unwrap(),
+            hash.to_string(),
+            "pem".to_string(),
+        );
+        let decoded: CommsAddress =
+            serde_json::from_value(serde_json::to_value(&address).unwrap()).unwrap();
+        assert_eq!(decoded.pubkey_pem, "pem");
+        assert_eq!(decoded, address);
     }
 }
