@@ -6,4 +6,12 @@ ignore = [
     # an upstream migration. Re-evaluate when `rsa` ships a patched release.
     # https://rustsec.org/advisories/RUSTSEC-2023-0071
     "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0387 (crypto-bigint timing side channels).
+    # No fix in the 0.5 line (patched >= 0.7.6). Pulled in via
+    # age 0.12 (bitvmx-settings) / hpke -> p256 0.13 -> elliptic-curve 0.13;
+    # latest age (0.12.1) still requires p256 ^0.13. Re-evaluate when age
+    # moves to elliptic-curve 0.14.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0387
+    "RUSTSEC-2026-0387",
 ]
