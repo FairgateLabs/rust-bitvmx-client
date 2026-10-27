@@ -35,11 +35,11 @@ use bitvmx_client::{
                     get_dispute_core_pid, indexed_name,
                 },
                 types::{
-                    FundsAdvanced, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_TX, CANCEL_TAKE0_TX,
-                    CHALLENGE_TX, INPUT_NOT_REVEALED_TX, OPERATOR_TAKE_TX, OPERATOR_WON_TX,
-                    OP_INITIAL_DEPOSIT_TX, OP_SELF_DISABLER_TX, PROTOCOL_FUNDING_TX,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_INPUT_TX,
-                    WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
+                    FundsAdvanced, PegInAccepted, ACCEPT_PEGIN_TX, ADVANCE_FUNDS_TX,
+                    CANCEL_TAKE0_TX, CHALLENGE_TX, INPUT_NOT_REVEALED_TX, OPERATOR_TAKE_TX,
+                    OPERATOR_WON_TX, OP_INITIAL_DEPOSIT_TX, OP_SELF_DISABLER_TX,
+                    PROTOCOL_FUNDING_TX, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX,
+                    REVEAL_INPUT_TX, WT_SELF_DISABLER_TX, WT_START_ENABLER_TX,
                 },
             },
         },
@@ -343,8 +343,31 @@ pub fn cli_solidity_txs() -> Result<()> {
     }
 
     let (mut committee, mut user, _) = pegin_setup(1, NETWORK == Network::Regtest)?;
-    let (slot_index, _, _, request_pegin_tx) = request_and_accept_pegin(&mut committee, &mut user)?;
+    let ((slot_index, stream_value, accept_pegin_tx, request_pegin_tx), pegin_accepted) =
+        request_and_accept_pegin_signed(&mut committee, &mut user)?;
     let op_index = advance_funds(&mut committee, user.public_key()?, slot_index, false)?;
+
+    // Committee Musig2 data for the user take, set up without dispatching it
+    let user_take_tx = get_user_take_tx(
+        stream_value,
+        accept_pegin_tx.compute_txid(),
+        user.public_key()?,
+    );
+    let user_take_sighash = calculate_taproot_key_path_sighash(
+        &user_take_tx,
+        0,
+        &[
+            accept_pegin_tx.output[0].clone(),
+            accept_pegin_tx.output[1].clone(),
+        ],
+    )?;
+    let pegout_accepted = committee.setup_user_take(
+        user.public_key()?,
+        slot_index,
+        stream_value,
+        TESTING_PEGOUT_ID.to_vec(),
+        user_take_sighash.to_vec(),
+    )?;
 
     let committee_agg_key = committee.public_key()?;
     let dispute_keys = committee.get_dispute_keys();
@@ -491,10 +514,19 @@ pub fn cli_solidity_txs() -> Result<()> {
     let operator_funding_utxo = committee
         .get_operator_funding_utxo(&committee.members[op_index].keyring.take_pubkey.unwrap())?;
 
+    let take_keys: Vec<PublicKey> = committee
+        .members
+        .iter()
+        .map(|m| m.keyring.take_pubkey.unwrap())
+        .collect();
+
     let solidity_file = format_solidity_data_file(
         &committee_agg_key,
         &dispute_agg_key,
         &dispute_keys,
+        &take_keys,
+        &pegin_accepted,
+        &pegout_accepted,
         &user.public_key()?,
         &TESTING_PEGOUT_ID,
         op_index,
@@ -1036,6 +1068,14 @@ pub fn request_and_accept_pegin(
     committee: &mut Committee,
     user: &mut User,
 ) -> Result<(usize, u64, Transaction, Transaction)> {
+    Ok(request_and_accept_pegin_signed(committee, user)?.0)
+}
+
+/// Like `request_and_accept_pegin`, also returning each member accept peg-in nonce and partial signature.
+pub fn request_and_accept_pegin_signed(
+    committee: &mut Committee,
+    user: &mut User,
+) -> Result<((usize, u64, Transaction, Transaction), Vec<PegInAccepted>)> {
     let (request_pegin_txid, amount, request_pegin_tx) = request_pegin(committee, user)?;
 
     // This came from the contracts
@@ -1044,7 +1084,7 @@ pub fn request_and_accept_pegin(
     let accept_pegin_sighash = vec![0; 32]; // This should be replaced with the actual sighash of the accept peg-in tx
     let slot_index = get_and_increment_slot_index(); // This should be replaced with the actual slot index
 
-    committee.accept_pegin(
+    let pegin_accepted = committee.accept_pegin(
         committee.committee_id(),
         request_pegin_txid,
         amount,
@@ -1080,7 +1120,10 @@ pub fn request_and_accept_pegin(
 
     info!("Pegin accepted and confirmed.");
     confirm_to_continue();
-    Ok((slot_index, amount, accept_pegin_tx, request_pegin_tx))
+    Ok((
+        (slot_index, amount, accept_pegin_tx, request_pegin_tx),
+        pegin_accepted,
+    ))
 }
 
 pub fn request_pegout() -> Result<()> {
