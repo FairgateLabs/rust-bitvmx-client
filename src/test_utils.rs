@@ -67,7 +67,7 @@ impl Drop for TestStorageDir {
 }
 
 /// Development comms key of remote peer `index` (`op_{index + 2}`).
-fn peer_key_path(index: usize) -> String {
+pub(crate) fn peer_key_path(index: usize) -> String {
     format!("config/keys/op_{}.key", index + 2)
 }
 

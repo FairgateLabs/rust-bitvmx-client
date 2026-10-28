@@ -186,6 +186,12 @@ impl Program {
         // Participant public-key hashes define protocol indices and must be unique.
         validate_participants(&peers)?;
         for peer in &peers {
+            if peer.pubkey_pem.is_empty() {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Missing pubkey_pem for public-key hash: {}",
+                    peer.pubkey_hash
+                )));
+            }
             let hash = compute_pubkey_hash(&peer.pubkey_pem).map_err(|_| {
                 BitVMXError::InvalidMessage(format!(
                     "Invalid RSA public key for public-key hash: {}",
@@ -215,16 +221,15 @@ impl Program {
         info!("Program: my_pos: {}", my_idx);
         info!("Program: Leader pos: {}", leader);
 
-        // Request verification keys from other participants for message authentication
-        // This is critical for security - allows us to verify message authenticity
-        OperatorVerificationStore::request_missing_verification_keys(
-            &context.globals,
-            &context.comms,
-            &context.key_manager,
-            &context.rsa_public_key,
-            &program_id,
-            &peers,
-        )?;
+        // Each `pubkey_pem` was checked against its hash above, so it is the peer's
+        // verification key: store it instead of asking the peer for it.
+        for peer in &peers {
+            OperatorVerificationStore::store(
+                &context.globals,
+                &peer.pubkey_hash,
+                &peer.pubkey_pem,
+            )?;
+        }
 
         // Create protocol
         let mut protocol = new_protocol_type(program_id, program_type, my_idx, storage.clone())?;
@@ -974,7 +979,10 @@ mod tests {
         ));
 
         // "" is what a payload without `pubkey_pem` deserializes to.
-        for pem in ["not a pem", ""] {
+        for (pem, expected) in [
+            ("not a pem", "Invalid RSA public key"),
+            ("", "Missing pubkey_pem"),
+        ] {
             let mut garbage = self_address.clone();
             garbage.pubkey_pem = pem.to_string();
             let garbage_result = Program::new(
@@ -987,7 +995,7 @@ mod tests {
             );
             assert!(matches!(
                 garbage_result,
-                Err(BitVMXError::InvalidMessage(message)) if message.contains("Invalid RSA public key")
+                Err(BitVMXError::InvalidMessage(message)) if message.contains(expected)
             ));
         }
     }
@@ -1018,6 +1026,29 @@ mod tests {
         assert_eq!(loaded.participants, vec![self_address]);
         assert_eq!(loaded.state, ProgramState::SettingUp);
         assert!(loaded.setup_engine.is_some());
+    }
+
+    #[test]
+    fn test_new_stores_peer_verification_keys_without_requesting_them() {
+        let mut env = TestProgramContextEnv::new_with_peers("program-new-peer-keys", 1).unwrap();
+        let dir = TestStorageDir::new("program-new-peer-keys-storage");
+        let peer = env.peer_address(0).unwrap();
+
+        Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![env.self_address().unwrap(), peer.clone()],
+            0,
+            &mut env.context,
+            dir.storage(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            OperatorVerificationStore::get(&env.context.globals, &peer.pubkey_hash).unwrap(),
+            Some(peer.pubkey_pem)
+        );
+        env.assert_no_delivery_via_peer(0);
     }
 
     #[test]

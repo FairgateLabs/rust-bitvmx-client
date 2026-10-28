@@ -32,7 +32,7 @@ pub fn rsa_public_key_pem(private_key: &str) -> Result<String, BitVMXError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestProgramContextEnv;
+    use crate::test_utils::{peer_key_path, TestProgramContextEnv};
     use bitvmx_settings::settings;
 
     // Program::new checks peers' `pubkey_pem` against their `pubkey_hash`, so
@@ -46,7 +46,7 @@ mod tests {
             env.context.comms.get_pubk_hash().unwrap()
         );
 
-        let private_key = settings::decrypt_or_read_file("config/keys/op_2.key").unwrap();
+        let private_key = settings::decrypt_or_read_file(&peer_key_path(0)).unwrap();
         let pem = rsa_public_key_pem(&private_key).unwrap();
         assert_eq!(
             compute_pubkey_hash(&pem).unwrap(),

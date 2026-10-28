@@ -10,8 +10,10 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     fmt,
+    hash::{Hash, Hasher},
     net::SocketAddr,
 };
 
@@ -324,7 +326,9 @@ fn validate_pubkey_hash(pubkey_hash: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
+/// Identity (`Eq`, `Ord`, `Hash`) is `address` + `pubkey_hash`; `pubkey_pem` is left out
+/// so an address stored without it still equals the same peer's current one.
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(try_from = "UncheckedCommsAddress")]
 pub struct CommsAddress {
     pub address: SocketAddr,
@@ -349,6 +353,38 @@ impl TryFrom<UncheckedCommsAddress> for CommsAddress {
 
     fn try_from(value: UncheckedCommsAddress) -> Result<Self, Self::Error> {
         CommsAddress::try_new(value.address, value.pubkey_hash, value.pubkey_pem)
+    }
+}
+
+impl CommsAddress {
+    fn identity(&self) -> (&SocketAddr, &PubkHash) {
+        (&self.address, &self.pubkey_hash)
+    }
+}
+
+impl PartialEq for CommsAddress {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for CommsAddress {}
+
+impl PartialOrd for CommsAddress {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CommsAddress {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.identity().cmp(&other.identity())
+    }
+}
+
+impl Hash for CommsAddress {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity().hash(state)
     }
 }
 
@@ -721,5 +757,6 @@ mod tests {
             serde_json::from_value(serde_json::to_value(&address).unwrap()).unwrap();
         assert_eq!(decoded.pubkey_pem, "pem");
         assert_eq!(decoded, address);
+        assert_eq!(legacy, address);
     }
 }
