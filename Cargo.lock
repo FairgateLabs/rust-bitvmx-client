@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "bitvmx-client"
-version = "0.8.7"
+version = "0.8.8"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.102",
