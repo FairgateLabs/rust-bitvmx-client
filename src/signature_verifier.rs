@@ -917,7 +917,11 @@ mod tests {
         let env = TestProgramContextEnv::new("sigver-hvm-store")?;
         let program_id = Uuid::new_v4();
         let peer_hash = compute_pubkey_hash(&env.context.rsa_public_key)?;
-        let peer_address = CommsAddress::new(env.context.comms.get_address(), peer_hash.clone());
+        let peer_address = CommsAddress::new(
+            env.context.comms.get_address(),
+            peer_hash.clone(),
+            env.context.rsa_public_key.clone(),
+        );
         let data = VerificationKeyAnnouncement {
             verification_key: env.context.rsa_public_key.clone(),
         }
@@ -944,6 +948,7 @@ mod tests {
         let peer_address = CommsAddress::new(
             env.context.comms.get_address(),
             "not-the-key-fingerprint".to_string(),
+            env.context.rsa_public_key.clone(),
         );
         let data = VerificationKeyAnnouncement {
             verification_key: env.context.rsa_public_key.clone(),

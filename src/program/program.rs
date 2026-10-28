@@ -9,6 +9,7 @@ use crate::{
     comms_helper::CommsMessageType,
     error_handling::{classify, send_error_report, Severity},
     errors::{BitVMXError, ProgramError},
+    helper::compute_pubkey_hash,
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -184,6 +185,26 @@ impl Program {
 
         // Participant public-key hashes define protocol indices and must be unique.
         validate_participants(&peers)?;
+        for peer in &peers {
+            if peer.pubkey_pem.is_empty() {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Missing pubkey_pem for public-key hash: {}",
+                    peer.pubkey_hash
+                )));
+            }
+            let hash = compute_pubkey_hash(&peer.pubkey_pem).map_err(|_| {
+                BitVMXError::InvalidMessage(format!(
+                    "Invalid RSA public key for public-key hash: {}",
+                    peer.pubkey_hash
+                ))
+            })?;
+            if hash != peer.pubkey_hash {
+                return Err(BitVMXError::InvalidMessage(format!(
+                    "Public key does not match public-key hash: {}",
+                    peer.pubkey_hash
+                )));
+            }
+        }
 
         // Validate leader index
         if leader >= peers.len() {
@@ -200,16 +221,15 @@ impl Program {
         info!("Program: my_pos: {}", my_idx);
         info!("Program: Leader pos: {}", leader);
 
-        // Request verification keys from other participants for message authentication
-        // This is critical for security - allows us to verify message authenticity
-        OperatorVerificationStore::request_missing_verification_keys(
-            &context.globals,
-            &context.comms,
-            &context.key_manager,
-            &context.rsa_public_key,
-            &program_id,
-            &peers,
-        )?;
+        // Each `pubkey_pem` was checked against its hash above, so it is the peer's
+        // verification key: store it instead of asking the peer for it.
+        for peer in &peers {
+            OperatorVerificationStore::store(
+                &context.globals,
+                &peer.pubkey_hash,
+                &peer.pubkey_pem,
+            )?;
+        }
 
         // Create protocol
         let mut protocol = new_protocol_type(program_id, program_type, my_idx, storage.clone())?;
@@ -788,16 +808,14 @@ mod tests {
     use super::*;
     use crate::{
         program::variables::VariableTypes,
-        test_utils::{TestProgramContextEnv, TestStorageDir},
+        test_utils::{dev_comms_address, TestProgramContextEnv, TestStorageDir},
         types::PROGRAM_TYPE_AGGREGATED_KEY,
     };
     use bitcoin::{absolute::LockTime, transaction::Version};
 
     fn test_program(storage: Rc<Storage>, program_id: Uuid) -> Program {
-        let participants = vec![CommsAddress::new(
-            "127.0.0.1:10000".parse().unwrap(),
-            "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f".to_string(),
-        )];
+        let participants =
+            vec![dev_comms_address("127.0.0.1:10000", "config/keys/op_10.key").unwrap()];
         let protocol =
             new_protocol_type(program_id, PROGRAM_TYPE_AGGREGATED_KEY, 0, storage.clone()).unwrap();
         let setup_engine = Program::try_create_setup_engine(&protocol, participants.len()).unwrap();
@@ -929,11 +947,7 @@ mod tests {
             Err(BitVMXError::InvalidMessageFormat)
         ));
 
-        let stranger = CommsAddress::try_new(
-            "127.0.0.1:29999".parse().unwrap(),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-        )
-        .unwrap();
+        let stranger = dev_comms_address("127.0.0.1:29999", "config/keys/op_10.key").unwrap();
         let missing_local_result = Program::new(
             Uuid::new_v4(),
             PROGRAM_TYPE_AGGREGATED_KEY,
@@ -946,6 +960,44 @@ mod tests {
             missing_local_result,
             Err(BitVMXError::InvalidMessage(message)) if message.contains("Peer not found")
         ));
+
+        let mut forged = self_address.clone();
+        forged.pubkey_pem = dev_comms_address("127.0.0.1:29999", "config/keys/op_10.key")
+            .unwrap()
+            .pubkey_pem;
+        let forged_result = Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![forged],
+            0,
+            &mut env.context,
+            dir.storage(),
+        );
+        assert!(matches!(
+            forged_result,
+            Err(BitVMXError::InvalidMessage(message)) if message.contains("does not match")
+        ));
+
+        // "" is what a payload without `pubkey_pem` deserializes to.
+        for (pem, expected) in [
+            ("not a pem", "Invalid RSA public key"),
+            ("", "Missing pubkey_pem"),
+        ] {
+            let mut garbage = self_address.clone();
+            garbage.pubkey_pem = pem.to_string();
+            let garbage_result = Program::new(
+                Uuid::new_v4(),
+                PROGRAM_TYPE_AGGREGATED_KEY,
+                vec![garbage],
+                0,
+                &mut env.context,
+                dir.storage(),
+            );
+            assert!(matches!(
+                garbage_result,
+                Err(BitVMXError::InvalidMessage(message)) if message.contains(expected)
+            ));
+        }
     }
 
     #[test]
@@ -974,6 +1026,29 @@ mod tests {
         assert_eq!(loaded.participants, vec![self_address]);
         assert_eq!(loaded.state, ProgramState::SettingUp);
         assert!(loaded.setup_engine.is_some());
+    }
+
+    #[test]
+    fn test_new_stores_peer_verification_keys_without_requesting_them() {
+        let mut env = TestProgramContextEnv::new_with_peers("program-new-peer-keys", 1).unwrap();
+        let dir = TestStorageDir::new("program-new-peer-keys-storage");
+        let peer = env.peer_address(0).unwrap();
+
+        Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![env.self_address().unwrap(), peer.clone()],
+            0,
+            &mut env.context,
+            dir.storage(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            OperatorVerificationStore::get(&env.context.globals, &peer.pubkey_hash).unwrap(),
+            Some(peer.pubkey_pem)
+        );
+        env.assert_no_delivery_via_peer(0);
     }
 
     #[test]

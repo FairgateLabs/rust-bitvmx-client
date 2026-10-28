@@ -239,6 +239,8 @@ pub enum ErrorReportKind {
         amount: u64,
         min_required: u64,
     },
+    /// The `Decrypt` request this report's scope names could not be decrypted.
+    DecryptFailed,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]

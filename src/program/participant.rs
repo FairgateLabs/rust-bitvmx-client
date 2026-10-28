@@ -10,10 +10,11 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     fmt,
+    hash::{Hash, Hasher},
     net::SocketAddr,
-    str::FromStr,
 };
 
 impl TryFrom<&str> for ParticipantRole {
@@ -325,43 +326,86 @@ fn validate_pubkey_hash(pubkey_hash: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, Debug)]
+/// Identity (`Eq`, `Ord`, `Hash`) is `address` + `pubkey_hash`; `pubkey_pem` is left out
+/// so an address stored without it still equals the same peer's current one.
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(try_from = "UncheckedCommsAddress")]
 pub struct CommsAddress {
     pub address: SocketAddr,
     pub pubkey_hash: PubkHash,
+    /// Full comms RSA public key (PEM). Must hash to `pubkey_hash`; the node checks it
+    /// when a program is created, since this crate carries no crypto dependencies.
+    /// Empty when deserialized without it (programs stored before this field existed);
+    /// `Program::new` rejects an empty key, so new setups still must provide it.
+    pub pubkey_pem: String,
 }
 
 #[derive(Deserialize)]
 struct UncheckedCommsAddress {
     address: SocketAddr,
     pubkey_hash: PubkHash,
+    #[serde(default)]
+    pubkey_pem: String,
 }
 
 impl TryFrom<UncheckedCommsAddress> for CommsAddress {
     type Error = String;
 
     fn try_from(value: UncheckedCommsAddress) -> Result<Self, Self::Error> {
-        CommsAddress::try_new(value.address, value.pubkey_hash)
+        CommsAddress::try_new(value.address, value.pubkey_hash, value.pubkey_pem)
+    }
+}
+
+impl CommsAddress {
+    fn identity(&self) -> (&SocketAddr, &PubkHash) {
+        (&self.address, &self.pubkey_hash)
+    }
+}
+
+impl PartialEq for CommsAddress {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for CommsAddress {}
+
+impl PartialOrd for CommsAddress {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CommsAddress {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.identity().cmp(&other.identity())
+    }
+}
+
+impl Hash for CommsAddress {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity().hash(state)
     }
 }
 
 impl CommsAddress {
     /// Constructs an address without validation for compatibility with trusted internal callers.
-    /// External input must use `try_new`, `FromStr`, or serde deserialization.
-    pub fn new(address: SocketAddr, pubkey_hash: PubkHash) -> Self {
+    /// External input must use `try_new` or serde deserialization.
+    pub fn new(address: SocketAddr, pubkey_hash: PubkHash, pubkey_pem: String) -> Self {
         Self {
             address,
             pubkey_hash,
+            pubkey_pem,
         }
     }
 
-    pub fn try_new(address: SocketAddr, pubkey_hash: PubkHash) -> Result<Self, String> {
+    pub fn try_new(
+        address: SocketAddr,
+        pubkey_hash: PubkHash,
+        pubkey_pem: String,
+    ) -> Result<Self, String> {
         validate_pubkey_hash(&pubkey_hash)?;
-        Ok(Self {
-            address,
-            pubkey_hash,
-        })
+        Ok(Self::new(address, pubkey_hash, pubkey_pem))
     }
 }
 
@@ -422,33 +466,16 @@ impl fmt::Display for CommsAddress {
     }
 }
 
-impl FromStr for CommsAddress {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.splitn(2, ',').collect();
-        if parts.len() != 2 {
-            return Err("Invalid format. Expected <socket_addr>,<pubkey_hash>".to_string());
-        }
-
-        let address: SocketAddr = parts[0]
-            .parse()
-            .map_err(|e| format!("Invalid socket address: {}", e))?;
-
-        let pubkey_hash = parts[1].to_string();
-
-        CommsAddress::try_new(address, pubkey_hash)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     fn participant(port: u16, pubkey_hash: &str) -> CommsAddress {
         CommsAddress::new(
             format!("127.0.0.1:{port}").parse().unwrap(),
             pubkey_hash.to_string(),
+            String::new(),
         )
     }
 
@@ -500,14 +527,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_valid_comms_address() {
-        let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
-        let parsed: CommsAddress = format!("127.0.0.1:1000,{hash}").parse().unwrap();
-
-        assert_eq!(parsed.pubkey_hash, hash);
-    }
-
-    #[test]
     fn rejects_malformed_comms_address_hashes() {
         for hash in [
             "",
@@ -516,9 +535,12 @@ mod tests {
             "g005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f",
             " 005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f",
         ] {
-            assert!(format!("127.0.0.1:1000,{hash}")
-                .parse::<CommsAddress>()
-                .is_err());
+            assert!(CommsAddress::try_new(
+                "127.0.0.1:1000".parse().unwrap(),
+                hash.to_string(),
+                String::new()
+            )
+            .is_err());
         }
     }
 
@@ -526,7 +548,8 @@ mod tests {
     fn serde_rejects_malformed_comms_address_hash() {
         let value = serde_json::json!({
             "address": "127.0.0.1:1000",
-            "pubkey_hash": "not-a-fingerprint"
+            "pubkey_hash": "not-a-fingerprint",
+            "pubkey_pem": "pem"
         });
 
         assert!(serde_json::from_value::<CommsAddress>(value).is_err());
@@ -692,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn comms_address_round_trips_and_lookups_preserve_identity() {
+    fn comms_address_lookups_preserve_identity() {
         let first_hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
         let second_hash = "1d10fa43ebbf6674d74caa3e9032711ade09d98ea7d20f89459f61152bebda1e";
         let participants = vec![
@@ -700,8 +723,6 @@ mod tests {
             participant(2000, second_hash),
         ];
 
-        let encoded = participants[0].to_string();
-        assert_eq!(encoded.parse::<CommsAddress>().unwrap(), participants[0]);
         assert_eq!(
             get_comms_address_by_pubkey_hash(&participants, &second_hash.to_string()).unwrap(),
             participants[1]
@@ -718,9 +739,24 @@ mod tests {
             Err(BitVMXError::InvalidCommsAddress(hash)) if hash == missing
         ));
         assert!(get_index_by_pubkey_hash(&participants, &missing).is_err());
-        assert!("127.0.0.1:1000".parse::<CommsAddress>().is_err());
-        assert!(format!("not-an-address,{first_hash}")
-            .parse::<CommsAddress>()
-            .is_err());
+    }
+
+    #[test]
+    fn serde_defaults_missing_pubkey_pem() {
+        let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
+        let missing = serde_json::json!({ "address": "127.0.0.1:1000", "pubkey_hash": hash });
+        let legacy: CommsAddress = serde_json::from_value(missing).unwrap();
+        assert!(legacy.pubkey_pem.is_empty());
+
+        let address = CommsAddress::new(
+            "127.0.0.1:1000".parse().unwrap(),
+            hash.to_string(),
+            "pem".to_string(),
+        );
+        let decoded: CommsAddress =
+            serde_json::from_value(serde_json::to_value(&address).unwrap()).unwrap();
+        assert_eq!(decoded.pubkey_pem, "pem");
+        assert_eq!(decoded, address);
+        assert_eq!(legacy, address);
     }
 }

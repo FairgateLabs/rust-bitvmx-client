@@ -15,6 +15,24 @@ introduce breaking changes between versions.
   `StorageError::MissingCurrent` is returned when a database directory has no CURRENT file, and
   `Storage::repair` returns a `RepairReport`. The storage-backend CLI exits with 2 when a repair
   lost files and with 1 on errors.
+- `CommsAddress` has a new `pubkey_pem` field with the participant's full comms RSA public key
+  (PEM). `CommsAddress::new` and `CommsAddress::try_new` take it as a third argument. This is a
+  breaking change for `rust-bitvmx-client-types` consumers.
+- `Setup` and `SetupKey` must give each participant a
+  `pubkey_pem` that hashes to its `pubkey_hash`. A missing, invalid, or mismatched key is rejected.
+  The node stores these keys as the participants' verification keys and no longer sends them a
+  `VerificationKeyRequest`.
+- `CommInfo` now returns the node's `pubkey_pem` inside its `CommsAddress`, so L2 can forward it
+  to the other participants.
+- `CommsAddress` no longer implements `FromStr`. Build it with `CommsAddress::try_new` or serde.
+- `CommsAddress` equality, ordering, and hashing use `address` and `pubkey_hash` only and ignore
+  `pubkey_pem`. Addresses stored before this field existed deserialize with an empty `pubkey_pem`.
+
+### Added
+
+- `ErrorReportKind::DecryptFailed`. A `Decrypt` request that has a bad ciphertext or names a
+  public key this node has no private key for is answered with an `Error` scoped to that request,
+  instead of stopping the node. Key store failures still stop it.
 
 ## 0.8.7
 

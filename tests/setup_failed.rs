@@ -1,16 +1,18 @@
 use anyhow::Result;
 
+use bitvmx_client::helper::{compute_pubkey_hash, rsa_public_key_pem};
 use bitvmx_client::program::participant::CommsAddress;
 use bitvmx_client::types::{
     ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages,
     SetupFailureReason,
 };
+use bitvmx_settings::settings;
 use uuid::Uuid;
 
 mod common;
 
 /// A peer identity that is never brought up, on a port nobody listens on.
-const ABSENT_PEER: &str = "aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899";
+const ABSENT_PEER_KEY: &str = "config/keys/op_10.key";
 const ABSENT_ADDRESS: &str = "127.0.0.1:61999";
 
 /// A setup whose counterpart never answers must be reported to L2, not left hanging.
@@ -35,7 +37,13 @@ fn undeliverable_setup_message_is_reported_to_l2() -> Result<()> {
             node.retry_max_delay_msecs = 200;
         })?;
 
-    let absent = CommsAddress::new(ABSENT_ADDRESS.parse()?, ABSENT_PEER.to_string());
+    let absent_pem = rsa_public_key_pem(&settings::decrypt_or_read_file(ABSENT_PEER_KEY)?)?;
+    let absent = CommsAddress::new(
+        ABSENT_ADDRESS.parse()?,
+        compute_pubkey_hash(&absent_pem)?,
+        absent_pem,
+    );
+    let absent_peer = absent.pubkey_hash.clone();
     let program_id = Uuid::new_v4();
 
     // Participant 1 (the absent peer) leads, so this client has to send to it.
@@ -61,7 +69,7 @@ fn undeliverable_setup_message_is_reported_to_l2() -> Result<()> {
                     assert!(!step.is_empty(), "the failing step should be named");
                     assert_eq!(
                         peer.as_deref(),
-                        Some(ABSENT_PEER),
+                        Some(absent_peer.as_str()),
                         "the peer that could not be reached should be named",
                     );
                     assert_eq!(

@@ -214,7 +214,7 @@ pub fn init_bitvmx_with_config(
 
     let bitvmx = BitVMX::new(config)?;
 
-    let address = CommsAddress::new(bitvmx.address(), bitvmx.pubkey_hash()?);
+    let address = bitvmx.comms_address()?;
     info!("public key hash {:?}", bitvmx.pubkey_hash());
 
     //This messages will come from the bridge client.
