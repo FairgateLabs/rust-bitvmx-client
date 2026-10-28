@@ -241,19 +241,19 @@ impl DisputeChannelSetup {
 
         match VERIFIER {
             DRPVerifier::Union => {
-                let journal_size: u32 = 76 / 4;
+                let journal_size: u32 = 72 / 4;
                 let journal_size_input = journal_size.to_le_bytes().to_vec();
                 info!("journal_size_input: {:?}", journal_size_input);
 
-                let elf_id = "0bef5ad87b9c1fa0d1b61b17db019b7af7fb3050fec33afdef0c698ef54d7a0b"; // Placeholder for the actual ELF ID of the verifier
+                let elf_id = "bae8e89ef2f1c13ffa632eaf1f6dba2777f34e3d9aeb5859bc3bc7cdb6a5515e"; // Placeholder for the actual ELF ID of the verifier
                 let elf_id_input = hex::decode(elf_id).unwrap();
 
                 let operator_id_hex =
                     "1111111111111111111111111111111111111111111111111111111111111111"; // Placeholder for the actual operator ID, should be a UUID
-                let mut operator_id = hex::decode(operator_id_hex).unwrap();
-                operator_id.extend_from_slice(&[0u8; 4]); // 0 padding
+                let operator_id = hex::decode(operator_id_hex).unwrap();
+                let operator_id_parity = 0x02;
 
-                let input_6 = [1u8, 0, 1, 0]; // true + version 0 + padding
+                let input_6 = [operator_id_parity, 1u8, 1, 0]; // parity + true + version + padding
 
                 // Set DRP constants defined in union-verifier.yaml
                 set_program_input(&bitvmx, drp_id, 0, journal_size_input.clone())?;
