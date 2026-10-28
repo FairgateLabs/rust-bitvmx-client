@@ -32,7 +32,7 @@ use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, 
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
 use key_manager::{
-    create_key_manager_from_config, key_manager::KeyManager, key_type::BitcoinKeyType,
+    create_key_manager_from_config, errors::KeyManagerError, key_manager::KeyManager, key_type::BitcoinKeyType,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
@@ -119,23 +119,25 @@ impl StoreKey {
 }
 
 /// Answers a `Decrypt` request. The ciphertext comes from other parties, so a bad one is
-/// answered to the requester instead of failing the tick and stopping the node.
+/// answered to the requester instead of failing the tick and stopping the node. Key store
+/// failures are the node's own fault and still propagate.
 fn decrypt_reply(
     key_manager: &KeyManager,
     id: Uuid,
     message: &[u8],
     pub_key: &str,
-) -> OutgoingBitVMXApiMessages {
+) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
     match key_manager.decrypt_rsa_message(message, pub_key) {
-        Ok(decrypted) => OutgoingBitVMXApiMessages::Decrypted(id, decrypted),
-        Err(e) => {
+        Ok(decrypted) => Ok(OutgoingBitVMXApiMessages::Decrypted(id, decrypted)),
+        Err(e @ (KeyManagerError::RsaKeyNotFound | KeyManagerError::RsaError(_))) => {
             warn!("Failed to decrypt message for request {}: {:?}", id, e);
-            OutgoingBitVMXApiMessages::Error(ErrorReport::new(
+            Ok(OutgoingBitVMXApiMessages::Error(ErrorReport::new(
                 ErrorScope::Request(id),
                 ErrorReportKind::DecryptFailed,
                 Some(e.to_string()),
-            ))
+            )))
         }
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -542,7 +544,7 @@ mod tests {
         let ciphertext = key_manager.encrypt_rsa_message(b"203.0.113.7:61180", pub_key)?;
         let id = Uuid::new_v4();
 
-        match decrypt_reply(key_manager, id, &ciphertext, pub_key) {
+        match decrypt_reply(key_manager, id, &ciphertext, pub_key)? {
             OutgoingBitVMXApiMessages::Decrypted(reply_id, plaintext) => {
                 assert_eq!(reply_id, id);
                 assert_eq!(plaintext, b"203.0.113.7:61180");
@@ -562,7 +564,7 @@ mod tests {
             id,
             &[7u8; 256],
             &env.context.rsa_public_key,
-        );
+        )?;
 
         assert_decrypt_failed(reply, id);
         Ok(())
@@ -578,7 +580,18 @@ mod tests {
             .encrypt_rsa_message(b"addr", &peer_key)?;
         let id = Uuid::new_v4();
 
-        let reply = decrypt_reply(&env.context.key_manager, id, &ciphertext, &peer_key);
+        let reply = decrypt_reply(&env.context.key_manager, id, &ciphertext, &peer_key)?;
+
+        assert_decrypt_failed(reply, id);
+        Ok(())
+    }
+
+    #[test]
+    fn decrypt_with_an_invalid_public_key_is_answered_with_an_error() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("decrypt-bad-pem")?;
+        let id = Uuid::new_v4();
+
+        let reply = decrypt_reply(&env.context.key_manager, id, &[7u8; 256], "not a pem")?;
 
         assert_decrypt_failed(reply, id);
         Ok(())

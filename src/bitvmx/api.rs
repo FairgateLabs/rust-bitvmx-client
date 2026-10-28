@@ -487,7 +487,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         message: Vec<u8>,
         public_key: String,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        Ok(super::decrypt_reply(&self.program_context.key_manager, id, &message, &public_key))
+        super::decrypt_reply(&self.program_context.key_manager, id, &message, &public_key)
     }
 
     fn get_aggregated_pubkey(
