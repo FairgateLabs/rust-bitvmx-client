@@ -5,6 +5,12 @@ introduce breaking changes between versions.
 
 ## Unreleased
 
+### Added
+
+- `comms.public_address` is an optional config setting with the address `GetCommInfo` returns, for
+  nodes whose listen `comms.address` peers cannot reach (Docker, NAT). The node still listens on
+  `comms.address`, and `GetCommInfo` returns it when `public_address` is not set.
+
 ### Changed
 
 - Following rust-bitvmx-storage-backend PR #43, `StorageConfig` has a `sync_writes` option, on by

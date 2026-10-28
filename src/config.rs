@@ -28,6 +28,9 @@ pub struct ProtocolBuilderConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommsConfig {
     pub address: SocketAddr,
+    /// Address returned by `GetCommInfo` for peers to connect to, when it differs from the
+    /// listen `address` (for example behind Docker or NAT). Defaults to `address`.
+    pub public_address: Option<SocketAddr>,
     pub priv_key: String,
     pub storage_path: String,
     pub allow_list: String,

@@ -275,7 +275,10 @@ impl BitVMX {
 
     pub fn comms_address(&self) -> Result<CommsAddress, BitVMXError> {
         CommsAddress::try_new(
-            self.address(),
+            self.config
+                .comms
+                .public_address
+                .unwrap_or_else(|| self.address()),
             self.pubkey_hash()?,
             self.program_context.rsa_public_key.clone(),
         )
