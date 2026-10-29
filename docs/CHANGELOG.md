@@ -9,7 +9,8 @@ introduce breaking changes between versions.
 
 - `comms.public_address` is an optional config setting with the address `GetCommInfo` returns, for
   nodes whose listen `comms.address` peers cannot reach (Docker, NAT). The node still listens on
-  `comms.address`, and `GetCommInfo` returns it when `public_address` is not set.
+  `comms.address`, and `GetCommInfo` returns it when `public_address` is not set. It must be a
+  literal `IP:port`; hostnames fail config parsing.
 
 ### Changed
 

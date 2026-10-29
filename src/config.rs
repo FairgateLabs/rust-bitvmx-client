@@ -29,11 +29,19 @@ pub struct ProtocolBuilderConfig {
 pub struct CommsConfig {
     pub address: SocketAddr,
     /// Address returned by `GetCommInfo` for peers to connect to, when it differs from the
-    /// listen `address` (for example behind Docker or NAT). Defaults to `address`.
+    /// listen `address` (for example behind Docker or NAT). Defaults to `address`. Must be a
+    /// literal `IP:port`: hostnames are rejected, since peers dial and allow-list by IP.
     pub public_address: Option<SocketAddr>,
     pub priv_key: String,
     pub storage_path: String,
     pub allow_list: String,
+}
+
+impl CommsConfig {
+    /// Address peers should dial: `public_address`, or the listen `address` when unset.
+    pub fn public_address(&self) -> SocketAddr {
+        self.public_address.unwrap_or(self.address)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -144,4 +152,36 @@ where
 {
     let path = String::deserialize(d)?;
     BrokerSettings::new(&path).map_err(serde::de::Error::custom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommsConfig;
+
+    fn comms(public_address: Option<&str>) -> Result<CommsConfig, serde_json::Error> {
+        serde_json::from_value(serde_json::json!({
+            "address": "0.0.0.0:61180",
+            "public_address": public_address,
+            "priv_key": "",
+            "storage_path": "",
+            "allow_list": "",
+        }))
+    }
+
+    #[test]
+    fn public_address_defaults_to_listen_address() {
+        let config = comms(None).unwrap();
+        assert_eq!(config.public_address(), config.address);
+    }
+
+    #[test]
+    fn public_address_overrides_listen_address() {
+        let config = comms(Some("203.0.113.5:61180")).unwrap();
+        assert_eq!(config.public_address(), "203.0.113.5:61180".parse().unwrap());
+    }
+
+    #[test]
+    fn public_address_rejects_hostnames() {
+        assert!(comms(Some("node1.example.com:61180")).is_err());
+    }
 }

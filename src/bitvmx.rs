@@ -273,12 +273,13 @@ impl BitVMX {
         Ok(self.program_context.comms.get_pubk_hash()?)
     }
 
+    pub fn public_address(&self) -> SocketAddr {
+        self.config.comms.public_address()
+    }
+
     pub fn comms_address(&self) -> Result<CommsAddress, BitVMXError> {
         CommsAddress::try_new(
-            self.config
-                .comms
-                .public_address
-                .unwrap_or_else(|| self.address()),
+            self.public_address(),
             self.pubkey_hash()?,
             self.program_context.rsa_public_key.clone(),
         )
