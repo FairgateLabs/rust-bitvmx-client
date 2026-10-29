@@ -835,7 +835,7 @@ impl DisputeCoreProtocol {
         let wt_dispute_key = &committee.members[data.member_index].dispute_key;
         let mut init_challenge_cosign_outputs: Vec<Option<OutputType>> = vec![];
         let mut op_cosign_outputs: Vec<Option<OutputType>> = vec![];
-        let challenge_cost = dispute::protocol_cost();
+        let challenge_cost = dispute::DEFAULT_PROTOCOL_COST;
 
         // First output block of WT_START_ENABLER_TX: one output per member, funding
         // WT_INIT_CHALLENGE_TX for every member that is an operator other than the owner of this

@@ -58,7 +58,7 @@ pub fn slot_protocol_dust_cost(participants: u8) -> u64 {
 pub fn amount_for_operator(operators: u8) -> u64 {
     let dust = OutputType::generic_dust_limit(None).to_sat();
 
-    let protocol_cost = dispute::protocol_cost();
+    let protocol_cost = dispute::DEFAULT_PROTOCOL_COST;
     let claim_gate_cost = ClaimGate::cost(dust, dust, operators as u8 - 1, 1, false);
     let amount_for_operator = dust
         + dust
@@ -667,7 +667,7 @@ impl ProtocolHandler for SlotProtocol {
             let pair_agg_check =
                 scripts::check_aggregated_signature(&operators_pairs[0], SignMode::Aggregate);
             let start_challenge = OutputType::taproot(
-                dispute::protocol_cost(),
+                dispute::DEFAULT_PROTOCOL_COST,
                 &operators_aggregated_pub,
                 &[ops_agg_check, pair_agg_check],
             )?;
