@@ -182,8 +182,11 @@ class OperatorConfigGenerator:
         }
 
         # Communication address pattern: 61180 + (operator_num - 1)
+        # public_address is what GetCommInfo advertises; set it to the reachable host behind Docker/NAT
+        comms_address = f"127.0.0.1:{61180 + (operator_num - 1)}"
         config["comms"] = {
-            "address": f"127.0.0.1:{61180 + (operator_num - 1)}",
+            "address": comms_address,
+            "public_address": comms_address,
             "priv_key": f"config/keys/op_{operator_num}.key",
             "storage_path": f"/tmp/regtest/op_{operator_num}/comms.db",
             "allow_list": "config/comms_allow_list.yaml"

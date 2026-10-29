@@ -108,6 +108,7 @@ fn run_bitvmx(opn: &str, fresh: bool, rx: Receiver<()>, tx: Option<Sender<()>>) 
     for instance in &instances {
         let _span = info_span!("", id = instance.name).entered();
         info!("Comms Address: {}", instance.bitvmx.address());
+        info!("Public Address: {}", instance.bitvmx.comms_address()?.address);
         info!("Peer Public Key Hash: {}", instance.bitvmx.pubkey_hash()?);
         info!("Starting Bitcoin blockchain sync");
     }
