@@ -159,7 +159,10 @@ pub enum IncomingBitVMXApiMessages {
     SendFunds(Uuid, Destination, Option<u64>),
     GetProtocolVisualization(Uuid),
     ListAllowList(Uuid),
-    AddToAllowList(Uuid, PubkHash, Option<IpAddr>), // An absent address matches any source IP.
+    // An absent address matches any source IP. Pass None for peers: a pinned IP must equal both
+    // the IP we dial (their public_address) and the source IP of their connections, which
+    // differ behind some NATs and multi-homed hosts. The key is still checked by TLS.
+    AddToAllowList(Uuid, PubkHash, Option<IpAddr>),
     RemoveFromAllowList(Uuid, PubkHash),
     SetAllowAll(Uuid, bool), // Blanket accept-everyone. Independent of the entries above.
     Shutdown(),
