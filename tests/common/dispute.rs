@@ -120,6 +120,30 @@ impl ForcedChallenges {
     }
 }
 
+/// Program definition the dispute will run. Tests need it before the setup starts, to derive the funding
+/// amount from it, so the choice lives here instead of inside prepare_dispute.
+pub fn program_definition_path(
+    fail_force_config: &ForcedChallenges,
+    program_path: Option<String>,
+) -> String {
+    if let Some(program_path) = program_path {
+        return program_path;
+    }
+
+    format!(
+        "{}/{}",
+        "../BitVMX-CPU/docker-riscv32/riscv32/build/",
+        match fail_force_config {
+            ForcedChallenges::Uninitialized(_) => "hello-world-uninitialized.yaml",
+            ForcedChallenges::ProgramCounterSection(ParticipantRole::Prover) => "pc_invalid.yaml",
+            ForcedChallenges::WriteSection(ParticipantRole::Prover) => "write_invalid.yaml",
+            ForcedChallenges::ReadSection(ParticipantRole::Prover) => "read_invalid.yaml",
+            ForcedChallenges::WitnessDiv(_) => "audit_09.yaml",
+            _ => "hello-world.yaml",
+        }
+    )
+}
+
 pub fn prepare_dispute(
     program_id: Uuid,
     participants: Vec<CommsAddress>,
@@ -133,19 +157,7 @@ pub fn prepare_dispute(
     program_path: Option<String>,
     auto_dispatch_input: Option<u8>,
 ) -> Result<()> {
-    let program = format!(
-        "{}/{}",
-        "../BitVMX-CPU/docker-riscv32/riscv32/build/",
-        match fail_force_config {
-            ForcedChallenges::Uninitialized(_) => "hello-world-uninitialized.yaml",
-            ForcedChallenges::ProgramCounterSection(ParticipantRole::Prover) => "pc_invalid.yaml",
-            ForcedChallenges::WriteSection(ParticipantRole::Prover) => "write_invalid.yaml",
-            ForcedChallenges::ReadSection(ParticipantRole::Prover) => "read_invalid.yaml",
-            ForcedChallenges::WitnessDiv(_) => "audit_09.yaml",
-            _ => "hello-world.yaml",
-        }
-    );
-    let program_definition = program_path.unwrap_or(program.to_string());
+    let program_definition = program_definition_path(&fail_force_config, program_path);
 
     let config_results = get_fail_force_config(fail_force_config.clone());
 
