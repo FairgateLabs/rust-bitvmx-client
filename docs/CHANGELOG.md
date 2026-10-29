@@ -5,6 +5,22 @@ introduce breaking changes between versions.
 
 ## Unreleased
 
+### Added
+
+- `comms.public_address` is an optional config setting with the address `GetCommInfo` returns, for
+  nodes whose listen `comms.address` peers cannot reach (Docker, NAT). The node still listens on
+  `comms.address`, and `GetCommInfo` returns it when `public_address` is not set. It must be a
+  literal `IP:port`; hostnames fail config parsing.
+- BitVMX refuses to start when the address it would return from `GetCommInfo` (`comms.public_address`,
+  or `comms.address` when unset) has an unspecified IP (`0.0.0.0`, `::`) or port 0, since no peer can
+  dial it. Set `comms.public_address` when listening on `0.0.0.0`.
+- BitVMX also refuses to start when that address is loopback, private (`10/8`, `172.16/12`,
+  `192.168/16`), shared/CGNAT (`100.64/10`), link-local, multicast, broadcast, benchmarking
+  (`198.18/15`), reserved (`240/4`) or a documentation range, or the IPv6 equivalents. Set
+  `comms.allow_private_address: true` when every peer shares that network (local tests, Docker, a
+  VPC or VPN). This is a breaking change: existing configs with such an address need the flag. The
+  bundled regtest and testnet configs set it.
+
 ### Changed
 
 - Following rust-bitvmx-storage-backend PR #43, `StorageConfig` has a `sync_writes` option, on by
@@ -25,6 +41,8 @@ introduce breaking changes between versions.
 - `CommInfo` now returns the node's `pubkey_pem` inside its `CommsAddress`, so L2 can forward it
   to the other participants.
 - `CommsAddress` no longer implements `FromStr`. Build it with `CommsAddress::try_new` or serde.
+- `Config::comms_address()` is removed: it returned the listen address, not the one peers dial. Use
+  `CommsConfig::public_address()` or `BitVMX::comms_address()`.
 - `CommsAddress` equality, ordering, and hashing use `address` and `pubkey_hash` only and ignore
   `pubkey_pem`. Addresses stored before this field existed deserialize with an empty `pubkey_pem`.
 

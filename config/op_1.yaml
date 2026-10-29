@@ -20,6 +20,11 @@ storage:
 
 comms:
   address: 127.0.0.1:61180
+  # Same as address, so a no-op here. Kept because deployment templates copy op_1: set it to the
+  # IP:port peers can reach when address is not reachable (Docker, NAT).
+  public_address: 127.0.0.1:61180
+  # Accepts the loopback address above. Remove it once public_address is a public IP.
+  allow_private_address: true
   priv_key: config/keys/op_1.key
   storage_path: /tmp/regtest/op_1/comms.db
   allow_list: config/comms_allow_list.yaml

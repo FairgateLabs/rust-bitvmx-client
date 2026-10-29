@@ -70,6 +70,7 @@ storage:
   path: /tmp/regtest/op_8/storage.db
 comms:
   address: 127.0.0.1:61187
+  allow_private_address: true
   priv_key: config/keys/op_8.key
   storage_path: /tmp/regtest/op_8/comms.db
   allow_list: config/comms_allow_list.yaml

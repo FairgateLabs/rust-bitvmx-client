@@ -163,6 +163,8 @@ fn print_version_info() {
 impl BitVMX {
     pub fn new(config: Config) -> Result<Self, BitVMXError> {
         print_version_info();
+        // Fail at startup, not on the first GetCommInfo, when peers could never dial us.
+        config.comms.public_address()?;
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_manager =
             create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
@@ -273,9 +275,13 @@ impl BitVMX {
         Ok(self.program_context.comms.get_pubk_hash()?)
     }
 
+    pub fn public_address(&self) -> Result<SocketAddr, BitVMXError> {
+        Ok(self.config.comms.public_address()?)
+    }
+
     pub fn comms_address(&self) -> Result<CommsAddress, BitVMXError> {
         CommsAddress::try_new(
-            self.address(),
+            self.public_address()?,
             self.pubkey_hash()?,
             self.program_context.rsa_public_key.clone(),
         )

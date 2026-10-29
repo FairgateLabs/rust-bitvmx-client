@@ -14,6 +14,7 @@ storage:
   path: /tmp/op_2/storage.db
 comms:
   address: 127.0.0.1:61181
+  allow_private_address: true
   priv_key: config/keys/op_2.key
   storage_path: /tmp/op_2/comms.db
   allow_list: config/comms_allow_list.yaml

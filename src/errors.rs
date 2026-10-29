@@ -398,6 +398,12 @@ pub enum ConfigError {
     #[error("Invalid job dispatcher ping config: {0}")]
     InvalidPingConfig(String),
 
+    #[error("Comms address {0} cannot be dialed by peers; set comms.public_address")]
+    UndialableCommsAddress(std::net::SocketAddr),
+
+    #[error("Comms address {0} is not reachable by peers outside this network; set comms.public_address, or comms.allow_private_address if all peers share a private network")]
+    PrivateCommsAddress(std::net::SocketAddr),
+
     #[error("Invalid configuration from file: {0}")]
     SettingsError(#[from] bitvmx_settings::errors::ConfigError),
 
