@@ -14,6 +14,12 @@ introduce breaking changes between versions.
 - BitVMX refuses to start when the address it would return from `GetCommInfo` (`comms.public_address`,
   or `comms.address` when unset) has an unspecified IP (`0.0.0.0`, `::`) or port 0, since no peer can
   dial it. Set `comms.public_address` when listening on `0.0.0.0`.
+- BitVMX also refuses to start when that address is loopback, private (`10/8`, `172.16/12`,
+  `192.168/16`), shared/CGNAT (`100.64/10`), link-local, multicast, broadcast, benchmarking
+  (`198.18/15`), reserved (`240/4`) or a documentation range, or the IPv6 equivalents. Set
+  `comms.allow_private_address: true` when every peer shares that network (local tests, Docker, a
+  VPC or VPN). This is a breaking change: existing configs with such an address need the flag. The
+  bundled regtest and testnet configs set it.
 
 ### Changed
 

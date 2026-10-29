@@ -14,6 +14,7 @@ storage:
   path: /tmp/testnet4/op_3/storage.db
 comms:
   address: 127.0.0.1:61182
+  allow_private_address: true
   priv_key: config/keys/op_3.key
   storage_path: /tmp/testnet4/op_3/comms.db
   allow_list: config/comms_allow_list.yaml

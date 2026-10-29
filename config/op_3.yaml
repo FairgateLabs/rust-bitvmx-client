@@ -20,6 +20,7 @@ storage:
 
 comms:
   address: 127.0.0.1:61182
+  allow_private_address: true
   priv_key: config/keys/op_3.key
   storage_path: /tmp/regtest/op_3/comms.db
   allow_list: config/comms_allow_list.yaml
