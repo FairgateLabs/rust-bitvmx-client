@@ -27,10 +27,14 @@ pub struct ProtocolBuilderConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommsConfig {
+    /// Local socket the node binds and listens on. Never sent to peers, so it can be private,
+    /// a Docker network IP or `0.0.0.0` (then `public_address` is required).
     pub address: SocketAddr,
-    /// Address returned by `GetCommInfo` for peers to connect to, when it differs from the
-    /// listen `address` (for example behind Docker or NAT). Defaults to `address`. Must be a
-    /// literal `IP:port`: hostnames are rejected, since peers dial and allow-list by IP.
+    /// Address peers dial to reach this node, returned by `GetCommInfo`. Set it when `address`
+    /// is not reachable by peers (Docker, NAT); defaults to `address`. Public, or private only
+    /// when every peer shares that network. Must be a literal `IP:port`: hostnames are
+    /// rejected, since peers dial and allow-list by IP. It does not set the source IP of
+    /// outgoing connections; the OS and NAT decide that.
     pub public_address: Option<SocketAddr>,
     pub priv_key: String,
     pub storage_path: String,
@@ -39,8 +43,13 @@ pub struct CommsConfig {
 
 impl CommsConfig {
     /// Address peers should dial: `public_address`, or the listen `address` when unset.
-    pub fn public_address(&self) -> SocketAddr {
-        self.public_address.unwrap_or(self.address)
+    /// Fails on an unspecified IP (`0.0.0.0`, `::`) or port 0, which no peer can dial.
+    pub fn public_address(&self) -> Result<SocketAddr, ConfigError> {
+        let address = self.public_address.unwrap_or(self.address);
+        if address.ip().is_unspecified() || address.port() == 0 {
+            return Err(ConfigError::UndialableCommsAddress(address));
+        }
+        Ok(address)
     }
 }
 
@@ -137,10 +146,6 @@ impl Config {
         }
     }
 
-    pub fn comms_address(&self) -> &SocketAddr {
-        &self.comms.address
-    }
-
     pub fn comms_key(&self) -> &str {
         self.comms.priv_key.as_str()
     }
@@ -157,10 +162,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::CommsConfig;
+    use crate::errors::ConfigError;
 
-    fn comms(public_address: Option<&str>) -> Result<CommsConfig, serde_json::Error> {
+    fn comms(
+        address: &str,
+        public_address: Option<&str>,
+    ) -> Result<CommsConfig, serde_json::Error> {
         serde_json::from_value(serde_json::json!({
-            "address": "0.0.0.0:61180",
+            "address": address,
             "public_address": public_address,
             "priv_key": "",
             "storage_path": "",
@@ -170,18 +179,39 @@ mod tests {
 
     #[test]
     fn public_address_defaults_to_listen_address() {
-        let config = comms(None).unwrap();
-        assert_eq!(config.public_address(), config.address);
+        let config = comms("127.0.0.1:61180", None).unwrap();
+        assert_eq!(config.public_address().unwrap(), config.address);
     }
 
     #[test]
     fn public_address_overrides_listen_address() {
-        let config = comms(Some("203.0.113.5:61180")).unwrap();
-        assert_eq!(config.public_address(), "203.0.113.5:61180".parse().unwrap());
+        let config = comms("0.0.0.0:61180", Some("203.0.113.5:61180")).unwrap();
+        assert_eq!(
+            config.public_address().unwrap(),
+            "203.0.113.5:61180".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn public_address_rejects_undialable_addresses() {
+        for (address, public_address) in [
+            ("0.0.0.0:61180", None),
+            ("[::]:61180", None),
+            ("127.0.0.1:61180", Some("0.0.0.0:61180")),
+            ("127.0.0.1:0", None),
+        ] {
+            assert!(
+                matches!(
+                    comms(address, public_address).unwrap().public_address(),
+                    Err(ConfigError::UndialableCommsAddress(_))
+                ),
+                "{address} / {public_address:?}"
+            );
+        }
     }
 
     #[test]
     fn public_address_rejects_hostnames() {
-        assert!(comms(Some("node1.example.com:61180")).is_err());
+        assert!(comms("127.0.0.1:61180", Some("node1.example.com:61180")).is_err());
     }
 }
