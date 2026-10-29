@@ -22,7 +22,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
   for every transaction in the dispute flow.
 
 ### Changed
-
+- `WT_START_ENABLER_TX` challenge outputs are sized with `dispute::DEFAULT_PROTOCOL_COST`, a fixed worst case
+  for a 10 round, 3 input transaction program. `dispute::protocol_cost` now derives the exact funding of a
+  dispute from its `ProgramDefinition`, but `create_wt_start_enabler` commits those output values at packet
+  setup, before the disputed program is known, so it cannot call it. This is a placeholder: replace it with
+  the derived value once the program definition is reachable there.
 - Pass the new optional setup timeout through Union setup requests. Existing flows use `None`
   (the one-hour compatibility default); production deployments must select timeouts appropriate
   to each protocol operation.
