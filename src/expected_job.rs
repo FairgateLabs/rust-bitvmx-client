@@ -62,20 +62,11 @@ impl JobTarget {
         }
     }
 
-    pub fn owner(&self) -> ExpectedJobOwner {
+    pub fn expected_target(&self) -> ExpectedJobTarget {
         match self {
-            Self::Request(id) => ExpectedJobOwner::Request(*id),
-            Self::Setup(program_id, _) | Self::Program(program_id, _) => {
-                ExpectedJobOwner::Program(*program_id)
-            }
-        }
-    }
-
-    pub fn kind(&self) -> ExpectedJobKind {
-        match self {
-            Self::Request(_) => ExpectedJobKind::Zkp,
-            Self::Setup(_, _) => ExpectedJobKind::Setup,
-            Self::Program(_, _) => ExpectedJobKind::Program,
+            Self::Request(id) => ExpectedJobTarget::Request(*id),
+            Self::Setup(program_id, _) => ExpectedJobTarget::Setup(*program_id),
+            Self::Program(program_id, _) => ExpectedJobTarget::Program(*program_id),
         }
     }
 }
@@ -85,8 +76,7 @@ impl JobTarget {
 pub(crate) struct ExpectedJob {
     pub job_id: String,
     pub dispatcher: JobDispatcherType,
-    pub owner: ExpectedJobOwner,
-    pub kind: ExpectedJobKind,
+    pub target: ExpectedJobTarget,
     pub status: ExpectedJobStatus,
     /// Exact outbound envelope and destination, retained so retries reuse the same wire id.
     #[serde(default)]
@@ -106,17 +96,11 @@ struct ExpectedJobDispatch {
     message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ExpectedJobOwner {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ExpectedJobTarget {
+    Setup(Uuid),
     Program(Uuid),
     Request(Uuid),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ExpectedJobKind {
-    Setup,
-    Program,
-    Zkp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,7 +132,7 @@ impl ExpectedJobs {
         Ok(StorageKey::new(["bitvmx", "expected_job", &digest])?)
     }
 
-    /// Registers the wire job id and derives its owner and kind using the same
+    /// Registers the wire job id and derives its target using the same
     /// source-specific contract that ingress validates.
     #[cfg(test)]
     pub fn register(
@@ -173,15 +157,13 @@ impl ExpectedJobs {
         dispatch: Option<ExpectedJobDispatch>,
         execution_timeout: Option<Duration>,
     ) -> Result<ExpectedJobRegistration, BitVMXError> {
-        let target = JobTarget::derive(dispatcher, &job_id)?;
-        let (owner, kind) = (target.owner(), target.kind());
+        let target = JobTarget::derive(dispatcher, &job_id)?.expected_target();
         let timeout = execution_timeout.unwrap_or(DEFAULT_JOB_TIMEOUT);
         let execution_timeout_ms = Some(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX));
         let job = ExpectedJob {
             job_id,
             dispatcher,
-            owner,
-            kind,
+            target,
             status: ExpectedJobStatus::Pending,
             dispatch,
             retry_attempts: 0,
@@ -191,8 +173,7 @@ impl ExpectedJobs {
 
         if let Some(existing) = self.get(&job.job_id)? {
             if existing.dispatcher == job.dispatcher
-                && existing.owner == job.owner
-                && existing.kind == job.kind
+                && existing.target == job.target
                 && existing.execution_timeout_ms == job.execution_timeout_ms
             {
                 return Ok(ExpectedJobRegistration::AlreadyExists(existing.status));
@@ -209,35 +190,30 @@ impl ExpectedJobs {
         ids.push(job.job_id.clone());
         self.storage.set(Self::key(&job.job_id)?, &job, None)?;
         self.storage.set(EXPECTED_JOB_IDS_KEY.as_ref(), ids, None)?;
-        match (&job.owner, &job.kind) {
-            (ExpectedJobOwner::Program(program_id), ExpectedJobKind::Setup) => {
+        match job.target {
+            ExpectedJobTarget::Setup(program_id) => {
                 timeouts.register_setup_job(
-                    *program_id,
+                    program_id,
                     job.job_id.clone(),
                     job.execution_timeout_ms.map(Duration::from_millis),
                     false,
                 )?;
             }
-            (ExpectedJobOwner::Program(program_id), ExpectedJobKind::Program) => {
+            ExpectedJobTarget::Program(program_id) => {
                 timeouts.register_runtime_job(
-                    *program_id,
+                    program_id,
                     job.job_id.clone(),
                     job.execution_timeout_ms.map(Duration::from_millis),
                     false,
                 )?;
             }
-            (ExpectedJobOwner::Request(request_id), ExpectedJobKind::Zkp) => {
+            ExpectedJobTarget::Request(request_id) => {
                 timeouts.register_request_job(
-                    *request_id,
+                    request_id,
                     job.job_id.clone(),
                     job.execution_timeout_ms.map(Duration::from_millis),
                     false,
                 )?;
-            }
-            _ => {
-                return Err(BitVMXError::InvalidState(
-                    "dispatcher job owner and kind are incompatible".to_string(),
-                ));
             }
         }
         Ok(ExpectedJobRegistration::Registered)
@@ -365,14 +341,14 @@ impl ExpectedJobs {
                 job_id, job.retry_attempts
             );
             broker_channel.send_service(&dispatch.destination, dispatch.message)?;
-            let ExpectedJobOwner::Program(program_id) = &job.owner else {
+            let ExpectedJobTarget::Program(program_id) = job.target else {
                 return Err(BitVMXError::InvalidState(format!(
-                    "retryable dispatcher job '{}' is not program-owned",
+                    "retryable dispatcher job '{}' is not a runtime program job",
                     job_id
                 )));
             };
             timeouts.register_runtime_job(
-                *program_id,
+                program_id,
                 job_id.clone(),
                 job.execution_timeout_ms.map(Duration::from_millis),
                 true,
@@ -429,6 +405,40 @@ mod tests {
 
     fn expected_jobs(storage: Rc<Storage>) -> ExpectedJobs {
         ExpectedJobs::new(storage)
+    }
+
+    #[test]
+    fn expected_job_target_variants_round_trip_in_the_new_format() {
+        let id = Uuid::new_v4();
+        let variants = [
+            (ExpectedJobTarget::Setup(id), JobDispatcherType::Garbler),
+            (ExpectedJobTarget::Program(id), JobDispatcherType::Emulator),
+            (ExpectedJobTarget::Request(id), JobDispatcherType::ZKP),
+        ];
+
+        for (target, dispatcher) in variants {
+            let job = ExpectedJob {
+                job_id: "job".to_string(),
+                dispatcher,
+                target,
+                status: ExpectedJobStatus::Pending,
+                dispatch: None,
+                retry_attempts: 0,
+                retry_not_before_ms: None,
+                execution_timeout_ms: None,
+            };
+            let serialized = serde_json::to_value(&job).unwrap();
+            let expected_target = match target {
+                ExpectedJobTarget::Setup(id) => serde_json::json!({"Setup": id}),
+                ExpectedJobTarget::Program(id) => serde_json::json!({"Program": id}),
+                ExpectedJobTarget::Request(id) => serde_json::json!({"Request": id}),
+            };
+            assert_eq!(serialized["target"], expected_target);
+            assert_eq!(
+                serde_json::from_value::<ExpectedJob>(serialized).unwrap(),
+                job
+            );
+        }
     }
 
     #[test]

@@ -604,7 +604,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         job_id: String,
         reason: String,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        use crate::expected_job::{ExpectedJobKind, ExpectedJobStatus};
+        use crate::expected_job::{ExpectedJobStatus, ExpectedJobTarget};
 
         if requester != &self.config.components.l2 {
             return Ok(Self::api_error(
@@ -627,7 +627,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 format!("Dispatcher job '{job_id}' was not found"),
             ));
         };
-        if job.kind != ExpectedJobKind::Program {
+        if !matches!(job.target, ExpectedJobTarget::Program(_)) {
             return Ok(Self::api_error(
                 request_id,
                 format!("Dispatcher job '{job_id}' is not a runtime program job"),

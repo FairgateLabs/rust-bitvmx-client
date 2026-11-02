@@ -184,7 +184,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 )));
             }
         };
-        if expected.owner != target.owner() || expected.kind != target.kind() {
+        if expected.target != target.expected_target() {
             warn!(
                 "Expected-job metadata does not match result '{}'",
                 message.job_id

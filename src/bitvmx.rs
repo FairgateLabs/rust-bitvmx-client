@@ -15,9 +15,7 @@ use crate::{
     comms_helper::{deserialize_msg, CommsMessageType},
     config::Config,
     errors::BitVMXError,
-    expected_job::{
-        ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus, ExpectedJobs, JOB_TIMEOUT_REASON,
-    },
+    expected_job::{ExpectedJobStatus, ExpectedJobTarget, ExpectedJobs, JOB_TIMEOUT_REASON},
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::{MessageQueue, PushOutcome, QueuedMessage},
     operation_timeout::{OperationTimeoutId, OperationTimeouts, TimeoutFailurePolicy},
@@ -1129,9 +1127,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                                 "dispatcher job '{expected_job_id}' is not registered"
                             ))
                         })?;
-                    if expected.owner != ExpectedJobOwner::Program(program_id)
-                        || expected.kind != ExpectedJobKind::Program
-                    {
+                    if expected.target != ExpectedJobTarget::Program(program_id) {
                         return Err(BitVMXError::InvalidState(format!(
                             "dispatcher job '{expected_job_id}' has incompatible runtime ownership"
                         )));
@@ -1371,8 +1367,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         .expected_jobs
                         .get(&job_id)?
                         .is_some_and(|job| {
-                            job.owner == ExpectedJobOwner::Program(program_id)
-                                && job.kind == ExpectedJobKind::Setup
+                            job.target == ExpectedJobTarget::Setup(program_id)
                                 && matches!(job.status, ExpectedJobStatus::Pending)
                         });
                     if !valid_pending_setup_job {
@@ -1394,8 +1389,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
                     return self.program_context.operation_timeouts.cancel(id);
                 };
-                if job.owner != ExpectedJobOwner::Request(request_id)
-                    || job.kind != ExpectedJobKind::Zkp
+                if job.target != ExpectedJobTarget::Request(request_id)
                     || !matches!(job.status, ExpectedJobStatus::Pending)
                 {
                     return self.program_context.operation_timeouts.cancel(id);
@@ -1406,8 +1400,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
                     return self.program_context.operation_timeouts.cancel(id);
                 };
-                if job.owner != ExpectedJobOwner::Program(program_id)
-                    || job.kind != ExpectedJobKind::Program
+                if job.target != ExpectedJobTarget::Program(program_id)
                     || !matches!(job.status, ExpectedJobStatus::Pending)
                 {
                     return self.program_context.operation_timeouts.cancel(id);
