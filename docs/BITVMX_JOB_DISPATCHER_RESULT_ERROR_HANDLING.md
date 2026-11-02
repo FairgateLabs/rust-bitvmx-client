@@ -373,8 +373,8 @@ A general durable timeout facility now handles protocol operations independently
   created and no peer message ever arrives. This covers, for example, a participant that
   starts setup and then waits forever for an absent peer contribution.
 
-The timeout facility stores a typed operation id/owner, absolute deadline, timeout kind, and
-failure policy in durable storage, with an iterable deadline index. Registration, renewal,
+The timeout facility stores a typed operation id/owner, absolute deadline, and failure policy in
+durable storage, with an iterable deadline index. Registration, renewal,
 and cancellation are idempotent and committed atomically with the state transition that
 starts, retries, or completes the operation. The setup-process deadline is an overall deadline:
 ordinary peer messages and setup-step advancement do not grant a fresh full setup budget.

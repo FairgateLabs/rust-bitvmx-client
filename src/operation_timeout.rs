@@ -22,12 +22,6 @@ pub(crate) enum OperationTimeoutId {
     DispatcherJob(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum OperationTimeoutKind {
-    SetupProcess,
-    JobExecution,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum TimeoutFailurePolicy {
     FailSetup {
@@ -48,7 +42,6 @@ pub(crate) enum TimeoutFailurePolicy {
 pub(crate) struct OperationTimeout {
     pub id: OperationTimeoutId,
     pub deadline_ms: u64,
-    pub kind: OperationTimeoutKind,
     pub policy: TimeoutFailurePolicy,
 }
 
@@ -76,7 +69,6 @@ impl OperationTimeouts {
     fn register(
         &self,
         id: OperationTimeoutId,
-        kind: OperationTimeoutKind,
         policy: TimeoutFailurePolicy,
         duration: Duration,
         renew: bool,
@@ -84,7 +76,7 @@ impl OperationTimeouts {
         let key = Self::key(&id)?;
         let existing: Option<OperationTimeout> = self.storage.get(&key, None)?;
         if let Some(existing) = existing {
-            if existing.kind != kind || existing.policy != policy {
+            if existing.policy != policy {
                 return Err(BitVMXError::InvalidState(format!(
                     "operation timeout '{id:?}' is registered with incompatible metadata"
                 )));
@@ -107,7 +99,6 @@ impl OperationTimeouts {
             OperationTimeout {
                 id,
                 deadline_ms: Self::deadline(duration)?,
-                kind,
                 policy,
             },
             None,
@@ -122,7 +113,6 @@ impl OperationTimeouts {
     ) -> Result<(), BitVMXError> {
         self.register(
             OperationTimeoutId::SetupProcess(program_id),
-            OperationTimeoutKind::SetupProcess,
             TimeoutFailurePolicy::FailSetup {
                 program_id,
                 job_id: None,
@@ -141,7 +131,6 @@ impl OperationTimeouts {
     ) -> Result<(), BitVMXError> {
         self.register(
             OperationTimeoutId::DispatcherJob(job_id.clone()),
-            OperationTimeoutKind::JobExecution,
             TimeoutFailurePolicy::FailSetup {
                 program_id,
                 job_id: Some(job_id),
@@ -160,7 +149,6 @@ impl OperationTimeouts {
     ) -> Result<(), BitVMXError> {
         self.register(
             OperationTimeoutId::DispatcherJob(job_id.clone()),
-            OperationTimeoutKind::JobExecution,
             TimeoutFailurePolicy::FailRequestJob { request_id, job_id },
             timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
             renew,
@@ -176,7 +164,6 @@ impl OperationTimeouts {
     ) -> Result<(), BitVMXError> {
         self.register(
             OperationTimeoutId::DispatcherJob(job_id.clone()),
-            OperationTimeoutKind::JobExecution,
             TimeoutFailurePolicy::RetryRuntimeJob { program_id, job_id },
             timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
             renew,
