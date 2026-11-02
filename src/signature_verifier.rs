@@ -144,6 +144,18 @@ impl SignatureVerifier {
     /// Authenticates a communication message without conflating a missing key,
     /// peer rejection, and a local/key-manager failure.
     ///
+    /// # Parameters
+    /// - `globals`: Global storage used to retrieve the sender's verification key
+    /// - `program_id`: ID of the program or collaboration (as String)
+    /// - `version`: Protocol version (e.g., "1.0")
+    /// - `msg_type`: Message type
+    /// - `data`: Message data (JSON Value)
+    /// - `timestamp`: Message timestamp
+    /// - `signature`: RSA signature of the message (`Vec<u8>`)
+    /// - `sender_pubkey_hash`: Hash of the sender's public key
+    /// - `rsa_public_key`: This operator's RSA public key for verification operations
+    /// - `my_pubkey_hash`: Hash of this operator's public key
+    ///
     /// `VerificationKeyRequest` is the unsigned bootstrap exception. A
     /// `VerificationKey` announcement is authenticated by binding the announced
     /// key's fingerprint to the broker's TLS-authenticated sender in
