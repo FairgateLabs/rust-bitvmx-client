@@ -22,27 +22,12 @@ pub(crate) enum OperationTimeoutId {
     DispatcherJob(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum TimeoutFailurePolicy {
-    FailSetup {
-        program_id: Uuid,
-        job_id: Option<String>,
-    },
-    RetryRuntimeJob {
-        program_id: Uuid,
-        job_id: String,
-    },
-    FailRequestJob {
-        request_id: Uuid,
-        job_id: String,
-    },
-}
-
+/// What happens on expiry follows from the id: a setup process fails its setup, and a
+/// dispatcher job is handled according to its `ExpectedJob::target`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OperationTimeout {
     pub id: OperationTimeoutId,
     pub deadline_ms: u64,
-    pub policy: TimeoutFailurePolicy,
 }
 
 #[derive(Clone)]
@@ -69,18 +54,12 @@ impl OperationTimeouts {
     fn register(
         &self,
         id: OperationTimeoutId,
-        policy: TimeoutFailurePolicy,
         duration: Duration,
         renew: bool,
     ) -> Result<(), BitVMXError> {
         let key = Self::key(&id)?;
         let existing: Option<OperationTimeout> = self.storage.get(&key, None)?;
-        if let Some(existing) = existing {
-            if existing.policy != policy {
-                return Err(BitVMXError::InvalidState(format!(
-                    "operation timeout '{id:?}' is registered with incompatible metadata"
-                )));
-            }
+        if existing.is_some() {
             if !renew {
                 return Ok(());
             }
@@ -99,7 +78,6 @@ impl OperationTimeouts {
             OperationTimeout {
                 id,
                 deadline_ms: Self::deadline(duration)?,
-                policy,
             },
             None,
         )?;
@@ -113,58 +91,19 @@ impl OperationTimeouts {
     ) -> Result<(), BitVMXError> {
         self.register(
             OperationTimeoutId::SetupProcess(program_id),
-            TimeoutFailurePolicy::FailSetup {
-                program_id,
-                job_id: None,
-            },
             timeout.unwrap_or(DEFAULT_SETUP_TIMEOUT),
             false,
         )
     }
 
-    pub fn register_setup_job(
+    pub fn register_job(
         &self,
-        program_id: Uuid,
         job_id: String,
         timeout: Option<Duration>,
         renew: bool,
     ) -> Result<(), BitVMXError> {
         self.register(
-            OperationTimeoutId::DispatcherJob(job_id.clone()),
-            TimeoutFailurePolicy::FailSetup {
-                program_id,
-                job_id: Some(job_id),
-            },
-            timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
-            renew,
-        )
-    }
-
-    pub fn register_request_job(
-        &self,
-        request_id: Uuid,
-        job_id: String,
-        timeout: Option<Duration>,
-        renew: bool,
-    ) -> Result<(), BitVMXError> {
-        self.register(
-            OperationTimeoutId::DispatcherJob(job_id.clone()),
-            TimeoutFailurePolicy::FailRequestJob { request_id, job_id },
-            timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
-            renew,
-        )
-    }
-
-    pub fn register_runtime_job(
-        &self,
-        program_id: Uuid,
-        job_id: String,
-        timeout: Option<Duration>,
-        renew: bool,
-    ) -> Result<(), BitVMXError> {
-        self.register(
-            OperationTimeoutId::DispatcherJob(job_id.clone()),
-            TimeoutFailurePolicy::RetryRuntimeJob { program_id, job_id },
+            OperationTimeoutId::DispatcherJob(job_id),
             timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
             renew,
         )

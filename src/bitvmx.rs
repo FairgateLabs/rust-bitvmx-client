@@ -18,7 +18,7 @@ use crate::{
     expected_job::{ExpectedJobStatus, ExpectedJobTarget, ExpectedJobs, JOB_TIMEOUT_REASON},
     leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::{MessageQueue, PushOutcome, QueuedMessage},
-    operation_timeout::{OperationTimeoutId, OperationTimeouts, TimeoutFailurePolicy},
+    operation_timeout::{OperationTimeoutId, OperationTimeouts},
     program::{
         participant::CommsAddress,
         setup::SetupMessageState,
@@ -1352,76 +1352,71 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             return Ok(());
         }
 
-        match timeout.policy {
-            TimeoutFailurePolicy::FailSetup { program_id, job_id } => {
-                let Some(program) = self.load_program(&program_id)? else {
+        match id {
+            OperationTimeoutId::SetupProcess(program_id) => {
+                self.apply_setup_timeout(id, *program_id, None)
+            }
+            OperationTimeoutId::DispatcherJob(job_id) => {
+                let Some(job) = self.program_context.expected_jobs.get(job_id)? else {
                     return self.program_context.operation_timeouts.cancel(id);
                 };
-                if program.peer_message_lifecycle_disposition().is_some() {
+                if !matches!(job.status, ExpectedJobStatus::Pending) {
                     return self.program_context.operation_timeouts.cancel(id);
                 }
-
-                if let Some(job_id) = job_id {
-                    let valid_pending_setup_job = self
-                        .program_context
-                        .expected_jobs
-                        .get(&job_id)?
-                        .is_some_and(|job| {
-                            job.target == ExpectedJobTarget::Setup(program_id)
-                                && matches!(job.status, ExpectedJobStatus::Pending)
-                        });
-                    if !valid_pending_setup_job {
-                        return self.program_context.operation_timeouts.cancel(id);
+                match job.target {
+                    ExpectedJobTarget::Setup(program_id) => {
+                        self.apply_setup_timeout(id, program_id, Some(job_id))
                     }
-                    self.program_context.expected_jobs.fail(
-                        &self.program_context.operation_timeouts,
-                        &job_id,
-                        JOB_TIMEOUT_REASON.to_string(),
-                    )?;
+                    ExpectedJobTarget::Request(request_id) => {
+                        self.fail_zkp_timeout(request_id, job_id)
+                    }
+                    ExpectedJobTarget::Program(program_id) => {
+                        let Some(program) = self.load_program(&program_id)? else {
+                            return self.program_context.operation_timeouts.cancel(id);
+                        };
+                        if program.is_failed() {
+                            return self.program_context.operation_timeouts.cancel(id);
+                        }
+                        self.apply_dispatcher_result_disposition(
+                            job.dispatcher,
+                            ResultDisposition::fail_dispatcher(DispatcherJobFailure {
+                                program_id,
+                                expected_job_id: job_id.clone(),
+                                job_id: job_id.clone(),
+                                reason: JOB_TIMEOUT_REASON.to_string(),
+                            }),
+                        )
+                    }
                 }
-                self.fail_program_setup(
-                    &program_id,
-                    None,
-                    SetupFailureReason::StepError("setup operation timed out".to_string()),
-                )
-            }
-            TimeoutFailurePolicy::FailRequestJob { request_id, job_id } => {
-                let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if job.target != ExpectedJobTarget::Request(request_id)
-                    || !matches!(job.status, ExpectedJobStatus::Pending)
-                {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-                self.fail_zkp_timeout(request_id, &job_id)
-            }
-            TimeoutFailurePolicy::RetryRuntimeJob { program_id, job_id } => {
-                let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if job.target != ExpectedJobTarget::Program(program_id)
-                    || !matches!(job.status, ExpectedJobStatus::Pending)
-                {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-                let Some(program) = self.load_program(&program_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if program.is_failed() {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-                self.apply_dispatcher_result_disposition(
-                    job.dispatcher,
-                    ResultDisposition::fail_dispatcher(DispatcherJobFailure {
-                        program_id,
-                        expected_job_id: job_id.clone(),
-                        job_id,
-                        reason: JOB_TIMEOUT_REASON.to_string(),
-                    }),
-                )
             }
         }
+    }
+
+    /// Fails an unfinished setup, settling `job_id` first when a dispatcher job timed out.
+    fn apply_setup_timeout(
+        &mut self,
+        id: &OperationTimeoutId,
+        program_id: Uuid,
+        job_id: Option<&str>,
+    ) -> Result<(), BitVMXError> {
+        let Some(program) = self.load_program(&program_id)? else {
+            return self.program_context.operation_timeouts.cancel(id);
+        };
+        if program.peer_message_lifecycle_disposition().is_some() {
+            return self.program_context.operation_timeouts.cancel(id);
+        }
+        if let Some(job_id) = job_id {
+            self.program_context.expected_jobs.fail(
+                &self.program_context.operation_timeouts,
+                job_id,
+                JOB_TIMEOUT_REASON.to_string(),
+            )?;
+        }
+        self.fail_program_setup(
+            &program_id,
+            None,
+            SetupFailureReason::StepError("setup operation timed out".to_string()),
+        )
     }
 
     /// Advances each program in its own transaction, reporting nonfatal failures locally.
@@ -1568,6 +1563,89 @@ mod transaction_tests {
     }
 
     #[test]
+    fn setup_job_timeout_fails_the_job_and_its_setup() {
+        let mut env = TestBitVMXEnv::new("setup-job-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        let job_id = Context::SetupStep(
+            program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        )
+        .to_string()
+        .unwrap();
+        let context = &env.bitvmx.program_context;
+        context
+            .expected_jobs
+            .register(job_id.clone(), crate::types::JobDispatcherType::Garbler)
+            .unwrap();
+        context.operation_timeouts.cancel_job(&job_id).unwrap();
+        context
+            .operation_timeouts
+            .register_job(job_id.clone(), Some(Duration::ZERO), false)
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&job_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ExpectedJobStatus::Failed(ref reason) if reason == JOB_TIMEOUT_REASON
+        ));
+        assert!(Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(!env.bitvmx.process_operation_timeouts().unwrap());
+    }
+
+    #[test]
+    fn settled_job_timeout_is_cancelled_without_touching_the_program() {
+        let mut env = TestBitVMXEnv::new("settled-job-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        let job_id = Context::SetupStep(
+            program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        )
+        .to_string()
+        .unwrap();
+        let context = &env.bitvmx.program_context;
+        context
+            .expected_jobs
+            .register(job_id.clone(), crate::types::JobDispatcherType::Garbler)
+            .unwrap();
+        context
+            .expected_jobs
+            .complete(&context.operation_timeouts, &job_id)
+            .unwrap();
+        context
+            .operation_timeouts
+            .register_job(job_id.clone(), Some(Duration::ZERO), false)
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(!Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(env
+            .bitvmx
+            .program_context
+            .operation_timeouts
+            .get(&OperationTimeoutId::DispatcherJob(job_id))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn runtime_job_timeout_enters_retry_without_failing_program() {
         let mut env = TestBitVMXEnv::new("runtime-operation-timeout").unwrap();
         let program_id = Uuid::new_v4();
@@ -1600,7 +1678,7 @@ mod transaction_tests {
             .cancel(&timeout_id)
             .unwrap();
         OperationTimeouts::new(store.clone())
-            .register_runtime_job(program_id, job_id.clone(), Some(Duration::ZERO), false)
+            .register_job(job_id.clone(), Some(Duration::ZERO), false)
             .unwrap();
 
         assert!(env.bitvmx.process_operation_timeouts().unwrap());

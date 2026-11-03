@@ -190,32 +190,11 @@ impl ExpectedJobs {
         ids.push(job.job_id.clone());
         self.storage.set(Self::key(&job.job_id)?, &job, None)?;
         self.storage.set(EXPECTED_JOB_IDS_KEY.as_ref(), ids, None)?;
-        match job.target {
-            ExpectedJobTarget::Setup(program_id) => {
-                timeouts.register_setup_job(
-                    program_id,
-                    job.job_id.clone(),
-                    job.execution_timeout_ms.map(Duration::from_millis),
-                    false,
-                )?;
-            }
-            ExpectedJobTarget::Program(program_id) => {
-                timeouts.register_runtime_job(
-                    program_id,
-                    job.job_id.clone(),
-                    job.execution_timeout_ms.map(Duration::from_millis),
-                    false,
-                )?;
-            }
-            ExpectedJobTarget::Request(request_id) => {
-                timeouts.register_request_job(
-                    request_id,
-                    job.job_id.clone(),
-                    job.execution_timeout_ms.map(Duration::from_millis),
-                    false,
-                )?;
-            }
-        }
+        timeouts.register_job(
+            job.job_id.clone(),
+            job.execution_timeout_ms.map(Duration::from_millis),
+            false,
+        )?;
         Ok(ExpectedJobRegistration::Registered)
     }
 
@@ -341,14 +320,13 @@ impl ExpectedJobs {
                 job_id, job.retry_attempts
             );
             broker_channel.send_service(&dispatch.destination, dispatch.message)?;
-            let ExpectedJobTarget::Program(program_id) = job.target else {
+            if !matches!(job.target, ExpectedJobTarget::Program(_)) {
                 return Err(BitVMXError::InvalidState(format!(
                     "retryable dispatcher job '{}' is not a runtime program job",
                     job_id
                 )));
-            };
-            timeouts.register_runtime_job(
-                program_id,
+            }
+            timeouts.register_job(
                 job_id.clone(),
                 job.execution_timeout_ms.map(Duration::from_millis),
                 true,
