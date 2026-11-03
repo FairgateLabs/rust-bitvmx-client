@@ -42,3 +42,10 @@ version = "1.0.11"
 [[allow.exact]]
 crate = "zstd-sys"
 version = "2.1.2+zstd.1.5.7"
+
+# Security fix for RUSTSEC-2026-0418; keep the exception limited to this version.
+# https://rustsec.org/advisories/RUSTSEC-2026-0418
+# https://github.com/rust-lang/libz-sys/pull/280
+[[allow.exact]]
+crate = "libz-sys"
+version = "1.1.31"
