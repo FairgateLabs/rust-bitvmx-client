@@ -6,7 +6,8 @@ use bitvmx_client::program::protocols::union::common::{
     get_user_take_pid,
 };
 use bitvmx_client::program::protocols::union::types::{
-    MemberData, PacketSettings, ACCEPT_PEGIN_TX, DUST_VALUE, SPEEDUP_VALUE, USER_TAKE_TX,
+    MemberData, PacketSettings, PegInAccepted, PegOutAccepted, ACCEPT_PEGIN_TX, DUST_VALUE,
+    SPEEDUP_VALUE, USER_TAKE_TX,
 };
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
 
@@ -169,11 +170,11 @@ impl Committee {
         rootstock_address: String,
         reimbursement_pubkey: PublicKey,
         dispatch_tx: bool,
-    ) -> Result<()> {
+    ) -> Result<Vec<PegInAccepted>> {
         let members = self.get_member_data();
         let addresses = self.get_addresses();
 
-        self.all(|op: &mut Member| {
+        let pegin_accepted = self.all(|op: &mut Member| {
             op.accept_pegin(
                 &members.clone(),
                 request_pegin_txid,
@@ -194,7 +195,7 @@ impl Committee {
             )?;
         }
 
-        Ok(())
+        Ok(pegin_accepted)
     }
 
     pub fn setup_full_penalization(&mut self) -> Result<()> {
@@ -218,14 +219,15 @@ impl Committee {
         Ok(())
     }
 
-    pub fn request_pegout(
+    /// Sets up the UserTake protocol in every member, without dispatching it.
+    pub fn setup_user_take(
         &mut self,
         user_pubkey: PublicKey,
         slot_index: usize,
         amount: u64,
         pegout_id: Vec<u8>,
         user_take_sighash: Vec<u8>,
-    ) -> Result<PartialUtxo> {
+    ) -> Result<Vec<PegOutAccepted>> {
         let committee_id = self.committee_id.clone();
         let addresses = self.get_addresses();
 
@@ -239,9 +241,26 @@ impl Committee {
                 user_take_sighash.as_slice(),
                 &addresses,
             )
-        })?;
+        })
+    }
 
-        let protocol_id = get_user_take_pid(committee_id, slot_index);
+    pub fn request_pegout(
+        &mut self,
+        user_pubkey: PublicKey,
+        slot_index: usize,
+        amount: u64,
+        pegout_id: Vec<u8>,
+        user_take_sighash: Vec<u8>,
+    ) -> Result<PartialUtxo> {
+        self.setup_user_take(
+            user_pubkey,
+            slot_index,
+            amount,
+            pegout_id,
+            user_take_sighash,
+        )?;
+
+        let protocol_id = get_user_take_pid(self.committee_id, slot_index);
         let tx =
             self.members[0].dispatch_transaction_by_name(protocol_id, USER_TAKE_TX.to_string())?;
         let utxo = (

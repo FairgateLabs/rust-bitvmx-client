@@ -17,6 +17,14 @@ introduce breaking changes between versions.
   to stop automatic retries for unresolved runtime Garbler and Emulator jobs. Successful and
   repeated idempotent requests return `JobDiscarded(request_id, job_id)`; unsupported job types or
   states return `ApiError(request_id, error)`.
+- Following rust-bitvmx-storage-backend PR #43, `StorageConfig` has a `sync_writes` option, on by
+  default, that fsyncs every write, including transaction commits. The `storage` and `key_storage`
+  sections of the client config accept `sync_writes: false` to turn it off. `StorageConfig` has a
+  new field, so direct storage-backend consumers must build it with `StorageConfig::new`.
+- Following the same PR, `StorageError::ReadError` carries the RocksDB message,
+  `StorageError::MissingCurrent` is returned when a database directory has no CURRENT file, and
+  `Storage::repair` returns a `RepairReport`. The storage-backend CLI exits with 2 when a repair
+  lost files and with 1 on errors.
 
 ## 0.8.7
 

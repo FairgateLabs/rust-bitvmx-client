@@ -16,3 +16,29 @@ version = "0.21.1"
 [[allow.exact]]
 crate = "rustls"
 version = "0.23.46"
+
+# Security fixes for RUSTSEC-2026-0382, RUSTSEC-2026-0383,
+# RUSTSEC-2026-0385, and RUSTSEC-2026-0410.
+# Same reviewed exceptions as union-bridge-client (2026-10-26): registry
+# publisher/checksum and packaged sources match the tagged upstream commit
+# (zstd-sys: vendored zstd is upstream v1.5.7); keep the exceptions limited
+# to these versions.
+# https://github.com/RustCrypto/utils/releases/tag/ctutils-v0.4.6
+# https://github.com/rustls/webpki/releases/tag/v%2F0.103.16
+# https://github.com/rustls/webpki-roots/releases/tag/v%2F1.0.11
+# https://github.com/gyscos/zstd-rs/releases/tag/zstd-sys-2.1.2
+[[allow.exact]]
+crate = "ctutils"
+version = "0.4.6"
+
+[[allow.exact]]
+crate = "rustls-webpki"
+version = "0.103.16"
+
+[[allow.exact]]
+crate = "webpki-root-certs"
+version = "1.0.11"
+
+[[allow.exact]]
+crate = "zstd-sys"
+version = "2.1.2+zstd.1.5.7"

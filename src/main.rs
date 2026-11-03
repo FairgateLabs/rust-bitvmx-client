@@ -50,6 +50,7 @@ fn config_trace() {
         .init();
 }
 
+// Does not check whether another instance has the DB open.
 fn clear_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }

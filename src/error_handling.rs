@@ -128,7 +128,7 @@ pub fn classify(error: &(dyn Error + 'static)) -> Severity {
             if matches!(
                 error,
                 StorageError::WriteError
-                    | StorageError::ReadError
+                    | StorageError::ReadError(_)
                     | StorageError::CommitError
                     | StorageError::TransactionRollbackFailed
             ) {
@@ -368,7 +368,9 @@ mod tests {
 
     #[test]
     fn wallet_storage_failure_is_fatal() {
-        let error = BitVMXError::WalletError(WalletError::StoreError(StorageError::ReadError));
+        let error = BitVMXError::WalletError(WalletError::StoreError(StorageError::ReadError(
+            "Corruption: block checksum mismatch".to_string(),
+        )));
         assert_eq!(classify(&error), Severity::Fatal);
     }
 

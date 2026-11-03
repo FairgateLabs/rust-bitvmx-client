@@ -7,10 +7,11 @@ on:
   push:
     tags:
       - "v*"
+      - "force/types/v[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "version to build as (e.g. v0.8.5)"
+        description: "version to build as (v0.8.5, or force/types/v0.8.5 to force a types release)"
         required: true
       publish:
         description: "commit, tag and push the mirror"
@@ -41,6 +42,15 @@ jobs:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.sha }}
           persist-credentials: false
 
+      - name: Test mirror generator
+        run: python3 -m unittest discover -s client/scripts -p 'test_mirror.py' -v
+
+      - name: Resolve mirror release tag
+        run: |
+          mirror_tag="${TAG#force/types/}"
+          echo "MIRROR_TAG=$mirror_tag" >> "$GITHUB_ENV"
+          echo "MIRROR_VERSION=${mirror_tag#v}" >> "$GITHUB_ENV"
+
       - name: Check out mirror
         uses: actions/checkout@v7
         with:
@@ -63,11 +73,10 @@ jobs:
             --out mirror \
             --tag "$TAG"
           after=$(sed -n '/^\[files]/,$p' mirror/mirror.toml)
-          # Byte-identical contract: the crate this would publish differs from
-          # the last release only by its version stamp, so there is nothing to
-          # release. Dependency-only changes are deliberately not a release
-          # trigger either -- the contract is what consumers pin this crate for.
-          if [ "$before" = "$after" ]; then
+          # Ordinary client releases publish only when the contract changes.
+          # A force/types/* release explicitly forces publication, including when
+          # only the version or dependencies changed.
+          if [[ "$TAG" != force/types/* && "$before" == "$after" ]]; then
             echo "contract unchanged -- skipping publish"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -76,8 +85,7 @@ jobs:
 
       - name: Stamp mirror Cargo.toml version from tag
         run: |
-          version="${TAG#v}"
-          awk -v ver="$version" '
+          awk -v ver="$MIRROR_VERSION" '
             /^\[/ { in_pkg = ($0 == "[package]") }
             in_pkg && /^version = / { $0 = "version = \"" ver "\"" }
             { print }
@@ -107,11 +115,11 @@ jobs:
         working-directory: mirror
         run: |
           # Re-runs of an already-published release are a no-op, not a failure.
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
-            echo "tag $TAG already published on mirror -- skipping push"
+          if git ls-remote --exit-code --tags origin "refs/tags/$MIRROR_TAG" >/dev/null; then
+            echo "tag $MIRROR_TAG already published on mirror -- skipping push"
             exit 0
           fi
-          git tag "$TAG"
+          git tag "$MIRROR_TAG"
           # The release lands on its own branch, never on main: main is ruleset
           # protected and moves only by PR. The tag is what consumers pin, and a
           # tag resolves regardless of which branch carries the commit, so the
@@ -119,4 +127,4 @@ jobs:
           #
           # Atomic: a rejected tag (e.g. re-tagging an existing release) must not
           # leave the branch pushed without it — that half-publishes the release.
-          git push --atomic origin "HEAD:refs/heads/release/$TAG" "refs/tags/$TAG"
+          git push --atomic origin "HEAD:refs/heads/release/$MIRROR_TAG" "refs/tags/$MIRROR_TAG"

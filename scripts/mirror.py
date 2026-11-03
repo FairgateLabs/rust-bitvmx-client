@@ -59,12 +59,20 @@ def sync_dep_tags(client_cargo: pathlib.Path, mirror_cargo: pathlib.Path, releas
     A published crate must not float, so a dep the client tracks by branch, by
     rev, or by nothing at all does not carry that over -- it is pinned to the
     release tag, which the sibling repos cut in lockstep with the client.
+    Types-only releases are independent of sibling releases, so every mirrored
+    git dependency must already have a tag in the client's manifest.
     """
     client_tags = _client_tags(client_cargo)
 
     def repin(match: re.Match) -> str:
         entry = match.group(0)
-        tag = f'tag = "{client_tags.get(_normalize_url(match.group("url")), release_tag)}"'
+        url = match.group("url")
+        dependency_tag = client_tags.get(_normalize_url(url))
+        if dependency_tag is None:
+            if release_tag.startswith("force/types/"):
+                raise ValueError(f"types-only release requires a client tag for dependency {url}")
+            dependency_tag = release_tag
+        tag = f'tag = "{dependency_tag}"'
         entry, replaced = REF_RE.subn(tag, entry, count=1)
         if not replaced:
             entry = entry[:-1].rstrip().rstrip(",") + f", {tag} }}"
