@@ -7,6 +7,10 @@ introduce breaking changes between versions.
 
 ### Changed
 
+- **BREAKING**: Removed the `ProofReady` request and response, along with `BitVMXClient::proof_ready`.
+  When a `GenerateZKP` job succeeds, the requester now receives `ZKPResult(uuid, proof, journal)`
+  directly, so no follow-up request is needed. Use `GetZKPExecutionResult(uuid)` to query a job's
+  status or result, which answers `ZKPResult`, `ProofNotReady`, `ProofGenerationError`, or `ApiError`.
 - **BREAKING**: Added operation-specific timeout arguments. `Setup` and `SetupKey` now accept an optional overall
   setup timeout in seconds, `GenerateZKP` accepts an optional prover execution timeout in seconds,
   `Program::new` accepts an optional setup `Duration`, and protocol `execute_job` accepts an optional

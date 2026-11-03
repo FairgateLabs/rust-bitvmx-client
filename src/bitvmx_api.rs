@@ -521,35 +521,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )
     }
 
-    pub(super) fn proof_ready(
-        &mut self,
-        id: Uuid,
-    ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        info!("Checking if proof is ready for job: {}", id);
-
-        let expected = self.program_context.expected_jobs.get(&id.to_string())?;
-        Ok(match expected.map(|job| job.status) {
-            Some(ExpectedJobStatus::Completed) => {
-                let execution: Option<ZKPExecution> = self
-                    .store
-                    .get(StoreKey::ZKPExecution(id).get_key()?, None)?;
-                match execution.and_then(ZKPExecution::into_output) {
-                    Some(_) => OutgoingBitVMXApiMessages::ProofReady(id),
-                    None => OutgoingBitVMXApiMessages::ProofGenerationError(
-                        id,
-                        format!("Inconsistent ZKP data for job {id}: completed job has no output"),
-                    ),
-                }
-            }
-            Some(ExpectedJobStatus::Failed(reason) | ExpectedJobStatus::Discarded(reason)) => {
-                OutgoingBitVMXApiMessages::ProofGenerationError(id, reason)
-            }
-            Some(ExpectedJobStatus::Pending | ExpectedJobStatus::RetryPending(_)) | None => {
-                OutgoingBitVMXApiMessages::ProofNotReady(id)
-            }
-        })
-    }
-
     pub(super) fn fail_zkp_timeout(&mut self, id: Uuid, job_id: &str) -> Result<(), BitVMXError> {
         let reason = JOB_TIMEOUT_REASON.to_string();
         let execution: Option<ZKPExecution> = self
@@ -654,7 +625,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         }
     }
 
-    fn get_zkp_execution_result(
+    pub(super) fn get_zkp_execution_result(
         &mut self,
         id: Uuid,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
@@ -1128,7 +1099,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     self.generate_zkp(from, id, input, elf_file_path, execution_timeout_secs)?;
                     Ok(None)
                 }
-                IncomingBitVMXApiMessages::ProofReady(id) => self.proof_ready(id).map(Some),
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                     self.get_zkp_execution_result(id).map(Some)
                 }

@@ -185,9 +185,8 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `GenerateZKP(uuid, payload_to_sign, name, execution_timeout_secs)` | `ProofReady(uuid)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` | Generate zero-knowledge proof; the optional timeout defaults to 900 seconds |
-| `ProofReady(uuid)` | `ProofReady(uuid)` | Check if proof is ready |
-| `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, zkp_result, zkp_proof)` or `ApiError(uuid, error)` | Get ZKP execution result; returns `ApiError` when a successful job is missing its proof or journal |
+| `GenerateZKP(uuid, payload_to_sign, name, execution_timeout_secs)` | `ZKPResult(uuid, proof, journal)` or `ProofGenerationError(uuid, error)` | Generate zero-knowledge proof; the response is sent when the job ends and already carries the proof, so no follow-up request is needed. The optional timeout defaults to 900 seconds |
+| `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, proof, journal)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` or `ApiError(uuid, error)` | Query the status or result of a ZKP job at any time; returns `ApiError` when a successful job is missing its proof or journal |
 
 ### Special Cases
 

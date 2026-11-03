@@ -155,7 +155,6 @@ pub enum IncomingBitVMXApiMessages {
     SignMessage(Uuid, Vec<u8>, PublicKey), // id, payload_to_sign, public_key_to_use
     /// Optional timeout is the prover job execution budget in seconds.
     GenerateZKP(Uuid, Vec<u8>, String, Option<u64>),
-    ProofReady(Uuid),
     GetZKPExecutionResult(Uuid),
     /// Stops automatic retries for an unresolved runtime dispatcher job.
     DiscardDispatcherJob(Uuid, String, String), // request id, job id, reason
@@ -308,7 +307,6 @@ pub enum OutgoingBitVMXApiMessages {
     Witness(Uuid, String, WitnessTypes),
     NotFound(Uuid, String),
     HashedMessage(Uuid, String, u32, u32, String),
-    ProofReady(Uuid),
     ProofNotReady(Uuid),
     ProofGenerationError(Uuid, String),
     JobDiscarded(Uuid, String), // request id, job id
@@ -473,7 +471,6 @@ impl OutgoingBitVMXApiMessages {
             OutgoingBitVMXApiMessages::Witness(_, _, _) => "Witness".to_string(),
             OutgoingBitVMXApiMessages::NotFound(_, _) => "NotFound".to_string(),
             OutgoingBitVMXApiMessages::HashedMessage(_, _, _, _, _) => "HashedMessage".to_string(),
-            OutgoingBitVMXApiMessages::ProofReady(_) => "ProofReady".to_string(),
             OutgoingBitVMXApiMessages::ProofNotReady(_) => "ProofNotReady".to_string(),
             OutgoingBitVMXApiMessages::ProofGenerationError(_, _) => {
                 "ProofGenerationError".to_string()

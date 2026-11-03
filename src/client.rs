@@ -140,10 +140,6 @@ impl BitVMXClient {
         ))
     }
 
-    pub fn proof_ready(&self, id: Uuid) -> Result<()> {
-        self.send_message(IncomingBitVMXApiMessages::ProofReady(id))
-    }
-
     pub fn get_zkp_execution_result(&self, id: Uuid) -> Result<()> {
         self.send_message(IncomingBitVMXApiMessages::GetZKPExecutionResult(id))
     }

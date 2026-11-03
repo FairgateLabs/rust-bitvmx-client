@@ -258,7 +258,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             None,
         )?;
         self.complete_job(&message.job_id)?;
-        let response = self.proof_ready(id)?;
+        let response = self.get_zkp_execution_result(id)?;
         self.reply(requester, response)?;
         Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
@@ -731,7 +731,8 @@ mod tests {
             replies.as_slice(),
             [message] if matches!(
                 OutgoingBitVMXApiMessages::from_string(&message.msg),
-                Ok(OutgoingBitVMXApiMessages::ProofReady(response_id)) if response_id == id
+                Ok(OutgoingBitVMXApiMessages::ZKPResult(response_id, seal, journal))
+                    if response_id == id && seal == vec![1, 2] && journal == vec![3, 4]
             )
         ));
     }

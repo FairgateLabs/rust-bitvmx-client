@@ -349,7 +349,7 @@ For ZKP:
 
 - validate every journal/seal item as an integer in `0..=255`; reject instead of
   filtering or truncating;
-- on success, store proof, journal, and `OK`, then enqueue `ProofReady`;
+- on success, store proof, journal, and `OK`, then enqueue `ZKPResult`;
 - on dispatcher or payload failure, store `FAILED` plus the reason and enqueue
   `ProofGenerationError`;
 - a missing ZKP execution record/requester is treated as an orphaned terminal result
