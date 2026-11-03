@@ -273,30 +273,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             VariableTypes::String(optional_keys),
         )?;
 
-        // Use Program with AggregatedKeyProtocol for key aggregation
-        if let Err(error) = Program::new(
+        self.setup(
             id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
+            PROGRAM_TYPE_AGGREGATED_KEY.to_string(),
             participants,
-            leader_idx as usize,
-            setup_timeout_secs.map(std::time::Duration::from_secs),
-            &mut self.program_context,
-            self.store.clone(),
-        ) {
-            if is_fatal(&error) {
-                return Err(error);
-            }
-
-            return Ok(Some(Self::api_error(
-                id,
-                format!("Failed to set up program: {error}"),
-            )));
-        }
-        // Add the program to the programs list
-        self.add_new_program(&id)?;
-
-        info!("Key setup finished for program: {:?}", id);
-        Ok(None)
+            leader_idx,
+            setup_timeout_secs,
+        )
     }
 
     fn api_error(id: Uuid, message: String) -> OutgoingBitVMXApiMessages {
