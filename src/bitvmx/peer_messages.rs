@@ -349,38 +349,16 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Must be called without an active global transaction.
     pub fn process_comms_messages(&mut self) -> Result<bool, BitVMXError> {
         let incoming = self
-            .run_step("comms inbox", Self::process_comms_inbox)?
+            .run_step("comms inbox", |this| {
+                this.process_inputs(Self::process_one_comms_message)
+            })?
             .unwrap_or(true);
         let deadletters = self
-            .run_step("comms dead letters", Self::process_deadletters)?
+            .run_step("comms dead letters", |this| {
+                this.process_inputs(Self::process_one_deadletter)
+            })?
             .unwrap_or(true);
         Ok(incoming || deadletters)
-    }
-
-    fn process_comms_inbox(&mut self) -> Result<bool, BitVMXError> {
-        const MAX_MESSAGES: usize = 20;
-        let store = self.store.clone();
-        let mut had_work = false;
-        for _ in 0..MAX_MESSAGES {
-            if !Self::run_transaction(&store, || self.process_one_comms_message())? {
-                break;
-            }
-            had_work = true;
-        }
-        Ok(had_work)
-    }
-
-    fn process_deadletters(&mut self) -> Result<bool, BitVMXError> {
-        const MAX_MESSAGES: usize = 20;
-        let store = self.store.clone();
-        let mut had_work = false;
-        for _ in 0..MAX_MESSAGES {
-            if !Self::run_transaction(&store, || self.process_one_deadletter())? {
-                break;
-            }
-            had_work = true;
-        }
-        Ok(had_work)
     }
 
     fn process_one_comms_message(&mut self) -> Result<bool, BitVMXError> {

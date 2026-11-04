@@ -351,17 +351,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Processes a bounded number of service/API inputs, committing each independently.
     /// Must be called without an active global transaction.
     pub fn process_api_messages(&mut self) -> Result<bool, BitVMXError> {
-        const MAX_MESSAGES_PER_TICK: usize = 20;
-
-        let store = self.store.clone();
-        let mut processed = false;
-        for _ in 0..MAX_MESSAGES_PER_TICK {
-            if !Self::run_transaction(&store, || self.process_one_api_message())? {
-                break;
-            }
-            processed = true;
-        }
-        Ok(processed)
+        self.process_inputs(Self::process_one_api_message)
     }
 
     fn process_one_api_message(&mut self) -> Result<bool, BitVMXError> {

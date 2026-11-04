@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 use storage_backend::storage::Storage;
 use tracing::{error, warn};
 
+/// How many inputs one tick takes from each queue, so a busy queue can't starve the others.
+const MAX_INPUTS_PER_QUEUE: usize = 20;
+
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Accepts pure decoding results before handler state changes. Invalid inputs return
     /// `None`, allowing the receive transaction to commit and consume the malformed event.
@@ -75,6 +78,24 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         work: impl FnOnce(&mut Self) -> Result<bool, BitVMXError>,
     ) -> Result<bool, BitVMXError> {
         Ok(Self::measure_time(name, || self.run_tx_step(name, work))?.unwrap_or(true))
+    }
+
+    /// Calls `process_one` until it reports no more input, up to `MAX_INPUTS_PER_QUEUE` times,
+    /// committing each input independently. Returns whether any input was processed.
+    /// Must be called without an active global transaction.
+    pub(super) fn process_inputs(
+        &mut self,
+        process_one: fn(&mut Self) -> Result<bool, BitVMXError>,
+    ) -> Result<bool, BitVMXError> {
+        let store = self.store.clone();
+        let mut had_work = false;
+        for _ in 0..MAX_INPUTS_PER_QUEUE {
+            if !Self::run_transaction(&store, || process_one(self))? {
+                break;
+            }
+            had_work = true;
+        }
+        Ok(had_work)
     }
 
     /// Requires the attempt transaction to be closed. This records failure policy in a

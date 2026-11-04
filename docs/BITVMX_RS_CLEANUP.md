@@ -104,8 +104,9 @@ and `into_no_op_reason`. `None` means the message continues to authentication.
 
 ## Medium value
 
-- **Inbox duplication:** `process_comms_inbox` and `process_deadletters` differ by one call. Use
-  `drain(Self::process_one_x)` with a shared `MAX_MESSAGES`.
+- **Inbox duplication (applied):** `process_comms_inbox`, `process_deadletters` and
+  `process_api_messages` differed by one call. All three now use `process_inputs` with a shared
+  `MAX_INPUTS_PER_QUEUE`.
 - **Retry arm (418-451):** extract `defer_message`, and move the logic to
   `RetryReason::needs_verification_keys()` and `RetryReason::setup_failure(sender)`.
 - **Catch-all `_ => unreachable!` (463):** list the remaining variants so a new one causes a
