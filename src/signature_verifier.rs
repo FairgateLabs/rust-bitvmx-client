@@ -128,16 +128,6 @@ impl OperatorVerificationStore {
         }
         Ok(())
     }
-
-    pub fn respond_with_verification_key(
-        comms: &BrokerNode,
-        key_manager: &Rc<KeyManager>,
-        rsa_public_key: &str,
-        program_id: &Uuid,
-        peer_address: CommsAddress,
-    ) -> Result<(), BitVMXError> {
-        send_verification_key_to_peer(comms, key_manager, rsa_public_key, program_id, peer_address)
-    }
 }
 
 impl SignatureVerifier {
@@ -264,8 +254,10 @@ impl SignatureVerifier {
                 Self::handle_verification_key_announcement(program_context, peer_address, data)
             }
             CommsMessageType::VerificationKeyRequest => {
-                Self::handle_verification_key_request(
-                    program_context,
+                send_verification_key_to_peer(
+                    &program_context.comms,
+                    &program_context.key_manager,
+                    &program_context.rsa_public_key,
                     program_id,
                     peer_address.clone(),
                 )?;
@@ -335,27 +327,6 @@ impl SignatureVerifier {
         )?;
 
         Ok(ResultDisposition::Success(SuccessDetail::Processed))
-    }
-
-    fn handle_verification_key_request<BC: BitcoinCoordinatorApi>(
-        program_context: &ProgramContext<BC>,
-        context_id: &Uuid,
-        peer_address: CommsAddress,
-    ) -> Result<(), BitVMXError> {
-        OperatorVerificationStore::respond_with_verification_key(
-            &program_context.comms,
-            &program_context.key_manager,
-            &program_context.rsa_public_key,
-            context_id,
-            peer_address,
-        )
-    }
-
-    pub fn has_all_keys(
-        globals: &Globals,
-        pubkey_hashes: &[PubkHash],
-    ) -> Result<bool, BitVMXError> {
-        OperatorVerificationStore::has_all_keys(globals, pubkey_hashes)
     }
 }
 
@@ -524,11 +495,11 @@ mod tests {
         let globals = &env.context.globals;
         let peers = vec!["peer-a".to_string(), "peer-b".to_string()];
 
-        assert!(!SignatureVerifier::has_all_keys(&globals, &peers)?);
+        assert!(!OperatorVerificationStore::has_all_keys(&globals, &peers)?);
         OperatorVerificationStore::store(&globals, &peers[0], "key-a")?;
-        assert!(!SignatureVerifier::has_all_keys(&globals, &peers)?);
+        assert!(!OperatorVerificationStore::has_all_keys(&globals, &peers)?);
         OperatorVerificationStore::store(&globals, &peers[1], "key-b")?;
-        assert!(SignatureVerifier::has_all_keys(&globals, &peers)?);
+        assert!(OperatorVerificationStore::has_all_keys(&globals, &peers)?);
         Ok(())
     }
 

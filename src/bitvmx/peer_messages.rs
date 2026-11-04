@@ -73,7 +73,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             .filter(|p| p.pubkey_hash != my_pubkey_hash)
             .map(|p| p.pubkey_hash.clone())
             .collect();
-        if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
+        if !OperatorVerificationStore::has_all_keys(&self.program_context.globals, &participants)? {
             info!(
                 "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
                 program_id
