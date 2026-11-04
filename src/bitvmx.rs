@@ -294,37 +294,42 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let result = self.tick_inner();
 
         if let Err(e) = &result {
-            error!("Error in tick(): {e:#?}");
-            let mut source = std::error::Error::source(e);
-            while let Some(err) = source {
-                error!("  Caused by: {err}");
-                source = std::error::Error::source(err);
-            }
-
-            // decide type of error to send
-            let should_stop = match classify(e) {
-                Severity::Fatal => {
-                    self.reporter.fatal(e, &self.program_context.broker_channel);
-                    true
-                }
-                Severity::BitcoinNodeUnreachable => {
-                    self.reporter
-                        .rpc_unavailable(e, &self.program_context.broker_channel);
-                    false
-                }
-                Severity::Other => {
-                    self.reporter
-                        .non_fatal(e, &self.program_context.broker_channel);
-                    false
-                }
-            };
-
-            if !should_stop {
+            Self::log_error_chain(e);
+            if !self.report_tick_error(e) {
                 return Ok(TickOutcome::Operating);
             }
         }
 
         result
+    }
+
+    fn log_error_chain(e: &BitVMXError) {
+        error!("Error in tick(): {e:#?}");
+        let mut source = std::error::Error::source(e);
+        while let Some(err) = source {
+            error!("  Caused by: {err}");
+            source = std::error::Error::source(err);
+        }
+    }
+
+    /// Reports the error by severity and returns whether the node should stop.
+    fn report_tick_error(&mut self, e: &BitVMXError) -> bool {
+        match classify(e) {
+            Severity::Fatal => {
+                self.reporter.fatal(e, &self.program_context.broker_channel);
+                true
+            }
+            Severity::BitcoinNodeUnreachable => {
+                self.reporter
+                    .rpc_unavailable(e, &self.program_context.broker_channel);
+                false
+            }
+            Severity::Other => {
+                self.reporter
+                    .non_fatal(e, &self.program_context.broker_channel);
+                false
+            }
+        }
     }
 
     fn tick_inner(&mut self) -> Result<TickOutcome, BitVMXError> {
@@ -393,7 +398,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
-    pub fn process_broker_queues(&mut self) -> Result<bool, BitVMXError> {
+    pub fn process_broker_queues(&mut self) -> Result<(), BitVMXError> {
         // Deliver committed outgoing work before processing application messages.
         // Rollback cannot undo delivery, so transport retries may send duplicates.
         self.run_tx_step("comms transport", |this| {
@@ -405,7 +410,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 .tick()
                 .map_err(BitVMXError::from)
         })?;
-        Ok(true)
+        Ok(())
     }
 
     /// Advances each program in its own transaction, reporting nonfatal failures locally.

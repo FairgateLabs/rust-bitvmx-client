@@ -107,17 +107,17 @@ and `into_no_op_reason`. `None` means the message continues to authentication.
 - **Inbox duplication (applied):** `process_comms_inbox`, `process_deadletters` and
   `process_api_messages` differed by one call. All three now use `process_inputs` with a shared
   `MAX_INPUTS_PER_QUEUE`.
-- **Retry arm (418-451):** extract `defer_message`, and move the logic to
+- **Retry arm (applied):** extracted `defer_message`, and moved the logic to
   `RetryReason::needs_verification_keys()` and `RetryReason::setup_failure(sender)`.
-- **Catch-all `_ => unreachable!` (463):** list the remaining variants so a new one causes a
+- **Catch-all `_ => unreachable!` (applied):** lists the remaining variants so a new one causes a
   compile error. Panic behavior stays the same.
 - **L2 sends (applied):** `process_monitor_news` serialized and sent 3 times. It now calls
   `notify_l2(&msg)`.
-- **Failed attempts:** move the runtime-job arm of `settle_failed_attempt` (1099-1132) to its own
-  function.
-- **`tick`:** extract `log_error_chain(e)` and `report_tick_error(e) -> bool`.
-- **Always-true returns:** `handle_news` and `process_broker_queues` can return `Result<()>`.
-  `handle_news` also has no external callers, so make it private.
+- **Failed attempts (applied):** moved the runtime-job arm of `settle_failed_attempt` to
+  `fail_runtime_job`.
+- **`tick` (applied):** extracted `log_error_chain(e)` and `report_tick_error(e) -> bool`.
+- **Always-true returns (applied):** `handle_news` and `process_broker_queues` return `Result<()>`.
+  `handle_news` had no external callers, so it is now private.
 
 ## Small cleanups
 

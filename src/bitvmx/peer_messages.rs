@@ -158,34 +158,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Pending message to back: {:?} for program {:?} from {:?}: {:?}",
                     msg_type, program_id, msg.identifier.pubkey_hash, reason,
                 );
-                let (peer, failure_reason) = match &reason {
-                    RetryReason::MissingVerificationKey { peer } => {
-                        (peer.clone(), SetupFailureReason::VerificationKeyMissing)
-                    }
-                    _ => (
-                        msg.identifier.pubkey_hash.clone(),
-                        SetupFailureReason::MessageLost,
-                    ),
-                };
-                let retry_needs_keys = matches!(
-                    reason,
-                    RetryReason::MissingVerificationKey { .. }
-                        | RetryReason::MissingParticipantVerificationKeys
-                );
-                match self.message_queue.push_deferred(msg)? {
-                    PushOutcome::Dropped => {
-                        self.fail_program_setup(program_id, Some(peer), failure_reason)?;
-                    }
-                    PushOutcome::Queued | PushOutcome::AlreadyQueued => {
-                        if retry_needs_keys {
-                            // Verification-key requests are intentionally idempotent.
-                            // Re-requesting is harmless, and key presence in
-                            // OperatorVerificationStore naturally stops future requests.
-                            self.request_missing_verification_keys(program_id)?;
-                        }
-                    }
-                }
-                Ok(())
+                self.defer_message(msg, program_id, reason)
             }
             ResultDisposition::Fail(FailureDetail::PeerSetup(PeerSetupFault { peer, reason })) => {
                 warn!(
@@ -198,8 +171,35 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     SetupFailureReason::StepError(format!("{reason:?}")),
                 )
             }
-            _ => unreachable!("invalid peer-message disposition"),
+            ResultDisposition::Success(SuccessDetail::QueuedMessage(_))
+            | ResultDisposition::Fail(FailureDetail::DispatcherJob(_)) => {
+                unreachable!("invalid peer-message disposition")
+            }
         }
+    }
+
+    /// Queues the message for a later retry, or fails setup once its retries run out.
+    fn defer_message(
+        &mut self,
+        msg: QueuedMessage,
+        program_id: &Uuid,
+        reason: RetryReason,
+    ) -> Result<(), BitVMXError> {
+        let (peer, failure_reason) = reason.setup_failure(&msg.identifier.pubkey_hash);
+        match self.message_queue.push_deferred(msg)? {
+            PushOutcome::Dropped => {
+                self.fail_program_setup(program_id, Some(peer), failure_reason)?;
+            }
+            PushOutcome::Queued | PushOutcome::AlreadyQueued => {
+                if reason.needs_verification_keys() {
+                    // Verification-key requests are intentionally idempotent.
+                    // Re-requesting is harmless, and key presence in
+                    // OperatorVerificationStore naturally stops future requests.
+                    self.request_missing_verification_keys(program_id)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {

@@ -103,6 +103,25 @@ pub enum RetryReason {
     MissingSetupPrerequisite,
 }
 
+impl RetryReason {
+    pub(crate) fn needs_verification_keys(&self) -> bool {
+        matches!(
+            self,
+            Self::MissingVerificationKey { .. } | Self::MissingParticipantVerificationKeys
+        )
+    }
+
+    /// The peer to blame and the failure to report when `sender`'s message runs out of retries.
+    pub(crate) fn setup_failure(&self, sender: &PubkHash) -> (PubkHash, SetupFailureReason) {
+        match self {
+            Self::MissingVerificationKey { peer } => {
+                (peer.clone(), SetupFailureReason::VerificationKeyMissing)
+            }
+            _ => (sender.clone(), SetupFailureReason::MessageLost),
+        }
+    }
+}
+
 /// Why consuming a message without applying it is safe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoOpReason {

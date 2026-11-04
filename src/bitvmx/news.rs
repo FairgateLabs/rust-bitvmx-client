@@ -25,13 +25,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
-    pub fn handle_news(
+    fn handle_news(
         &mut self,
         tx_id: Txid,
         tx_status: TransactionStatus,
         context_data: String,
         vout: Option<u32>,
-    ) -> Result<bool, BitVMXError> {
+    ) -> Result<(), BitVMXError> {
         let context = Context::from_string(&context_data)?;
         debug!(
             "Transaction Found: {:?} {:?} for context: {:?}",
@@ -71,7 +71,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }
             _ => {}
         }
-        Ok(true)
+        Ok(())
     }
 
     fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {

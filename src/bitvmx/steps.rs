@@ -12,6 +12,7 @@ use bitvmx_broker::BrokerNode;
 use std::time::{Duration, Instant};
 use storage_backend::storage::Storage;
 use tracing::{error, warn};
+use uuid::Uuid;
 
 /// How many inputs one tick takes from each queue, so a busy queue can't starve the others.
 const MAX_INPUTS_PER_QUEUE: usize = 20;
@@ -129,34 +130,44 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }) => {
                 let store = self.store.clone();
                 Self::run_transaction(&store, || {
-                    let expected = self
-                        .program_context
-                        .expected_jobs
-                        .get(&expected_job_id)?
-                        .ok_or_else(|| {
-                            BitVMXError::InvalidState(format!(
-                                "dispatcher job '{expected_job_id}' is not registered"
-                            ))
-                        })?;
-                    if expected.target != ExpectedJobTarget::Program(program_id) {
-                        return Err(BitVMXError::InvalidState(format!(
-                            "dispatcher job '{expected_job_id}' has incompatible runtime ownership"
-                        )));
-                    }
-                    self.apply_dispatcher_result_disposition(
-                        expected.dispatcher,
-                        ResultDisposition::fail_dispatcher(DispatcherJobFailure {
-                            program_id,
-                            expected_job_id,
-                            job_id,
-                            reason,
-                        }),
-                    )
+                    self.fail_runtime_job(program_id, expected_job_id, job_id, reason)
                 })?;
                 Ok(None)
             }
             other => other.map(Some),
         }
+    }
+
+    fn fail_runtime_job(
+        &mut self,
+        program_id: Uuid,
+        expected_job_id: String,
+        job_id: String,
+        reason: String,
+    ) -> Result<(), BitVMXError> {
+        let expected = self
+            .program_context
+            .expected_jobs
+            .get(&expected_job_id)?
+            .ok_or_else(|| {
+                BitVMXError::InvalidState(format!(
+                    "dispatcher job '{expected_job_id}' is not registered"
+                ))
+            })?;
+        if expected.target != ExpectedJobTarget::Program(program_id) {
+            return Err(BitVMXError::InvalidState(format!(
+                "dispatcher job '{expected_job_id}' has incompatible runtime ownership"
+            )));
+        }
+        self.apply_dispatcher_result_disposition(
+            expected.dispatcher,
+            ResultDisposition::fail_dispatcher(DispatcherJobFailure {
+                program_id,
+                expected_job_id,
+                job_id,
+                reason,
+            }),
+        )
     }
 
     pub(super) fn finish_step<T>(
