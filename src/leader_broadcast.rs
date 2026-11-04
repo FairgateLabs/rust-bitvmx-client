@@ -396,6 +396,42 @@ impl LeaderBroadcastHelper {
             }));
         }
 
+        let outcomes = Self::evaluate_originals(
+            program_context,
+            program,
+            leader_pubkey_hash,
+            &program_id,
+            &broadcasted_msg,
+        )?;
+
+        // A single invalid original makes the active setup untrustworthy. Do
+        // not queue otherwise valid/deferred originals from the same envelope.
+        if let Some(fault) = outcomes.iter().find_map(|outcome| match outcome {
+            ResultDisposition::Fail(FailureDetail::PeerSetup(fault)) => Some(fault.clone()),
+            _ => None,
+        }) {
+            return Ok(ResultDisposition::fail_peer(fault));
+        }
+
+        Self::queue_outcomes(
+            leader_pubkey_hash,
+            &program_id,
+            &broadcasted_msg.original_messages,
+            outcomes,
+            message_queue,
+        )
+    }
+
+    /// Evaluates every original in the envelope without queueing any of them, so a
+    /// later fault can still reject the earlier ones. Keeps going after a fault: a
+    /// local failure on a later original is returned as `Err` and takes priority.
+    fn evaluate_originals<BC: BitcoinCoordinatorApi>(
+        program_context: &ProgramContext<BC>,
+        program: &Program,
+        leader_pubkey_hash: &PubkHash,
+        program_id: &Uuid,
+        broadcasted_msg: &BroadcastedMessage,
+    ) -> Result<Vec<ResultDisposition>, BitVMXError> {
         let mut seen_senders = HashSet::new();
         let mut outcomes = Vec::with_capacity(broadcasted_msg.original_messages.len());
         for original_msg in &broadcasted_msg.original_messages {
@@ -413,24 +449,26 @@ impl LeaderBroadcastHelper {
                 program_context,
                 program,
                 leader_pubkey_hash,
-                &program_id,
+                program_id,
                 original_msg,
             )?);
         }
+        Ok(outcomes)
+    }
 
-        // A single invalid original makes the active setup untrustworthy. Do
-        // not queue otherwise valid/deferred originals from the same envelope.
-        if let Some(fault) = outcomes.iter().find_map(|outcome| match outcome {
-            ResultDisposition::Fail(FailureDetail::PeerSetup(fault)) => Some(fault.clone()),
-            _ => None,
-        }) {
-            return Ok(ResultDisposition::fail_peer(fault));
-        }
-
+    /// Queues the verified originals of an envelope with no faults, and derives the
+    /// disposition of the envelope from the outcomes.
+    fn queue_outcomes(
+        leader_pubkey_hash: &PubkHash,
+        program_id: &Uuid,
+        original_messages: &[OriginalMessage],
+        outcomes: Vec<ResultDisposition>,
+        message_queue: &MessageQueue,
+    ) -> Result<ResultDisposition, BitVMXError> {
         let mut queued_count = 0usize;
         let mut no_op_count = 0usize;
         let mut retries = Vec::new();
-        for (original_msg, outcome) in broadcasted_msg.original_messages.iter().zip(outcomes) {
+        for (original_msg, outcome) in original_messages.iter().zip(outcomes) {
             match outcome {
                 ResultDisposition::Success => {
                     info!(
@@ -440,7 +478,7 @@ impl LeaderBroadcastHelper {
                     let full_message = serialize_msg(
                         &original_msg.version,
                         original_msg.msg_type,
-                        &program_id,
+                        program_id,
                         &original_msg.data,
                         original_msg.original_timestamp,
                         original_msg.original_signature.clone(),

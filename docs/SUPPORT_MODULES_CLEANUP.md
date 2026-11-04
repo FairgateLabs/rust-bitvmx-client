@@ -219,9 +219,10 @@ broker_node)`.
 
 ## Medium value
 
-- **Split `process_broadcasted_message` (`leader_broadcast.rs:361-483`):** it runs 122 lines and has
-  three phases. Move envelope checks and evaluation to `evaluate_originals`, and the queueing pass to
-  `queue_outcomes`. Each has one caller but holds real logic.
+- **Split `process_broadcasted_message` (applied, `leader_broadcast.rs:361-483`):** it runs 122 lines
+  and has three phases. Evaluation moved to `evaluate_originals`, and the queueing pass to
+  `queue_outcomes`. Each has one caller but holds real logic. The envelope check stays in the caller,
+  because it returns a disposition rather than a list of outcomes.
 - **Its parameters (applied, 361-369):** `self` is unused, so it can be an associated function.
   `leader_identifier: Identifier` only supplies `pubkey_hash`, so it can be `&PubkHash`, which also
   removes the `msg.identifier.clone()` at `peer_messages.rs:303`.
