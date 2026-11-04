@@ -30,6 +30,11 @@ pub(crate) struct OperationTimeout {
     pub deadline_ms: u64,
 }
 
+/// Whole milliseconds in `duration`, saturating at `u64::MAX`.
+pub(crate) fn duration_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 #[derive(Clone)]
 pub(crate) struct OperationTimeouts {
     storage: Rc<Storage>,
@@ -47,8 +52,14 @@ impl OperationTimeouts {
     }
 
     fn deadline(duration: Duration) -> Result<u64, BitVMXError> {
-        let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
-        Ok(bitvmx_broker::retry::now_ms()?.saturating_add(duration_ms))
+        Ok(bitvmx_broker::retry::now_ms()?.saturating_add(duration_ms(duration)))
+    }
+
+    fn load_ids(&self) -> Result<Vec<OperationTimeoutId>, BitVMXError> {
+        Ok(self
+            .storage
+            .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
+            .unwrap_or_default())
     }
 
     fn register(
@@ -59,15 +70,11 @@ impl OperationTimeouts {
     ) -> Result<(), BitVMXError> {
         let key = Self::key(&id)?;
         let existing: Option<OperationTimeout> = self.storage.get(&key, None)?;
-        if existing.is_some() {
-            if !renew {
-                return Ok(());
-            }
-        } else {
-            let mut ids: Vec<OperationTimeoutId> = self
-                .storage
-                .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
-                .unwrap_or_default();
+        if existing.is_some() && !renew {
+            return Ok(());
+        }
+        if existing.is_none() {
+            let mut ids = self.load_ids()?;
             ids.push(id.clone());
             self.storage
                 .set(OPERATION_TIMEOUT_IDS_KEY.as_ref(), ids, None)?;
@@ -115,10 +122,7 @@ impl OperationTimeouts {
             return Ok(());
         }
         self.storage.remove(key, None)?;
-        let mut ids: Vec<OperationTimeoutId> = self
-            .storage
-            .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
-            .unwrap_or_default();
+        let mut ids = self.load_ids()?;
         ids.retain(|candidate| candidate != id);
         self.storage
             .set(OPERATION_TIMEOUT_IDS_KEY.as_ref(), ids, None)?;
@@ -140,12 +144,8 @@ impl OperationTimeouts {
     /// Returns a bounded snapshot. Callers must re-read each item in its own transaction.
     pub fn expired(&self, limit: usize) -> Result<Vec<OperationTimeoutId>, BitVMXError> {
         let now = bitvmx_broker::retry::now_ms()?;
-        let ids: Vec<OperationTimeoutId> = self
-            .storage
-            .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
-            .unwrap_or_default();
         let mut expired = Vec::new();
-        for id in ids {
+        for id in self.load_ids()? {
             if expired.len() == limit {
                 break;
             }
@@ -179,6 +179,25 @@ mod tests {
             .register_setup(program_id, Some(Duration::from_secs(120)))
             .unwrap();
         assert_eq!(timeouts.get(&id).unwrap(), Some(first));
+    }
+
+    #[test]
+    fn job_renewal_moves_the_deadline_without_duplicating_the_id() {
+        let dir = TestStorageDir::new("operation-timeout-renew");
+        let timeouts = OperationTimeouts::new(dir.storage());
+        let job_id = "job".to_string();
+        timeouts
+            .register_job(job_id.clone(), Some(Duration::from_secs(3_600)), false)
+            .unwrap();
+        assert!(timeouts.expired(10).unwrap().is_empty());
+
+        timeouts
+            .register_job(job_id.clone(), Some(Duration::ZERO), true)
+            .unwrap();
+        assert_eq!(
+            timeouts.expired(10).unwrap(),
+            vec![OperationTimeoutId::DispatcherJob(job_id)]
+        );
     }
 
     #[test]

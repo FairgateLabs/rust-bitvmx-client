@@ -1,7 +1,7 @@
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
-    operation_timeout::{OperationTimeouts, DEFAULT_JOB_TIMEOUT},
+    operation_timeout::{duration_ms, OperationTimeouts, DEFAULT_JOB_TIMEOUT},
     types::JobDispatcherType,
 };
 use bitvmx_broker::{identification::identifier::Identifier, BrokerNode};
@@ -136,6 +136,13 @@ impl ExpectedJobs {
         Ok(StorageKey::new(["bitvmx", "expected_job", &digest])?)
     }
 
+    fn load_ids(&self) -> Result<Vec<String>, BitVMXError> {
+        Ok(self
+            .storage
+            .get(EXPECTED_JOB_IDS_KEY.as_ref(), None)?
+            .unwrap_or_default())
+    }
+
     /// Registers the wire job id and derives its target using the same
     /// source-specific contract that ingress validates.
     #[cfg(test)]
@@ -156,7 +163,7 @@ impl ExpectedJobs {
     ) -> Result<ExpectedJobRegistration, BitVMXError> {
         let target = JobTarget::derive(dispatcher, &job_id)?.expected_target();
         let timeout = execution_timeout.unwrap_or(DEFAULT_JOB_TIMEOUT);
-        let execution_timeout_ms = Some(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX));
+        let execution_timeout_ms = Some(duration_ms(timeout));
         let job = ExpectedJob {
             job_id,
             dispatcher,
@@ -180,10 +187,7 @@ impl ExpectedJobs {
                 job.job_id
             )));
         }
-        let mut ids: Vec<String> = self
-            .storage
-            .get(EXPECTED_JOB_IDS_KEY.as_ref(), None)?
-            .unwrap_or_default();
+        let mut ids = self.load_ids()?;
         ids.push(job.job_id.clone());
         self.storage.set(Self::key(&job.job_id)?, &job, None)?;
         self.storage.set(EXPECTED_JOB_IDS_KEY.as_ref(), ids, None)?;
@@ -230,6 +234,12 @@ impl ExpectedJobs {
         Ok(self.storage.get(Self::key(job_id)?, None)?)
     }
 
+    pub fn get_registered(&self, job_id: &str) -> Result<ExpectedJob, BitVMXError> {
+        self.get(job_id)?.ok_or_else(|| {
+            BitVMXError::InvalidState(format!("dispatcher job '{job_id}' is not registered"))
+        })
+    }
+
     pub fn complete(&self, job_id: &str) -> Result<(), BitVMXError> {
         self.set_status(job_id, ExpectedJobStatus::Completed)
     }
@@ -237,12 +247,7 @@ impl ExpectedJobs {
     /// Keeps a runtime job unresolved after a dispatcher failure and schedules the
     /// same serialized job for redispatch with durable exponential backoff.
     pub fn retry_pending(&self, job_id: &str, reason: String) -> Result<(), BitVMXError> {
-        let Some(mut job) = self.get(job_id)? else {
-            return Err(BitVMXError::InvalidState(format!(
-                "dispatcher job '{}' is not registered",
-                job_id
-            )));
-        };
+        let mut job = self.get_registered(job_id)?;
         self.timeouts.cancel_job(job_id)?;
         job.retry_attempts = job.retry_attempts.saturating_add(1);
         let exponent = job.retry_attempts.saturating_sub(1).min(31);
@@ -279,12 +284,8 @@ impl ExpectedJobs {
     /// transaction, so a failed commit cannot lose the retry intent.
     pub fn redispatch_due(&self, broker_channel: &BrokerNode) -> Result<usize, BitVMXError> {
         let now = bitvmx_broker::retry::now_ms()?;
-        let ids: Vec<String> = self
-            .storage
-            .get(EXPECTED_JOB_IDS_KEY.as_ref(), None)?
-            .unwrap_or_default();
         let mut dispatched = 0;
-        for job_id in ids {
+        for job_id in self.load_ids()? {
             let Some(mut job) = self.get(&job_id)? else {
                 continue;
             };
@@ -334,12 +335,7 @@ impl ExpectedJobs {
     }
 
     fn set_status(&self, job_id: &str, status: ExpectedJobStatus) -> Result<(), BitVMXError> {
-        let Some(mut job) = self.get(job_id)? else {
-            return Err(BitVMXError::InvalidState(format!(
-                "dispatcher job '{}' is not registered",
-                job_id
-            )));
-        };
+        let mut job = self.get_registered(job_id)?;
         self.timeouts.cancel_job(job_id)?;
         job.status = status;
         self.storage.set(Self::key(job_id)?, job, None)?;

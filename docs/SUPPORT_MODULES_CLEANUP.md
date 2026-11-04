@@ -150,6 +150,8 @@ from the last line, so deleting it also removes the need for a shared helper.
 
 ### 6. Share the repeated storage steps
 
+Status: applied.
+
 `expected_job.rs`, `operation_timeout.rs`
 
 - **ID list:** the same `get(IDS_KEY).unwrap_or_default()` appears at `expected_job.rs:186-189, 296-299`
@@ -321,8 +323,8 @@ broker_node)`.
   run ended the loop with the poison message still queued, and the assert at 119 failed. It failed 1 of
   8 runs of the file both at `a8a79de` and with item 5 applied. The loop now ends when the queue drains,
   with a 30s deadline only as a guard against hanging.
-- **Missing coverage:** nothing asserts that `register_job(.., renew: true)` moves the deadline. Add
-  this while flattening `register`.
+- **Missing coverage (applied):** nothing asserted that `register_job(.., renew: true)` moves the
+  deadline. `job_renewal_moves_the_deadline_without_duplicating_the_id` now does.
 
 ## Traps: tempting changes that alter behavior
 

@@ -148,12 +148,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let expected = self
             .program_context
             .expected_jobs
-            .get(&expected_job_id)?
-            .ok_or_else(|| {
-                BitVMXError::InvalidState(format!(
-                    "dispatcher job '{expected_job_id}' is not registered"
-                ))
-            })?;
+            .get_registered(&expected_job_id)?;
         if expected.target != ExpectedJobTarget::Program(program_id) {
             return Err(BitVMXError::InvalidState(format!(
                 "dispatcher job '{expected_job_id}' has incompatible runtime ownership"
