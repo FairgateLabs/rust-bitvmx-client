@@ -34,7 +34,7 @@ use crate::{
 fn decode_hex_input(field: &str, value: &str) -> Result<Vec<u8>, BitVMXError> {
     hex::decode(value)
         .invalid_output(format!("invalid emulator hex value for '{field}'"))
-        .map_err(Into::into)
+        .into()
 }
 
 pub fn execution_result<BC: BitcoinCoordinatorApi>(
