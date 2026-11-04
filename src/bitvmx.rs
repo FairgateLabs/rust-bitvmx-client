@@ -135,20 +135,6 @@ impl BitVMX<BitcoinCoordinator> {
     }
 }
 
-#[cfg(test)]
-impl BitVMX<crate::test_utils::BitcoinCoordinatorMock> {
-    /// Builds the complete runtime without a wallet or a Bitcoin node.
-    pub(crate) fn new_mock(config: Config) -> Result<Self, BitVMXError> {
-        Self::new_with_coordinator_factory(config, false, |_, _, _| {
-            Ok(crate::test_utils::BitcoinCoordinatorMock::new())
-        })
-    }
-
-    pub(crate) fn coordinator_mock(&self) -> &crate::test_utils::BitcoinCoordinatorMock {
-        &self.program_context.bitcoin_coordinator
-    }
-}
-
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     fn new_with_coordinator_factory<F>(
         config: Config,
@@ -1499,6 +1485,19 @@ mod transaction_tests {
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
     use crate::types::{ErrorReport, ErrorScope, IncomingBitVMXApiMessages};
     use storage_backend::error::StorageError;
+
+    impl super::BitVMX<crate::test_utils::BitcoinCoordinatorMock> {
+        /// Builds the complete runtime without a wallet or a Bitcoin node.
+        pub(crate) fn new_mock(config: Config) -> Result<Self, BitVMXError> {
+            Self::new_with_coordinator_factory(config, false, |_, _, _| {
+                Ok(crate::test_utils::BitcoinCoordinatorMock::new())
+            })
+        }
+
+        pub(crate) fn coordinator_mock(&self) -> &crate::test_utils::BitcoinCoordinatorMock {
+            &self.program_context.bitcoin_coordinator
+        }
+    }
 
     macro_rules! test_key {
         ($name:expr) => {
