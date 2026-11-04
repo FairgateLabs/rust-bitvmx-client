@@ -103,7 +103,7 @@ fn test_queue_no_starvation() {
         if let Some(msg) = queue.pop_front().unwrap() {
             if msg.identifier == poison_id {
                 counter += 1;
-                queue.push_back(msg).unwrap();
+                queue.push_deferred(msg).unwrap();
             } else if msg.identifier == good_id {
                 assert_eq!(msg.data, good_msg);
                 assert!(!good_seen, "Good message seen multiple times");

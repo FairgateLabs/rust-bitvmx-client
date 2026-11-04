@@ -142,24 +142,6 @@ impl MessageQueue {
         Ok(())
     }
 
-    pub fn push_back(&self, mut queued_msg: QueuedMessage) -> Result<PushOutcome, BitVMXError> {
-        queued_msg
-            .retry_state
-            .record_attempt(&self.retry_policy, now_ms()?);
-
-        if self.retry_policy.is_exhausted(&queued_msg.retry_state) {
-            warn!(
-                "Dropping message after {} attempts: {:?}",
-                queued_msg.retry_state.get_attempts(),
-                queued_msg.identifier
-            );
-            return Ok(PushOutcome::Dropped);
-        }
-
-        self.push(queued_msg)?;
-        Ok(PushOutcome::Queued)
-    }
-
     pub fn push_new(&self, identifier: Identifier, msg: String) -> Result<(), BitVMXError> {
         let queued_msg = QueuedMessage::new(identifier, msg)?;
         self.push(queued_msg)
@@ -406,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn push_back_increments_attempts_and_drops_exhausted_messages() {
+    fn push_deferred_increments_attempts_and_drops_exhausted_messages() {
         let test_dir = test_storage_dir();
         let storage = test_dir.storage();
         let retry_policy = test_retry_policy();
@@ -414,7 +396,7 @@ mod tests {
 
         let msg =
             QueuedMessage::new(test_identifier("retry"), "retry-payload".to_string()).unwrap();
-        queue.push_back(msg).unwrap();
+        queue.push_deferred(msg).unwrap();
 
         let queued_ids = queue.get_queue_ids().unwrap();
         assert_eq!(queued_ids.len(), 1);
@@ -431,7 +413,10 @@ mod tests {
                 .record_attempt(&retry_policy, now_ms().unwrap());
         }
 
-        assert_eq!(queue.push_back(exhausted).unwrap(), PushOutcome::Dropped);
+        assert_eq!(
+            queue.push_deferred(exhausted).unwrap(),
+            PushOutcome::Dropped
+        );
 
         assert_eq!(queue.get_queue_ids().unwrap().len(), 1);
         assert!(!queue.is_empty().unwrap());
