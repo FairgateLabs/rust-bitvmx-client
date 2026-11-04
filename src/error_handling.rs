@@ -47,15 +47,7 @@ impl Reporter {
         self.fatal_reported = true;
 
         error!("Fatal error, stopping the node: {:?}", error);
-        send_error_report(
-            broker_node,
-            &self.l2_identifier,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::Fatal,
-                Some(error.to_string()),
-            ),
-        );
+        self.report_node_error(ErrorReportKind::Fatal, error, broker_node);
     }
 
     pub(crate) fn rpc_unavailable(&mut self, error: &BitVMXError, broker_node: &BrokerNode) {
@@ -65,15 +57,7 @@ impl Reporter {
         self.rpc_unavailable = true;
 
         error!("Bitcoin node is unreachable: {:?}", error);
-        send_error_report(
-            broker_node,
-            &self.l2_identifier,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::BitcoinRpcUnavailable,
-                Some(error.to_string()),
-            ),
-        );
+        self.report_node_error(ErrorReportKind::BitcoinRpcUnavailable, error, broker_node);
     }
 
     pub(crate) fn rpc_recovered(&mut self, broker_node: &BrokerNode) {
@@ -106,14 +90,19 @@ impl Reporter {
 
     /// Reports that the node is stopping on a non-fatal error
     pub(crate) fn non_fatal(&self, error: &BitVMXError, broker_node: &BrokerNode) {
+        self.report_node_error(ErrorReportKind::NonFatal, error, broker_node);
+    }
+
+    fn report_node_error(
+        &self,
+        kind: ErrorReportKind,
+        error: &BitVMXError,
+        broker_node: &BrokerNode,
+    ) {
         send_error_report(
             broker_node,
             &self.l2_identifier,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::NonFatal,
-                Some(error.to_string()),
-            ),
+            ErrorReport::new(ErrorScope::Node, kind, Some(error.to_string())),
         );
     }
 }
@@ -121,55 +110,40 @@ impl Reporter {
 /// Walks the error's source chain. Takes `dyn Error` so an error borrowed from a
 /// dependency can be classified without a conversion that would consume it.
 pub fn classify(error: &(dyn Error + 'static)) -> Severity {
-    let mut next = Some(error);
-
-    while let Some(error) = next {
-        if let Some(error) = error.downcast_ref::<StorageError>() {
-            if matches!(
-                error,
+    for error in std::iter::successors(Some(error), |&error| error.source()) {
+        let fatal = matches!(
+            error.downcast_ref::<StorageError>(),
+            Some(
                 StorageError::WriteError
                     | StorageError::ReadError(_)
                     | StorageError::CommitError
                     | StorageError::TransactionRollbackFailed
-            ) {
-                return Severity::Fatal;
-            }
-        }
-
-        if let Some(error) = error.downcast_ref::<BitcoinRpcError>() {
-            if matches!(
-                error,
-                BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(_))
-            ) {
-                return Severity::BitcoinNodeUnreachable;
-            }
-        }
-
-        if let Some(error) = error.downcast_ref::<BrokerError>() {
-            if error.is_fatal() {
-                return Severity::Fatal;
-            }
-        }
-
-        // Both are broker types that BitVMXError wraps directly, so they reach here without
-        // passing through BrokerError and have to be asked for their severity separately.
-        if let Some(error) = error.downcast_ref::<IdentificationError>() {
-            if error.severity().is_fatal() {
-                return Severity::Fatal;
-            }
-        }
-
-        if let Some(error) = error.downcast_ref::<RetryPolicyError>() {
-            if error.severity().is_fatal() {
-                return Severity::Fatal;
-            }
-        }
-
-        if let Some(BitVMXError::PoisonedLockError(_)) = error.downcast_ref::<BitVMXError>() {
+            )
+        ) || error
+            .downcast_ref::<BrokerError>()
+            .is_some_and(BrokerError::is_fatal)
+            // Both are broker types that BitVMXError wraps directly, so they reach here without
+            // passing through BrokerError and have to be asked for their severity separately.
+            || error
+                .downcast_ref::<IdentificationError>()
+                .is_some_and(|error| error.severity().is_fatal())
+            || error
+                .downcast_ref::<RetryPolicyError>()
+                .is_some_and(|error| error.severity().is_fatal())
+            || matches!(
+                error.downcast_ref::<BitVMXError>(),
+                Some(BitVMXError::PoisonedLockError(_))
+            );
+        if fatal {
             return Severity::Fatal;
         }
 
-        next = error.source();
+        if matches!(
+            error.downcast_ref::<BitcoinRpcError>(),
+            Some(BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(_)))
+        ) {
+            return Severity::BitcoinNodeUnreachable;
+        }
     }
 
     Severity::Other
