@@ -76,7 +76,9 @@ No helpers were extracted: each would have one caller and only forward a call.
 
 ### 5. Add `report_coordinator_news(context, kind)`
 
-`self.reporter.coordinator_news(..., &self.program_context.broker_channel)?` appears 8 times in
+Status: applied.
+
+`self.reporter.coordinator_news(..., &self.program_context.broker_channel)?` appeared 8 times in
 `process_coordinator_news` (865-1006).
 
 ### 6. Flatten `apply_operation_timeout`

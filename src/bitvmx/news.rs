@@ -183,13 +183,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     available, required
                 );
                 // No txid or context, so the program cannot be identified.
-                self.reporter.coordinator_news(
+                self.report_coordinator_news(
                     None,
                     ErrorReportKind::InsufficientFunds {
                         available,
                         required,
                     },
-                    &self.program_context.broker_channel,
                 )?;
             }
             CoordinatorNews::DispatchError { txid, context } => {
@@ -199,26 +198,23 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
                     }
                 }
-                self.reporter.coordinator_news(
+                self.report_coordinator_news(
                     Some(&context),
                     ErrorReportKind::TransactionDispatchFailed { txid },
-                    &self.program_context.broker_channel,
                 )?;
             }
             CoordinatorNews::SpeedupDispatchError { txid, context } => {
                 error!("Speedup dispatch error: {:?} {:?}", txid, context);
-                self.reporter.coordinator_news(
+                self.report_coordinator_news(
                     Some(&context),
                     ErrorReportKind::SpeedupDispatchFailed { txid },
-                    &self.program_context.broker_channel,
                 )?;
             }
             CoordinatorNews::TransactionStuckInMempool { txid, context } => {
                 warn!("Transaction stuck in mempool: {:?} {:?}", txid, context);
-                self.reporter.coordinator_news(
+                self.report_coordinator_news(
                     Some(&context),
                     ErrorReportKind::TransactionStuckInMempool { txid },
-                    &self.program_context.broker_channel,
                 )?;
             }
             CoordinatorNews::MaxFeeRateReached {
@@ -230,13 +226,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Speedup for {:?} reached the fee rate cap at {} sat/vB. No further boosts",
                     txid, effective_fee_rate
                 );
-                self.reporter.coordinator_news(
+                self.report_coordinator_news(
                     Some(&context),
                     ErrorReportKind::MaxFeeRateReached {
                         txid,
                         effective_fee_rate,
                     },
-                    &self.program_context.broker_channel,
                 )?;
             }
             CoordinatorNews::EstimateFeerateTooHigh {
@@ -247,22 +242,17 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Estimated fee rate {} exceeds the configured maximum {}",
                     estimated_fee_rate, max_fee_rate
                 );
-                self.reporter.coordinator_news(
+                self.report_coordinator_news(
                     None,
                     ErrorReportKind::FeeRateTooHigh {
                         estimated: estimated_fee_rate,
                         max: max_fee_rate,
                     },
-                    &self.program_context.broker_channel,
                 )?;
             }
             CoordinatorNews::FundingNotAvailable => {
                 error!("No funding UTXO is available");
-                self.reporter.coordinator_news(
-                    None,
-                    ErrorReportKind::FundingNotAvailable,
-                    &self.program_context.broker_channel,
-                )?;
+                self.report_coordinator_news(None, ErrorReportKind::FundingNotAvailable)?;
             }
             CoordinatorNews::InvalidFundingUtxo {
                 amount,
@@ -272,13 +262,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Funding UTXO of {} is below the {} minimum",
                     amount, min_required
                 );
-                self.reporter.coordinator_news(
+                self.report_coordinator_news(
                     None,
                     ErrorReportKind::InvalidFundingUtxo {
                         amount,
                         min_required,
                     },
-                    &self.program_context.broker_channel,
                 )?;
             }
             // Not reported: our own invariant broke, which is not L2's problem.
@@ -310,6 +299,15 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             .bitcoin_coordinator
             .ack_news(AckNews::Coordinator(coordinator_news))?;
         Ok(())
+    }
+
+    fn report_coordinator_news(
+        &self,
+        context: Option<&str>,
+        kind: ErrorReportKind,
+    ) -> Result<(), BitVMXError> {
+        self.reporter
+            .coordinator_news(context, kind, &self.program_context.broker_channel)
     }
 
     fn send_new_block_news(&self, context: &ProgramContext<BC>) -> bool {
