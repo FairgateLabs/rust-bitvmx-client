@@ -7,7 +7,7 @@ use crate::{
     leader_broadcast::OriginalMessage,
     message_queue::{PushOutcome, QueuedMessage},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
-    program::{program::Program, setup::SetupMessageState},
+    program::program::Program,
     signature_verifier::{OperatorVerificationStore, SignatureVerifier},
     types::{
         FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ResultDisposition,
@@ -241,15 +241,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         }
 
         let sender_pubkey_hash = msg.identifier.pubkey_hash.clone();
-        let peer_address = match program.get_address_from_pubkey_hash(&sender_pubkey_hash) {
-            Some(address) => address,
-            None => {
-                warn!(
-                    "Consuming peer message {:?} for program {} from non-participant {}",
-                    msg_type, program_id, sender_pubkey_hash
-                );
-                return Ok(ResultDisposition::NoOp(NoOpReason::UnauthorizedSender));
-            }
+        let Some(peer_address) = program.get_address_from_pubkey_hash(&sender_pubkey_hash) else {
+            warn!(
+                "Consuming peer message {:?} for program {} from non-participant {}",
+                msg_type, program_id, sender_pubkey_hash
+            );
+            return Ok(ResultDisposition::NoOp(NoOpReason::UnauthorizedSender));
         };
 
         // The broker constructs `Identifier` from the mutually authenticated TLS
@@ -263,10 +260,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "Rejecting Broadcasted message for program {} from non-leader participant {}",
                 program_id, sender_pubkey_hash
             );
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: sender_pubkey_hash,
-                reason: PeerSetupFaultReason::UnauthorizedMessage,
-            }));
+            return Ok(ResultDisposition::fail_peer_reason(
+                sender_pubkey_hash,
+                PeerSetupFaultReason::UnauthorizedMessage,
+            ));
         }
 
         let is_verification_msg = matches!(
@@ -276,17 +273,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         if !is_verification_msg {
             let setup_state = program.classify_setup_message(&sender_pubkey_hash, msg_type);
-            match setup_state {
-                SetupMessageState::PendingCurrentContribution
-                | SetupMessageState::NotForCurrentStep => {}
-                no_op_state @ (SetupMessageState::ContributionAlreadyAccepted
-                | SetupMessageState::SetupComplete
-                | SetupMessageState::UnauthorizedSender) => {
-                    let reason = no_op_state
-                        .into_no_op_reason()
-                        .expect("matched setup no-op state");
-                    return Ok(ResultDisposition::NoOp(reason));
-                }
+            if let Some(reason) = setup_state.into_no_op_reason() {
+                return Ok(ResultDisposition::NoOp(reason));
             }
 
             let my_pubkey_hash = self.program_context.comms.get_pubk_hash();

@@ -63,14 +63,16 @@ Some call sites keep `measure_time` directly because they don't fit the helpers:
 - `operation timeouts` and `comms messages` aren't wrapped in `run_step`.
 - `bitcoin updates` returns `()`, not whether it did work.
 
-### 4. Break up `process_decoded_peer_message`
+### 4. Simplify `process_decoded_peer_message`
 
-The function is 135 lines. Extract `setup_gate` and `authenticate_peer_message`, leaving the top
-function as the ordered pipeline.
+Status: applied.
 
-- 545-556: the match and `.expect()` reduce to
+No helpers were extracted: each would have one caller and only forward a call.
+
+- 545-556: the match and `.expect()` reduced to
   `if let Some(reason) = setup_state.into_no_op_reason() { return ... }`.
-- 532: use the existing `ResultDisposition::fail_peer_reason`.
+- 532: uses the existing `ResultDisposition::fail_peer_reason`.
+- The participant check became a `let ... else`.
 
 ### 5. Add `report_coordinator_news(context, kind)`
 
@@ -81,6 +83,18 @@ function as the ordered pipeline.
 
 Lines 1333-1379 have four nesting levels and call `cancel(id)` 5 times. Extract
 `apply_job_timeout` and `apply_program_job_timeout`.
+
+### 7. Remove `SetupMessageState`
+
+`classify_participant_message` could return `Option<NoOpReason>` directly, which removes the enum
+and `into_no_op_reason`. `None` means the message continues to authentication.
+
+- `Pending` and `NotForCurrentStep` lead to the same handling in both callers, so `None` loses no
+  production behavior. The `setup_engine.rs` test that asserts `Pending` must assert `None` instead.
+- `leader_broadcast.rs` hand-writes the same mapping, except that `UnauthorizedSender` falls
+  through instead of being a no-op. Both callers reject non-participants first, so that arm can't
+  run. Keep those earlier checks: they log and, for the leader, report a peer fault.
+- The return type gets less precise, since `NoOpReason` has 9 variants and this returns 3.
 
 ## Medium value
 
