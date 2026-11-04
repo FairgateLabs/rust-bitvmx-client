@@ -4,7 +4,7 @@ use super::{BitVMX, Context};
 use crate::{
     comms_helper::{deserialize_msg, CommsMessageType, DecodedPeerMessage},
     errors::BitVMXError,
-    leader_broadcast::OriginalMessage,
+    leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
     message_queue::{PushOutcome, QueuedMessage},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::program::Program,
@@ -290,17 +290,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 "Processing authenticated Broadcasted message for program {} from leader {}",
                 program_id, sender_pubkey_hash
             );
-            return self
-                .program_context
-                .leader_broadcast_helper
-                .process_broadcasted_message(
-                    &self.program_context,
-                    &program,
-                    msg.identifier.clone(),
-                    program_id,
-                    message.data,
-                    &self.message_queue,
-                );
+            return LeaderBroadcastHelper::process_broadcasted_message(
+                &self.program_context,
+                &program,
+                &sender_pubkey_hash,
+                program_id,
+                message.data,
+                &self.message_queue,
+            );
         }
 
         if is_verification_msg {

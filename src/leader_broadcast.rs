@@ -359,10 +359,9 @@ impl LeaderBroadcastHelper {
     /// contributions are ignored. If any original is malformed, unauthorized, or
     /// has an invalid signature, no originals are queued and setup is failed.
     pub fn process_broadcasted_message<BC: BitcoinCoordinatorApi>(
-        &self,
         program_context: &ProgramContext<BC>,
         program: &Program,
-        leader_identifier: Identifier,
+        leader_pubkey_hash: &PubkHash,
         program_id: Uuid,
         data: Value,
         message_queue: &MessageQueue,
@@ -372,10 +371,10 @@ impl LeaderBroadcastHelper {
             Err(error) => {
                 warn!(
                     "Rejecting malformed BroadcastedMessage from leader {} for {}: {:?}",
-                    leader_identifier.pubkey_hash, program_id, error
+                    leader_pubkey_hash, program_id, error
                 );
                 return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: leader_identifier.pubkey_hash,
+                    peer: leader_pubkey_hash.clone(),
                     reason: PeerSetupFaultReason::MalformedMessage,
                 }));
             }
@@ -383,7 +382,7 @@ impl LeaderBroadcastHelper {
 
         info!(
             "Processing BroadcastedMessage from leader {} for context {} with {} original messages",
-            leader_identifier.pubkey_hash,
+            leader_pubkey_hash,
             program_id,
             broadcasted_msg.original_messages.len()
         );
@@ -392,7 +391,7 @@ impl LeaderBroadcastHelper {
             || !broadcasted_msg.original_msg_type.should_store()
         {
             return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: leader_identifier.pubkey_hash,
+                peer: leader_pubkey_hash.clone(),
                 reason: PeerSetupFaultReason::UnauthorizedMessage,
             }));
         }
@@ -404,7 +403,7 @@ impl LeaderBroadcastHelper {
                 || !seen_senders.insert(&original_msg.sender_pubkey_hash)
             {
                 outcomes.push(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: leader_identifier.pubkey_hash.clone(),
+                    peer: leader_pubkey_hash.clone(),
                     reason: PeerSetupFaultReason::UnauthorizedMessage,
                 }));
                 continue;
@@ -413,7 +412,7 @@ impl LeaderBroadcastHelper {
             outcomes.push(Self::evaluate_original_message(
                 program_context,
                 program,
-                &leader_identifier.pubkey_hash,
+                leader_pubkey_hash,
                 &program_id,
                 original_msg,
             )?);
@@ -466,7 +465,7 @@ impl LeaderBroadcastHelper {
 
         info!(
             "Processed BroadcastedMessage from leader {}: {} queued, {} no-op, {} deferred",
-            leader_identifier.pubkey_hash,
+            leader_pubkey_hash,
             queued_count,
             no_op_count,
             retries.len()
@@ -1046,17 +1045,15 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        env.context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
-            )
-            .unwrap();
+        LeaderBroadcastHelper::process_broadcasted_message(
+            &env.context,
+            &program,
+            &"leader-hash".to_string(),
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        )
+        .unwrap();
 
         // The reconstructed original is queued and round-trips back to the
         // exact message the sender signed
@@ -1102,18 +1099,15 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
-            )
-            .unwrap();
+        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
+            &env.context,
+            &program,
+            &"leader-hash".to_string(),
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        )
+        .unwrap();
 
         assert_eq!(
             disposition,
@@ -1159,18 +1153,15 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
-            )
-            .unwrap();
+        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
+            &env.context,
+            &program,
+            &"leader-hash".to_string(),
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        )
+        .unwrap();
         assert!(matches!(disposition, ResultDisposition::Fail(_)));
 
         // All-or-nothing: the valid message must not have been queued either
@@ -1190,18 +1181,15 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
-            )
-            .unwrap();
+        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
+            &env.context,
+            &program,
+            &"leader-hash".to_string(),
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        )
+        .unwrap();
 
         assert!(matches!(disposition, ResultDisposition::Fail(_)));
         assert!(queue.is_empty().unwrap());
@@ -1214,18 +1202,15 @@ mod tests {
         let program = install_test_program(&mut env, program_id, vec![]);
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                json!("not a broadcasted message"),
-                &queue,
-            )
-            .unwrap();
+        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
+            &env.context,
+            &program,
+            &"leader-hash".to_string(),
+            program_id,
+            json!("not a broadcasted message"),
+            &queue,
+        )
+        .unwrap();
         assert!(matches!(disposition, ResultDisposition::Fail(_)));
         assert!(queue.is_empty().unwrap());
     }
