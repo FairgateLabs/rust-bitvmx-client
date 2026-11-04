@@ -2,12 +2,12 @@
 
 use super::{BitVMX, Context};
 use crate::{
-    comms_helper::{deserialize_msg, CommsMessageType},
+    comms_helper::{deserialize_msg, CommsMessageType, DecodedPeerMessage},
     errors::BitVMXError,
     leader_broadcast::OriginalMessage,
     message_queue::{PushOutcome, QueuedMessage},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
-    program::{participant::CommsAddress, program::Program, setup::SetupMessageState},
+    program::{program::Program, setup::SetupMessageState},
     signature_verifier::{OperatorVerificationStore, SignatureVerifier},
     types::{
         FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ResultDisposition,
@@ -15,7 +15,6 @@ use crate::{
     },
 };
 use bitvmx_broker::{identification::identifier::PubkHash, ReceivedMessage};
-use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -46,18 +45,22 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// or should be retried later.
     fn process_program_message(
         &mut self,
-        program_id: &Uuid,
-        msg_type: CommsMessageType,
-        data: Value,
-        peer_address: CommsAddress,
+        message: DecodedPeerMessage,
+        sender_pubkey_hash: &PubkHash,
         program: &mut Program,
-        timestamp: i64,
-        signature: Vec<u8>,
-        version: String,
     ) -> Result<ResultDisposition, BitVMXError> {
+        let DecodedPeerMessage {
+            version,
+            msg_type,
+            program_id,
+            data,
+            timestamp,
+            signature,
+        } = message;
+
         debug!(
             "BitVMX::process_program_message() - Processing {:?} for program {} from {}",
-            msg_type, program_id, peer_address.pubkey_hash
+            msg_type, program_id, sender_pubkey_hash
         );
 
         let my_pubkey_hash = self.program_context.comms.get_pubk_hash();
@@ -82,17 +85,17 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             let should_store = msg_type.should_store();
             if should_store {
                 let original_msg = OriginalMessage {
-                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
+                    sender_pubkey_hash: sender_pubkey_hash.clone(),
                     msg_type,
                     data: data.clone(),
                     original_timestamp: timestamp,
-                    original_signature: signature.clone(),
-                    version: version.clone(),
+                    original_signature: signature,
+                    version,
                 };
                 if !self
                     .program_context
                     .leader_broadcast_helper
-                    .store_original_message(program_id, msg_type, original_msg)?
+                    .store_original_message(&program_id, msg_type, original_msg)?
                 {
                     info!(
                         "There is a message already stored for program {}",
@@ -112,7 +115,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             ))
         })?;*/
         program.process_comms_message(
-            &peer_address.pubkey_hash,
+            sender_pubkey_hash,
             &msg_type,
             data,
             &mut self.program_context,
@@ -209,27 +212,23 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 .max_frame_size_kb
                 - 1, // Reserve 1kb for headers
         );
-        let Some((version, msg_type, program_id, data, timestamp, signature)) =
-            Self::discard_if_malformed(decoded)
-        else {
+        let Some(message) = Self::discard_if_malformed(decoded) else {
             return Ok(());
         };
-        let disposition = self.process_decoded_peer_message(
-            &msg, version, msg_type, program_id, data, timestamp, signature,
-        )?;
+        let program_id = message.program_id;
+        let msg_type = message.msg_type;
+        let disposition = self.process_decoded_peer_message(&msg, message)?;
         self.apply_message_disposition(msg, &program_id, msg_type, disposition)
     }
 
     fn process_decoded_peer_message(
         &mut self,
         msg: &QueuedMessage,
-        version: String,
-        msg_type: CommsMessageType,
-        program_id: Uuid,
-        data: Value,
-        timestamp: i64,
-        signature: Vec<u8>,
+        message: DecodedPeerMessage,
     ) -> Result<ResultDisposition, BitVMXError> {
+        let program_id = message.program_id;
+        let msg_type = message.msg_type;
+
         // Apply the lifecycle gate before authentication or message-specific
         // handling. Terminal setup traffic is stale and cannot mutate state.
         let Some(mut program) = self.load_program(&program_id)? else {
@@ -294,11 +293,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             match SignatureVerifier::authenticate_message(
                 &self.program_context.globals,
                 &program_id.to_string(),
-                &version,
+                &message.version,
                 &msg_type,
-                &data,
-                timestamp,
-                &signature,
+                &message.data,
+                message.timestamp,
+                &message.signature,
                 &sender_pubkey_hash,
                 &self.program_context.rsa_public_key,
                 &my_pubkey_hash,
@@ -324,7 +323,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     &program,
                     msg.identifier.clone(),
                     program_id,
-                    data,
+                    message.data,
                     &self.message_queue,
                 );
         }
@@ -334,7 +333,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &self.program_context,
                 &program_id,
                 &msg_type,
-                &data,
+                &message.data,
                 &peer_address,
             )? {
                 ResultDisposition::Success(SuccessDetail::Processed) => {
@@ -345,16 +344,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             };
         }
 
-        self.process_program_message(
-            &program_id,
-            msg_type,
-            data,
-            peer_address,
-            &mut program,
-            timestamp,
-            signature,
-            version,
-        )
+        self.process_program_message(message, &peer_address.pubkey_hash, &mut program)
     }
 
     pub fn process_pending_messages(&mut self) -> Result<bool, BitVMXError> {

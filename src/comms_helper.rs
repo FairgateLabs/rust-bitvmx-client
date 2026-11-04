@@ -359,10 +359,21 @@ pub fn serialize_msg<T: Serialize>(
     serde_json::to_string(&result).map_err(|_| BitVMXError::SerializationError)
 }
 
+/// A peer message whose encoding is valid. Its signature has not been checked yet.
+#[derive(Debug)]
+pub struct DecodedPeerMessage {
+    pub version: String,
+    pub msg_type: CommsMessageType,
+    pub program_id: Uuid,
+    pub data: Value,
+    pub timestamp: i64,
+    pub signature: Vec<u8>,
+}
+
 pub fn deserialize_msg(
     data: &str,
     max_expected_msg_len_kb: usize,
-) -> Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError> {
+) -> Result<DecodedPeerMessage, BitVMXError> {
     let data: Vec<u8> = serde_json::from_str(data)
         .map_err(|e| BitVMXError::InvalidMessage(format!("Invalid message encoding: {:?}", e)))?;
 
@@ -455,14 +466,14 @@ pub fn deserialize_msg(
         signature.push(byte as u8);
     }
 
-    Ok((
+    Ok(DecodedPeerMessage {
         version,
         msg_type,
         program_id,
-        data.clone(),
+        data: data.clone(),
         timestamp,
         signature,
-    ))
+    })
 }
 
 #[cfg(test)]
@@ -512,8 +523,14 @@ mod tests {
         let (sender, raw) = env.receive_one()?;
         assert_eq!(sender.pubkey_hash, env.context.comms.get_pubk_hash());
 
-        let (version, msg_type, received_program_id, data, timestamp, signature) =
-            deserialize_msg(&raw, 200000)?;
+        let DecodedPeerMessage {
+            version,
+            msg_type,
+            program_id: received_program_id,
+            data,
+            timestamp,
+            signature,
+        } = deserialize_msg(&raw, 200000)?;
         assert_eq!(version, CURRENT_PROTOCOL_VERSION);
         assert_eq!(msg_type, CommsMessageType::Keys);
         assert_eq!(received_program_id, program_id);
@@ -554,8 +571,14 @@ mod tests {
         )?;
 
         let (_, raw) = env.receive_one()?;
-        let (version, msg_type, received_program_id, data, _, signature) =
-            deserialize_msg(&raw, 200000)?;
+        let DecodedPeerMessage {
+            version,
+            msg_type,
+            program_id: received_program_id,
+            data,
+            signature,
+            ..
+        } = deserialize_msg(&raw, 200000)?;
         assert_eq!(version, CURRENT_PROTOCOL_VERSION);
         assert_eq!(msg_type, CommsMessageType::VerificationKey);
         assert_eq!(received_program_id, program_id);
@@ -685,20 +708,13 @@ mod tests {
 
         let serialized_msg =
             serialize_msg(version, msg_type, &program_id, msg, 0, signature.clone()).unwrap();
-        let (
-            deserialized_version,
-            deserialized_msg_type,
-            deserialized_program_id,
-            deserialized_msg,
-            _deserialized_timestamp,
-            deserialized_signature,
-        ) = deserialize_msg(&serialized_msg, 200000).unwrap();
+        let deserialized = deserialize_msg(&serialized_msg, 200000).unwrap();
 
-        assert_eq!(deserialized_version, version);
-        assert_eq!(deserialized_msg_type, msg_type);
-        assert_eq!(deserialized_program_id, program_id);
-        assert_eq!(deserialized_msg, msg);
-        assert_eq!(deserialized_signature, signature);
+        assert_eq!(deserialized.version, version);
+        assert_eq!(deserialized.msg_type, msg_type);
+        assert_eq!(deserialized.program_id, program_id);
+        assert_eq!(deserialized.data, msg);
+        assert_eq!(deserialized.signature, signature);
     }
 
     // TODO: This code section was commented out since it is no longer needed.
@@ -780,7 +796,7 @@ mod tests {
     }
 
     fn assert_invalid_message(
-        result: Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError>,
+        result: Result<DecodedPeerMessage, BitVMXError>,
         expected_fragment: &str,
     ) {
         match result {

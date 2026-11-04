@@ -25,15 +25,18 @@ The file was 2554 lines, of which 1060 (41%) were tests.
 
 ### 2. Replace the message tuple with a struct
 
-The same six fields pass through `deserialize_msg`, `process_decoded_peer_message` and
-`process_program_message`. The last has 9 parameters including `self`, over the clippy limit.
+Status: applied.
+
+The same six fields passed through `deserialize_msg`, `process_decoded_peer_message` and
+`process_program_message`. The last had 9 parameters including `self`, over the clippy limit.
 
 ```rust
-struct DecodedPeerMessage { version, msg_type, program_id, data, timestamp, signature }
+pub struct DecodedPeerMessage { version, msg_type, program_id, data, timestamp, signature }
 ```
 
-`process_program_message` also takes both `program_id` and `program`, although
-`program.program_id` exists. It only uses `peer_address.pubkey_hash`, so it can take that alone.
+`deserialize_msg` now returns this struct, which changes the signature of a public function.
+`process_program_message` no longer takes a separate `program_id`. It only used
+`peer_address.pubkey_hash`, so it takes that alone.
 
 ### 3. Add step helpers
 
