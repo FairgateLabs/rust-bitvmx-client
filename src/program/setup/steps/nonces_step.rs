@@ -7,7 +7,7 @@ use crate::{
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
         setup::{decode_contribution, SetupStep},
     },
-    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, SuccessDetail},
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition},
 };
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PubNonce};
@@ -219,7 +219,7 @@ impl SetupStep for NoncesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -494,7 +494,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
@@ -527,7 +527,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert!(step
             .can_advance(&first_protocol, &participants, &first.context)

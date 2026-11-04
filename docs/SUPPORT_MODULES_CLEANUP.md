@@ -65,7 +65,9 @@ pub fn authenticate_message<BC: BitcoinCoordinatorApi>(
 - A struct for the signed fields would reach 4 parameters, but was rejected to avoid a new type. The
   function stays one over the clippy limit of 7.
 
-### 3. Remove `SuccessDetail::QueuedMessage` by building messages in the queueing pass
+### 3. Remove `SuccessDetail` by building messages in the queueing pass
+
+Status: applied.
 
 `leader_broadcast.rs:process_broadcasted_message, evaluate_original_message`, `types/mod.rs:53-68`
 
@@ -74,18 +76,22 @@ exists only for this path, and it is the reason for the hand-written `PartialEq`
 part of the `unreachable!` arm at `peer_messages.rs:166`. The caller also has two `unreachable!` arms.
 
 Keep `ResultDisposition` as the return type, without adding an outcome type. A verified original returns
-`Success(Processed)`, and the queueing pass builds the message from the original it already has:
+`Success`, and the queueing pass builds the message from the original it already has:
 
 ```rust
 for (original_msg, outcome) in broadcasted_msg.original_messages.iter().zip(outcomes) {
     match outcome {
-        ResultDisposition::Success(_) => {
-            // serialize_msg + QueuedMessage::new, moved from evaluate_original_message
-            message_queue.push_new_unique(message.identifier, message.data)?;
+        ResultDisposition::Success => {
+            let full_message = serialize_msg(/* moved from evaluate_original_message */)?;
+            message_queue.push_new_unique(
+                Identifier::new(original_msg.sender_pubkey_hash.clone(), COMMS_ID),
+                full_message,
+            )?;
             queued_count += 1;
         }
         ResultDisposition::Retry(reason) => {
-            first_retry.get_or_insert(reason);
+            info!("Deferring leader envelope: {:?}", reason);
+            retries.push(reason);
         }
         ResultDisposition::NoOp(reason) => {
             debug!("Discarding redundant embedded original: {:?}", reason);
@@ -96,11 +102,11 @@ for (original_msg, outcome) in broadcasted_msg.original_messages.iter().zip(outc
 }
 ```
 
-- `SuccessDetail::QueuedMessage` is removed, and `PartialEq` can be derived.
-- `evaluate_original_message` can end by returning the `authenticate_message` result directly.
+- Without `QueuedMessage`, `SuccessDetail` only had `Processed` left and carried no data, so the whole
+  type is removed and the variant is plain `ResultDisposition::Success`.
+- `evaluate_original_message` ends by returning the `authenticate_message` result directly.
+- `push_new_unique` already builds a `QueuedMessage`, so the queueing pass doesn't build one first.
 - Keeping the whole `RetryReason` removes the `_ => unreachable!` arm, leaving one panic in this `match`.
-- `SuccessDetail` is left with one variant. Keep it, since removing it would touch every
-  `Success(SuccessDetail::Processed)` for little gain.
 
 Keep the two passes and the "first fault wins" order. See Traps.
 
@@ -109,12 +115,12 @@ This item changes behavior in three small ways:
 - **Failure order:** building the message moves after the fault check. `QueuedMessage::new` fails if
   reading the clock fails. `serialize_msg` can only fail on the version or type bytes, which
   `construct_message` has already checked, or on JSON encoding. An envelope with both a fault and one of
-  these failures would return the fault instead of `Err`.
+  these failures now returns the fault instead of `Err`.
 - **Partial queueing:** a build failure can happen after earlier originals were queued.
-  `push_new_unique` can already fail at that point, so this is not a new kind of risk. Whether a
-  transaction rolls those pushes back on this path has not been checked.
-- **Logs:** the deferral log prints the retry reason instead of the peer, unless the old format is kept
-  by matching `MissingVerificationKey` in the log only.
+  `push_new_unique` could already fail at that point. Both production paths run inside
+  `run_transaction` (`process_pending_messages` through `timed_tx_step`, `process_one_comms_message`
+  through `process_inputs`), which rolls back on `Err`.
+- **Logs:** the deferral log prints the retry reason instead of only the peer.
 
 ### 4. Remove the forwarders in `signature_verifier.rs`
 
@@ -258,7 +264,6 @@ broker_node)`.
 
 `leader_broadcast.rs`:
 
-- 474: `crate::types::RetryReason` is already imported.
 - Delete comments that restate the next line (60, 93, 101, 109, 300, 342).
 - `validate` messages (95-122) print values already known to be empty, such as
   `Version is empty: ""`. Shorten them. This only changes error text.
@@ -285,7 +290,7 @@ broker_node)`.
   does nothing. Assert `timeouts.get(&id)` is `None`, or register with `Duration::ZERO`.
 - **Weak assertions in `leader_broadcast.rs`:**
   - `process_broadcasted_message_queues_verified_original` (1069-1079) ignores the returned
-    disposition. Assert `Success(Processed)`.
+    disposition. Assert `Success`.
   - Three tests (1194, 1226, 1249) only assert `Fail(_)`, so they pass with the wrong peer or reason.
     Assert the fault: the sender for a bad signature, the leader for a non-participant or malformed
     envelope.

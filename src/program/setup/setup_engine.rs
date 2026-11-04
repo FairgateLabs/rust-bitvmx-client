@@ -8,7 +8,7 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{NoOpReason, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
+    types::{NoOpReason, ProgramContext, ResultDisposition, RetryReason},
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -426,7 +426,7 @@ impl SetupEngine {
         if self.state.has_participant_completed(participant_idx) {
             if participant_idx == my_idx {
                 warn!("Getting data from ourselves again for step '{}', ignoring since we already processed it.", step_name);
-                return Ok(ResultDisposition::Success(SuccessDetail::Processed));
+                return Ok(ResultDisposition::Success);
             }
 
             info!(
@@ -455,7 +455,7 @@ impl SetupEngine {
             context,
             false,
         )? {
-            ResultDisposition::Success(SuccessDetail::Processed) => {}
+            ResultDisposition::Success => {}
             disposition => return Ok(disposition),
         }
 
@@ -475,7 +475,7 @@ impl SetupEngine {
             self.state.current_step_state
         );
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     /// Checks if the current step can advance to the next step.
@@ -681,7 +681,7 @@ impl SetupEngine {
             participants,
             context,
         )?;
-        if disposition != ResultDisposition::Success(SuccessDetail::Processed) {
+        if disposition != ResultDisposition::Success {
             debug!(
                 "SetupEngine::receive_setup_data() - Data from participant {} was not applied for step '{}': {:?}",
                 from, step_name, disposition
@@ -700,7 +700,7 @@ impl SetupEngine {
             self.send_broadcast_data_to_non_leaders(context, program_id, participants, msg_type)?;
         }
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     fn send_broadcast_data_to_non_leaders<BC: BitcoinCoordinatorApi>(
@@ -809,7 +809,7 @@ impl SetupEngine {
                         context,
                         true,
                     )?;
-                    if own_outcome != ResultDisposition::Success(SuccessDetail::Processed) {
+                    if own_outcome != ResultDisposition::Success {
                         return Err(BitVMXError::InvalidState(format!(
                             "Locally generated data for step '{}' was not accepted: {:?}",
                             step_name, own_outcome
@@ -1162,7 +1162,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert_eq!(
             engine
@@ -1206,7 +1206,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
     }
 

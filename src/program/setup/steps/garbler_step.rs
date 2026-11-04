@@ -22,9 +22,7 @@ use crate::{
         setup::{decode_contribution, decode_contribution_slice, SetupStep},
         variables::{Globals, VariableTypes},
     },
-    types::{
-        JobDispatcherType, PeerSetupFaultReason, ProgramContext, ResultDisposition, SuccessDetail,
-    },
+    types::{JobDispatcherType, PeerSetupFaultReason, ProgramContext, ResultDisposition},
 };
 
 pub const GC_INPUT_PK: &str = "GC_INPUT_PK";
@@ -310,7 +308,7 @@ impl SetupStep for GarblerStep {
                 )?;
             }
 
-            return Ok(ResultDisposition::Success(SuccessDetail::Processed));
+            return Ok(ResultDisposition::Success);
         }
 
         let ProverGarblerData {
@@ -355,7 +353,7 @@ impl SetupStep for GarblerStep {
             context,
             &protocol_id,
         )?;
-        if signature_outcome != ResultDisposition::Success(SuccessDetail::Processed) {
+        if signature_outcome != ResultDisposition::Success {
             return Ok(signature_outcome);
         }
 
@@ -363,7 +361,7 @@ impl SetupStep for GarblerStep {
 
         dispatch_proof_verification(proof_blob, context, &config, protocol_id, self.step_name())?;
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -451,7 +449,7 @@ fn import_public_input_signature<BC: BitcoinCoordinatorApi>(
         VariableTypes::Input(public_input_signature.clone()),
     )?;
 
-    Ok(ResultDisposition::Success(SuccessDetail::Processed))
+    Ok(ResultDisposition::Success)
 }
 
 fn import_public_keys<BC: BitcoinCoordinatorApi>(
@@ -944,7 +942,7 @@ mod tests {
                 &id,
             )
             .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert!(env
             .context
@@ -1035,7 +1033,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
@@ -1094,7 +1092,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
     }
 

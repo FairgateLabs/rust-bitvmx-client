@@ -10,7 +10,7 @@ use crate::{
         participant::CommsAddress,
         variables::{Globals, VariableTypes},
     },
-    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason},
 };
 use bitvmx_broker::{identification::identifier::PubkHash, BrokerNode};
 use key_manager::key_manager::KeyManager;
@@ -162,7 +162,7 @@ impl SignatureVerifier {
             msg_type,
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
         ) {
-            return Ok(ResultDisposition::Success(SuccessDetail::Processed));
+            return Ok(ResultDisposition::Success);
         }
 
         let rejected = || {
@@ -224,7 +224,7 @@ impl SignatureVerifier {
                 "Message signature verified successfully from {} for message type: {:?}",
                 sender_pubkey_hash, msg_type
             );
-            Ok(ResultDisposition::Success(SuccessDetail::Processed))
+            Ok(ResultDisposition::Success)
         } else {
             error!(
                 "Invalid RSA signature from peer: {} for message type: {:?} in program: {}",
@@ -256,9 +256,9 @@ impl SignatureVerifier {
                     program_id,
                     peer_address.clone(),
                 )?;
-                Ok(ResultDisposition::Success(SuccessDetail::Processed))
+                Ok(ResultDisposition::Success)
             }
-            _ => Ok(ResultDisposition::Success(SuccessDetail::Processed)),
+            _ => Ok(ResultDisposition::Success),
         }
     }
 
@@ -321,7 +321,7 @@ impl SignatureVerifier {
             &announcement.verification_key,
         )?;
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 }
 
@@ -375,10 +375,7 @@ mod tests {
             &signature,
             &sender_pubkey_hash,
         )?;
-        assert_eq!(
-            outcome,
-            ResultDisposition::Success(SuccessDetail::Processed)
-        );
+        assert_eq!(outcome, ResultDisposition::Success);
         Ok(())
     }
 
@@ -614,10 +611,7 @@ mod tests {
                 &[],
                 &peer,
             )?;
-            assert_eq!(
-                outcome,
-                ResultDisposition::Success(SuccessDetail::Processed)
-            );
+            assert_eq!(outcome, ResultDisposition::Success);
         }
         Ok(())
     }
@@ -656,10 +650,7 @@ mod tests {
             &signature,
             &my_hash,
         )?;
-        assert_eq!(
-            outcome,
-            ResultDisposition::Success(SuccessDetail::Processed)
-        );
+        assert_eq!(outcome, ResultDisposition::Success);
 
         let outcome = SignatureVerifier::authenticate_message(
             &env.context,
@@ -700,7 +691,7 @@ mod tests {
                 &data,
                 &peer_address,
             )?,
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
 
         assert_eq!(
@@ -795,7 +786,7 @@ mod tests {
                 &json!({}),
                 &peer_address,
             )?,
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
 
         let (_, raw) = env.receive_via_peer(0)?;
@@ -820,7 +811,7 @@ mod tests {
                 &json!({}),
                 &peer_address,
             )?,
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
 
         // Non-verification types are ignored: no key stored, nothing sent.

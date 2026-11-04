@@ -16,7 +16,6 @@ use uuid::Uuid;
 use crate::{
     expected_job::ExpectedJobs,
     leader_broadcast::LeaderBroadcastHelper,
-    message_queue::QueuedMessage,
     operation_timeout::OperationTimeouts,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::variables::{Globals, WitnessVars},
@@ -29,7 +28,7 @@ use crate::{
 /// regular `Result::Err` values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResultDisposition {
-    Success(SuccessDetail),
+    Success,
     NoOp(NoOpReason),
     Retry(RetryReason),
     Fail(FailureDetail),
@@ -48,26 +47,6 @@ impl ResultDisposition {
         Self::Fail(FailureDetail::DispatcherJob(failure))
     }
 }
-
-#[derive(Debug, Clone)]
-pub enum SuccessDetail {
-    Processed,
-    QueuedMessage(QueuedMessage),
-}
-
-impl PartialEq for SuccessDetail {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Processed, Self::Processed) => true,
-            (Self::QueuedMessage(left), Self::QueuedMessage(right)) => {
-                left.identifier == right.identifier && left.data == right.data
-            }
-            _ => false,
-        }
-    }
-}
-
-impl Eq for SuccessDetail {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailureDetail {

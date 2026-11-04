@@ -6,8 +6,7 @@ use crate::{
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     types::{
         DispatcherJobFailure, ErrorReport, ErrorReportKind, ErrorScope, FailureDetail,
-        JobDispatcherType, NoOpReason, OutgoingBitVMXApiMessages, ResultDisposition, SuccessDetail,
-        ZKPExecution,
+        JobDispatcherType, NoOpReason, OutgoingBitVMXApiMessages, ResultDisposition, ZKPExecution,
     },
 };
 use bitvmx_broker::{identification::identifier::Identifier, ReceivedMessage};
@@ -116,9 +115,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &self.program_context,
                 &self.config.components,
             );
-            return Ok(DispatcherIngress::Settled(ResultDisposition::Success(
-                SuccessDetail::Processed,
-            )));
+            return Ok(DispatcherIngress::Settled(ResultDisposition::Success));
         }
 
         let message = match ResultMessage::from_str(msg) {
@@ -197,7 +194,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             OutgoingBitVMXApiMessages::ProofGenerationError(id, status.clone()),
         )?;
         self.program_context.expected_jobs.fail(job_id, status)?;
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     fn handle_zkp_result(
@@ -234,7 +231,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             .complete(&message.job_id)?;
         let response = self.get_zkp_execution_result(id)?;
         self.reply(requester, response)?;
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     fn handle_program_result(
@@ -276,9 +273,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: &ResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            ResultDisposition::Success(SuccessDetail::Processed) => {
-                self.program_context.expected_jobs.complete(job_id)
-            }
+            ResultDisposition::Success => self.program_context.expected_jobs.complete(job_id),
             ResultDisposition::NoOp(NoOpReason::Stale) => self
                 .program_context
                 .expected_jobs
@@ -300,7 +295,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: ResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            ResultDisposition::Success(SuccessDetail::Processed) => Ok(()),
+            ResultDisposition::Success => Ok(()),
             ResultDisposition::NoOp(reason) => {
                 debug!(
                     "Consuming no-op result from {:?} dispatcher: {:?}",
@@ -416,9 +411,7 @@ mod tests {
                 JobDispatcherType::Emulator,
                 &serde_json::to_string(&PingMessage::Pong).unwrap(),
             ),
-            Ok(DispatcherIngress::Settled(ResultDisposition::Success(
-                SuccessDetail::Processed
-            )))
+            Ok(DispatcherIngress::Settled(ResultDisposition::Success))
         ));
         assert!(matches!(
             env.bitvmx
@@ -565,7 +558,7 @@ mod tests {
             env.bitvmx
                 .handle_job_result(JobDispatcherType::ZKP, &message)
                 .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         let expected = env
             .bitvmx
@@ -677,7 +670,7 @@ mod tests {
             env.bitvmx
                 .handle_job_result(JobDispatcherType::ZKP, &message)
                 .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         let expected = env
             .bitvmx
@@ -740,7 +733,7 @@ mod tests {
             env.bitvmx
                 .handle_job_result(JobDispatcherType::ZKP, &message)
                 .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert!(matches!(
             env.bitvmx

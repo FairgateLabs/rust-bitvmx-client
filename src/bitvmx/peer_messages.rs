@@ -11,7 +11,7 @@ use crate::{
     signature_verifier::{OperatorVerificationStore, SignatureVerifier},
     types::{
         FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ResultDisposition,
-        RetryReason, SetupFailureReason, SuccessDetail,
+        RetryReason, SetupFailureReason,
     },
 };
 use bitvmx_broker::{identification::identifier::PubkHash, ReceivedMessage};
@@ -137,7 +137,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: ResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            ResultDisposition::Success(SuccessDetail::Processed) => Ok(()),
+            ResultDisposition::Success => Ok(()),
             ResultDisposition::NoOp(reason) => {
                 debug!(
                     "Consuming no-op peer message {:?} for program {} from {}: {:?}",
@@ -163,8 +163,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     SetupFailureReason::StepError(format!("{reason:?}")),
                 )
             }
-            ResultDisposition::Success(SuccessDetail::QueuedMessage(_))
-            | ResultDisposition::Fail(FailureDetail::DispatcherJob(_)) => {
+            ResultDisposition::Fail(FailureDetail::DispatcherJob(_)) => {
                 unreachable!("invalid peer-message disposition")
             }
         }
@@ -278,7 +277,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &message.signature,
                 &sender_pubkey_hash,
             )? {
-                ResultDisposition::Success(SuccessDetail::Processed) => {}
+                ResultDisposition::Success => {}
                 disposition => return Ok(disposition),
             }
         }
@@ -312,9 +311,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 &message.data,
                 &peer_address,
             )? {
-                ResultDisposition::Success(SuccessDetail::Processed) => {
-                    Ok(ResultDisposition::Success(SuccessDetail::Processed))
-                }
+                ResultDisposition::Success => Ok(ResultDisposition::Success),
                 failure @ ResultDisposition::Fail(FailureDetail::PeerSetup(_)) => Ok(failure),
                 _ => unreachable!("invalid verification-message disposition"),
             };

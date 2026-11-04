@@ -1,12 +1,12 @@
 use crate::comms_helper::{construct_message, request, serialize_msg, CommsMessageType};
 use crate::errors::BitVMXError;
-use crate::message_queue::{MessageQueue, QueuedMessage};
+use crate::message_queue::MessageQueue;
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::{participant::CommsAddress, program::Program};
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::{
     FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
-    ResultDisposition, RetryReason, SuccessDetail,
+    ResultDisposition,
 };
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use bitvmx_broker::settings::COMMS_ID;
@@ -431,30 +431,37 @@ impl LeaderBroadcastHelper {
 
         let mut queued_count = 0usize;
         let mut no_op_count = 0usize;
-        let mut missing_peers = Vec::new();
-        for outcome in outcomes {
+        let mut retries = Vec::new();
+        for (original_msg, outcome) in broadcasted_msg.original_messages.iter().zip(outcomes) {
             match outcome {
-                ResultDisposition::Success(SuccessDetail::QueuedMessage(message)) => {
+                ResultDisposition::Success => {
                     info!(
                         "Queueing verified embedded original from {}",
-                        message.identifier.pubkey_hash
+                        original_msg.sender_pubkey_hash
                     );
-                    message_queue.push_new_unique(message.identifier, message.data)?;
+                    let full_message = serialize_msg(
+                        &original_msg.version,
+                        original_msg.msg_type,
+                        &program_id,
+                        &original_msg.data,
+                        original_msg.original_timestamp,
+                        original_msg.original_signature.clone(),
+                    )?;
+                    message_queue.push_new_unique(
+                        Identifier::new(original_msg.sender_pubkey_hash.clone(), COMMS_ID),
+                        full_message,
+                    )?;
                     queued_count += 1;
                 }
-                ResultDisposition::Retry(RetryReason::MissingVerificationKey { peer }) => {
-                    info!(
-                        "Deferring leader envelope until the verification key for {} arrives",
-                        peer
-                    );
-                    missing_peers.push(peer);
+                ResultDisposition::Retry(reason) => {
+                    info!("Deferring leader envelope: {:?}", reason);
+                    retries.push(reason);
                 }
                 ResultDisposition::NoOp(reason) => {
                     debug!("Discarding redundant embedded original: {:?}", reason);
                     no_op_count += 1;
                 }
                 ResultDisposition::Fail(_) => unreachable!("handled before queueing"),
-                _ => unreachable!("invalid embedded-original disposition"),
             }
         }
 
@@ -463,22 +470,20 @@ impl LeaderBroadcastHelper {
             leader_identifier.pubkey_hash,
             queued_count,
             no_op_count,
-            missing_peers.len()
+            retries.len()
         );
-        if let Some(peer) = missing_peers.into_iter().next() {
+        if let Some(reason) = retries.into_iter().next() {
             // Retry the authenticated outer envelope rather than creating an
             // independently fresh budget for every missing-key original. On a
             // retry, accepted originals are no-ops and pending verified ones are
             // deduplicated by MessageQueue.
-            Ok(ResultDisposition::Retry(
-                crate::types::RetryReason::MissingVerificationKey { peer },
-            ))
+            Ok(ResultDisposition::Retry(reason))
         } else if queued_count == 0 {
             Ok(ResultDisposition::NoOp(
                 NoOpReason::ContributionAlreadyAccepted,
             ))
         } else {
-            Ok(ResultDisposition::Success(SuccessDetail::Processed))
+            Ok(ResultDisposition::Success)
         }
     }
 
@@ -525,7 +530,7 @@ impl LeaderBroadcastHelper {
             }));
         }
 
-        let authentication = SignatureVerifier::authenticate_message(
+        SignatureVerifier::authenticate_message(
             program_context,
             program_id,
             &original_msg.version,
@@ -534,29 +539,7 @@ impl LeaderBroadcastHelper {
             original_msg.original_timestamp,
             &original_msg.original_signature,
             &original_msg.sender_pubkey_hash,
-        )?;
-
-        match authentication {
-            ResultDisposition::Success(SuccessDetail::Processed) => {}
-            disposition => return Ok(disposition),
-        };
-
-        let full_message = serialize_msg(
-            &original_msg.version,
-            original_msg.msg_type,
-            program_id,
-            &original_msg.data,
-            original_msg.original_timestamp,
-            original_msg.original_signature.clone(),
-        )?;
-        let queued_message = QueuedMessage::new(
-            Identifier::new(original_msg.sender_pubkey_hash.clone(), COMMS_ID),
-            full_message,
-        )?;
-
-        Ok(ResultDisposition::Success(SuccessDetail::QueuedMessage(
-            queued_message,
-        )))
+        )
     }
 }
 

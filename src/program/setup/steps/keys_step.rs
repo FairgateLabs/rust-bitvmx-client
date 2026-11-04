@@ -8,7 +8,7 @@ use crate::{
         setup::{decode_contribution, SetupStep, MY_KEYS},
         variables::VariableTypes,
     },
-    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason},
 };
 use serde_json::Value;
 use tracing::{debug, info};
@@ -244,7 +244,7 @@ impl SetupStep for KeysStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -397,7 +397,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert!(step
             .can_advance(&protocol, &participants, &env.context)
