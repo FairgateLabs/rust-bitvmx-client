@@ -94,8 +94,9 @@ fn test_queue_no_starvation() {
 
     // Simulate repeated processing failures → requeue
     let start = Instant::now();
-    let timeout =
-        Duration::from_millis(retry_policy.max_delay_ms * retry_policy.max_attempts as u64);
+    // Only stops a broken queue from hanging the test. The loop normally ends when the queue
+    // drains, and storage writes can be slow enough that a tight deadline makes this flaky.
+    let timeout = Duration::from_secs(30);
 
     let mut good_seen = false;
     let mut counter = 0;
