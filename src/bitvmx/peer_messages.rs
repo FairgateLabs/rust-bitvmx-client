@@ -268,18 +268,15 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 return Ok(ResultDisposition::NoOp(reason));
             }
 
-            let my_pubkey_hash = self.program_context.comms.get_pubk_hash();
             match SignatureVerifier::authenticate_message(
-                &self.program_context.globals,
-                &program_id.to_string(),
+                &self.program_context,
+                &program_id,
                 &message.version,
-                &msg_type,
+                msg_type,
                 &message.data,
                 message.timestamp,
                 &message.signature,
                 &sender_pubkey_hash,
-                &self.program_context.rsa_public_key,
-                &my_pubkey_hash,
             )? {
                 ResultDisposition::Success(SuccessDetail::Processed) => {}
                 disposition => return Ok(disposition),

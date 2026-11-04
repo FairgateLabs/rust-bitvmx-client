@@ -34,64 +34,87 @@ pub fn new(storage: Rc<Storage>) -> Self {
 
 Writes still join the same global transaction, because the store is the same object.
 
-### 2. Reduce `authenticate_message` to 4 parameters
+### 2. Reduce `authenticate_message` to 8 parameters
 
-`signature_verifier.rs:163-174`
+Status: applied.
 
-It takes 10 parameters, over the clippy limit. Both production callers (`peer_messages.rs:272`,
-`leader_broadcast.rs:528`) have a `ProgramContext` and unpack `globals`, `rsa_public_key` and the
-comms hash from it. Both also call `program_id.to_string()` at the call site.
+`signature_verifier.rs`
+
+It took 10 parameters. Both production callers (`peer_messages.rs`, `leader_broadcast.rs`) have a
+`ProgramContext` and unpacked `globals`, `rsa_public_key` and the comms hash from it. Both also called
+`program_id.to_string()` at the call site.
 
 ```rust
-pub struct SignedFields<'a> {
-    pub version: &'a str,
-    pub msg_type: CommsMessageType,
-    pub data: &'a Value,
-    pub timestamp: i64,
-    pub signature: &'a [u8],
-}
-
 pub fn authenticate_message<BC: BitcoinCoordinatorApi>(
-    context: &ProgramContext<BC>,
+    program_context: &ProgramContext<BC>,
     program_id: &Uuid,
+    version: &str,
+    msg_type: CommsMessageType,
+    data: &Value,
+    timestamp: i64,
+    signature: &[u8],
     sender_pubkey_hash: &PubkHash,
-    message: SignedFields,
 ) -> Result<ResultDisposition, BitVMXError>;
 ```
 
 - `msg_type` is `Copy`, so it no longer needs a reference.
-- The parameter list in the doc comment (147-157) goes away with the parameters.
+- The parameter list in the doc comment stays, with `program_context` replacing the removed entries.
 - A local `rejected()` closure replaces the 3 identical `fail_peer_reason(..., AuthenticationRejected)`
-  calls (208, 222, 245). The log lines stay separate.
-- Tests that pass `"self"` as both sender and own hash must use the real comms hash, as
-  `authenticate_message_accepts_valid_and_rejects_tampered` already does.
+  calls. The log lines stay separate.
+- Tests that passed `"self"` as both sender and own hash now use the real comms hash.
+- A struct for the signed fields would reach 4 parameters, but was rejected to avoid a new type. The
+  function stays one over the clippy limit of 7.
 
-### 3. Give embedded originals their own outcome type
+### 3. Remove `SuccessDetail::QueuedMessage` by building messages in the queueing pass
 
-`leader_broadcast.rs:400-483, 485-562`, `types/mod.rs:53-68`
+`leader_broadcast.rs:process_broadcasted_message, evaluate_original_message`, `types/mod.rs:53-68`
 
-`evaluate_original_message` returns `ResultDisposition`, but only 4 of its shapes are valid here. The
-caller therefore needs two `unreachable!` arms (456-457). `SuccessDetail::QueuedMessage` exists only
-for this path, and it is the reason for two other pieces of code: the hand-written `PartialEq` on
-`SuccessDetail`, and part of the `unreachable!` arm at `peer_messages.rs:166`.
+`evaluate_original_message` returns a built message inside `SuccessDetail::QueuedMessage`. That variant
+exists only for this path, and it is the reason for the hand-written `PartialEq` on `SuccessDetail` and
+part of the `unreachable!` arm at `peer_messages.rs:166`. The caller also has two `unreachable!` arms.
+
+Keep `ResultDisposition` as the return type, without adding an outcome type. A verified original returns
+`Success(Processed)`, and the queueing pass builds the message from the original it already has:
 
 ```rust
-enum OriginalOutcome {
-    Queue(QueuedMessage),
-    Redundant(NoOpReason),
-    MissingKey(PubkHash),
-    Fault(PeerSetupFault),
+for (original_msg, outcome) in broadcasted_msg.original_messages.iter().zip(outcomes) {
+    match outcome {
+        ResultDisposition::Success(_) => {
+            // serialize_msg + QueuedMessage::new, moved from evaluate_original_message
+            message_queue.push_new_unique(message.identifier, message.data)?;
+            queued_count += 1;
+        }
+        ResultDisposition::Retry(reason) => {
+            first_retry.get_or_insert(reason);
+        }
+        ResultDisposition::NoOp(reason) => {
+            debug!("Discarding redundant embedded original: {:?}", reason);
+            no_op_count += 1;
+        }
+        ResultDisposition::Fail(_) => unreachable!("handled before queueing"),
+    }
 }
 ```
 
-- The `match` in `process_broadcasted_message` becomes exhaustive with no panics.
 - `SuccessDetail::QueuedMessage` is removed, and `PartialEq` can be derived.
-- One `unreachable!` remains, where `evaluate_original_message` maps the result of
-  `authenticate_message`.
+- `evaluate_original_message` can end by returning the `authenticate_message` result directly.
+- Keeping the whole `RetryReason` removes the `_ => unreachable!` arm, leaving one panic in this `match`.
 - `SuccessDetail` is left with one variant. Keep it, since removing it would touch every
   `Success(SuccessDetail::Processed)` for little gain.
 
 Keep the two passes and the "first fault wins" order. See Traps.
+
+This item changes behavior in three small ways:
+
+- **Failure order:** building the message moves after the fault check. `QueuedMessage::new` fails if
+  reading the clock fails. `serialize_msg` can only fail on the version or type bytes, which
+  `construct_message` has already checked, or on JSON encoding. An envelope with both a fault and one of
+  these failures would return the fault instead of `Err`.
+- **Partial queueing:** a build failure can happen after earlier originals were queued.
+  `push_new_unique` can already fail at that point, so this is not a new kind of risk. Whether a
+  transaction rolls those pushes back on this path has not been checked.
+- **Logs:** the deferral log prints the retry reason instead of the peer, unless the old format is kept
+  by matching `MissingVerificationKey` in the log only.
 
 ### 4. Remove the forwarders in `signature_verifier.rs`
 

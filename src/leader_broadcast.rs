@@ -526,16 +526,14 @@ impl LeaderBroadcastHelper {
         }
 
         let authentication = SignatureVerifier::authenticate_message(
-            &program_context.globals,
-            &program_id.to_string(),
+            program_context,
+            program_id,
             &original_msg.version,
-            &original_msg.msg_type,
+            original_msg.msg_type,
             &original_msg.data,
             original_msg.original_timestamp,
             &original_msg.original_signature,
             &original_msg.sender_pubkey_hash,
-            &program_context.rsa_public_key,
-            &program_context.comms.get_pubk_hash(),
         )?;
 
         match authentication {
