@@ -348,53 +348,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             });
         }
 
-        let process_application = self.bitvmx_throttle.should_call();
-        if process_application {
-            self.process_broker_queues()?;
-        }
-
-        // Each step commits independently.
-        let store = self.store.clone();
-
-        if process_application {
-            // Failed work stays pending; do not count a failed phase as idle.
-            let mut had_work = false;
-
-            had_work |=
-                Self::measure_time("operation timeouts", || self.process_operation_timeouts())?;
-
-            had_work |= Self::measure_time("dispatcher retries", || {
-                self.run_step("dispatcher retries", |this| {
-                    Self::run_transaction(&store, || {
-                        Ok(this.program_context.expected_jobs.redispatch_due(
-                            &this.program_context.operation_timeouts,
-                            &this.program_context.broker_channel,
-                        )? > 0)
-                    })
-                })
-            })?
-            .unwrap_or(true);
-
-            had_work |= Self::measure_time("programs", || {
-                self.run_step("programs", Self::process_programs)
-            })?
-            .unwrap_or(true);
-
-            had_work |= Self::measure_time("pending messages", || {
-                self.run_step("pending messages", |this| {
-                    Self::run_transaction(&store, || this.process_pending_messages())
-                })
-            })?
-            .unwrap_or(true);
-
-            had_work |= Self::measure_time("comms messages", || self.process_comms_messages())?;
-
-            had_work |= Self::measure_time("API messages", || {
-                self.run_step("API messages", Self::process_api_messages)
-            })?
-            .unwrap_or(true);
-
-            self.bitvmx_throttle.record(had_work);
+        if self.bitvmx_throttle.should_call() {
+            self.process_application_phase()?;
         }
 
         Self::measure_time("bitcoin updates", || {
@@ -404,31 +359,51 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             )
         })?;
 
-        self.run_step("dispatcher liveness", |this| {
-            Self::run_transaction(&store, || {
-                this.ping_helper
-                    .check_job_dispatchers_liveness(&this.program_context, &this.config.components)
-            })
+        self.run_tx_step("dispatcher liveness", |this| {
+            this.ping_helper
+                .check_job_dispatchers_liveness(&this.program_context, &this.config.components)
         })?;
 
         Ok(TickOutcome::Operating)
     }
 
+    fn process_application_phase(&mut self) -> Result<(), BitVMXError> {
+        self.process_broker_queues()?;
+
+        let mut had_work = false;
+
+        had_work |= Self::measure_time("operation timeouts", || self.process_operation_timeouts())?;
+
+        had_work |= self.timed_tx_step("dispatcher retries", |this| {
+            Ok(this.program_context.expected_jobs.redispatch_due(
+                &this.program_context.operation_timeouts,
+                &this.program_context.broker_channel,
+            )? > 0)
+        })?;
+
+        had_work |= self.timed_step("programs", Self::process_programs)?;
+
+        had_work |= self.timed_tx_step("pending messages", Self::process_pending_messages)?;
+
+        had_work |= Self::measure_time("comms messages", || self.process_comms_messages())?;
+
+        had_work |= self.timed_step("API messages", Self::process_api_messages)?;
+
+        self.bitvmx_throttle.record(had_work);
+        Ok(())
+    }
+
     pub fn process_broker_queues(&mut self) -> Result<bool, BitVMXError> {
         // Deliver committed outgoing work before processing application messages.
         // Rollback cannot undo delivery, so transport retries may send duplicates.
-        self.run_step("comms transport", |this| {
-            Self::run_transaction(&this.store, || {
-                this.program_context.comms.tick().map_err(BitVMXError::from)
-            })
+        self.run_tx_step("comms transport", |this| {
+            this.program_context.comms.tick().map_err(BitVMXError::from)
         })?;
-        self.run_step("service transport", |this| {
-            Self::run_transaction(&this.store, || {
-                this.program_context
-                    .broker_channel
-                    .tick()
-                    .map_err(BitVMXError::from)
-            })
+        self.run_tx_step("service transport", |this| {
+            this.program_context
+                .broker_channel
+                .tick()
+                .map_err(BitVMXError::from)
         })?;
         Ok(true)
     }
@@ -440,22 +415,19 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         let mut had_work = false;
 
-        let store = self.store.clone();
         for status in all_programs {
             let program_id = status.program_id;
             had_work |= self
-                .run_step(&format!("program {program_id}"), |this| {
-                    Self::run_transaction(&store, || {
-                        if !is_active_program(&this.store, &program_id)? {
-                            return Ok(false);
-                        }
-                        let Some(mut program) = this.load_program(&program_id)? else {
-                            warn!("Active program {} not found", program_id);
-                            return Ok(false);
-                        };
-                        program.tick(&mut this.program_context)?;
-                        Ok(true)
-                    })
+                .run_tx_step(&format!("program {program_id}"), |this| {
+                    if !is_active_program(&this.store, &program_id)? {
+                        return Ok(false);
+                    }
+                    let Some(mut program) = this.load_program(&program_id)? else {
+                        warn!("Active program {} not found", program_id);
+                        return Ok(false);
+                    };
+                    program.tick(&mut this.program_context)?;
+                    Ok(true)
                 })?
                 .unwrap_or(true);
         }

@@ -16,11 +16,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     pub(super) fn process_operation_timeouts(&mut self) -> Result<bool, BitVMXError> {
         let ids = self.program_context.operation_timeouts.expired(32)?;
         let had_work = !ids.is_empty();
-        let store = self.store.clone();
 
         for id in ids {
-            self.run_step(&format!("operation timeout {id:?}"), |this| {
-                Self::run_transaction(&store, || this.apply_operation_timeout(&id))
+            self.run_tx_step(&format!("operation timeout {id:?}"), |this| {
+                this.apply_operation_timeout(&id)
             })?;
         }
         Ok(had_work)

@@ -47,6 +47,36 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         .map(Option::flatten)
     }
 
+    /// Runs a step in its own transaction, so each step commits independently. The
+    /// transaction closes inside `run_step`, which is what failure settlement requires.
+    pub(super) fn run_tx_step<T>(
+        &mut self,
+        name: &str,
+        work: impl FnOnce(&mut Self) -> Result<T, BitVMXError>,
+    ) -> Result<Option<T>, BitVMXError> {
+        let store = self.store.clone();
+        self.run_step(name, |this| Self::run_transaction(&store, || work(this)))
+    }
+
+    /// Times a step and returns whether it did work. A failed step stays pending, so it
+    /// counts as work rather than idle.
+    pub(super) fn timed_step(
+        &mut self,
+        name: &str,
+        work: impl FnOnce(&mut Self) -> Result<bool, BitVMXError>,
+    ) -> Result<bool, BitVMXError> {
+        Ok(Self::measure_time(name, || self.run_step(name, work))?.unwrap_or(true))
+    }
+
+    /// `timed_step` with the work in its own transaction.
+    pub(super) fn timed_tx_step(
+        &mut self,
+        name: &str,
+        work: impl FnOnce(&mut Self) -> Result<bool, BitVMXError>,
+    ) -> Result<bool, BitVMXError> {
+        Ok(Self::measure_time(name, || self.run_tx_step(name, work))?.unwrap_or(true))
+    }
+
     /// Requires the attempt transaction to be closed. This records failure policy in a
     /// fresh transaction only after all effects staged by the failed attempt were rolled
     /// back. Restored dispatcher inputs are consumed as duplicates on redelivery.

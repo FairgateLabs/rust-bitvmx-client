@@ -105,15 +105,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         let had_monitor_news = !monitor_news.is_empty();
         for news in monitor_news {
-            self.run_step("monitor news", |this| {
-                Self::run_transaction(&store, || this.process_monitor_news(news))
-            })?;
+            self.run_tx_step("monitor news", |this| this.process_monitor_news(news))?;
         }
         let had_coordinator_news = !coordinator_news.is_empty();
         // Unacknowledged items remain in coordinator storage for the next fetch.
         for news in coordinator_news {
-            self.run_step("coordinator news", |this| {
-                Self::run_transaction(&store, || this.process_coordinator_news(news))
+            self.run_tx_step("coordinator news", |this| {
+                this.process_coordinator_news(news)
             })?;
         }
         Ok(had_monitor_news || had_coordinator_news)

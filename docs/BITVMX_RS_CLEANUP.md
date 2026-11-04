@@ -35,22 +35,30 @@ struct DecodedPeerMessage { version, msg_type, program_id, data, timestamp, sign
 `process_program_message` also takes both `program_id` and `program`, although
 `program.program_id` exists. It only uses `peer_address.pubkey_hash`, so it can take that alone.
 
-### 3. Add one step helper
+### 3. Add step helpers
 
-`run_step` wrapping `run_transaction` appears 9 times, and
-`measure_time("x", || run_step("x", ...)).unwrap_or(true)` repeats the name each time.
+Status: applied.
+
+`run_step` wrapping `run_transaction` appeared 9 times, and
+`measure_time("x", || run_step("x", ...)).unwrap_or(true)` repeated the name each time.
 
 ```rust
 fn run_tx_step<T>(&mut self, name: &str, work: impl FnOnce(&mut Self) -> Result<T, BitVMXError>)
     -> Result<Option<T>, BitVMXError>;
 fn timed_step(&mut self, name: &str, work: ...) -> Result<bool, BitVMXError>; // unwrap_or(true) inside
+fn timed_tx_step(&mut self, name: &str, work: ...) -> Result<bool, BitVMXError>; // same, in a transaction
 ```
 
-This also removes most `let store = self.store.clone()` lines. `tick_inner` then shrinks to a list
-of phases:
+This also removed most `let store = self.store.clone()` lines. `tick_inner` shrank to a list of
+phases:
 
-- Move the application phase to `process_application_phase()`.
-- Merge the two `if process_application` blocks (1224, 1231). Only an `Rc` clone sits between them.
+- The application phase moved to `process_application_phase()`.
+- The two `if process_application` blocks (1224, 1231) merged. Only an `Rc` clone sat between them.
+
+Some call sites keep `measure_time` directly because they don't fit the helpers:
+
+- `operation timeouts` and `comms messages` aren't wrapped in `run_step`.
+- `bitcoin updates` returns `()`, not whether it did work.
 
 ### 4. Break up `process_decoded_peer_message`
 
