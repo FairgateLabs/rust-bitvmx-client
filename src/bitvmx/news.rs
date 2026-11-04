@@ -4,8 +4,7 @@ use super::{BitVMX, Context, CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS};
 use crate::{
     errors::BitVMXError,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
-    program::variables::VariableTypes,
-    types::{ErrorReportKind, OutgoingBitVMXApiMessages, ProgramContext, RSK_PEGIN_TAG},
+    types::{ErrorReportKind, OutgoingBitVMXApiMessages, RSK_PEGIN_TAG},
 };
 use bitcoin::Txid;
 use bitcoin_coordinator::{
@@ -20,7 +19,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         if self.coordinator_throttle.should_call() {
             let had_work = self.process_bitcoin_updates()?;
             self.coordinator_throttle.record(had_work);
-            return Ok(());
         }
         Ok(())
     }
@@ -144,7 +142,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }
             MonitorNews::NewBlock(block_height, block_hash) => {
                 debug!("New block: {} {}", block_height, block_hash);
-                if self.send_new_block_news(&self.program_context) {
+                if self.send_new_block_news() {
                     self.notify_l2(&OutgoingBitVMXApiMessages::NewBlock(
                         block_hash,
                         block_height,
@@ -309,13 +307,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             .coordinator_news(context, kind, &self.program_context.broker_channel)
     }
 
-    fn send_new_block_news(&self, context: &ProgramContext<BC>) -> bool {
-        context
+    fn send_new_block_news(&self) -> bool {
+        self.program_context
             .globals
             .get_var(&CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS)
-            .unwrap_or(None)
-            .unwrap_or(VariableTypes::Bool(false))
-            .bool()
+            .ok()
+            .flatten()
+            .and_then(|value| value.bool().ok())
             .unwrap_or(false)
     }
 }

@@ -121,15 +121,18 @@ and `into_no_op_reason`. `None` means the message continues to authentication.
 
 ## Small cleanups
 
-- Delete commented-out code (372-378).
-- Merge nested ifs: `if program.my_idx == program.leader && msg_type.should_store()` (346-348).
-- Drop needless clones: `&config.key_storage.clone()` (150), `store: store.clone()` (244).
-- `process_bitcoin_updates_with_throttle`: remove the redundant early return (1313).
-- `send_new_block_news`: remove the `context` parameter, and simplify to
+Status: applied.
+
+- Deleted the commented-out code (372-378).
+- Merged nested ifs: `if program.my_idx == program.leader && msg_type.should_store()` (346-348).
+- Dropped needless clones: `&config.key_storage.clone()` (150), `store: store.clone()` (244).
+- `process_bitcoin_updates_with_throttle`: removed the redundant early return (1313).
+- `send_new_block_news`: removed the `context` parameter, and simplified to
   `.ok().flatten().and_then(|v| v.bool().ok()).unwrap_or(false)`.
-- Name magic numbers: `expired(32)`, and the `- 1` header reserve in `process_msg` (475).
-- Rename `count` to `tick_count`.
-- Normalize imports, which mix flat and nested styles, with `bitcoin_coordinator` imported twice.
+- Named magic numbers: `MAX_TIMEOUTS_PER_TICK` for `expired(32)`, and `FRAME_HEADER_RESERVE_KB` for
+  the `- 1` in `process_msg` (475).
+- Renamed `count` to `tick_count`.
+- Normalized the imports in `bitvmx.rs` to the nested style.
 
 ## Tests
 

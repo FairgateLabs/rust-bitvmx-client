@@ -7,33 +7,32 @@ mod steps;
 mod tests;
 mod timeouts;
 
-use crate::comms_allow_list;
-use crate::config::ComponentsConfig;
-use crate::error_handling::{classify, Reporter, Severity};
-use crate::ping_helper::PingHelper;
-use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use crate::program::program::{is_active_program, Program};
-use crate::throttle::Throttle;
 use crate::{
+    comms_allow_list,
     comms_helper::CommsMessageType,
-    config::Config,
+    config::{ComponentsConfig, Config},
+    error_handling::{classify, Reporter, Severity},
     errors::BitVMXError,
     expected_job::ExpectedJobs,
     leader_broadcast::LeaderBroadcastHelper,
     message_queue::MessageQueue,
     operation_timeout::OperationTimeouts,
-    program::variables::{Globals, WitnessVars},
+    ping_helper::PingHelper,
+    ports::bitcoin_coordinator::BitcoinCoordinatorApi,
+    program::{
+        program::{is_active_program, Program},
+        variables::{Globals, WitnessVars},
+    },
+    throttle::Throttle,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TypesToMonitor};
-use bitvmx_broker::identification::identifier::Identifier;
-use bitvmx_broker::retry::RetryPolicy;
-use bitvmx_broker::BrokerNode;
+use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, BrokerNode};
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
-use key_manager::create_key_manager_from_config;
-use key_manager::key_manager::KeyManager;
-use key_manager::key_type::BitcoinKeyType;
+use key_manager::{
+    create_key_manager_from_config, key_manager::KeyManager, key_type::BitcoinKeyType,
+};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
 use storage_backend::{
@@ -80,7 +79,7 @@ pub struct BitVMX<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     config: Config,
     program_context: ProgramContext<BC>,
     store: Rc<Storage>,
-    count: u32,
+    tick_count: u32,
     message_queue: MessageQueue,
     coordinator_throttle: Throttle,
     bitvmx_throttle: Throttle,
@@ -151,8 +150,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     {
         print_version_info();
         let store = Rc::new(Storage::new(&config.storage)?);
-        let key_manager =
-            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
+        let key_manager = create_key_manager_from_config(&config.key_manager, &config.key_storage)?;
         let key_manager = Rc::new(key_manager);
         let rsa_public_key = key_manager
             .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
@@ -246,8 +244,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(Self {
             config,
             program_context,
-            store: store.clone(),
-            count: 0,
+            store,
+            tick_count: 0,
             message_queue,
             coordinator_throttle,
             bitvmx_throttle,
@@ -333,14 +331,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     }
 
     fn tick_inner(&mut self) -> Result<TickOutcome, BitVMXError> {
-        debug!("Ticking BitVMX: {}", self.count);
+        debug!("Ticking BitVMX: {}", self.tick_count);
 
         if self.shutdown {
             info!("BitVMX is shutdown, stopping tick processing.");
             return Ok(TickOutcome::Stopping);
         }
 
-        self.count += 1;
+        self.tick_count += 1;
 
         // Nothing else can run against a chain we have not caught up with, so until the
         // coordinator reaches the tip a tick only advances the sync.

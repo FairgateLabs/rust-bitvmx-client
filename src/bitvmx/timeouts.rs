@@ -10,11 +10,17 @@ use crate::{
 };
 use uuid::Uuid;
 
+/// How many expired timeouts one tick settles, so a backlog can't stall the other phases.
+const MAX_TIMEOUTS_PER_TICK: usize = 32;
+
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Applies a bounded timeout snapshot, settling every expiration in its own
     /// transaction so one broken operation cannot roll back unrelated deadlines.
     pub(super) fn process_operation_timeouts(&mut self) -> Result<bool, BitVMXError> {
-        let ids = self.program_context.operation_timeouts.expired(32)?;
+        let ids = self
+            .program_context
+            .operation_timeouts
+            .expired(MAX_TIMEOUTS_PER_TICK)?;
         let had_work = !ids.is_empty();
 
         for id in ids {

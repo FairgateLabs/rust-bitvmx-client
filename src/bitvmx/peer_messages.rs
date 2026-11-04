@@ -18,6 +18,9 @@ use bitvmx_broker::{identification::identifier::PubkHash, ReceivedMessage};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+/// Part of the broker frame kept free for headers when bounding a peer message.
+const FRAME_HEADER_RESERVE_KB: usize = 1;
+
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Reports a setup failure for a message the node knows it has lost. Unlike the errors
     /// `Program` catches itself, nothing here raised an error: the message simply never
@@ -81,39 +84,28 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         }
 
         // If this operator is the leader and the message type should be broadcast, store the original message
-        if program.my_idx == program.leader {
-            let should_store = msg_type.should_store();
-            if should_store {
-                let original_msg = OriginalMessage {
-                    sender_pubkey_hash: sender_pubkey_hash.clone(),
-                    msg_type,
-                    data: data.clone(),
-                    original_timestamp: timestamp,
-                    original_signature: signature,
-                    version,
-                };
-                if !self
-                    .program_context
-                    .leader_broadcast_helper
-                    .store_original_message(&program_id, msg_type, original_msg)?
-                {
-                    info!(
-                        "There is a message already stored for program {}",
-                        program_id
-                    );
-                    return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
-                }
+        if program.my_idx == program.leader && msg_type.should_store() {
+            let original_msg = OriginalMessage {
+                sender_pubkey_hash: sender_pubkey_hash.clone(),
+                msg_type,
+                data: data.clone(),
+                original_timestamp: timestamp,
+                original_signature: signature,
+                version,
+            };
+            if !self
+                .program_context
+                .leader_broadcast_helper
+                .store_original_message(&program_id, msg_type, original_msg)?
+            {
+                info!(
+                    "There is a message already stored for program {}",
+                    program_id
+                );
+                return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
             }
         }
 
-        // Process the message
-        /*let data_bytes: Vec<u8> = serde_json::from_value(data.clone()).map_err(|e| {
-            BitVMXError::InvalidMessage(format!(
-                "Failed to parse message data as byte array: {}. Expected JSON array of integers [0-255], got: {}",
-                e,
-                serde_json::to_string(&data).unwrap_or_else(|_| "<unparseable>".to_string())
-            ))
-        })?;*/
         program.process_comms_message(
             sender_pubkey_hash,
             &msg_type,
@@ -210,7 +202,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 .settings
                 .msg_size_config
                 .max_frame_size_kb
-                - 1, // Reserve 1kb for headers
+                - FRAME_HEADER_RESERVE_KB,
         );
         let Some(message) = Self::discard_if_malformed(decoded) else {
             return Ok(());
