@@ -6,7 +6,7 @@ use crate::{
     expected_job::{ExpectedJobStatus, ExpectedJobTarget, JOB_TIMEOUT_REASON},
     operation_timeout::OperationTimeoutId,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
-    types::{DispatcherJobFailure, ResultDisposition, SetupFailureReason},
+    types::{DispatcherJobFailure, JobDispatcherType, ResultDisposition, SetupFailureReason},
 };
 use uuid::Uuid;
 
@@ -37,40 +37,54 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             OperationTimeoutId::SetupProcess(program_id) => {
                 self.apply_setup_timeout(id, *program_id, None)
             }
-            OperationTimeoutId::DispatcherJob(job_id) => {
-                let Some(job) = self.program_context.expected_jobs.get(job_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if !matches!(job.status, ExpectedJobStatus::Pending) {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-                match job.target {
-                    ExpectedJobTarget::Setup(program_id) => {
-                        self.apply_setup_timeout(id, program_id, Some(job_id))
-                    }
-                    ExpectedJobTarget::Request(request_id) => {
-                        self.fail_zkp_timeout(request_id, job_id)
-                    }
-                    ExpectedJobTarget::Program(program_id) => {
-                        let Some(program) = self.load_program(&program_id)? else {
-                            return self.program_context.operation_timeouts.cancel(id);
-                        };
-                        if program.is_failed() {
-                            return self.program_context.operation_timeouts.cancel(id);
-                        }
-                        self.apply_dispatcher_result_disposition(
-                            job.dispatcher,
-                            ResultDisposition::fail_dispatcher(DispatcherJobFailure {
-                                program_id,
-                                expected_job_id: job_id.clone(),
-                                job_id: job_id.clone(),
-                                reason: JOB_TIMEOUT_REASON.to_string(),
-                            }),
-                        )
-                    }
-                }
+            OperationTimeoutId::DispatcherJob(job_id) => self.apply_job_timeout(id, job_id),
+        }
+    }
+
+    fn apply_job_timeout(
+        &mut self,
+        id: &OperationTimeoutId,
+        job_id: &str,
+    ) -> Result<(), BitVMXError> {
+        let Some(job) = self.program_context.expected_jobs.get(job_id)? else {
+            return self.program_context.operation_timeouts.cancel(id);
+        };
+        if !matches!(job.status, ExpectedJobStatus::Pending) {
+            return self.program_context.operation_timeouts.cancel(id);
+        }
+        match job.target {
+            ExpectedJobTarget::Setup(program_id) => {
+                self.apply_setup_timeout(id, program_id, Some(job_id))
+            }
+            ExpectedJobTarget::Request(request_id) => self.fail_zkp_timeout(request_id, job_id),
+            ExpectedJobTarget::Program(program_id) => {
+                self.apply_program_job_timeout(id, job_id, program_id, job.dispatcher)
             }
         }
+    }
+
+    fn apply_program_job_timeout(
+        &mut self,
+        id: &OperationTimeoutId,
+        job_id: &str,
+        program_id: Uuid,
+        dispatcher: JobDispatcherType,
+    ) -> Result<(), BitVMXError> {
+        let Some(program) = self.load_program(&program_id)? else {
+            return self.program_context.operation_timeouts.cancel(id);
+        };
+        if program.is_failed() {
+            return self.program_context.operation_timeouts.cancel(id);
+        }
+        self.apply_dispatcher_result_disposition(
+            dispatcher,
+            ResultDisposition::fail_dispatcher(DispatcherJobFailure {
+                program_id,
+                expected_job_id: job_id.to_string(),
+                job_id: job_id.to_string(),
+                reason: JOB_TIMEOUT_REASON.to_string(),
+            }),
+        )
     }
 
     /// Fails an unfinished setup, settling `job_id` first when a dispatcher job timed out.

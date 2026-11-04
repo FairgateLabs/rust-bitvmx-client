@@ -83,8 +83,10 @@ Status: applied.
 
 ### 6. Flatten `apply_operation_timeout`
 
-Lines 1333-1379 have four nesting levels and call `cancel(id)` 5 times. Extract
-`apply_job_timeout` and `apply_program_job_timeout`.
+Status: applied.
+
+Lines 1333-1379 had four nesting levels and called `cancel(id)` 5 times. `apply_job_timeout` and
+`apply_program_job_timeout` were extracted. Each has one caller but holds real logic.
 
 ### 7. Remove `SetupMessageState`
 
