@@ -272,8 +272,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         );
 
         if !is_verification_msg {
-            let setup_state = program.classify_setup_message(&sender_pubkey_hash, msg_type);
-            if let Some(reason) = setup_state.into_no_op_reason() {
+            if let Some(reason) = program.classify_setup_message(&sender_pubkey_hash, msg_type) {
                 return Ok(ResultDisposition::NoOp(reason));
             }
 

@@ -90,15 +90,17 @@ Lines 1333-1379 had four nesting levels and called `cancel(id)` 5 times. `apply_
 
 ### 7. Remove `SetupMessageState`
 
-`classify_participant_message` could return `Option<NoOpReason>` directly, which removes the enum
+Status: applied.
+
+`classify_participant_message` now returns `Option<NoOpReason>` directly, which removed the enum
 and `into_no_op_reason`. `None` means the message continues to authentication.
 
-- `Pending` and `NotForCurrentStep` lead to the same handling in both callers, so `None` loses no
-  production behavior. The `setup_engine.rs` test that asserts `Pending` must assert `None` instead.
-- `leader_broadcast.rs` hand-writes the same mapping, except that `UnauthorizedSender` falls
-  through instead of being a no-op. Both callers reject non-participants first, so that arm can't
-  run. Keep those earlier checks: they log and, for the leader, report a peer fault.
-- The return type gets less precise, since `NoOpReason` has 9 variants and this returns 3.
+- `Pending` and `NotForCurrentStep` led to the same handling in both callers, so `None` loses no
+  production behavior. The `setup_engine.rs` test that asserted `Pending` now asserts `None`.
+- `leader_broadcast.rs` hand-wrote the same mapping, except that `UnauthorizedSender` fell through
+  instead of being a no-op. Both callers reject non-participants first, so that arm couldn't run.
+  Keep those earlier checks: they log and, for the leader, report a peer fault.
+- The return type is less precise, since `NoOpReason` has 9 variants and this returns 3.
 
 ## Medium value
 

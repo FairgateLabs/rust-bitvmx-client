@@ -2,7 +2,7 @@ use crate::comms_helper::{construct_message, request, serialize_msg, CommsMessag
 use crate::errors::BitVMXError;
 use crate::message_queue::{MessageQueue, QueuedMessage};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use crate::program::{participant::CommsAddress, program::Program, setup::SetupMessageState};
+use crate::program::{participant::CommsAddress, program::Program};
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::{
     FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
@@ -503,20 +503,10 @@ impl LeaderBroadcastHelper {
             }));
         }
 
-        match program
-            .classify_setup_message(&original_msg.sender_pubkey_hash, original_msg.msg_type)
+        if let Some(reason) =
+            program.classify_setup_message(&original_msg.sender_pubkey_hash, original_msg.msg_type)
         {
-            SetupMessageState::ContributionAlreadyAccepted => {
-                return Ok(ResultDisposition::NoOp(
-                    NoOpReason::ContributionAlreadyAccepted,
-                ));
-            }
-            SetupMessageState::SetupComplete => {
-                return Ok(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete));
-            }
-            SetupMessageState::PendingCurrentContribution
-            | SetupMessageState::NotForCurrentStep
-            | SetupMessageState::UnauthorizedSender => {}
+            return Ok(ResultDisposition::NoOp(reason));
         }
 
         if original_msg.validate().is_err()

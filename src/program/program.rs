@@ -12,7 +12,7 @@ use crate::{
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
-        setup::{SetupEngine, SetupEngineState, SetupMessageState, StepState},
+        setup::{SetupEngine, SetupEngineState, StepState},
     },
     signature_verifier::OperatorVerificationStore,
     types::{
@@ -865,12 +865,13 @@ impl Program {
     }
 
     /// Classifies a participant message against the current setup step before
-    /// payload validation.
+    /// payload validation. Returns why the message can be consumed as a no-op,
+    /// or `None` when it needs further processing.
     pub fn classify_setup_message(
         &self,
         pubkey_hash: &PubKeyHash,
         msg_type: CommsMessageType,
-    ) -> SetupMessageState {
+    ) -> Option<NoOpReason> {
         self.setup_engine
             .classify_participant_message(&self.participants, pubkey_hash, msg_type)
     }

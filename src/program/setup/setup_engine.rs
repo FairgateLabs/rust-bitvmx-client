@@ -34,29 +34,6 @@ pub enum StepState {
     Completed,
 }
 
-/// How an incoming setup message relates to the active setup step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SetupMessageState {
-    PendingCurrentContribution,
-    ContributionAlreadyAccepted,
-    NotForCurrentStep,
-    UnauthorizedSender,
-    SetupComplete,
-}
-
-impl SetupMessageState {
-    /// Converts setup states that are safe to consume into the corresponding
-    /// message-level no-op reason.
-    pub fn into_no_op_reason(self) -> Option<NoOpReason> {
-        match self {
-            Self::ContributionAlreadyAccepted => Some(NoOpReason::ContributionAlreadyAccepted),
-            Self::UnauthorizedSender => Some(NoOpReason::UnauthorizedSender),
-            Self::SetupComplete => Some(NoOpReason::SetupAlreadyComplete),
-            Self::PendingCurrentContribution | Self::NotForCurrentStep => None,
-        }
-    }
-}
-
 /// Tracks the state of the setup engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SetupEngineState {
@@ -392,27 +369,26 @@ impl SetupEngine {
     }
 
     /// Classifies a participant message against the active setup step without
-    /// inspecting its payload.
+    /// inspecting its payload. Returns why the message can be consumed as a no-op,
+    /// or `None` when it needs further processing.
     pub fn classify_participant_message(
         &self,
         participants: &[CommsAddress],
         from: &PubKeyHash,
         msg_type: CommsMessageType,
-    ) -> SetupMessageState {
+    ) -> Option<NoOpReason> {
         if self.is_complete() {
-            return SetupMessageState::SetupComplete;
+            return Some(NoOpReason::SetupAlreadyComplete);
         }
         let Some(participant_idx) = get_index_by_pubkey_hash(participants, from) else {
-            return SetupMessageState::UnauthorizedSender;
+            return Some(NoOpReason::UnauthorizedSender);
         };
         if !self.current_step_accepts(msg_type) {
-            return SetupMessageState::NotForCurrentStep;
+            return None;
         }
-        if self.state.has_participant_completed(participant_idx) {
-            SetupMessageState::ContributionAlreadyAccepted
-        } else {
-            SetupMessageState::PendingCurrentContribution
-        }
+        self.state
+            .has_participant_completed(participant_idx)
+            .then_some(NoOpReason::ContributionAlreadyAccepted)
     }
 
     /// Receives and verifies data from a participant for the current step.
@@ -1116,7 +1092,7 @@ mod tests {
                 &"unknown-participant".to_string(),
                 CommsMessageType::Keys,
             ),
-            SetupMessageState::UnauthorizedSender
+            Some(NoOpReason::UnauthorizedSender)
         );
         assert_eq!(
             engine.classify_participant_message(
@@ -1124,7 +1100,7 @@ mod tests {
                 &peer.pubkey_hash,
                 CommsMessageType::Keys,
             ),
-            SetupMessageState::PendingCurrentContribution
+            None
         );
         let unknown = CommsAddress::new(peer.address, "unknown-participant".to_string());
         assert_eq!(
