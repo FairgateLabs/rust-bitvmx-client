@@ -182,5 +182,12 @@ These are behavior questions, so they are out of scope for a behavior-preserving
 
 - **`process_operation_timeouts` isn't wrapped in `run_step` (1236):** a non-fatal error from
   `expired()` aborts the rest of the tick. Every other phase is isolated.
+
+  Resolution: won't handle. The non-fatal errors are a clock before 1970, or corrupt or
+  incompatible stored data, so a retry or an isolated phase wouldn't recover. A change to the stored
+  timeout format would need a migration, because old entries would fail this scan on every tick.
 - **Backoff counts as work:** because of the `pop_front` case above, messages waiting on backoff
   count as `had_work`, which may keep the throttle from treating the node as idle.
+
+  Resolution: won't handle. The node only keeps polling at its busy rate during backoff, and the
+  main loop still sleeps 10ms per pass. No messages are lost or reordered.
