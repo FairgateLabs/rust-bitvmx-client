@@ -1037,7 +1037,6 @@ pub trait ProtocolHandler {
         program_context
             .expected_jobs
             .send_dispatcher_job(
-                &program_context.operation_timeouts,
                 &program_context.broker_channel,
                 dispatcher,
                 destination,

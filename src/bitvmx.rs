@@ -378,10 +378,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         had_work |= Self::measure_time("operation timeouts", || self.process_operation_timeouts())?;
 
         had_work |= self.timed_tx_step("dispatcher retries", |this| {
-            Ok(this.program_context.expected_jobs.redispatch_due(
-                &this.program_context.operation_timeouts,
-                &this.program_context.broker_channel,
-            )? > 0)
+            Ok(this
+                .program_context
+                .expected_jobs
+                .redispatch_due(&this.program_context.broker_channel)?
+                > 0)
         })?;
 
         had_work |= self.timed_step("programs", Self::process_programs)?;

@@ -107,11 +107,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             return self.program_context.operation_timeouts.cancel(id);
         }
         if let Some(job_id) = job_id {
-            self.program_context.expected_jobs.fail(
-                &self.program_context.operation_timeouts,
-                job_id,
-                JOB_TIMEOUT_REASON.to_string(),
-            )?;
+            self.program_context
+                .expected_jobs
+                .fail(job_id, JOB_TIMEOUT_REASON.to_string())?;
         }
         self.fail_program_setup(
             &program_id,
@@ -215,10 +213,7 @@ mod tests {
             .expected_jobs
             .register(job_id.clone(), crate::types::JobDispatcherType::Garbler)
             .unwrap();
-        context
-            .expected_jobs
-            .complete(&context.operation_timeouts, &job_id)
-            .unwrap();
+        context.expected_jobs.complete(&job_id).unwrap();
         context
             .operation_timeouts
             .register_job(job_id.clone(), Some(Duration::ZERO), false)

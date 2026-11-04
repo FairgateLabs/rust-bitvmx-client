@@ -512,11 +512,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         if let Some(execution) = execution {
             self.fail_zkp_result(id, job_id, execution.requester().clone(), reason)?;
         } else {
-            self.program_context.expected_jobs.fail(
-                &self.program_context.operation_timeouts,
-                job_id,
-                reason,
-            )?;
+            self.program_context.expected_jobs.fail(job_id, reason)?;
         }
         Ok(())
     }
@@ -532,7 +528,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         info!("Generating ZKP for input: {:?}", input);
 
         let registration = self.program_context.expected_jobs.send_dispatcher_job(
-            &self.program_context.operation_timeouts,
             &self.program_context.broker_channel,
             JobDispatcherType::ZKP,
             &self.config.components.prover,
@@ -590,11 +585,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         match job.status {
             ExpectedJobStatus::Pending | ExpectedJobStatus::RetryPending(_) => {
-                self.program_context.expected_jobs.discard(
-                    &self.program_context.operation_timeouts,
-                    &job_id,
-                    reason.to_string(),
-                )?;
+                self.program_context
+                    .expected_jobs
+                    .discard(&job_id, reason.to_string())?;
                 info!("Operator discarded dispatcher job '{}': {}", job_id, reason);
                 Ok(OutgoingBitVMXApiMessages::JobDiscarded(request_id, job_id))
             }
@@ -1463,11 +1456,7 @@ mod tests {
         env.bitvmx
             .program_context
             .expected_jobs
-            .fail(
-                &env.bitvmx.program_context.operation_timeouts,
-                &id.to_string(),
-                "FAILED".to_string(),
-            )
+            .fail(&id.to_string(), "FAILED".to_string())
             .unwrap();
         assert!(matches!(
             env.bitvmx.get_zkp_execution_result(id).unwrap(),
@@ -1478,10 +1467,7 @@ mod tests {
         env.bitvmx
             .program_context
             .expected_jobs
-            .complete(
-                &env.bitvmx.program_context.operation_timeouts,
-                &id.to_string(),
-            )
+            .complete(&id.to_string())
             .unwrap();
         assert!(matches!(
             env.bitvmx.get_zkp_execution_result(id).unwrap(),
@@ -1534,7 +1520,7 @@ mod tests {
         env.bitvmx
             .program_context
             .expected_jobs
-            .complete(&env.bitvmx.program_context.operation_timeouts, &job_id)
+            .complete(&job_id)
             .unwrap();
 
         // Recreate the storage-backed facilities as a restart would. Both the
@@ -1881,11 +1867,7 @@ mod tests {
         env.bitvmx
             .program_context
             .expected_jobs
-            .retry_pending(
-                &env.bitvmx.program_context.operation_timeouts,
-                &job_id,
-                "emulator failed".to_string(),
-            )
+            .retry_pending(&job_id, "emulator failed".to_string())
             .unwrap();
 
         let first_request = Uuid::new_v4();

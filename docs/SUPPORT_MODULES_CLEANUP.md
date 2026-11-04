@@ -11,6 +11,8 @@ Line numbers refer to commit `a8a79de`. Items are proposed unless marked as appl
 
 ### 1. Let `ExpectedJobs` own its `OperationTimeouts`
 
+Status: applied. `ProgramContext.operation_timeouts` stays, for setup timeouts and the expiry loop.
+
 `expected_job.rs`
 
 Eight `ExpectedJobs` methods take `timeouts: &OperationTimeouts`, and 12 production call sites pass

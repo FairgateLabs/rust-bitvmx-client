@@ -88,36 +88,6 @@ fn parse_program_payload(message: &ResultMessage) -> Result<serde_json::Value, S
 }
 
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
-    fn complete_job(&self, job_id: &str) -> Result<(), BitVMXError> {
-        self.program_context
-            .expected_jobs
-            .complete(&self.program_context.operation_timeouts, job_id)
-    }
-
-    fn fail_job(&self, job_id: &str, reason: String) -> Result<(), BitVMXError> {
-        self.program_context.expected_jobs.fail(
-            &self.program_context.operation_timeouts,
-            job_id,
-            reason,
-        )
-    }
-
-    fn discard_job(&self, job_id: &str, reason: String) -> Result<(), BitVMXError> {
-        self.program_context.expected_jobs.discard(
-            &self.program_context.operation_timeouts,
-            job_id,
-            reason,
-        )
-    }
-
-    fn retry_job(&self, job_id: &str, reason: String) -> Result<(), BitVMXError> {
-        self.program_context.expected_jobs.retry_pending(
-            &self.program_context.operation_timeouts,
-            job_id,
-            reason,
-        )
-    }
-
     /// Maps an authenticated sender to the dispatcher route it owns, if any.
     fn dispatcher_for(&self, from: &Identifier) -> Option<JobDispatcherType> {
         let components = &self.config.components;
@@ -226,7 +196,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             requester,
             OutgoingBitVMXApiMessages::ProofGenerationError(id, status.clone()),
         )?;
-        self.fail_job(job_id, status)?;
+        self.program_context.expected_jobs.fail(job_id, status)?;
         Ok(ResultDisposition::Success(SuccessDetail::Processed))
     }
 
@@ -243,7 +213,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let Some(execution) = execution else {
             let reason = format!("Missing requester correlation for ZKP job {id}");
             warn!("{reason}");
-            self.fail_job(&message.job_id, reason)?;
+            self.program_context
+                .expected_jobs
+                .fail(&message.job_id, reason)?;
             return Ok(ResultDisposition::NoOp(NoOpReason::Orphaned));
         };
         let requester = execution.requester().clone();
@@ -257,7 +229,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             ZKPExecution::with_output(requester.clone(), seal, journal),
             None,
         )?;
-        self.complete_job(&message.job_id)?;
+        self.program_context
+            .expected_jobs
+            .complete(&message.job_id)?;
         let response = self.get_zkp_execution_result(id)?;
         self.reply(requester, response)?;
         Ok(ResultDisposition::Success(SuccessDetail::Processed))
@@ -273,7 +247,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         let Some(mut program) = self.load_program(&program_id)? else {
             let reason = format!("Program {program_id} not found for dispatcher result");
             error!("{reason}");
-            self.fail_job(&message.job_id, reason)?;
+            self.program_context
+                .expected_jobs
+                .fail(&message.job_id, reason)?;
             return Ok(ResultDisposition::NoOp(NoOpReason::Orphaned));
         };
 
@@ -300,14 +276,19 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         disposition: &ResultDisposition,
     ) -> Result<(), BitVMXError> {
         match disposition {
-            ResultDisposition::Success(SuccessDetail::Processed) => self.complete_job(job_id),
-            ResultDisposition::NoOp(NoOpReason::Stale) => {
-                self.discard_job(job_id, "stale dispatcher result".to_string())
+            ResultDisposition::Success(SuccessDetail::Processed) => {
+                self.program_context.expected_jobs.complete(job_id)
             }
-            ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed) => self.fail_job(
-                job_id,
-                "owning setup failed before the dispatcher result settled".to_string(),
-            ),
+            ResultDisposition::NoOp(NoOpReason::Stale) => self
+                .program_context
+                .expected_jobs
+                .discard(job_id, "stale dispatcher result".to_string()),
+            ResultDisposition::NoOp(NoOpReason::SetupAlreadyFailed) => {
+                self.program_context.expected_jobs.fail(
+                    job_id,
+                    "owning setup failed before the dispatcher result settled".to_string(),
+                )
+            }
             _ => Ok(()),
         }
     }
@@ -333,7 +314,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 job_id,
                 reason,
             })) => {
-                self.retry_job(&expected_job_id, reason.clone())?;
+                self.program_context
+                    .expected_jobs
+                    .retry_pending(&expected_job_id, reason.clone())?;
                 try_send_error_report(
                     &self.program_context.broker_channel,
                     &self.program_context.components_config.l2,
