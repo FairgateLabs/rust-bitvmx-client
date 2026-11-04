@@ -7,7 +7,7 @@ BitVMX operators. It focuses on:
 
 - `src/signature_verifier.rs`;
 - `src/leader_broadcast.rs`;
-- `src/bitvmx.rs`;
+- `src/bitvmx/peer_messages.rs`;
 - `src/message_queue.rs`;
 - the setup engine and setup steps under `src/program/setup/`;
 - the TLS identity and allow-list enforcement provided by the sibling
@@ -646,7 +646,7 @@ Subsequent implementation steps also mapped rejections at the authorized
 active-setup boundary, centralized missing-key request behavior in `BitVMX`, and
 removed the obsolete `handle_missing_verification_key` buffering path.
 
-### `src/bitvmx.rs`
+### `src/bitvmx/peer_messages.rs`
 
 - authenticate and authorize `Broadcasted` before special dispatch;
 - resolve the sender against program participants;
@@ -720,7 +720,7 @@ rationale while removing obsolete expected-failure and source-line claims.
 These ignored integration tests are explicitly scoped as missing-program
 lifecycle smoke tests: they verify that the unchanged outer envelope remains the
 retry unit until the program is installed. Missing outer-key and embedded-key
-behavior is covered directly by the non-Docker unit tests in `src/bitvmx.rs`,
+behavior is covered directly by the non-Docker unit tests in `src/bitvmx/tests.rs`,
 `src/leader_broadcast.rs`, and `src/message_queue.rs`.
 
 ## Required tests

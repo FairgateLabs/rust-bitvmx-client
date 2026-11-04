@@ -192,7 +192,7 @@ fn assert_setup_failed(
     }
 }
 
-/// Both drop paths in `bitvmx.rs`: a queued setup message whose retries run out is
+/// Both drop paths in `bitvmx/peer_messages.rs`: a queued setup message whose retries run out is
 /// reported to L2 rather than vanishing. The two differ in why the message is queued.
 ///
 /// Kept in one test because each `prepare_bitcoin()` call creates the same

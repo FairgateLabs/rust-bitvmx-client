@@ -86,7 +86,7 @@ cargo binstall -y cargo-llvm-cov   # one-time install
 HTML report lands in `target/coverage/html/index.html`. Baseline as of
 2026-07-13 (unit tests only): **10.54% lines / 11.75% regions / 15.61%
 functions** (TOTAL, 18942 lines). Low totals are expected — protocol code
-(`bitvmx.rs`, `cardinal/`, `union/`, `dispute/`) is only exercised by the
+(`bitvmx/`, `cardinal/`, `union/`, `dispute/`) is only exercised by the
 `#[ignore]`d integration tests; use `--nightly` or `--test file:name` to
 include those (needs bitcoind Docker).
 
@@ -96,7 +96,9 @@ include those (needs bitcoind Docker).
 src/
   main.rs            # binary: runs one or more operator instances from config/
   lib.rs             # library root; re-exports bitcoin, protocol_builder, etc.
-  bitvmx.rs          # BitVMX struct — central orchestrator / main loop (largest file)
+  bitvmx.rs          # BitVMX struct — central orchestrator / main loop (tick, construction)
+  bitvmx/            # BitVMX impl split by topic: api, job_handler, peer_messages, news,
+                     # steps (step/transaction runners), timeouts, tests
   client.rs          # client-side API wrapper
   types.rs           # IncomingBitVMXApiMessages / OutgoingBitVMXApiMessages (broker JSON-RPC API)
   config.rs          # YAML config loading (config/*.yaml, one per operator)

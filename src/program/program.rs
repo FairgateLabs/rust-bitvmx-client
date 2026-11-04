@@ -1414,7 +1414,7 @@ mod tests {
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         program.state = ProgramState::Ready;
 
-        // Reached from bitvmx.rs when a late message for a finished setup exhausts its retries.
+        // Reached from bitvmx/peer_messages.rs when a late message for a finished setup exhausts its retries.
         program
             .fail_setup(None, SetupFailureReason::MessageLost, &mut env.context)
             .unwrap();

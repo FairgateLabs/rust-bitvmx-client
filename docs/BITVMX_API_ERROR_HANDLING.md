@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document records the intended error-handling model for the BitVMX API, the decisions applied to `src/bitvmx_api.rs`, and the remaining risks and follow-up work.
+This document records the intended error-handling model for the BitVMX API, the decisions applied to `src/bitvmx/api.rs`, and the remaining risks and follow-up work.
 
 The primary goals are:
 
