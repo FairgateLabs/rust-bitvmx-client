@@ -184,6 +184,3 @@ These are behavior questions, so they are out of scope for a behavior-preserving
   `expired()` aborts the rest of the tick. Every other phase is isolated.
 - **Backoff counts as work:** because of the `pop_front` case above, messages waiting on backoff
   count as `had_work`, which may keep the throttle from treating the node as idle.
-- **`PROGRAM_TYPE_GC_DRP` catch-all (`protocol_handler.rs:1209`):** the constant is only imported
-  under `feature = "union"`. Without that feature the match arm is a binding that matches any name,
-  so an unknown program type becomes `GCDisputeResolutionProtocol` instead of `NotImplemented`.
