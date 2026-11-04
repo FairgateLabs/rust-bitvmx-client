@@ -225,7 +225,7 @@ broker_node)`.
 - **Its parameters (361-369):** `self` is unused, so it can be an associated function.
   `leader_identifier: Identifier` only supplies `pubkey_hash`, so it can be `&PubkHash`, which also
   removes the `msg.identifier.clone()` at `peer_messages.rs:303`.
-- **Redundant check (404):** `!original_msg.msg_type.should_store()` can't be true. Line 403 has just
+- **Redundant check (applied, 404):** `!original_msg.msg_type.should_store()` can't be true. Line 403 has just
   established that the type equals `original_msg_type`, which line 392 already checked. The
   `seen_senders.insert` that follows still runs in the same cases.
 - **`fail_peer_reason` (377, 394, 407, 500, 522):** five `fail_peer(PeerSetupFault { .. })` calls can

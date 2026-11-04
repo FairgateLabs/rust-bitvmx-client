@@ -401,7 +401,6 @@ impl LeaderBroadcastHelper {
         let mut outcomes = Vec::with_capacity(broadcasted_msg.original_messages.len());
         for original_msg in &broadcasted_msg.original_messages {
             if original_msg.msg_type != broadcasted_msg.original_msg_type
-                || !original_msg.msg_type.should_store()
                 || !seen_senders.insert(&original_msg.sender_pubkey_hash)
             {
                 outcomes.push(ResultDisposition::fail_peer(PeerSetupFault {
