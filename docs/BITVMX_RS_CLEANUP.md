@@ -136,19 +136,30 @@ Status: applied.
 
 ## Tests
 
-- **Setup duplication:** `Program::new` is repeated about 10 times, although
-  `create_single_participant_program` exists. `serialize_msg("1.0", ..., 0, vec![1])` is repeated
-  9 times, so add a helper.
-- **Module name:** `transaction_tests` also held peer and broadcast tests. Split them by topic.
-- **Misleading names:** these only exercise `run_transaction` or raw storage, not news or broker
-  code, so merge or rename them:
-  - `news_handler_and_acknowledgement_commit_independently_per_item` (2242)
-  - `broker_commit_survives_application_rollback` (2395)
-  - `failed_second_broker_does_not_undo_first_broker` (2418)
-  - `fatal_broker_error_also_rolls_back` (2515)
-- **Weak assertion:** after its `process_msg` calls,
-  `terminal_programs_discard_peer_messages_before_payload_processing` (1754) only checks that they
-  return `Ok`. Fixing this adds a check rather than refactoring.
+Status: applied.
+
+- **Setup duplication:** `Program::new` was repeated about 10 times. Tests now use
+  `create_program` and `create_single_participant_program`. The 9 copies of
+  `serialize_msg("1.0", ..., 0, vec![1])` became `peer_message`.
+- **Module name:** `transaction_tests` also held peer and broadcast tests. They now sit in an inline
+  `mod tests` in `peer_messages.rs`, `steps.rs` and `timeouts.rs`, matching the rest of the repo.
+  The shared helpers moved to `test_support.rs`.
+- **Misleading names:** these only exercised `run_transaction` or raw storage, not news or broker
+  code:
+  - `news_handler_and_acknowledgement_commit_independently_per_item` (2242): renamed
+    `only_committed_transactions_survive_reopening_the_store`.
+  - `broker_commit_survives_application_rollback` (2395): removed, see below.
+  - `failed_second_broker_does_not_undo_first_broker` (2418): removed, see below.
+  - `fatal_broker_error_also_rolls_back` (2515): renamed `fatal_error_also_rolls_back`.
+
+  `failed_item_preserves_previous_commit_and_unvisited_input` already asserts what the two removed
+  tests did: an earlier commit survives, a failed transaction leaves nothing, and the next
+  transaction can open.
+- **Weak assertion:** `terminal_programs_discard_peer_messages_before_payload_processing` (1754)
+  only checked that `process_msg` returned `Ok`. It now also checks that the program state is
+  unchanged, nothing was queued, and L2 received no new report. Only the failed-program case detects
+  a removed lifecycle gate, through the message that would be queued. For a ready program,
+  `classify_participant_message` returns the same no-op.
 
 ## Traps: tempting changes that alter behavior
 

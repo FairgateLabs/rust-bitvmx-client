@@ -398,3 +398,342 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(had_work)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        bitvmx::test_support::{
+            create_program, create_single_participant_program, peer_message, self_address,
+            test_l2_messages,
+        },
+        comms_helper::{prepare_message, serialize_msg, VerificationKeyAnnouncement},
+        leader_broadcast::BroadcastedMessage,
+        program::{participant::CommsAddress, variables::VariableTypes},
+        test_utils::TestBitVMXEnv,
+        types::{ErrorReport, ErrorReportKind, ErrorScope, OutgoingBitVMXApiMessages},
+    };
+    use bitvmx_broker::identification::identifier::Identifier;
+
+    #[test]
+    fn terminal_programs_discard_peer_messages_before_payload_processing() {
+        let mut env = TestBitVMXEnv::new("peer-lifecycle-gate").unwrap();
+        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+
+        let ready_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, ready_id);
+        env.bitvmx
+            .program_context
+            .globals
+            .set_var(
+                &ready_id,
+                "optional_keys",
+                VariableTypes::String("null".to_string()),
+            )
+            .unwrap();
+        let mut ready_program = Program::load(store.clone(), &ready_id).unwrap().unwrap();
+        ready_program.tick(&mut env.bitvmx.program_context).unwrap();
+        ready_program.tick(&mut env.bitvmx.program_context).unwrap();
+        assert_eq!(
+            ready_program.peer_message_lifecycle_disposition(),
+            Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete))
+        );
+        let reports_before = test_l2_messages(&env).unwrap().len();
+
+        // The invalid RSA signature would be rejected if authentication ran.
+        env.bitvmx
+            .process_msg(peer_message(
+                &self_hash,
+                CommsMessageType::Keys,
+                &ready_id,
+                serde_json::json!({"stale": true}),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            Program::load(store.clone(), &ready_id)
+                .unwrap()
+                .unwrap()
+                .peer_message_lifecycle_disposition(),
+            Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete))
+        );
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+        assert_eq!(test_l2_messages(&env).unwrap().len(), reports_before);
+
+        let remote_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "22".repeat(32));
+        let participants = vec![remote_leader.clone(), self_address(&env)];
+        let failed_id = Uuid::new_v4();
+        create_program(&mut env, failed_id, participants);
+        let mut failed_program = Program::load(store, &failed_id).unwrap().unwrap();
+        failed_program
+            .fail_setup(
+                None,
+                SetupFailureReason::StepError("test failure".to_string()),
+                &mut env.bitvmx.program_context,
+            )
+            .unwrap();
+        let reports_before = test_l2_messages(&env).unwrap().len();
+
+        // The leader's verification key is missing, so without the lifecycle gate
+        // authentication would queue this message for a retry that can never help.
+        env.bitvmx
+            .process_msg(peer_message(
+                &remote_leader.pubkey_hash,
+                CommsMessageType::Broadcasted,
+                &failed_id,
+                serde_json::json!({"malformed": true}),
+            ))
+            .unwrap();
+
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+        assert_eq!(test_l2_messages(&env).unwrap().len(), reports_before);
+    }
+
+    #[test]
+    fn attributable_peer_fault_is_terminal_and_notified_once() {
+        let mut env = TestBitVMXEnv::new("peer-fault-terminal").unwrap();
+        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+
+        // The sender is an expected participant and its current contribution is
+        // pending, so malformed signature bytes are an attributable peer fault.
+        let queued = peer_message(
+            &self_hash,
+            CommsMessageType::Keys,
+            &program_id,
+            serde_json::json!({"malformed": true}),
+        );
+        env.bitvmx.process_msg(queued.clone()).unwrap();
+
+        let program = Program::load(store.clone(), &program_id)
+            .unwrap()
+            .expect("program must remain persisted");
+        assert!(program.is_failed());
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+
+        let reports = test_l2_messages(&env).unwrap();
+        assert_eq!(reports.len(), 1);
+        match &reports[0] {
+            OutgoingBitVMXApiMessages::Error(ErrorReport {
+                scope: ErrorScope::Program(id),
+                kind: ErrorReportKind::SetupFailed { peer, .. },
+                ..
+            }) => {
+                assert_eq!(*id, program_id);
+                assert_eq!(peer.as_ref(), Some(&self_hash));
+            }
+            other => panic!("expected scoped SetupFailed report, got {other:?}"),
+        }
+
+        // Redelivery is stale after the terminal transition. It must neither
+        // enter the retry queue nor produce another setup-failure report.
+        env.bitvmx.process_msg(queued).unwrap();
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+        assert_eq!(test_l2_messages(&env).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn malformed_verification_announcement_fails_active_setup() {
+        let mut env = TestBitVMXEnv::new("verification-bootstrap-rejection").unwrap();
+        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+
+        env.bitvmx
+            .process_msg(peer_message(
+                &self_hash,
+                CommsMessageType::VerificationKey,
+                &program_id,
+                serde_json::json!({"wrong_field": true}),
+            ))
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(program.is_failed());
+    }
+
+    #[test]
+    fn verification_key_fingerprint_mismatch_fails_setup_without_storing_key() {
+        let mut env = TestBitVMXEnv::new("verification-bootstrap-fingerprint-mismatch").unwrap();
+        let peer_hash = "ab".repeat(32);
+        let peer = CommsAddress::new("127.0.0.1:1".parse().unwrap(), peer_hash.clone());
+        let participants = vec![self_address(&env), peer];
+        let program_id = Uuid::new_v4();
+        let store = create_program(&mut env, program_id, participants);
+
+        // This is a valid RSA public key, but it belongs to this node rather
+        // than to the TLS-authenticated peer fingerprint in `peer_hash`.
+        let announcement = VerificationKeyAnnouncement {
+            verification_key: env.bitvmx.program_context.rsa_public_key.clone(),
+        }
+        .to_value()
+        .unwrap();
+        env.bitvmx
+            .process_msg(peer_message(
+                &peer_hash,
+                CommsMessageType::VerificationKey,
+                &program_id,
+                announcement,
+            ))
+            .unwrap();
+
+        assert!(Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(
+            !OperatorVerificationStore::has(&env.bitvmx.program_context.globals, &peer_hash,)
+                .unwrap()
+        );
+        let reports = test_l2_messages(&env).unwrap();
+        assert!(matches!(
+            reports.as_slice(),
+            [OutgoingBitVMXApiMessages::Error(ErrorReport {
+                scope: ErrorScope::Program(id),
+                kind: ErrorReportKind::SetupFailed { peer: Some(failed_peer), .. },
+                ..
+            })] if *id == program_id && failed_peer == &peer_hash
+        ));
+    }
+
+    #[test]
+    fn broadcast_from_non_leader_participant_fails_active_setup() {
+        let mut env = TestBitVMXEnv::new("non-leader-broadcast").unwrap();
+        let non_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "11".repeat(32));
+        let participants = vec![self_address(&env), non_leader.clone()];
+        let program_id = Uuid::new_v4();
+        let store = create_program(&mut env, program_id, participants);
+
+        // Authorization precedes broadcast payload parsing, so even this
+        // malformed envelope is an attributable leader-role violation.
+        env.bitvmx
+            .process_msg(peer_message(
+                &non_leader.pubkey_hash,
+                CommsMessageType::Broadcasted,
+                &program_id,
+                serde_json::json!({"malformed": true}),
+            ))
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(program.is_failed());
+    }
+
+    #[test]
+    fn broadcast_from_configured_leader_is_authorized() {
+        let mut env = TestBitVMXEnv::new("leader-broadcast-authorization").unwrap();
+        let leader_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+
+        let original_data = serde_json::json!({"declaration": "test"});
+        let (version, data, timestamp, signature) = prepare_message(
+            &env.bitvmx.program_context.key_manager,
+            &env.bitvmx.program_context.rsa_public_key,
+            &program_id,
+            CommsMessageType::Keys,
+            original_data,
+        )
+        .unwrap();
+        let broadcast_data = BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![OriginalMessage {
+                sender_pubkey_hash: leader_hash.clone(),
+                msg_type: CommsMessageType::Keys,
+                data,
+                original_timestamp: timestamp,
+                original_signature: signature,
+                version,
+            }],
+        };
+        let (outer_version, outer_data, outer_timestamp, outer_signature) = prepare_message(
+            &env.bitvmx.program_context.key_manager,
+            &env.bitvmx.program_context.rsa_public_key,
+            &program_id,
+            CommsMessageType::Broadcasted,
+            serde_json::to_value(broadcast_data).unwrap(),
+        )
+        .unwrap();
+        let broadcast = serialize_msg(
+            &outer_version,
+            CommsMessageType::Broadcasted,
+            &program_id,
+            outer_data,
+            outer_timestamp,
+            outer_signature,
+        )
+        .unwrap();
+
+        env.bitvmx
+            .process_msg(QueuedMessage::new(Identifier::new(leader_hash, 0), broadcast).unwrap())
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(!program.is_failed());
+    }
+
+    #[test]
+    fn invalid_outer_broadcast_signature_from_leader_fails_setup() {
+        let mut env = TestBitVMXEnv::new("leader-broadcast-invalid-outer-signature").unwrap();
+        let leader_hash = env.bitvmx.program_context.comms.get_pubk_hash();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+
+        env.bitvmx
+            .process_msg(peer_message(
+                &leader_hash,
+                CommsMessageType::Broadcasted,
+                &program_id,
+                serde_json::json!({"malformed": true}),
+            ))
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(program.is_failed());
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn broadcast_with_missing_leader_key_is_retried() {
+        let mut env = TestBitVMXEnv::new("leader-broadcast-missing-outer-key").unwrap();
+        let remote_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "22".repeat(32));
+        let participants = vec![remote_leader.clone(), self_address(&env)];
+        let program_id = Uuid::new_v4();
+        let store = create_program(&mut env, program_id, participants);
+
+        env.bitvmx
+            .process_msg(peer_message(
+                &remote_leader.pubkey_hash,
+                CommsMessageType::Broadcasted,
+                &program_id,
+                serde_json::json!({"not_processed_without_the_key": true}),
+            ))
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert!(!program.is_failed());
+        assert!(!env.bitvmx.message_queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn non_participant_message_does_not_fail_active_setup() {
+        let mut env = TestBitVMXEnv::new("non-participant-message").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+
+        env.bitvmx
+            .process_msg(peer_message(
+                "non-participant",
+                CommsMessageType::Keys,
+                &program_id,
+                serde_json::json!({"malformed": true}),
+            ))
+            .unwrap();
+
+        let program = Program::load(store, &program_id).unwrap().unwrap();
+        assert_eq!(program.peer_message_lifecycle_disposition(), None);
+        assert!(env.bitvmx.message_queue.is_empty().unwrap());
+        assert!(test_l2_messages(&env).unwrap().is_empty());
+    }
+}

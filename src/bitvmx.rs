@@ -4,7 +4,7 @@ mod news;
 mod peer_messages;
 mod steps;
 #[cfg(test)]
-mod tests;
+mod test_support;
 mod timeouts;
 
 use crate::{

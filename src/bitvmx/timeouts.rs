@@ -120,3 +120,174 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        bitvmx::{test_support::create_single_participant_program, Context},
+        comms_helper::CommsMessageType,
+        operation_timeout::OperationTimeouts,
+        program::{program::Program, variables::VariableTypes},
+        test_utils::TestBitVMXEnv,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn setup_timeout_fails_a_setup_waiting_without_input() {
+        let mut env = TestBitVMXEnv::new("setup-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        env.bitvmx
+            .program_context
+            .operation_timeouts
+            .cancel_setup(program_id)
+            .unwrap();
+        OperationTimeouts::new(store.clone())
+            .register_setup(program_id, Some(Duration::ZERO))
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(!env.bitvmx.process_operation_timeouts().unwrap());
+    }
+
+    #[test]
+    fn setup_job_timeout_fails_the_job_and_its_setup() {
+        let mut env = TestBitVMXEnv::new("setup-job-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        let job_id = Context::SetupStep(
+            program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        )
+        .to_string()
+        .unwrap();
+        let context = &env.bitvmx.program_context;
+        context
+            .expected_jobs
+            .register(job_id.clone(), crate::types::JobDispatcherType::Garbler)
+            .unwrap();
+        context.operation_timeouts.cancel_job(&job_id).unwrap();
+        context
+            .operation_timeouts
+            .register_job(job_id.clone(), Some(Duration::ZERO), false)
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&job_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ExpectedJobStatus::Failed(ref reason) if reason == JOB_TIMEOUT_REASON
+        ));
+        assert!(Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(!env.bitvmx.process_operation_timeouts().unwrap());
+    }
+
+    #[test]
+    fn settled_job_timeout_is_cancelled_without_touching_the_program() {
+        let mut env = TestBitVMXEnv::new("settled-job-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        let job_id = Context::SetupStep(
+            program_id,
+            "garbler".to_string(),
+            String::new(),
+            CommsMessageType::GarbledCircuit,
+        )
+        .to_string()
+        .unwrap();
+        let context = &env.bitvmx.program_context;
+        context
+            .expected_jobs
+            .register(job_id.clone(), crate::types::JobDispatcherType::Garbler)
+            .unwrap();
+        context
+            .expected_jobs
+            .complete(&context.operation_timeouts, &job_id)
+            .unwrap();
+        context
+            .operation_timeouts
+            .register_job(job_id.clone(), Some(Duration::ZERO), false)
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(!Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+        assert!(env
+            .bitvmx
+            .program_context
+            .operation_timeouts
+            .get(&OperationTimeoutId::DispatcherJob(job_id))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn runtime_job_timeout_enters_retry_without_failing_program() {
+        let mut env = TestBitVMXEnv::new("runtime-operation-timeout").unwrap();
+        let program_id = Uuid::new_v4();
+        let store = create_single_participant_program(&mut env, program_id);
+        env.bitvmx
+            .program_context
+            .globals
+            .set_var(
+                &program_id,
+                "optional_keys",
+                VariableTypes::String("null".to_string()),
+            )
+            .unwrap();
+        let mut program = Program::load(store.clone(), &program_id).unwrap().unwrap();
+        program.tick(&mut env.bitvmx.program_context).unwrap();
+        program.tick(&mut env.bitvmx.program_context).unwrap();
+
+        let job_id = Context::ProgramStep(program_id, "execute-round-1".to_string())
+            .to_string()
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .register(job_id.clone(), crate::types::JobDispatcherType::Emulator)
+            .unwrap();
+        let timeout_id = OperationTimeoutId::DispatcherJob(job_id.clone());
+        env.bitvmx
+            .program_context
+            .operation_timeouts
+            .cancel(&timeout_id)
+            .unwrap();
+        OperationTimeouts::new(store.clone())
+            .register_job(job_id.clone(), Some(Duration::ZERO), false)
+            .unwrap();
+
+        assert!(env.bitvmx.process_operation_timeouts().unwrap());
+        assert!(matches!(
+            env.bitvmx
+                .program_context
+                .expected_jobs
+                .get(&job_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ExpectedJobStatus::RetryPending(_)
+        ));
+        assert!(!Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
+    }
+}

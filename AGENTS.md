@@ -98,7 +98,7 @@ src/
   lib.rs             # library root; re-exports bitcoin, protocol_builder, etc.
   bitvmx.rs          # BitVMX struct — central orchestrator / main loop (tick, construction)
   bitvmx/            # BitVMX impl split by topic: api, job_handler, peer_messages, news,
-                     # steps (step/transaction runners), timeouts, tests
+                     # steps (step/transaction runners), timeouts, test_support
   client.rs          # client-side API wrapper
   types.rs           # IncomingBitVMXApiMessages / OutgoingBitVMXApiMessages (broker JSON-RPC API)
   config.rs          # YAML config loading (config/*.yaml, one per operator)
