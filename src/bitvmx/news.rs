@@ -130,34 +130,25 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }
             MonitorNews::OutputPatternTransaction(tx_id, tx_status, tag) => {
                 if tag == RSK_PEGIN_TAG {
-                    let legacy =
-                        OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status.clone());
-                    let data = serde_json::to_string(&legacy)?;
-                    self.program_context
-                        .broker_channel
-                        .send_service(&self.config.components.l2, data)?;
+                    self.notify_l2(&OutgoingBitVMXApiMessages::PeginTransactionFound(
+                        tx_id,
+                        tx_status.clone(),
+                    ))?;
                 }
-                let outgoing = OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
+                self.notify_l2(&OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
                     tx_id,
                     tx_status,
                     tag.clone(),
-                );
-                let data = serde_json::to_string(&outgoing)?;
-                self.program_context
-                    .broker_channel
-                    .send_service(&self.config.components.l2, data)?;
+                ))?;
                 AckMonitorNews::OutputPatternTransaction(tx_id, tag)
             }
             MonitorNews::NewBlock(block_height, block_hash) => {
                 debug!("New block: {} {}", block_height, block_hash);
                 if self.send_new_block_news(&self.program_context) {
-                    let data = serde_json::to_string(&OutgoingBitVMXApiMessages::NewBlock(
+                    self.notify_l2(&OutgoingBitVMXApiMessages::NewBlock(
                         block_hash,
                         block_height,
                     ))?;
-                    self.program_context
-                        .broker_channel
-                        .send_service(&self.config.components.l2, data)?;
                 }
                 AckMonitorNews::NewBlock
             }
@@ -166,6 +157,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         self.program_context
             .bitcoin_coordinator
             .ack_news(AckNews::Monitor(ack_news))?;
+        Ok(())
+    }
+
+    fn notify_l2(&self, message: &OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
+        let data = serde_json::to_string(message)?;
+        self.program_context
+            .broker_channel
+            .send_service(&self.config.components.l2, data)?;
         Ok(())
     }
 

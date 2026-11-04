@@ -111,7 +111,8 @@ and `into_no_op_reason`. `None` means the message continues to authentication.
   `RetryReason::needs_verification_keys()` and `RetryReason::setup_failure(sender)`.
 - **Catch-all `_ => unreachable!` (463):** list the remaining variants so a new one causes a
   compile error. Panic behavior stays the same.
-- **L2 sends:** `process_monitor_news` serializes and sends 3 times. Add `notify_l2(&msg)`.
+- **L2 sends (applied):** `process_monitor_news` serialized and sent 3 times. It now calls
+  `notify_l2(&msg)`.
 - **Failed attempts:** move the runtime-job arm of `settle_failed_attempt` (1099-1132) to its own
   function.
 - **`tick`:** extract `log_error_chain(e)` and `report_tick_error(e) -> bool`.
@@ -169,3 +170,6 @@ These are behavior questions, so they are out of scope for a behavior-preserving
   `expired()` aborts the rest of the tick. Every other phase is isolated.
 - **Backoff counts as work:** because of the `pop_front` case above, messages waiting on backoff
   count as `had_work`, which may keep the throttle from treating the node as idle.
+- **`PROGRAM_TYPE_GC_DRP` catch-all (`protocol_handler.rs:1209`):** the constant is only imported
+  under `feature = "union"`. Without that feature the match arm is a binding that matches any name,
+  so an unknown program type becomes `GCDisputeResolutionProtocol` instead of `NotImplemented`.
