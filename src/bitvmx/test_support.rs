@@ -6,19 +6,6 @@ use crate::{
     test_utils::TestBitVMXEnv, types::PROGRAM_TYPE_AGGREGATED_KEY,
 };
 
-impl super::BitVMX<crate::test_utils::BitcoinCoordinatorMock> {
-    /// Builds the complete runtime without a wallet or a Bitcoin node.
-    pub(crate) fn new_mock(config: Config) -> Result<Self, BitVMXError> {
-        Self::new_with_coordinator_factory(config, false, |_, _, _| {
-            Ok(crate::test_utils::BitcoinCoordinatorMock::new())
-        })
-    }
-
-    pub(crate) fn coordinator_mock(&self) -> &crate::test_utils::BitcoinCoordinatorMock {
-        &self.program_context.bitcoin_coordinator
-    }
-}
-
 pub(super) fn test_l2_messages(
     env: &TestBitVMXEnv,
 ) -> Result<Vec<OutgoingBitVMXApiMessages>, BitVMXError> {

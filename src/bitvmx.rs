@@ -139,6 +139,27 @@ impl BitVMX<BitcoinCoordinator> {
     }
 }
 
+impl BitVMX<crate::test_utils::BitcoinCoordinatorMock> {
+    /// Builds the complete runtime without a wallet or a Bitcoin node.
+    pub fn new_mock(config: Config) -> Result<Self, BitVMXError> {
+        Self::new_with_coordinator_factory(config, false, |_, _, _| {
+            Ok(crate::test_utils::BitcoinCoordinatorMock::new())
+        })
+    }
+
+    pub fn coordinator_mock(&self) -> &crate::test_utils::BitcoinCoordinatorMock {
+        &self.program_context.bitcoin_coordinator
+    }
+
+    /// The channel L2 uses to talk to this node, without a remote broker connection.
+    pub fn l2_channel(&self) -> Result<bitvmx_broker::LocalChannel, BitVMXError> {
+        Ok(self
+            .program_context
+            .broker_channel
+            .create_local_channel(self.config.components.l2.clone())?)
+    }
+}
+
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     fn new_with_coordinator_factory<F>(
         config: Config,
