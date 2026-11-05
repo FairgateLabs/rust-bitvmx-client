@@ -27,7 +27,7 @@ use protocol_builder::{
     graph::graph::GraphOptions,
 };
 use std::time::Duration;
-use storage_backend::storage::KeyValueStore;
+use storage_backend::{error::StorageError, storage::KeyValueStore};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -285,6 +285,20 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     fn api_error(id: Uuid, message: String) -> OutgoingBitVMXApiMessages {
         error!("{message}");
         OutgoingBitVMXApiMessages::ApiError(id, message)
+    }
+
+    /// A variable or witness key the storage layer rejects is an error in the request. Returning
+    /// `Err` would roll the inbox back and retry the same request on every tick.
+    fn answer_invalid_key(
+        id: Uuid,
+        error: BitVMXError,
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
+        match error {
+            BitVMXError::StorageError(StorageError::InvalidKey(reason)) => {
+                Ok(Some(Self::api_error(id, reason)))
+            }
+            other => Err(other),
+        }
     }
 
     fn key_manager_response<T, F>(
@@ -956,13 +970,19 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 IncomingBitVMXApiMessages::Ping(id) => Ok(Some(Self::ping(id))),
                 IncomingBitVMXApiMessages::SetVar(id, key, value) => {
                     debug!("Setting variable {}: {:?}", key, value);
-                    self.program_context.globals.set_var(&id, &key, value)?;
-                    Ok(None)
+                    self.program_context
+                        .globals
+                        .set_var(&id, &key, value)
+                        .map(|()| None)
+                        .or_else(|error| Self::answer_invalid_key(id, error))
                 }
                 IncomingBitVMXApiMessages::SetWitness(id, key, value) => {
                     debug!("Setting witness {}: {:?}", key, value);
-                    self.program_context.witness.set_witness(&id, &key, value)?;
-                    Ok(None)
+                    self.program_context
+                        .witness
+                        .set_witness(&id, &key, value)
+                        .map(|()| None)
+                        .or_else(|error| Self::answer_invalid_key(id, error))
                 }
                 IncomingBitVMXApiMessages::SetFundingUtxo(_id, utxo) => {
                     info!("Setting funding utxo {:?}", utxo);
@@ -978,10 +998,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 IncomingBitVMXApiMessages::SendFunds(id, destination, fee_rate) => self
                     .send_funds(from.clone(), id, destination, fee_rate)
                     .map(Some),
-                IncomingBitVMXApiMessages::GetVar(id, key) => self.get_var(id, &key).map(Some),
-                IncomingBitVMXApiMessages::GetWitness(id, key) => {
-                    self.get_witness(id, &key).map(Some)
-                }
+                IncomingBitVMXApiMessages::GetVar(id, key) => self
+                    .get_var(id, &key)
+                    .map(Some)
+                    .or_else(|error| Self::answer_invalid_key(id, error)),
+                IncomingBitVMXApiMessages::GetWitness(id, key) => self
+                    .get_witness(id, &key)
+                    .map(Some)
+                    .or_else(|error| Self::answer_invalid_key(id, error)),
                 IncomingBitVMXApiMessages::GetTransaction(id, txid) => {
                     self.get_transaction(id, txid).map(Some)
                 }
@@ -1072,8 +1096,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     elf_file_path,
                     execution_timeout_secs,
                 ) => {
-                    self.generate_zkp(from, id, input, elf_file_path, execution_timeout_secs)?;
-                    Ok(None)
+                    match self.generate_zkp(from, id, input, elf_file_path, execution_timeout_secs)
+                    {
+                        Err(error @ BitVMXError::DispatcherJobConflict(_)) => {
+                            Ok(Some(Self::api_error(id, error.to_string())))
+                        }
+                        result => result.map(|()| None),
+                    }
                 }
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
                     self.get_zkp_execution_result(id).map(Some)

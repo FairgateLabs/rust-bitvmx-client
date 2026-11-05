@@ -305,6 +305,9 @@ pub enum BitVMXError {
     #[error("Invalid state: {0}")]
     InvalidState(String),
 
+    #[error("Dispatcher job id '{0}' is registered with incompatible metadata")]
+    DispatcherJobConflict(String),
+
     #[error("Invalid variable type: {0}")]
     InvalidVariableType(String),
 

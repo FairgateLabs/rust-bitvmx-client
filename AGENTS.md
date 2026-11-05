@@ -66,8 +66,7 @@ RUST_BACKTRACE=1 cargo test --release -- --ignored test_full
   Both lower `max_send_attempts` via `init_bitvmx_with_config` so retries exhaust in
   seconds; each runs in ~3s.
 - `poison_messages.rs` covers messages that can never succeed and must not block
-  an inbox. It runs on `TestBitVMXEnv` with no bitcoind, in plain `cargo test`. Three
-  of its tests fail until the fixes in `docs/ERROR_RECOVER_REVIEW_FINDINGS.md` land.
+  an inbox. It runs on `TestBitVMXEnv` with no bitcoind, in plain `cargo test`.
 - Every test calling `prepare_bitcoin()` creates the same `bitcoin-regtest`
   container, so two in one binary run in parallel fail with `container name
   "/bitcoin-regtest" is already in use`. Filter to one test, or pass

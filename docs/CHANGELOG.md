@@ -25,6 +25,9 @@ introduce breaking changes between versions.
   default, that fsyncs every write, including transaction commits. The `storage` and `key_storage`
   sections of the client config accept `sync_writes: false` to turn it off. `StorageConfig` has a
   new field, so direct storage-backend consumers must build it with `StorageConfig::new`.
+- `SetVar`, `GetVar`, `SetWitness` and `GetWitness` with an invalid key, and `GenerateZKP` reusing a
+  job id with a different timeout, now return `ApiError(uuid, error)`. They used to block every
+  later API request and dispatcher result.
 - Following the same PR, `StorageError::ReadError` carries the RocksDB message,
   `StorageError::MissingCurrent` is returned when a database directory has no CURRENT file, and
   `Storage::repair` returns a `RepairReport`. The storage-backend CLI exits with 2 when a repair

@@ -4,7 +4,7 @@ use crate::{
         VerificationKeyAnnouncement, VerificationKeyRequestPayload,
     },
     errors::BitVMXError,
-    helper::compute_pubkey_hash,
+    helper::{canonical_verification_key, compute_pubkey_hash},
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::{
         participant::CommsAddress,
@@ -213,11 +213,23 @@ impl SignatureVerifier {
                 return Ok(rejected());
             }
         };
-        let verified = key_manager::verifier::SignatureVerifier::new().verify_rsa_signature(
+        // Verification only fails on a key it cannot parse. For a stored peer key that is the
+        // peer's fault and must not block the inbox; for our own key it is a local fault.
+        let verified = match key_manager::verifier::SignatureVerifier::new().verify_rsa_signature(
             &rsa_signature,
             constructed.as_bytes(),
             &verification_key,
-        )?;
+        ) {
+            Ok(verified) => verified,
+            Err(error) if *sender_pubkey_hash != program_context.comms.get_pubk_hash() => {
+                warn!(
+                    "Unusable verification key for peer {} in program {}: {}",
+                    sender_pubkey_hash, program_id, error
+                );
+                return Ok(rejected());
+            }
+            Err(error) => return Err(error.into()),
+        };
 
         if verified {
             debug!(
@@ -310,6 +322,15 @@ impl SignatureVerifier {
             ));
         }
 
+        // Both encodings pass the fingerprint check above, but signature verification only parses SPKI.
+        let Ok(verification_key) = canonical_verification_key(&announcement.verification_key)
+        else {
+            return Ok(ResultDisposition::fail_peer_reason(
+                pubkey_hash,
+                PeerSetupFaultReason::InvalidVerificationKey,
+            ));
+        };
+
         info!(
             "Verification key received and validated for peer: {}",
             pubkey_hash
@@ -318,7 +339,7 @@ impl SignatureVerifier {
         OperatorVerificationStore::store(
             &program_context.globals,
             &pubkey_hash,
-            &announcement.verification_key,
+            &verification_key,
         )?;
 
         Ok(ResultDisposition::Success)
@@ -329,7 +350,7 @@ impl SignatureVerifier {
 mod tests {
     use super::*;
     use crate::test_utils::TestProgramContextEnv;
-    use rsa::signature::SignatureEncoding;
+    use rsa::{pkcs1::EncodeRsaPublicKey, pkcs8::DecodePublicKey, signature::SignatureEncoding};
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
@@ -697,6 +718,69 @@ mod tests {
         assert_eq!(
             OperatorVerificationStore::get(&env.context.globals, &peer_hash)?,
             Some(env.context.rsa_public_key.clone())
+        );
+        Ok(())
+    }
+
+    fn pkcs1_pem(spki_pem: &str) -> String {
+        rsa::RsaPublicKey::from_public_key_pem(spki_pem)
+            .unwrap()
+            .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+            .unwrap()
+    }
+
+    #[test]
+    fn handle_verification_messages_stores_pkcs1_announcement_as_spki() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-hvm-pkcs1")?;
+        let peer_hash = compute_pubkey_hash(&env.context.rsa_public_key)?;
+        let peer_address = CommsAddress::new(env.context.comms.get_address(), peer_hash.clone());
+        let data = VerificationKeyAnnouncement {
+            verification_key: pkcs1_pem(&env.context.rsa_public_key),
+        }
+        .to_value()?;
+
+        assert_eq!(
+            SignatureVerifier::handle_verification_messages(
+                &env.context,
+                &Uuid::new_v4(),
+                &CommsMessageType::VerificationKey,
+                &data,
+                &peer_address,
+            )?,
+            ResultDisposition::Success
+        );
+
+        assert_eq!(
+            OperatorVerificationStore::get(&env.context.globals, &peer_hash)?,
+            Some(env.context.rsa_public_key.clone())
+        );
+        Ok(())
+    }
+
+    /// A key stored before announcements were normalized must reject the message, not block the inbox.
+    #[test]
+    fn authenticate_message_rejects_a_stored_peer_key_it_cannot_parse() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-stored-pkcs1")?;
+        let peer = "peer-with-pkcs1-key".to_string();
+        OperatorVerificationStore::store(
+            &env.context.globals,
+            &peer,
+            &pkcs1_pem(&env.context.rsa_public_key),
+        )?;
+
+        let outcome = SignatureVerifier::authenticate_message(
+            &env.context,
+            &Uuid::new_v4(),
+            "1.0",
+            CommsMessageType::Keys,
+            &json!({}),
+            0,
+            &[7u8; 64],
+            &peer,
+        )?;
+        assert_eq!(
+            outcome,
+            ResultDisposition::fail_peer_reason(peer, PeerSetupFaultReason::AuthenticationRejected)
         );
         Ok(())
     }

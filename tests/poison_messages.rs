@@ -14,7 +14,7 @@ use bitvmx_client::error_handling::is_fatal;
 use bitvmx_client::errors::BitVMXError;
 use bitvmx_client::helper::compute_pubkey_hash;
 use bitvmx_client::program::participant::CommsAddress;
-use bitvmx_client::program::variables::{Globals, VariableTypes};
+use bitvmx_client::program::variables::{Globals, VariableTypes, WitnessTypes};
 use bitvmx_client::signature_verifier::OperatorVerificationStore;
 use bitvmx_client::test_utils::{TestBitVMXEnv, TestStorageDir};
 use bitvmx_client::types::{
@@ -127,6 +127,25 @@ fn set_var_with_invalid_key_is_an_api_error() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn every_variable_and_witness_request_rejects_an_invalid_key() -> Result<()> {
+    let id = Uuid::new_v4();
+    let witness = WitnessTypes::Secret(vec![1]);
+    let key = "a/b".to_string();
+    let requests = [
+        IncomingBitVMXApiMessages::SetVar(id, String::new(), VariableTypes::Number(1)),
+        IncomingBitVMXApiMessages::GetVar(id, key.clone()),
+        IncomingBitVMXApiMessages::SetWitness(id, key.clone(), witness),
+        IncomingBitVMXApiMessages::GetWitness(id, key),
+    ];
+    for request in requests {
+        let ping_id = Uuid::new_v4();
+        let replies = replies_to(vec![request], ping_id)?;
+        assert_rejected(&replies, id, ping_id);
+    }
+    Ok(())
+}
+
 fn generate_zkp_twice(second_timeout: Option<u64>) -> Result<(Replies, Uuid, Uuid)> {
     let (job, ping_id) = (Uuid::new_v4(), Uuid::new_v4());
     let request =
@@ -142,7 +161,7 @@ fn generate_zkp_repeated_with_same_timeout_does_not_block_the_inbox() -> Result<
     Ok(())
 }
 
-/// The same job id with a different timeout fails the metadata check with `InvalidState`.
+/// The same job id with a different timeout fails the metadata check.
 #[test]
 fn generate_zkp_with_conflicting_timeout_is_an_api_error() -> Result<()> {
     let (replies, job, ping_id) = generate_zkp_twice(Some(5))?;
@@ -330,8 +349,7 @@ fn bad_signature_from_peer_with_spki_key_fails_the_setup() -> Result<()> {
     Ok(())
 }
 
-/// The announcement accepts PKCS#1, but `RSAKeyPair::verify` only parses SPKI, and `authenticate_message` returns
-/// that parse failure as `Err` instead of a rejection.
+/// The announcement accepts PKCS#1, but `RSAKeyPair::verify` only parses SPKI, so the key is stored re-encoded.
 #[test]
 fn bad_signature_from_peer_with_pkcs1_key_fails_the_setup() -> Result<()> {
     let (replies, program_id, peer_hash) = replies_after_bad_signature_from_peer(true)?;

@@ -1,5 +1,7 @@
 # Analysis of the `review/error-recover-findings` branch
 
+**Status: all three findings are now fixed on `error_recover`, covered by `tests/poison_messages.rs`.** The rest of this document describes the code as it was at `a24cd7f`.
+
 Compares `origin/review/error-recover-findings` (`af48ec1`, 2026-10-21) with `error_recover` (`a24cd7f`, 2026-11-04).
 
 ## Conclusion
@@ -111,7 +113,7 @@ An equivalent port was tried in the temporary worktree. All three failing review
 | 4 | A typed `DispatcherJobConflict` is handled only in the `GenerateZKP` arm, so internal job registrations still propagate. | Port as is. |
 | 3 | Re-encoding to SPKI at announcement closes both the direct and broadcast paths, but does not repair PKCS#1 keys already stored. | Port with the line-ending fix, and also treat a peer key that fails to parse in `authenticate_message` as `rejected()`. That second change is untested and covers stored keys. Keep `Err` when the node's own key fails, since that is a local fault and not the peer's. |
 
-The review tests now live in `tests/poison_messages.rs`. When porting the fixes, add cases there for the `GetVar`, `GetWitness` and `SetWitness` arms.
+The review tests now live in `tests/poison_messages.rs`, with added cases for the `GetVar`, `GetWitness` and `SetWitness` arms. All recommendations above were applied, using the platform-default line ending for finding 3.
 
 ## What this does not settle
 

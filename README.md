@@ -122,10 +122,10 @@ This table shows the mapping between request messages and their expected respons
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
 | `Setup(uuid, program_type, participants, leader_idx, setup_timeout_secs)` | `SetupCompleted(uuid)` or `ApiError(uuid, error)` | Setup the program with an optional overall timeout in seconds (`None` defaults to one hour); returns `ApiError` for duplicate identifiers and non-fatal setup failures |
-| `SetVar(uuid, key, value)` | `Variable(uuid, key, value)` | Set a variable in the program |
-| `GetVar(uuid, key)` | `Variable(uuid, key, value)` or `NotFound(uuid, key)` | Get variable value |
-| `SetWitness(uuid, address, witness)` | `Witness(uuid, key, witness)` | Set witness data |
-| `GetWitness(uuid, address)` | `Witness(uuid, key, witness)` or `NotFound(uuid, key)` | Get witness data |
+| `SetVar(uuid, key, value)` | `Variable(uuid, key, value)` or `ApiError(uuid, error)` | Set a variable in the program; returns `ApiError` for an invalid key |
+| `GetVar(uuid, key)` | `Variable(uuid, key, value)`, `NotFound(uuid, key)` or `ApiError(uuid, error)` | Get variable value; returns `ApiError` for an invalid key |
+| `SetWitness(uuid, address, witness)` | `Witness(uuid, key, witness)` or `ApiError(uuid, error)` | Set witness data; returns `ApiError` for an invalid key |
+| `GetWitness(uuid, address)` | `Witness(uuid, key, witness)`, `NotFound(uuid, key)` or `ApiError(uuid, error)` | Get witness data; returns `ApiError` for an invalid key |
 | `GetHashedMessage(uuid, name, vout, leaf)` | `HashedMessage(uuid, name, vout, leaf, _)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get hashed message; returns `NotFound` when the program is absent and `ApiError` for non-fatal lookup failures |
 | `GetProtocolVisualization(uuid)` | `ProtocolVisualization(uuid, visualization)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get protocol visualization; returns `NotFound` when the program is absent and `ApiError` for non-fatal visualization failures |
 | `DiscardDispatcherJob(uuid, job_id, reason)` | `JobDiscarded(uuid, job_id)` or `ApiError(uuid, error)` | The configured L2 operator stops automatic retries for an unresolved runtime Garbler/Emulator job. Repeated discard is idempotent; setup and ZKP jobs cannot be discarded through this operation. |
@@ -185,7 +185,7 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `GenerateZKP(uuid, payload_to_sign, name, execution_timeout_secs)` | `ZKPResult(uuid, proof, journal)` or `ProofGenerationError(uuid, error)` | Generate zero-knowledge proof; the response is sent when the job ends and already carries the proof, so no follow-up request is needed. The optional timeout defaults to 900 seconds |
+| `GenerateZKP(uuid, payload_to_sign, name, execution_timeout_secs)` | `ZKPResult(uuid, proof, journal)`, `ProofGenerationError(uuid, error)` or `ApiError(uuid, error)` | Generate zero-knowledge proof; the response is sent when the job ends and already carries the proof, so no follow-up request is needed. The optional timeout defaults to 900 seconds. Reusing a job id with a different timeout returns `ApiError` |
 | `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, proof, journal)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` or `ApiError(uuid, error)` | Query the status or result of a ZKP job at any time; returns `ApiError` when a successful job is missing its proof or journal |
 
 ### Special Cases

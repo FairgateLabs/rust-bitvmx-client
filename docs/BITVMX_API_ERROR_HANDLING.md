@@ -303,7 +303,7 @@ and `docs/CHANGELOG.md` record the new shapes.
 
 ## No-response operations
 
-The lack of a reply from operations such as `SetVar`, `SetWitness`, and similar state-mutating commands is intentional. These operations do not have a request- or business-level failure after valid message decoding: under normal operation they succeed and commit without an acknowledgement.
+The lack of a reply from operations such as `SetVar`, `SetWitness`, and similar state-mutating commands is intentional: under normal operation they succeed and commit without an acknowledgement. Their one request-level failure is an invalid key, which returns `ApiError`.
 
 If such an operation encounters a storage, system, or other rollback-worthy error, it returns `Err` instead of replying. The transaction then rolls back, leaving the incoming request available for reprocessing. If the error requires the server to stop, an operator fixes the underlying problem and restarts the server; the retained request is then processed again and should complete successfully.
 
