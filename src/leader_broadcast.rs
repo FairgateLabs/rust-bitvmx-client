@@ -56,7 +56,6 @@ pub struct OriginalMessage {
 impl BroadcastedMessage {
     /// Validates that the BroadcastedMessage is valid
     pub fn validate(&self) -> Result<(), BitVMXError> {
-        // Validate that there is at least one original message
         if self.original_messages.is_empty() {
             return Err(BitVMXError::InvalidMessage(
                 "No original messages".to_string(),
@@ -89,36 +88,24 @@ impl BroadcastedMessage {
 impl OriginalMessage {
     /// Validates that the OriginalMessage is valid
     pub fn validate(&self) -> Result<(), BitVMXError> {
-        // Validate that the signature is not empty
         if self.original_signature.is_empty() {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Original signature is empty: {:?}",
-                self.original_signature
-            )));
+            return Err(BitVMXError::InvalidMessage(
+                "Original signature is empty".to_string(),
+            ));
         }
-
-        // Validate that the version is not empty
         if self.version.is_empty() {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Version is empty: {:?}",
-                self.version
-            )));
+            return Err(BitVMXError::InvalidMessage("Version is empty".to_string()));
         }
-
-        // Validate that the pubkey_hash is not empty
         if self.sender_pubkey_hash.is_empty() {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Sender pubkey hash is empty: {:?}",
-                self.sender_pubkey_hash
-            )));
+            return Err(BitVMXError::InvalidMessage(
+                "Sender pubkey hash is empty".to_string(),
+            ));
         }
-
-        // Validate that the message type is not Broadcasted (cannot broadcast a broadcast)
+        // A broadcast cannot carry another broadcast.
         if self.msg_type == CommsMessageType::Broadcasted {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Message type is Broadcasted: {:?}",
-                self.msg_type
-            )));
+            return Err(BitVMXError::InvalidMessage(
+                "Message type is Broadcasted".to_string(),
+            ));
         }
 
         Ok(())
@@ -293,7 +280,6 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
         non_leader_participants: &[CommsAddress],
     ) -> Result<(), BitVMXError> {
-        // Get all stored original messages
         let original_messages = self.get_original_messages(context_id, msg_type)?;
 
         if original_messages.is_empty() {
@@ -335,7 +321,6 @@ impl LeaderBroadcastHelper {
             )?;
         }
 
-        // Clear stored messages after successful broadcast
         self.clear_original_messages(context_id, msg_type)?;
 
         info!(

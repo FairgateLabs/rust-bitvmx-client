@@ -63,25 +63,22 @@ impl MessageQueue {
         }
     }
 
-    fn message_queue_key<'a>(
-        tail: impl IntoIterator<Item = &'a str>,
-    ) -> Result<StorageKey, BitVMXError> {
-        Ok(StorageKey::new(
-            ["bitvmx", "message_queue"]
-                .into_iter()
-                .map(str::to_string)
-                .chain(tail.into_iter().map(str::to_string)),
-        )?)
-    }
-
     fn msg_key(id: &Uuid) -> Result<StorageKey, BitVMXError> {
-        let id_str = id.to_string();
-        Self::message_queue_key(["msg", id_str.as_str()])
+        Ok(StorageKey::new([
+            "bitvmx",
+            "message_queue",
+            "msg",
+            &id.to_string(),
+        ])?)
     }
 
     fn retry_state_key(id: &Uuid) -> Result<StorageKey, BitVMXError> {
-        let id_str = id.to_string();
-        Self::message_queue_key(["retry_state", id_str.as_str()])
+        Ok(StorageKey::new([
+            "bitvmx",
+            "message_queue",
+            "retry_state",
+            &id.to_string(),
+        ])?)
     }
 
     fn get_queue_ids(&self) -> Result<Vec<Uuid>, BitVMXError> {
@@ -90,55 +87,36 @@ impl MessageQueue {
     }
 
     fn save_queue_ids(&self, ids: Vec<Uuid>) -> Result<(), BitVMXError> {
-        self.storage
-            .set(QUEUE_IDS_KEY.as_ref(), ids, None)
-            .map_err(BitVMXError::StorageError)?;
+        self.storage.set(QUEUE_IDS_KEY.as_ref(), ids, None)?;
         Ok(())
     }
 
     fn get_stored_message(&self, id: &Uuid) -> Result<Option<StoredMessage>, BitVMXError> {
-        self.storage
-            .get(Self::msg_key(id)?, None)
-            .map_err(BitVMXError::StorageError)
+        Ok(self.storage.get(Self::msg_key(id)?, None)?)
     }
 
     fn save_stored_message(&self, id: &Uuid, msg: &StoredMessage) -> Result<(), BitVMXError> {
-        self.storage
-            .set(Self::msg_key(id)?, msg, None)
-            .map_err(BitVMXError::StorageError)?;
+        self.storage.set(Self::msg_key(id)?, msg, None)?;
         Ok(())
     }
 
     fn get_retry_state(&self, id: &Uuid) -> Result<Option<RetryState>, BitVMXError> {
-        self.storage
-            .get(Self::retry_state_key(id)?, None)
-            .map_err(BitVMXError::StorageError)
+        Ok(self.storage.get(Self::retry_state_key(id)?, None)?)
     }
 
     fn save_retry_state(&self, id: &Uuid, retry_state: &RetryState) -> Result<(), BitVMXError> {
         self.storage
-            .set(Self::retry_state_key(id)?, retry_state, None)
-            .map_err(BitVMXError::StorageError)?;
+            .set(Self::retry_state_key(id)?, retry_state, None)?;
         Ok(())
     }
 
     fn remove_stored_message(&self, id: &Uuid) -> Result<(), BitVMXError> {
-        self.storage
-            .remove(Self::msg_key(id)?, None)
-            .map_err(BitVMXError::StorageError)?;
+        self.storage.remove(Self::msg_key(id)?, None)?;
         Ok(())
     }
 
     fn remove_retry_state(&self, id: &Uuid) -> Result<(), BitVMXError> {
-        self.storage
-            .remove(Self::retry_state_key(id)?, None)
-            .map_err(BitVMXError::StorageError)?;
-        Ok(())
-    }
-
-    fn remove_entry(&self, id: &Uuid) -> Result<(), BitVMXError> {
-        self.remove_stored_message(id)?;
-        self.remove_retry_state(id)?;
+        self.storage.remove(Self::retry_state_key(id)?, None)?;
         Ok(())
     }
 
@@ -186,10 +164,9 @@ impl MessageQueue {
                 continue;
             };
             if stored.identifier == queued_msg.identifier && stored.data == queued_msg.data {
-                let replace_retry_state = self
-                    .get_retry_state(&id)?
-                    .map(|existing| queued_msg.retry_state.get_attempts() > existing.get_attempts())
-                    .unwrap_or(true);
+                let replace_retry_state = self.get_retry_state(&id)?.is_none_or(|existing| {
+                    queued_msg.retry_state.get_attempts() > existing.get_attempts()
+                });
                 if replace_retry_state {
                     self.save_retry_state(&id, &queued_msg.retry_state)?;
                 }
@@ -246,7 +223,8 @@ impl MessageQueue {
             };
 
             self.save_queue_ids(ids)?;
-            self.remove_entry(&id)?;
+            self.remove_stored_message(&id)?;
+            self.remove_retry_state(&id)?;
 
             return Ok(Some(QueuedMessage {
                 identifier: stored_msg.identifier,
@@ -260,8 +238,7 @@ impl MessageQueue {
     }
 
     pub fn is_empty(&self) -> Result<bool, BitVMXError> {
-        let ids = self.get_queue_ids()?;
-        Ok(ids.is_empty())
+        Ok(self.get_queue_ids()?.is_empty())
     }
 }
 

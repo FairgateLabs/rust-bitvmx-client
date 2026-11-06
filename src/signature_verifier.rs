@@ -1,3 +1,6 @@
+//! Centralized RSA signature verification for all communication messages.
+//! All message signature verification should go through this module to ensure consistency.
+
 use crate::{
     comms_helper::{
         construct_message, request, send_verification_key_to_peer, CommsMessageType,
@@ -19,10 +22,6 @@ use std::rc::Rc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-/// Centralized signature verification module
-///
-/// This module provides centralized RSA signature verification for all communication messages.
-/// All message signature verification should go through this module to ensure consistency.
 pub struct SignatureVerifier;
 
 pub struct OperatorVerificationStore;
@@ -47,13 +46,13 @@ impl OperatorVerificationStore {
     }
 
     pub fn get(globals: &Globals, pubkey_hash: &PubkHash) -> Result<Option<String>, BitVMXError> {
-        match globals.get_var(
-            &GLOBAL_VERIFICATIONS_KEYS_UUID,
-            &Self::storage_key(pubkey_hash),
-        )? {
-            Some(value) => Ok(Some(value.string()?)),
-            None => Ok(None),
-        }
+        globals
+            .get_var(
+                &GLOBAL_VERIFICATIONS_KEYS_UUID,
+                &Self::storage_key(pubkey_hash),
+            )?
+            .map(|value| value.string())
+            .transpose()
     }
 
     pub fn has(globals: &Globals, pubkey_hash: &PubkHash) -> Result<bool, BitVMXError> {

@@ -88,7 +88,7 @@ impl Reporter {
         )
     }
 
-    /// Reports that the node is stopping on a non-fatal error
+    /// Reports a non-fatal error; the node keeps running
     pub(crate) fn non_fatal(&self, error: &BitVMXError, broker_node: &BrokerNode) {
         self.report_node_error(ErrorReportKind::NonFatal, error, broker_node);
     }
@@ -156,7 +156,7 @@ pub fn is_fatal(error: &(dyn Error + 'static)) -> bool {
 
 /// Resolves the `context` a coordinator news item carries into who the report concerns
 /// and, for API requests, who to answer. `None` destination means send to L2.
-pub(crate) fn resolve_scope(context: &str) -> (ErrorScope, Option<Identifier>) {
+fn resolve_scope(context: &str) -> (ErrorScope, Option<Identifier>) {
     if let Ok(context) = Context::from_string(context) {
         return match context {
             // Carries the `Identifier` so the failure reaches whoever asked, not L2.

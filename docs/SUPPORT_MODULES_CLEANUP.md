@@ -253,7 +253,7 @@ broker_node)`.
   `.into_iter().map(...).collect()`. Keep the `InvalidMessage` mapping, which rules out
   `partial_get` because it would return `ConversionError`.
 
-## Small cleanups
+## Small cleanups (applied)
 
 `message_queue.rs`:
 
