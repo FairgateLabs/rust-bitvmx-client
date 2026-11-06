@@ -127,10 +127,11 @@ impl SignatureVerifier {
     /// - `signature`: RSA signature of the message (`Vec<u8>`)
     /// - `sender_pubkey_hash`: Hash of the sender's public key
     ///
-    /// `VerificationKeyRequest` is the unsigned bootstrap exception. A
+    /// Verification messages are not application-signed and are rejected here:
+    /// `VerificationKeyRequest` is unsigned bootstrap traffic, and a
     /// `VerificationKey` announcement is authenticated by binding the announced
     /// key's fingerprint to the broker's TLS-authenticated sender in
-    /// `handle_verification_key_announcement`.
+    /// `handle_verification_key_announcement`. Callers route both before this.
     pub fn authenticate_message<BC: BitcoinCoordinatorApi>(
         program_context: &ProgramContext<BC>,
         program_id: &Uuid,
@@ -145,7 +146,10 @@ impl SignatureVerifier {
             msg_type,
             CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
         ) {
-            return Ok(ResultDisposition::Success);
+            return Ok(ResultDisposition::fail_peer_reason(
+                sender_pubkey_hash.clone(),
+                PeerSetupFaultReason::UnauthorizedMessage,
+            ));
         }
 
         let rejected = || {
@@ -501,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn authenticate_message_allows_bootstrap_messages() -> Result<(), BitVMXError> {
+    fn authenticate_message_rejects_verification_messages() -> Result<(), BitVMXError> {
         let env = TestProgramContextEnv::new("sigver-auth-bootstrap")?;
         let peer = "any-peer".to_string();
         for msg_type in [
@@ -518,7 +522,13 @@ mod tests {
                 &[],
                 &peer,
             )?;
-            assert_eq!(outcome, ResultDisposition::Success);
+            assert_eq!(
+                outcome,
+                ResultDisposition::fail_peer_reason(
+                    peer.clone(),
+                    PeerSetupFaultReason::UnauthorizedMessage
+                )
+            );
         }
         Ok(())
     }

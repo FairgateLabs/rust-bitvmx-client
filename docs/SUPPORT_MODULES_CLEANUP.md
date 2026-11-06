@@ -374,11 +374,11 @@ These are behavior questions, so they are out of scope for a behavior-preserving
   transaction, so every other due job in that pass rolls back too, on every tick. Normal flows can't
   reach either one (`retry_pending` guards the first and `steps.rs:157` the second), so this needs
   corrupt data.
-- **Unused bootstrap exception in `authenticate_message` (175-180):** it returns success for unsigned
-  verification messages, but no production path reaches it. `peer_messages.rs:266` skips authentication
-  for those types, and `leader_broadcast.rs:392` rejects them earlier. Removing it would make the
-  function fail closed if a future caller forgets the filter, but it changes what the function returns
-  and `authenticate_message_allows_bootstrap_messages` asserts the current result.
+- **Unused bootstrap exception in `authenticate_message` (fixed):** it returned success for unsigned
+  verification messages, but no production path reached it. `peer_messages.rs` skips authentication
+  for those types, and `process_broadcasted_message` rejects them through `should_store`. It now
+  fails closed with `UnauthorizedMessage`, so a future caller that forgets the filter cannot accept an
+  unsigned message (`authenticate_message_rejects_verification_messages`).
 - **`queued_count` includes duplicates (fixed):** the `push_new_unique` outcome was ignored, so
   `AlreadyQueued` counted as queued and the result was `Success` instead of `NoOp`.
   `apply_message_disposition` settles both the same way, so only the logs were affected. An
