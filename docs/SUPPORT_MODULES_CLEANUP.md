@@ -370,10 +370,14 @@ These are behavior questions, so they are out of scope for a behavior-preserving
   live under `bitvmx/expected_job/active/` while a result is expected and move to
   `bitvmx/expected_job/finished/` once terminal. `redispatch_due` scans only the active prefix, and
   the ID list is gone.
-- **One bad job blocks all retries:** the errors at `expected_job.rs:313` and `324` abort the shared
-  transaction, so every other due job in that pass rolls back too, on every tick. Normal flows can't
-  reach either one (`retry_pending` guards the first and `steps.rs:157` the second), so this needs
-  corrupt data.
+- **One bad job blocks all retries (intended, not fixed):** a due record with no dispatch payload or
+  a non-program target makes `redispatch_due` return an error, which rolls back the shared
+  transaction. The broker outbox writes are in the same transaction, so nothing reaches the
+  dispatcher. No due job is redispatched, and the error repeats every tick. A corrupt active record
+  fails `active_jobs()` the same way. Normal flows can't produce either record (`retry_pending`
+  leaves a job without a payload undue, and `steps.rs:150` checks the target first), so this means
+  corrupt storage. Skipping the record or marking it `Failed` would hide that. An operator has to
+  inspect the record and decide what happened, so the pass halts loudly until then.
 - **Unused bootstrap exception in `authenticate_message` (fixed):** it returned success for unsigned
   verification messages, but no production path reached it. `peer_messages.rs` skips authentication
   for those types, and `process_broadcasted_message` rejects them through `should_store`. It now

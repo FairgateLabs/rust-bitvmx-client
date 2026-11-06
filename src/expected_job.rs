@@ -295,6 +295,11 @@ impl ExpectedJobs {
 
     /// Redispatches due runtime jobs. Status and broker outbox writes share the caller's
     /// transaction, so a failed commit cannot lose the retry intent.
+    ///
+    /// A due record with no dispatch payload or a non-program target is corrupt, since
+    /// normal flows never produce one. It fails the whole pass on purpose rather than being
+    /// skipped or marked failed: the error repeats every tick and halts all redispatches
+    /// until an operator inspects the record and decides what happened.
     pub fn redispatch_due(&self, broker_channel: &BrokerNode) -> Result<usize, BitVMXError> {
         let now = bitvmx_broker::retry::now_ms()?;
         let mut dispatched = 0;
