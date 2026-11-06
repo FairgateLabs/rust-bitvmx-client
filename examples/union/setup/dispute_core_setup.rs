@@ -74,6 +74,7 @@ impl DisputeCoreSetup {
                 PROGRAM_TYPE_DISPUTE_CORE.to_string(),
                 addresses.clone(),
                 0,
+                None,
             )?;
         }
 

@@ -53,11 +53,11 @@ impl ProtocolHandler for RejectPegInProtocol {
         &mut self.ctx
     }
 
-    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
+    fn setup_steps(&self) -> Vec<SetupStepName> {
         // Rejection uses one member's existing dispute key, not MuSig2.
         // KeysStep builds the graph and creates the speedup key. Program's
         // finalization still signs the selected script leaf before dispatch.
-        Some(vec![SetupStepName::Keys])
+        vec![SetupStepName::Keys]
     }
 
     fn generate_keys<BC: BitcoinCoordinatorApi>(

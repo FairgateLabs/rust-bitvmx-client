@@ -21,6 +21,7 @@ use protocol_builder::scripts::{
 };
 use std::str::FromStr;
 use tracing::{error, info};
+use uuid::Uuid;
 
 use bitvmx_client::{
     client::BitVMXClient,
@@ -112,6 +113,7 @@ impl User {
         // Enable output pattern monitoring for RSK pegin transactions
         //TOOD: Define proper confirmation threshold
         self.bitvmx.subscribe_to_output_pattern(
+            Uuid::new_v4(),
             OutputPatternFilter {
                 output_index: 1,
                 tag: RSK_PEGIN_TAG.to_vec(),
@@ -161,7 +163,8 @@ impl User {
         info!("Waiting for SPV proof...");
 
         // Get the SPV proof, this should be used by the union client to present to the smart contract
-        self.bitvmx.get_spv_proof(request_pegin_txid)?;
+        self.bitvmx
+            .get_spv_proof(Uuid::new_v4(), request_pegin_txid)?;
         let spv_proof = wait_until_msg!(&self.bitvmx, SPVProof(_, Some(_spv_proof)) => _spv_proof);
 
         info!("SPV proof: {:?}", spv_proof);

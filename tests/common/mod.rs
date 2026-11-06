@@ -26,6 +26,8 @@ use bitvmx_job_dispatcher::DispatcherHandler;
 use bitvmx_job_dispatcher_types::emulator_messages::EmulatorJobType;
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::{Destination, RegtestWallet, Wallet};
+use uuid::Uuid;
+
 use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
@@ -223,6 +225,7 @@ pub fn init_bitvmx_with_config(
 }
 
 pub fn tick(instance: &mut BitVMX) -> Result<()> {
+    instance.process_broker_queues()?;
     instance.process_api_messages()?;
     instance.process_comms_messages()?;
     instance.process_programs()?;
@@ -882,7 +885,8 @@ pub fn set_speedup_funding(
     let fund_tx = wallet.fund_destination(Destination::P2WPKH(*pub_key, amount))?;
 
     let funds_utxo_0 = Utxo::new(fund_tx.compute_txid(), 0, amount, pub_key);
-    let command = IncomingBitVMXApiMessages::SetFundingUtxo(funds_utxo_0).to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
     channel.send(bitvmx_id, command)?;
     Ok(())
 }

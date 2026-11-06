@@ -15,7 +15,7 @@ pub fn main() -> Result<()> {
     let _bitcoin_client = get_bitcoin_client()?;
     let broker_pubk_hash =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/services.key")?.as_str())?
-            .get_pubk_hash()?;
+            .get_pubk_hash();
     let broker_config = BrokerConfig::new(54321, None, None);
     let cert =
         Cert::new_with_privk(settings::decrypt_or_read_file("config/keys/l2.key")?.as_str())?;

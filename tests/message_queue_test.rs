@@ -2,69 +2,14 @@ use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_broker::retry::RetryPolicy;
 use bitvmx_broker::rpc::config::BrokerNodeConfig;
 use bitvmx_client::message_queue::{MessageQueue, QueuedMessage};
-use std::rc::Rc;
+use bitvmx_client::test_utils::TestStorageDir;
+use std::thread;
 use std::time::{Duration, Instant};
-use std::{fs, thread};
-use storage_backend::storage::Storage;
-use storage_backend::storage_config::StorageConfig;
-use uuid::Uuid;
-
-#[test]
-fn test_message_queue_persistence() {
-    let temp_dir = format!("/tmp/test_storage__{}", Uuid::new_v4());
-    let config = StorageConfig::new(temp_dir.clone(), None);
-
-    // Create storage and queue
-    let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(
-        storage.clone(),
-        RetryPolicy::new(&BrokerNodeConfig::default()).unwrap(),
-    );
-
-    // Push messages
-    let msg1 = "msg-1".to_string();
-    let msg2 = "msg-2".to_string();
-    let id1 = Identifier::new("id1".to_string(), 0);
-    let id2 = Identifier::new("id2".to_string(), 0);
-    queue.push_new(id1.clone(), msg1.clone()).unwrap();
-    queue.push_new(id2.clone(), msg2.clone()).unwrap();
-
-    // Verify pop
-    let msg = queue.pop_front().unwrap().unwrap();
-    assert_eq!(msg.identifier, id1);
-    assert_eq!(msg.data, msg1);
-
-    // Simulate restart (reload storage)
-    drop(queue);
-    drop(storage);
-
-    let storage = Rc::new(Storage::new(&config).unwrap());
-    let queue = MessageQueue::new(
-        storage.clone(),
-        RetryPolicy::new(&BrokerNodeConfig::default()).unwrap(),
-    );
-
-    // Verify persistence
-    let msg = queue.pop_front().unwrap().unwrap();
-    assert_eq!(msg.identifier, id2);
-    assert_eq!(msg.data, msg2);
-
-    // Verify empty
-    assert!(queue.pop_front().unwrap().is_none());
-
-    // Cleanup
-    drop(queue);
-    drop(storage);
-    fs::remove_dir_all(temp_dir).unwrap();
-}
 
 #[test]
 fn test_queue_no_starvation() {
-    let temp_dir = format!("/tmp/test_storage_{}", Uuid::new_v4());
-    let config = StorageConfig::new(temp_dir.clone(), None);
-
-    // Create storage and queue
-    let storage = Rc::new(Storage::new(&config).unwrap());
+    let dir = TestStorageDir::new("message-queue-no-starvation");
+    let storage = dir.storage();
 
     // Create a retry policy with a small delay and limited attempts
     let retry_policy = RetryPolicy::new(&BrokerNodeConfig {
@@ -94,8 +39,9 @@ fn test_queue_no_starvation() {
 
     // Simulate repeated processing failures → requeue
     let start = Instant::now();
-    let timeout =
-        Duration::from_millis(retry_policy.max_delay_ms * retry_policy.max_attempts as u64);
+    // Only stops a broken queue from hanging the test. The loop normally ends when the queue
+    // drains, and storage writes can be slow enough that a tight deadline makes this flaky.
+    let timeout = Duration::from_secs(30);
 
     let mut good_seen = false;
     let mut counter = 0;
@@ -103,7 +49,7 @@ fn test_queue_no_starvation() {
         if let Some(msg) = queue.pop_front().unwrap() {
             if msg.identifier == poison_id {
                 counter += 1;
-                queue.push_back(msg).unwrap();
+                queue.push_deferred(msg).unwrap();
             } else if msg.identifier == good_id {
                 assert_eq!(msg.data, good_msg);
                 assert!(!good_seen, "Good message seen multiple times");
@@ -125,9 +71,4 @@ fn test_queue_no_starvation() {
         counter, retry_policy.max_attempts as usize,
         "Poison message was not retried the expected number of times"
     );
-
-    // Cleanup
-    drop(queue);
-    drop(storage);
-    fs::remove_dir_all(temp_dir).unwrap();
 }

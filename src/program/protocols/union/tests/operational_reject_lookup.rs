@@ -221,6 +221,7 @@ fn rejection_setup_and_lookup(early_lookup: bool) -> Result<()> {
             PROGRAM_TYPE_REJECT_PEGIN.into(),
             vec![address.clone()],
             0,
+            None,
         ),
     )?;
     if early_lookup {

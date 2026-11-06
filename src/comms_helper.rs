@@ -12,10 +12,35 @@ use uuid::Uuid;
 const MIN_EXPECTED_MSG_LEN: usize = 4; // 2 bytes for version + 2 bytes for message type
 const CURRENT_PROTOCOL_VERSION: &str = "1.0";
 
+/// Errors produced while constructing the canonical message covered by a signature.
+/// These depend only on message input and never represent storage or infrastructure failures.
+#[derive(Debug, thiserror::Error)]
+pub enum MessageConstructionError {
+    #[error("unsupported message version: {0}")]
+    UnsupportedVersion(String),
+    #[error("unsupported message type: {0:?}")]
+    UnsupportedMessageType(CommsMessageType),
+    #[error("failed to serialize message data: {0}")]
+    Serialization(String),
+}
+
+impl From<MessageConstructionError> for BitVMXError {
+    fn from(error: MessageConstructionError) -> Self {
+        match error {
+            MessageConstructionError::UnsupportedVersion(_) => BitVMXError::InvalidMsgVersion,
+            MessageConstructionError::UnsupportedMessageType(_) => BitVMXError::InvalidMessageType,
+            MessageConstructionError::Serialization(_) => BitVMXError::SerializationError,
+        }
+    }
+}
+
 // Public function for signature verification
-pub fn serialize_with_sorted_keys_for_verification(value: &Value) -> Result<String, BitVMXError> {
+pub fn serialize_with_sorted_keys_for_verification(
+    value: &Value,
+) -> Result<String, MessageConstructionError> {
     let sorted_json = sort_json_keys(value);
-    serde_json::to_string(&sorted_json).map_err(|_| BitVMXError::SerializationError)
+    serde_json::to_string(&sorted_json)
+        .map_err(|error| MessageConstructionError::Serialization(error.to_string()))
 }
 
 // Recursively sort all keys in a JSON value
@@ -41,9 +66,12 @@ pub fn construct_message(
     msg_type: CommsMessageType,
     data: &Value,
     timestamp: i64,
-) -> Result<String, BitVMXError> {
-    let version_bytes = Version::to_bytes(version)?;
-    let msg_type_bytes = msg_type.to_bytes()?;
+) -> Result<String, MessageConstructionError> {
+    let version_bytes = Version::to_bytes(version)
+        .map_err(|_| MessageConstructionError::UnsupportedVersion(version.to_string()))?;
+    let msg_type_bytes = msg_type
+        .to_bytes()
+        .map_err(|_| MessageConstructionError::UnsupportedMessageType(msg_type))?;
     let msg_string = serialize_with_sorted_keys_for_verification(data)?;
     Ok(format!(
         "{}|{:02X}{:02X}|{:02X}{:02X}|{}|{}",
@@ -331,11 +359,22 @@ pub fn serialize_msg<T: Serialize>(
     serde_json::to_string(&result).map_err(|_| BitVMXError::SerializationError)
 }
 
+/// A peer message whose encoding is valid. Its signature has not been checked yet.
+#[derive(Debug)]
+pub struct DecodedPeerMessage {
+    pub version: String,
+    pub msg_type: CommsMessageType,
+    pub program_id: Uuid,
+    pub data: Value,
+    pub timestamp: i64,
+    pub signature: Vec<u8>,
+}
+
 pub fn deserialize_msg(
-    data: String,
+    data: &str,
     max_expected_msg_len_kb: usize,
-) -> Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError> {
-    let data: Vec<u8> = serde_json::from_str(&data)
+) -> Result<DecodedPeerMessage, BitVMXError> {
+    let data: Vec<u8> = serde_json::from_str(data)
         .map_err(|e| BitVMXError::InvalidMessage(format!("Invalid message encoding: {:?}", e)))?;
 
     // Minimum length check: 4 bytes (2 for version + 2 for message type) + payload
@@ -427,14 +466,14 @@ pub fn deserialize_msg(
         signature.push(byte as u8);
     }
 
-    Ok((
+    Ok(DecodedPeerMessage {
         version,
         msg_type,
         program_id,
-        data.clone(),
+        data: data.clone(),
         timestamp,
         signature,
-    ))
+    })
 }
 
 #[cfg(test)]
@@ -482,10 +521,16 @@ mod tests {
         )?;
 
         let (sender, raw) = env.receive_one()?;
-        assert_eq!(sender.pubkey_hash, env.context.comms.get_pubk_hash()?);
+        assert_eq!(sender.pubkey_hash, env.context.comms.get_pubk_hash());
 
-        let (version, msg_type, received_program_id, data, timestamp, signature) =
-            deserialize_msg(raw, 200000)?;
+        let DecodedPeerMessage {
+            version,
+            msg_type,
+            program_id: received_program_id,
+            data,
+            timestamp,
+            signature,
+        } = deserialize_msg(&raw, 200000)?;
         assert_eq!(version, CURRENT_PROTOCOL_VERSION);
         assert_eq!(msg_type, CommsMessageType::Keys);
         assert_eq!(received_program_id, program_id);
@@ -526,8 +571,14 @@ mod tests {
         )?;
 
         let (_, raw) = env.receive_one()?;
-        let (version, msg_type, received_program_id, data, _, signature) =
-            deserialize_msg(raw, 200000)?;
+        let DecodedPeerMessage {
+            version,
+            msg_type,
+            program_id: received_program_id,
+            data,
+            signature,
+            ..
+        } = deserialize_msg(&raw, 200000)?;
         assert_eq!(version, CURRENT_PROTOCOL_VERSION);
         assert_eq!(msg_type, CommsMessageType::VerificationKey);
         assert_eq!(received_program_id, program_id);
@@ -657,20 +708,13 @@ mod tests {
 
         let serialized_msg =
             serialize_msg(version, msg_type, &program_id, msg, 0, signature.clone()).unwrap();
-        let (
-            deserialized_version,
-            deserialized_msg_type,
-            deserialized_program_id,
-            deserialized_msg,
-            _deserialized_timestamp,
-            deserialized_signature,
-        ) = deserialize_msg(serialized_msg, 200000).unwrap();
+        let deserialized = deserialize_msg(&serialized_msg, 200000).unwrap();
 
-        assert_eq!(deserialized_version, version);
-        assert_eq!(deserialized_msg_type, msg_type);
-        assert_eq!(deserialized_program_id, program_id);
-        assert_eq!(deserialized_msg, msg);
-        assert_eq!(deserialized_signature, signature);
+        assert_eq!(deserialized.version, version);
+        assert_eq!(deserialized.msg_type, msg_type);
+        assert_eq!(deserialized.program_id, program_id);
+        assert_eq!(deserialized.data, msg);
+        assert_eq!(deserialized.signature, signature);
     }
 
     // TODO: This code section was commented out since it is no longer needed.
@@ -752,7 +796,7 @@ mod tests {
     }
 
     fn assert_invalid_message(
-        result: Result<(String, CommsMessageType, Uuid, Value, i64, Vec<u8>), BitVMXError>,
+        result: Result<DecodedPeerMessage, BitVMXError>,
         expected_fragment: &str,
     ) {
         match result {
@@ -771,7 +815,7 @@ mod tests {
     #[test]
     fn test_deserialize_msg_too_short() {
         assert_invalid_message(
-            deserialize_msg(encoded(vec![0x01, 0x00, 0x00]), 200000),
+            deserialize_msg(&encoded(vec![0x01, 0x00, 0x00]), 200000),
             "Invalid message length",
         );
     }
@@ -780,7 +824,7 @@ mod tests {
     fn test_deserialize_msg_too_long() {
         // 1 KB limit, 2 KB message
         let data = vec![0u8; 2048];
-        assert_invalid_message(deserialize_msg(encoded(data), 1), "Invalid message length");
+        assert_invalid_message(deserialize_msg(&encoded(data), 1), "Invalid message length");
     }
 
     #[test]
@@ -789,7 +833,7 @@ mod tests {
         data[0] = 0xFF;
         data[1] = 0xFF;
         assert!(matches!(
-            deserialize_msg(encoded(data), 200000),
+            deserialize_msg(&encoded(data), 200000),
             Err(BitVMXError::InvalidMsgVersion)
         ));
     }
@@ -800,7 +844,7 @@ mod tests {
         data[2] = 0xFF;
         data[3] = 0xFF;
         assert!(matches!(
-            deserialize_msg(encoded(data), 200000),
+            deserialize_msg(&encoded(data), 200000),
             Err(BitVMXError::InvalidMessageType)
         ));
     }
@@ -812,7 +856,7 @@ mod tests {
         data.extend_from_slice(&CommsMessageType::Keys.to_bytes().unwrap());
         data.extend_from_slice(b"not json at all");
         assert_invalid_message(
-            deserialize_msg(encoded(data), 200000),
+            deserialize_msg(&encoded(data), 200000),
             "Invalid JSON payload",
         );
     }
@@ -822,7 +866,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("program_id");
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "Missing program ID",
         );
     }
@@ -832,7 +876,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["program_id"] = json!(42);
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "Missing program ID",
         );
     }
@@ -842,7 +886,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["program_id"] = json!("not-a-uuid");
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "Invalid program ID",
         );
     }
@@ -852,7 +896,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("msg");
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "Missing message",
         );
     }
@@ -862,7 +906,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("timestamp");
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "timestamp",
         );
     }
@@ -872,7 +916,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["timestamp"] = json!("yesterday");
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "timestamp",
         );
     }
@@ -882,7 +926,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.as_object_mut().unwrap().remove("signature");
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "signature field",
         );
     }
@@ -892,7 +936,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!("abc");
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "signature field",
         );
     }
@@ -902,7 +946,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!([]);
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "Signature array is empty",
         );
     }
@@ -912,7 +956,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!(vec![0u8; 513]);
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "exceeds maximum allowed length",
         );
     }
@@ -922,14 +966,14 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!([1, "x", 3]);
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "is not a valid u64",
         );
 
         let mut payload = valid_payload();
         payload["signature"] = json!([1, -2, 3]);
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "is not a valid u64",
         );
     }
@@ -939,7 +983,7 @@ mod tests {
         let mut payload = valid_payload();
         payload["signature"] = json!([1, 256, 3]);
         assert_invalid_message(
-            deserialize_msg(encoded(msg_with_payload(&payload)), 200000),
+            deserialize_msg(&encoded(msg_with_payload(&payload)), 200000),
             "exceeds maximum u8 value",
         );
     }

@@ -32,6 +32,7 @@ bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scrip
 bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", tag = "v0.8.7" }
 bitvmx-protocol-builder = { git = "https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git", tag = "v0.8.7" }
 bitcoin-coordinator = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin", tag = "v0.8.7" }
+bitvmx-transaction-monitor = { git = "https://github.com/FairgateLabs/rust-bitvmx-transaction-monitor.git", tag = "v0.8.7" }
 rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", tag = "v0.8.7" }
 bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.8.7" }
 bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.8.7" }
@@ -52,6 +53,7 @@ bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job
 bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.7" }
 redact = { version = "0.1", features = ["serde", "zeroize"] }
 time = "0.3.55"
+zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", tag = "v0.8.7" }
 
 
 [dev-dependencies]
@@ -60,7 +62,6 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.8.7" }
 reqwest = "0.13.4"
 
-zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", tag = "v0.8.7" }
 [features]
 default = ["cardinal", "union"]
 cardinal = []

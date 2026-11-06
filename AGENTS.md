@@ -65,6 +65,8 @@ RUST_BACKTRACE=1 cargo test --release -- --ignored test_full
   a `RawPeer` that holds op_2's identity but speaks the comms protocol directly.
   Both lower `max_send_attempts` via `init_bitvmx_with_config` so retries exhaust in
   seconds; each runs in ~3s.
+- `poison_messages.rs` covers messages that can never succeed and must not block
+  an inbox. It runs on `TestBitVMXEnv` with no bitcoind, in plain `cargo test`.
 - Every test calling `prepare_bitcoin()` creates the same `bitcoin-regtest`
   container, so two in one binary run in parallel fail with `container name
   "/bitcoin-regtest" is already in use`. Filter to one test, or pass
@@ -86,7 +88,7 @@ cargo binstall -y cargo-llvm-cov   # one-time install
 HTML report lands in `target/coverage/html/index.html`. Baseline as of
 2026-07-13 (unit tests only): **10.54% lines / 11.75% regions / 15.61%
 functions** (TOTAL, 18942 lines). Low totals are expected — protocol code
-(`bitvmx.rs`, `cardinal/`, `union/`, `dispute/`) is only exercised by the
+(`bitvmx/`, `cardinal/`, `union/`, `dispute/`) is only exercised by the
 `#[ignore]`d integration tests; use `--nightly` or `--test file:name` to
 include those (needs bitcoind Docker).
 
@@ -96,7 +98,9 @@ include those (needs bitcoind Docker).
 src/
   main.rs            # binary: runs one or more operator instances from config/
   lib.rs             # library root; re-exports bitcoin, protocol_builder, etc.
-  bitvmx.rs          # BitVMX struct — central orchestrator / main loop (largest file)
+  bitvmx.rs          # BitVMX struct — central orchestrator / main loop (tick, construction)
+  bitvmx/            # BitVMX impl split by topic: api, job_handler, peer_messages, news,
+                     # steps (step/transaction runners), timeouts, test_support
   client.rs          # client-side API wrapper
   types.rs           # IncomingBitVMXApiMessages / OutgoingBitVMXApiMessages (broker JSON-RPC API)
   config.rs          # YAML config loading (config/*.yaml, one per operator)

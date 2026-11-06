@@ -83,6 +83,7 @@ impl DisputeConfiguration {
                 PROGRAM_TYPE_DRP.to_string(),
                 addresses,
                 leader,
+                None,
             )
             .to_string()?,
         ])

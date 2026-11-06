@@ -51,6 +51,7 @@ fn expect_updated(reply: OutgoingBitVMXApiMessages) {
 #[ignore]
 fn added_peer_survives_a_restart() -> Result<()> {
     common::config_trace();
+    let _guarded = common::prepare_bitcoin_guarded()?;
     let addr: IpAddr = "10.1.2.3".parse().unwrap();
 
     {

@@ -71,6 +71,7 @@ impl AcceptPegInSetup {
             PROGRAM_TYPE_ACCEPT_PEGIN.to_string(),
             addresses.to_vec(),
             0,
+            None,
         )?;
 
         Ok(())

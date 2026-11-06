@@ -47,15 +47,7 @@ impl Reporter {
         self.fatal_reported = true;
 
         error!("Fatal error, stopping the node: {:?}", error);
-        send_error_report(
-            broker_node,
-            &self.l2_identifier,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::Fatal,
-                Some(error.to_string()),
-            ),
-        );
+        self.report_node_error(ErrorReportKind::Fatal, error, broker_node);
     }
 
     pub(crate) fn rpc_unavailable(&mut self, error: &BitVMXError, broker_node: &BrokerNode) {
@@ -65,15 +57,7 @@ impl Reporter {
         self.rpc_unavailable = true;
 
         error!("Bitcoin node is unreachable: {:?}", error);
-        send_error_report(
-            broker_node,
-            &self.l2_identifier,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::BitcoinRpcUnavailable,
-                Some(error.to_string()),
-            ),
-        );
+        self.report_node_error(ErrorReportKind::BitcoinRpcUnavailable, error, broker_node);
     }
 
     pub(crate) fn rpc_recovered(&mut self, broker_node: &BrokerNode) {
@@ -95,26 +79,30 @@ impl Reporter {
         context: Option<&str>,
         kind: ErrorReportKind,
         broker_node: &BrokerNode,
-    ) {
+    ) -> Result<(), BitVMXError> {
         let (scope, dest) = context.map_or((ErrorScope::Node, None), resolve_scope);
-
-        send_error_report(
+        try_send_error_report(
             broker_node,
             dest.as_ref().unwrap_or(&self.l2_identifier),
             ErrorReport::new(scope, kind, None),
-        );
+        )
     }
 
-    /// Reports that the node is stopping on a non-fatal error
-    pub(crate) fn stopping(&self, error: &BitVMXError, broker_node: &BrokerNode) {
+    /// Reports a non-fatal error; the node keeps running
+    pub(crate) fn non_fatal(&self, error: &BitVMXError, broker_node: &BrokerNode) {
+        self.report_node_error(ErrorReportKind::NonFatal, error, broker_node);
+    }
+
+    fn report_node_error(
+        &self,
+        kind: ErrorReportKind,
+        error: &BitVMXError,
+        broker_node: &BrokerNode,
+    ) {
         send_error_report(
             broker_node,
             &self.l2_identifier,
-            ErrorReport::new(
-                ErrorScope::Node,
-                ErrorReportKind::NodeStopping,
-                Some(error.to_string()),
-            ),
+            ErrorReport::new(ErrorScope::Node, kind, Some(error.to_string())),
         );
     }
 }
@@ -122,52 +110,40 @@ impl Reporter {
 /// Walks the error's source chain. Takes `dyn Error` so an error borrowed from a
 /// dependency can be classified without a conversion that would consume it.
 pub fn classify(error: &(dyn Error + 'static)) -> Severity {
-    let mut next = Some(error);
-
-    while let Some(error) = next {
-        if let Some(error) = error.downcast_ref::<StorageError>() {
-            if matches!(
-                error,
-                StorageError::WriteError | StorageError::ReadError(_) | StorageError::CommitError
-            ) {
-                return Severity::Fatal;
-            }
-        }
-
-        if let Some(error) = error.downcast_ref::<BitcoinRpcError>() {
-            if matches!(
-                error,
-                BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(_))
-            ) {
-                return Severity::BitcoinNodeUnreachable;
-            }
-        }
-
-        if let Some(error) = error.downcast_ref::<BrokerError>() {
-            if error.is_fatal() {
-                return Severity::Fatal;
-            }
-        }
-
-        // Both are broker types that BitVMXError wraps directly, so they reach here without
-        // passing through BrokerError and have to be asked for their severity separately.
-        if let Some(error) = error.downcast_ref::<IdentificationError>() {
-            if error.severity().is_fatal() {
-                return Severity::Fatal;
-            }
-        }
-
-        if let Some(error) = error.downcast_ref::<RetryPolicyError>() {
-            if error.severity().is_fatal() {
-                return Severity::Fatal;
-            }
-        }
-
-        if let Some(BitVMXError::PoisonedLockError(_)) = error.downcast_ref::<BitVMXError>() {
+    for error in std::iter::successors(Some(error), |&error| error.source()) {
+        let fatal = matches!(
+            error.downcast_ref::<StorageError>(),
+            Some(
+                StorageError::WriteError
+                    | StorageError::ReadError(_)
+                    | StorageError::CommitError
+                    | StorageError::TransactionRollbackFailed
+            )
+        ) || error
+            .downcast_ref::<BrokerError>()
+            .is_some_and(BrokerError::is_fatal)
+            // Both are broker types that BitVMXError wraps directly, so they reach here without
+            // passing through BrokerError and have to be asked for their severity separately.
+            || error
+                .downcast_ref::<IdentificationError>()
+                .is_some_and(|error| error.severity().is_fatal())
+            || error
+                .downcast_ref::<RetryPolicyError>()
+                .is_some_and(|error| error.severity().is_fatal())
+            || matches!(
+                error.downcast_ref::<BitVMXError>(),
+                Some(BitVMXError::PoisonedLockError(_))
+            );
+        if fatal {
             return Severity::Fatal;
         }
 
-        next = error.source();
+        if matches!(
+            error.downcast_ref::<BitcoinRpcError>(),
+            Some(BitcoinRpcError::JsonRpc(jsonrpc::Error::Transport(_)))
+        ) {
+            return Severity::BitcoinNodeUnreachable;
+        }
     }
 
     Severity::Other
@@ -180,7 +156,7 @@ pub fn is_fatal(error: &(dyn Error + 'static)) -> bool {
 
 /// Resolves the `context` a coordinator news item carries into who the report concerns
 /// and, for API requests, who to answer. `None` destination means send to L2.
-pub(crate) fn resolve_scope(context: &str) -> (ErrorScope, Option<Identifier>) {
+fn resolve_scope(context: &str) -> (ErrorScope, Option<Identifier>) {
     if let Ok(context) = Context::from_string(context) {
         return match context {
             // Carries the `Identifier` so the failure reaches whoever asked, not L2.
@@ -207,17 +183,19 @@ pub(crate) fn resolve_scope(context: &str) -> (ErrorScope, Option<Identifier>) {
 /// Sends a push-style [`ErrorReport`] to `dest`. Logs and drops on failure: a report that
 /// cannot be delivered must not take down the path that was only reporting a condition.
 pub(crate) fn send_error_report(channel: &BrokerNode, dest: &Identifier, report: ErrorReport) {
-    let message = match OutgoingBitVMXApiMessages::Error(report).to_string() {
-        Ok(message) => message,
-        Err(e) => {
-            error!("Could not serialize error report: {:?}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = channel.send_service(dest, message) {
+    if let Err(e) = try_send_error_report(channel, dest, report) {
         error!("Could not send error report to {:?}: {:?}", dest, e);
     }
+}
+
+/// Sends an error report, propagating failures to transaction-owning callers.
+pub(crate) fn try_send_error_report(
+    channel: &BrokerNode,
+    dest: &Identifier,
+    report: ErrorReport,
+) -> Result<(), BitVMXError> {
+    channel.send_service(dest, OutgoingBitVMXApiMessages::Error(report).to_string()?)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -228,6 +206,39 @@ mod tests {
     use bitvmx_broker::storage::BrokerStorageError;
     use bitvmx_wallet::wallet::errors::WalletError;
     use uuid::Uuid;
+
+    #[test]
+    fn fallible_error_report_reaches_l2() {
+        let env = crate::test_utils::TestProgramContextEnv::new("fallible-report").unwrap();
+        try_send_error_report(
+            &env.context.broker_channel,
+            &env.context.components_config.l2,
+            ErrorReport::new(ErrorScope::Node, ErrorReportKind::FundingNotAvailable, None),
+        )
+        .unwrap();
+        let messages = env.l2_messages().unwrap();
+        assert!(matches!(
+            messages.as_slice(),
+            [OutgoingBitVMXApiMessages::Error(ErrorReport {
+                kind: ErrorReportKind::FundingNotAvailable,
+                ..
+            })]
+        ));
+    }
+
+    #[test]
+    fn fallible_error_report_propagates_send_failure() {
+        let env = crate::test_utils::TestProgramContextEnv::new("fallible-report-error").unwrap();
+        let invalid_dest = Identifier::new(String::new(), 1);
+        let report =
+            || ErrorReport::new(ErrorScope::Node, ErrorReportKind::FundingNotAvailable, None);
+        assert!(
+            try_send_error_report(&env.context.broker_channel, &invalid_dest, report(),).is_err()
+        );
+        // Best-effort reporting remains safe for paths that cannot propagate failures.
+        send_error_report(&env.context.broker_channel, &invalid_dest, report());
+        assert!(env.l2_messages().unwrap().is_empty());
+    }
 
     #[test]
     fn a_failed_broker_write_is_fatal() {
