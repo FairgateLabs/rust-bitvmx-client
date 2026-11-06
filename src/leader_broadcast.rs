@@ -5,8 +5,7 @@ use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::{participant::CommsAddress, program::Program};
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::{
-    FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
-    ResultDisposition,
+    FailureDetail, NoOpReason, PeerSetupFaultReason, ProgramContext, ResultDisposition,
 };
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use bitvmx_broker::settings::COMMS_ID;
@@ -373,10 +372,10 @@ impl LeaderBroadcastHelper {
                     "Rejecting malformed BroadcastedMessage from leader {} for {}: {:?}",
                     leader_pubkey_hash, program_id, error
                 );
-                return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: leader_pubkey_hash.clone(),
-                    reason: PeerSetupFaultReason::MalformedMessage,
-                }));
+                return Ok(ResultDisposition::fail_peer_reason(
+                    leader_pubkey_hash.clone(),
+                    PeerSetupFaultReason::MalformedMessage,
+                ));
             }
         };
 
@@ -390,10 +389,10 @@ impl LeaderBroadcastHelper {
         if broadcasted_msg.original_messages.is_empty()
             || !broadcasted_msg.original_msg_type.should_store()
         {
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: leader_pubkey_hash.clone(),
-                reason: PeerSetupFaultReason::UnauthorizedMessage,
-            }));
+            return Ok(ResultDisposition::fail_peer_reason(
+                leader_pubkey_hash.clone(),
+                PeerSetupFaultReason::UnauthorizedMessage,
+            ));
         }
 
         let outcomes = Self::evaluate_originals(
@@ -438,10 +437,10 @@ impl LeaderBroadcastHelper {
             if original_msg.msg_type != broadcasted_msg.original_msg_type
                 || !seen_senders.insert(&original_msg.sender_pubkey_hash)
             {
-                outcomes.push(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: leader_pubkey_hash.clone(),
-                    reason: PeerSetupFaultReason::UnauthorizedMessage,
-                }));
+                outcomes.push(ResultDisposition::fail_peer_reason(
+                    leader_pubkey_hash.clone(),
+                    PeerSetupFaultReason::UnauthorizedMessage,
+                ));
                 continue;
             }
 
@@ -538,10 +537,10 @@ impl LeaderBroadcastHelper {
                 "Leader {} forwarded an original claiming non-participant sender {}",
                 leader_pubkey_hash, original_msg.sender_pubkey_hash
             );
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: leader_pubkey_hash.clone(),
-                reason: PeerSetupFaultReason::UnauthorizedMessage,
-            }));
+            return Ok(ResultDisposition::fail_peer_reason(
+                leader_pubkey_hash.clone(),
+                PeerSetupFaultReason::UnauthorizedMessage,
+            ));
         }
 
         if let Some(reason) =
@@ -560,10 +559,10 @@ impl LeaderBroadcastHelper {
             )
             .is_err()
         {
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: original_msg.sender_pubkey_hash.clone(),
-                reason: PeerSetupFaultReason::MalformedMessage,
-            }));
+            return Ok(ResultDisposition::fail_peer_reason(
+                original_msg.sender_pubkey_hash.clone(),
+                PeerSetupFaultReason::MalformedMessage,
+            ));
         }
 
         SignatureVerifier::authenticate_message(

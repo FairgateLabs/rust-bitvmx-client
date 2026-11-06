@@ -229,7 +229,7 @@ broker_node)`.
 - **Redundant check (applied, 404):** `!original_msg.msg_type.should_store()` can't be true. Line 403 has just
   established that the type equals `original_msg_type`, which line 392 already checked. The
   `seen_senders.insert` that follows still runs in the same cases.
-- **`fail_peer_reason` (377, 394, 407, 500, 522):** five `fail_peer(PeerSetupFault { .. })` calls can
+- **`fail_peer_reason` (applied, 377, 394, 407, 500, 522):** five `fail_peer(PeerSetupFault { .. })` calls can
   use the existing helper.
 - **`retry_pending` backoff (`expected_job.rs:257-268`):** replace
   `.as_ref().map(|_| ...).transpose()?` with a plain `if job.dispatch.is_some()`, and move the delay
