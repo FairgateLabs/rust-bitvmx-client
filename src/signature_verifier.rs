@@ -15,7 +15,7 @@ use crate::{
 use bitvmx_broker::{identification::identifier::PubkHash, BrokerNode};
 use key_manager::key_manager::KeyManager;
 use serde_json::Value;
-use std::{collections::HashSet, rc::Rc};
+use std::rc::Rc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -90,41 +90,25 @@ impl OperatorVerificationStore {
         peers: &[CommsAddress],
     ) -> Result<(), BitVMXError> {
         let my_pubkey_hash = comms.get_pubk_hash();
-        let peer_hashes: Vec<PubkHash> = peers
-            .iter()
-            .filter(|peer| peer.pubkey_hash != my_pubkey_hash)
-            .map(|peer| peer.pubkey_hash.clone())
-            .collect();
-
-        if peer_hashes.is_empty() {
-            return Ok(());
-        }
-
-        let missing = OperatorVerificationStore::missing(globals, &peer_hashes)?;
-        if missing.is_empty() {
-            return Ok(());
-        }
-
-        let missing_set: HashSet<_> = missing.into_iter().collect();
         for peer in peers {
-            if peer.pubkey_hash == my_pubkey_hash {
+            if peer.pubkey_hash == my_pubkey_hash
+                || OperatorVerificationStore::has(globals, &peer.pubkey_hash)?
+            {
                 continue;
             }
-            if missing_set.contains(&peer.pubkey_hash) {
-                info!(
-                    "I'm {:?} requesting verification key from peer: {:?}",
-                    my_pubkey_hash, peer.pubkey_hash
-                );
-                request(
-                    comms,
-                    key_manager,
-                    rsa_public_key,
-                    program_id,
-                    peer.clone(),
-                    CommsMessageType::VerificationKeyRequest,
-                    VerificationKeyRequestPayload,
-                )?;
-            }
+            info!(
+                "I'm {:?} requesting verification key from peer: {:?}",
+                my_pubkey_hash, peer.pubkey_hash
+            );
+            request(
+                comms,
+                key_manager,
+                rsa_public_key,
+                program_id,
+                peer.clone(),
+                CommsMessageType::VerificationKeyRequest,
+                VerificationKeyRequestPayload,
+            )?;
         }
         Ok(())
     }
@@ -279,7 +263,7 @@ impl SignatureVerifier {
         peer_address: &CommsAddress,
         data: &Value,
     ) -> Result<ResultDisposition, BitVMXError> {
-        let pubkey_hash = peer_address.pubkey_hash.clone();
+        let pubkey_hash = &peer_address.pubkey_hash;
         let announcement = match VerificationKeyAnnouncement::from_value(data) {
             Ok(announcement) => announcement,
             Err(error) => {
@@ -311,13 +295,13 @@ impl SignatureVerifier {
                 ));
             }
         };
-        if computed_hash != peer_address.pubkey_hash {
+        if &computed_hash != pubkey_hash {
             error!(
                 "Verification key fingerprint mismatch for peer {}",
                 pubkey_hash
             );
             return Ok(ResultDisposition::fail_peer_reason(
-                pubkey_hash,
+                pubkey_hash.clone(),
                 PeerSetupFaultReason::VerificationKeyFingerprintMismatch,
             ));
         }
@@ -326,7 +310,7 @@ impl SignatureVerifier {
         let Ok(verification_key) = canonical_verification_key(&announcement.verification_key)
         else {
             return Ok(ResultDisposition::fail_peer_reason(
-                pubkey_hash,
+                pubkey_hash.clone(),
                 PeerSetupFaultReason::InvalidVerificationKey,
             ));
         };
@@ -336,11 +320,7 @@ impl SignatureVerifier {
             pubkey_hash
         );
 
-        OperatorVerificationStore::store(
-            &program_context.globals,
-            &pubkey_hash,
-            &verification_key,
-        )?;
+        OperatorVerificationStore::store(&program_context.globals, pubkey_hash, &verification_key)?;
 
         Ok(ResultDisposition::Success)
     }

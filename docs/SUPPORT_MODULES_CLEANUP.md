@@ -231,25 +231,25 @@ broker_node)`.
   `seen_senders.insert` that follows still runs in the same cases.
 - **`fail_peer_reason` (applied, 377, 394, 407, 500, 522):** five `fail_peer(PeerSetupFault { .. })` calls can
   use the existing helper.
-- **`retry_pending` backoff (`expected_job.rs:257-268`):** replace
+- **`retry_pending` backoff (applied, `expected_job.rs:257-268`):** replace
   `.as_ref().map(|_| ...).transpose()?` with a plain `if job.dispatch.is_some()`, and move the delay
   calculation to `retry_delay_ms(attempts)`.
-- **`register_with_dispatch` (160-198):** it builds the whole `ExpectedJob` before the check that may
+- **`register_with_dispatch` (applied, 160-198):** it builds the whole `ExpectedJob` before the check that may
   discard it. Compare `dispatcher`, `target` and the timeout first, and build the job only for a new
   registration. `job.execution_timeout_ms.map(Duration::from_millis)` (195) can become
   `Some(timeout)`. Past `u64::MAX` ms both forms saturate to the same deadline.
-- **`redispatch_due` target check (`expected_job.rs:322-328`):** the check runs after `send_service`
+- **`redispatch_due` target check (applied, `expected_job.rs:322-328`):** the check runs after `send_service`
   and relies on rollback to undo the outbox write. Move it between the `warn!` and the send. The result
   and the logs stay the same, because `run_transaction` (`steps.rs:199`) already rolls back on this
   error.
-- **`request_missing_verification_keys` (`signature_verifier.rs:92-129`):** it builds a hash list,
+- **`request_missing_verification_keys` (applied, `signature_verifier.rs:92-129`):** it builds a hash list,
   computes the missing ones, builds a set, and loops over the peers again, with two early returns that
   the loop would handle anyway. A single loop over non-self peers with `Self::has` is enough. The only
   change is on a storage read error, where earlier requests may already be in the outbox. Both callers
   run in a transaction that rolls those back.
-- **`handle_verification_key_announcement` (283):** borrow `&peer_address.pubkey_hash` instead of
+- **`handle_verification_key_announcement` (applied, 283):** borrow `&peer_address.pubkey_hash` instead of
   cloning it and then comparing against the original at 315.
-- **`get_original_messages` (`leader_broadcast.rs:231-243`):** replace the manual loop with
+- **`get_original_messages` (applied, `leader_broadcast.rs:231-243`):** replace the manual loop with
   `.into_iter().map(...).collect()`. Keep the `InvalidMessage` mapping, which rules out
   `partial_get` because it would return `ConversionError`.
 

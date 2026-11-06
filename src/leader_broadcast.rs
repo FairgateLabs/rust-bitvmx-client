@@ -225,21 +225,18 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
     ) -> Result<Vec<OriginalMessage>, BitVMXError> {
         let prefix = get_original_messages_prefix(context_id, msg_type)?;
-        let stored_messages = self.store.partial_compare(&prefix, None)?;
-
-        let mut messages = Vec::new();
-        for (_, msg_json) in stored_messages.iter() {
-            // Deserialize each message individually
-            let msg: OriginalMessage = serde_json::from_str(msg_json).map_err(|e| {
-                BitVMXError::InvalidMessage(format!(
-                    "Failed to deserialize original message: {:?}",
-                    e
-                ))
-            })?;
-            messages.push(msg);
-        }
-
-        Ok(messages)
+        self.store
+            .partial_compare(&prefix, None)?
+            .into_iter()
+            .map(|(_, msg_json)| {
+                serde_json::from_str(&msg_json).map_err(|e| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Failed to deserialize original message: {:?}",
+                        e
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// Check if all expected messages have been received

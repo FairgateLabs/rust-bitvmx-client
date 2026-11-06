@@ -164,6 +164,16 @@ impl ExpectedJobs {
         let target = JobTarget::derive(dispatcher, &job_id)?.expected_target();
         let timeout = execution_timeout.unwrap_or(DEFAULT_JOB_TIMEOUT);
         let execution_timeout_ms = Some(duration_ms(timeout));
+
+        if let Some(existing) = self.get(&job_id)? {
+            if existing.dispatcher == dispatcher
+                && existing.target == target
+                && existing.execution_timeout_ms == execution_timeout_ms
+            {
+                return Ok(ExpectedJobRegistration::AlreadyExists(existing.status));
+            }
+            return Err(BitVMXError::DispatcherJobConflict(job_id));
+        }
         let job = ExpectedJob {
             job_id,
             dispatcher,
@@ -174,25 +184,12 @@ impl ExpectedJobs {
             retry_not_before_ms: None,
             execution_timeout_ms,
         };
-
-        if let Some(existing) = self.get(&job.job_id)? {
-            if existing.dispatcher == job.dispatcher
-                && existing.target == job.target
-                && existing.execution_timeout_ms == job.execution_timeout_ms
-            {
-                return Ok(ExpectedJobRegistration::AlreadyExists(existing.status));
-            }
-            return Err(BitVMXError::DispatcherJobConflict(job.job_id));
-        }
         let mut ids = self.load_ids()?;
         ids.push(job.job_id.clone());
         self.storage.set(Self::key(&job.job_id)?, &job, None)?;
         self.storage.set(EXPECTED_JOB_IDS_KEY.as_ref(), ids, None)?;
-        self.timeouts.register_job(
-            job.job_id.clone(),
-            job.execution_timeout_ms.map(Duration::from_millis),
-            false,
-        )?;
+        self.timeouts
+            .register_job(job.job_id, Some(timeout), false)?;
         Ok(ExpectedJobRegistration::Registered)
     }
 
@@ -247,17 +244,14 @@ impl ExpectedJobs {
         let mut job = self.get_registered(job_id)?;
         self.timeouts.cancel_job(job_id)?;
         job.retry_attempts = job.retry_attempts.saturating_add(1);
-        let exponent = job.retry_attempts.saturating_sub(1).min(31);
-        let delay = RETRY_MIN_DELAY_MS
-            .saturating_mul(1_u64 << exponent)
-            .min(RETRY_MAX_DELAY_MS);
+        let delay = retry_delay_ms(job.retry_attempts);
         // Records created before durable dispatch payloads were introduced cannot be
         // redispatched, but must still settle the failed input without poisoning inbox.
-        job.retry_not_before_ms = job
-            .dispatch
-            .as_ref()
-            .map(|_| bitvmx_broker::retry::now_ms().map(|now| now.saturating_add(delay)))
-            .transpose()?;
+        job.retry_not_before_ms = if job.dispatch.is_some() {
+            Some(bitvmx_broker::retry::now_ms()?.saturating_add(delay))
+        } else {
+            None
+        };
         error!(
             "Dispatcher job '{}' failed and will be retried: {}",
             job_id, reason
@@ -303,13 +297,13 @@ impl ExpectedJobs {
                 "Retrying dispatcher job '{}' now (attempt {})",
                 job_id, job.retry_attempts
             );
-            broker_channel.send_service(&dispatch.destination, dispatch.message)?;
             if !matches!(job.target, ExpectedJobTarget::Program(_)) {
                 return Err(BitVMXError::InvalidState(format!(
                     "retryable dispatcher job '{}' is not a runtime program job",
                     job_id
                 )));
             }
+            broker_channel.send_service(&dispatch.destination, dispatch.message)?;
             self.timeouts.register_job(
                 job_id.clone(),
                 job.execution_timeout_ms.map(Duration::from_millis),
@@ -338,6 +332,13 @@ impl ExpectedJobs {
         self.storage.set(Self::key(job_id)?, job, None)?;
         Ok(())
     }
+}
+
+fn retry_delay_ms(attempts: u32) -> u64 {
+    let exponent = attempts.saturating_sub(1).min(31);
+    RETRY_MIN_DELAY_MS
+        .saturating_mul(1_u64 << exponent)
+        .min(RETRY_MAX_DELAY_MS)
 }
 
 #[cfg(test)]
