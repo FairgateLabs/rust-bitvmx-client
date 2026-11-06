@@ -604,6 +604,26 @@ mod tests {
         }
     }
 
+    const LEADER_HASH: &str = "leader-hash";
+
+    fn process(
+        env: &TestProgramContextEnv,
+        program: &Program,
+        program_id: Uuid,
+        data: Value,
+        queue: &MessageQueue,
+    ) -> ResultDisposition {
+        LeaderBroadcastHelper::process_broadcasted_message(
+            &env.context,
+            program,
+            &LEADER_HASH.to_string(),
+            program_id,
+            data,
+            queue,
+        )
+        .unwrap()
+    }
+
     fn install_test_program(
         env: &mut TestProgramContextEnv,
         program_id: Uuid,
@@ -756,12 +776,8 @@ mod tests {
         let msg = BroadcastedMessage {
             original_msg_type: CommsMessageType::Keys,
             original_messages: vec![OriginalMessage {
-                sender_pubkey_hash: "test_hash".to_string(),
-                msg_type: CommsMessageType::PublicNonces, // Different type
-                data: json!({}),
-                original_timestamp: 1234567890,
-                original_signature: vec![1, 2, 3],
-                version: "1.0".to_string(),
+                msg_type: CommsMessageType::PublicNonces,
+                ..test_original_message("test_hash")
             }],
         };
         assert!(msg.validate().is_err());
@@ -772,21 +788,10 @@ mod tests {
         let msg = BroadcastedMessage {
             original_msg_type: CommsMessageType::Keys,
             original_messages: vec![
+                test_original_message("test_hash"),
                 OriginalMessage {
-                    sender_pubkey_hash: "test_hash".to_string(),
-                    msg_type: CommsMessageType::Keys,
-                    data: json!({}),
-                    original_timestamp: 1234567890,
-                    original_signature: vec![1, 2, 3],
-                    version: "1.0".to_string(),
-                },
-                OriginalMessage {
-                    sender_pubkey_hash: "test_hash".to_string(), // Duplicate
-                    msg_type: CommsMessageType::Keys,
-                    data: json!({}),
-                    original_timestamp: 1234567890,
                     original_signature: vec![4, 5, 6],
-                    version: "1.0".to_string(),
+                    ..test_original_message("test_hash")
                 },
             ],
         };
@@ -797,14 +802,7 @@ mod tests {
     fn test_broadcasted_message_validation_valid() {
         let msg = BroadcastedMessage {
             original_msg_type: CommsMessageType::Keys,
-            original_messages: vec![OriginalMessage {
-                sender_pubkey_hash: "test_hash".to_string(),
-                msg_type: CommsMessageType::Keys,
-                data: json!({}),
-                original_timestamp: 1234567890,
-                original_signature: vec![1, 2, 3],
-                version: "1.0".to_string(),
-            }],
+            original_messages: vec![test_original_message("test_hash")],
         };
         assert!(msg.validate().is_ok());
     }
@@ -812,12 +810,8 @@ mod tests {
     #[test]
     fn test_original_message_validation_empty_signature() {
         let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![], // Empty
-            version: "1.0".to_string(),
+            original_signature: vec![],
+            ..test_original_message("test_hash")
         };
         assert!(msg.validate().is_err());
     }
@@ -825,12 +819,8 @@ mod tests {
     #[test]
     fn test_original_message_validation_empty_version() {
         let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3],
-            version: "".to_string(), // Empty
+            version: String::new(),
+            ..test_original_message("test_hash")
         };
         assert!(msg.validate().is_err());
     }
@@ -838,33 +828,21 @@ mod tests {
     #[test]
     fn test_original_message_validation_broadcasted_type() {
         let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Broadcasted, // Not allowed
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3],
-            version: "1.0".to_string(),
+            msg_type: CommsMessageType::Broadcasted,
+            ..test_original_message("test_hash")
         };
         assert!(msg.validate().is_err());
     }
 
     #[test]
     fn test_original_message_validation_valid() {
-        let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3],
-            version: "1.0".to_string(),
-        };
+        let msg = test_original_message("test_hash");
         assert!(msg.validate().is_ok());
     }
 
     #[test]
     fn test_original_message_validation_empty_pubkey_hash() {
-        let mut msg = test_original_message("");
-        msg.sender_pubkey_hash = String::new();
+        let msg = test_original_message("");
         assert!(msg.validate().is_err());
     }
 
@@ -1064,15 +1042,14 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        LeaderBroadcastHelper::process_broadcasted_message(
-            &env.context,
+        let disposition = process(
+            &env,
             &program,
-            &"leader-hash".to_string(),
             program_id,
             serde_json::to_value(&broadcast).unwrap(),
             &queue,
-        )
-        .unwrap();
+        );
+        assert_eq!(disposition, ResultDisposition::Success);
 
         // The reconstructed original is queued and round-trips back to the
         // exact message the sender signed
@@ -1118,15 +1095,13 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
-            &env.context,
+        let disposition = process(
+            &env,
             &program,
-            &"leader-hash".to_string(),
             program_id,
             serde_json::to_value(&broadcast).unwrap(),
             &queue,
-        )
-        .unwrap();
+        );
 
         assert_eq!(
             disposition,
@@ -1163,7 +1138,7 @@ mod tests {
         )
         .unwrap();
         let mut forged = signed_self_original(&env, &program_id, json!({"step": "forged"}));
-        forged.sender_pubkey_hash = mallory;
+        forged.sender_pubkey_hash = mallory.clone();
         forged.data = json!({"step": "tampered"});
 
         let broadcast = BroadcastedMessage {
@@ -1172,16 +1147,20 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
-            &env.context,
+        let disposition = process(
+            &env,
             &program,
-            &"leader-hash".to_string(),
             program_id,
             serde_json::to_value(&broadcast).unwrap(),
             &queue,
-        )
-        .unwrap();
-        assert!(matches!(disposition, ResultDisposition::Fail(_)));
+        );
+        assert_eq!(
+            disposition,
+            ResultDisposition::fail_peer_reason(
+                mallory,
+                PeerSetupFaultReason::AuthenticationRejected
+            )
+        );
 
         // All-or-nothing: the valid message must not have been queued either
         assert!(queue.is_empty().unwrap());
@@ -1200,17 +1179,21 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
-            &env.context,
+        let disposition = process(
+            &env,
             &program,
-            &"leader-hash".to_string(),
             program_id,
             serde_json::to_value(&broadcast).unwrap(),
             &queue,
-        )
-        .unwrap();
+        );
 
-        assert!(matches!(disposition, ResultDisposition::Fail(_)));
+        assert_eq!(
+            disposition,
+            ResultDisposition::fail_peer_reason(
+                LEADER_HASH.to_string(),
+                PeerSetupFaultReason::UnauthorizedMessage
+            )
+        );
         assert!(queue.is_empty().unwrap());
     }
 
@@ -1221,71 +1204,20 @@ mod tests {
         let program = install_test_program(&mut env, program_id, vec![]);
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = LeaderBroadcastHelper::process_broadcasted_message(
-            &env.context,
+        let disposition = process(
+            &env,
             &program,
-            &"leader-hash".to_string(),
             program_id,
             json!("not a broadcasted message"),
             &queue,
-        )
-        .unwrap();
-        assert!(matches!(disposition, ResultDisposition::Fail(_)));
+        );
+        assert_eq!(
+            disposition,
+            ResultDisposition::fail_peer_reason(
+                LEADER_HASH.to_string(),
+                PeerSetupFaultReason::MalformedMessage
+            )
+        );
         assert!(queue.is_empty().unwrap());
-    }
-
-    #[test]
-    fn test_broadcasted_message_serialization() {
-        let msg = BroadcastedMessage {
-            original_msg_type: CommsMessageType::Keys,
-            original_messages: vec![OriginalMessage {
-                sender_pubkey_hash: "test_hash".to_string(),
-                msg_type: CommsMessageType::Keys,
-                data: json!({"key": "value"}),
-                original_timestamp: 1234567890,
-                original_signature: vec![1, 2, 3],
-                version: "1.0".to_string(),
-            }],
-        };
-
-        // Serialize
-        let serialized = serde_json::to_string(&msg).unwrap();
-        assert!(!serialized.is_empty());
-
-        // Deserialize
-        let deserialized: BroadcastedMessage = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.original_msg_type, msg.original_msg_type);
-        assert_eq!(
-            deserialized.original_messages.len(),
-            msg.original_messages.len()
-        );
-        assert_eq!(
-            deserialized.original_messages[0].sender_pubkey_hash,
-            msg.original_messages[0].sender_pubkey_hash
-        );
-    }
-
-    #[test]
-    fn test_original_message_serialization() {
-        let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({"key": "value"}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3, 4, 5],
-            version: "1.0".to_string(),
-        };
-
-        // Serialize
-        let serialized = serde_json::to_string(&msg).unwrap();
-        assert!(!serialized.is_empty());
-
-        // Deserialize
-        let deserialized: OriginalMessage = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.sender_pubkey_hash, msg.sender_pubkey_hash);
-        assert_eq!(deserialized.msg_type, msg.msg_type);
-        assert_eq!(deserialized.original_timestamp, msg.original_timestamp);
-        assert_eq!(deserialized.original_signature, msg.original_signature);
-        assert_eq!(deserialized.version, msg.version);
     }
 }

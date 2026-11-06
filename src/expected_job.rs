@@ -346,12 +346,8 @@ mod tests {
     use super::*;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
 
-    fn expected_jobs(storage: Rc<Storage>) -> ExpectedJobs {
-        ExpectedJobs::new(storage)
-    }
-
     #[test]
-    fn expected_job_target_variants_round_trip_in_the_new_format() {
+    fn expected_job_target_variants_round_trip() {
         let id = Uuid::new_v4();
         let variants = [
             (ExpectedJobTarget::Setup(id), JobDispatcherType::Garbler),
@@ -387,7 +383,7 @@ mod tests {
     #[test]
     fn registration_is_idempotent_for_every_existing_status() {
         let dir = TestStorageDir::new("expected-job-registration");
-        let jobs = expected_jobs(dir.storage());
+        let jobs = ExpectedJobs::new(dir.storage());
         let job_id = Uuid::new_v4().to_string();
 
         assert_eq!(
@@ -413,7 +409,7 @@ mod tests {
     fn terminal_job_history_survives_facility_reconstruction() {
         let dir = TestStorageDir::new("expected-job-terminal-history");
         let storage = dir.storage();
-        let jobs = expected_jobs(storage.clone());
+        let jobs = ExpectedJobs::new(storage.clone());
         let completed = Uuid::new_v4().to_string();
         let failed = Uuid::new_v4().to_string();
         let discarded = Context::ProgramStep(Uuid::new_v4(), "execute-round-1".to_string())
@@ -434,7 +430,7 @@ mod tests {
         // Reconstructing the online facility models a restart. Terminal records
         // remain the durable deduplication and diagnostic history; no online
         // maintenance path removes them.
-        let restarted = expected_jobs(storage);
+        let restarted = ExpectedJobs::new(storage);
         assert!(matches!(
             restarted.get(&completed).unwrap().unwrap().status,
             ExpectedJobStatus::Completed
@@ -452,7 +448,7 @@ mod tests {
     #[test]
     fn updating_an_unknown_job_is_an_error() {
         let dir = TestStorageDir::new("unknown-expected-job");
-        let jobs = expected_jobs(dir.storage());
+        let jobs = ExpectedJobs::new(dir.storage());
         assert!(matches!(
             jobs.complete(&Uuid::new_v4().to_string()),
             Err(BitVMXError::InvalidState(_))
@@ -462,7 +458,7 @@ mod tests {
     #[test]
     fn runtime_failure_durably_schedules_the_same_envelope_with_backoff() {
         let dir = TestStorageDir::new("expected-job-retry");
-        let jobs = expected_jobs(dir.storage());
+        let jobs = ExpectedJobs::new(dir.storage());
         let job_id = Context::ProgramStep(Uuid::new_v4(), "execute-round-1".to_string())
             .to_string()
             .unwrap();

@@ -204,7 +204,9 @@ mod tests {
         let dir = TestStorageDir::new("operation-timeout-cancel");
         let timeouts = OperationTimeouts::new(dir.storage());
         let program_id = Uuid::new_v4();
-        timeouts.register_setup(program_id, None).unwrap();
+        timeouts
+            .register_setup(program_id, Some(Duration::ZERO))
+            .unwrap();
         timeouts.cancel_setup(program_id).unwrap();
         timeouts.cancel_setup(program_id).unwrap();
         assert!(timeouts.expired(10).unwrap().is_empty());

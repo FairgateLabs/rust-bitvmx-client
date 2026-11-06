@@ -288,35 +288,36 @@ broker_node)`.
 
 ## Tests
 
-- **Weak assertion in `cancellation_is_idempotent` (`operation_timeout.rs:185`):** it registers with
+- **Weak assertion in `cancellation_is_idempotent` (applied, `operation_timeout.rs:185`):** it registers with
   the default 1-hour deadline and then asserts `expired(10)` is empty, which holds even if `cancel`
   does nothing. Assert `timeouts.get(&id)` is `None`, or register with `Duration::ZERO`.
-- **Weak assertions in `leader_broadcast.rs`:**
+- **Weak assertions in `leader_broadcast.rs` (applied):**
   - `process_broadcasted_message_queues_verified_original` (1069-1079) ignores the returned
     disposition. Assert `Success`.
   - Three tests (1194, 1226, 1249) only assert `Fail(_)`, so they pass with the wrong peer or reason.
     Assert the fault: the sender for a bad signature, the leader for a non-participant or malformed
     envelope.
-- **Duplicate tests in `signature_verifier.rs`:** `verify_message_signature_accepts_valid_payload`
+- **Duplicate tests in `signature_verifier.rs` (applied):** `verify_message_signature_accepts_valid_payload`
   (376) and `verify_message_signature_detects_tampering` (426) repeat
   `authenticate_message_accepts_valid_and_rejects_tampered` (682). Remove the first two.
-- **Stale names:** the remaining `verify_message_signature_*` tests should be named
+- **Stale names (applied):** the remaining `verify_message_signature_*` tests should be named
   `authenticate_message_*`. In `expected_job.rs:389`, "in_the_new_format" no longer contrasts with
   anything.
-- **Serialization tests (`leader_broadcast.rs:1254-1306`):** they only round-trip derived serde code
+- **Serialization tests (applied, `leader_broadcast.rs:1254-1306`):** they only round-trip derived serde code
   and assert `!serialized.is_empty()`. Neither pins the wire format, and the
   `process_broadcasted_message_*` tests already go through serde. Remove them.
-- **Setup duplication in `leader_broadcast.rs`:**
+- **Setup duplication in `leader_broadcast.rs` (applied):**
   - 10 `OriginalMessage` literals can use `test_original_message` plus one changed field.
   - 5 copies of the `process_broadcasted_message` call can share one helper.
   - Line 869 reassigns the field that line 868 already set to empty.
-- **Setup duplication elsewhere:**
+- **Setup duplication elsewhere (applied, except the last point):**
   - `expected_jobs` (`expected_job.rs:384`) only forwards to `ExpectedJobs::new`.
   - `build_test_env` (`signature_verifier.rs:371`) only fixes a directory name.
-  - A `sign_test_message` helper can replace the repeated construct-then-sign blocks.
-- **Needless code in `signature_verifier.rs` tests:** `msg_type.clone()` on a `Copy` type, and
+  - A `sign_test_message` helper can replace the repeated construct-then-sign blocks. Not applied:
+    after the duplicate tests were removed, only one such block remains.
+- **Needless code in `signature_verifier.rs` tests (applied):** `msg_type.clone()` on a `Copy` type, and
   `&globals` or `&rsa_public_key` on values that are already references.
-- **`tests/message_queue_test.rs`:** `test_message_queue_persistence` repeats
+- **`tests/message_queue_test.rs` (applied, using `TestStorageDir`):** `test_message_queue_persistence` repeats
   `queue_persists_across_storage_reopen` (`message_queue.rs:574`), and both tests write under `/tmp`.
   Remove the first, and use `TestStorageDir` or `std::env::temp_dir()` for the other.
 - **Flaky `test_queue_no_starvation` (applied, `tests/message_queue_test.rs:62`):** its loop got only

@@ -334,102 +334,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
 
-    fn build_test_env() -> Result<TestProgramContextEnv, BitVMXError> {
-        TestProgramContextEnv::new("sigver-unit")
-    }
-
-    #[test]
-    fn verify_message_signature_accepts_valid_payload() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
-        let (key_manager, rsa_public_key) = (&env.context.key_manager, &env.context.rsa_public_key);
-        let program_id = Uuid::new_v4();
-        let msg_type = CommsMessageType::Keys;
-        let data = json!({ "payload": "value" });
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-        let my_pubkey_hash = env.context.comms.get_pubk_hash();
-        let sender_pubkey_hash = my_pubkey_hash.clone();
-        let signature = {
-            let message = construct_message(
-                &program_id.to_string(),
-                "1.0",
-                msg_type.clone(),
-                &data,
-                timestamp,
-            )?;
-            key_manager
-                .sign_rsa_message(message.as_bytes(), &rsa_public_key)?
-                .to_bytes()
-                .to_vec()
-        };
-
-        let outcome = SignatureVerifier::authenticate_message(
-            &env.context,
-            &program_id,
-            "1.0",
-            msg_type,
-            &data,
-            timestamp,
-            &signature,
-            &sender_pubkey_hash,
-        )?;
-        assert_eq!(outcome, ResultDisposition::Success);
-        Ok(())
-    }
-
-    #[test]
-    fn verify_message_signature_detects_tampering() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
-        let (key_manager, rsa_public_key) = (&env.context.key_manager, &env.context.rsa_public_key);
-        let program_id = Uuid::new_v4();
-        let msg_type = CommsMessageType::Keys;
-        let original_data = json!({ "payload": "value" });
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-        let my_pubkey_hash = env.context.comms.get_pubk_hash();
-        let sender_pubkey_hash = my_pubkey_hash.clone();
-        let signature = {
-            let message = construct_message(
-                &program_id.to_string(),
-                "1.0",
-                msg_type.clone(),
-                &original_data,
-                timestamp,
-            )?;
-            key_manager
-                .sign_rsa_message(message.as_bytes(), &rsa_public_key)?
-                .to_bytes()
-                .to_vec()
-        };
-
-        let tampered_data = json!({ "payload": "tampered" });
-        let outcome = SignatureVerifier::authenticate_message(
-            &env.context,
-            &program_id,
-            "1.0",
-            msg_type,
-            &tampered_data,
-            timestamp,
-            &signature,
-            &sender_pubkey_hash,
-        )?;
-        assert_eq!(
-            outcome,
-            ResultDisposition::fail_peer_reason(
-                sender_pubkey_hash,
-                PeerSetupFaultReason::AuthenticationRejected,
-            )
-        );
-        Ok(())
-    }
-
     #[test]
     fn authenticate_message_reports_missing_key_as_outcome() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
+        let env = TestProgramContextEnv::new("sigver-unit")?;
         let peer = "peer-without-key".to_string();
         let outcome = SignatureVerifier::authenticate_message(
             &env.context,
@@ -450,17 +357,17 @@ mod tests {
 
     #[test]
     fn operator_verification_store_has_and_missing() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
+        let env = TestProgramContextEnv::new("sigver-unit")?;
         let globals = &env.context.globals;
         let stored_peer = "peer-stored".to_string();
         let missing_peer = "peer-missing".to_string();
 
-        assert!(!OperatorVerificationStore::has(&globals, &stored_peer)?);
-        OperatorVerificationStore::store(&globals, &stored_peer, "stored-key")?;
-        assert!(OperatorVerificationStore::has(&globals, &stored_peer)?);
+        assert!(!OperatorVerificationStore::has(globals, &stored_peer)?);
+        OperatorVerificationStore::store(globals, &stored_peer, "stored-key")?;
+        assert!(OperatorVerificationStore::has(globals, &stored_peer)?);
 
         let missing = OperatorVerificationStore::missing(
-            &globals,
+            globals,
             &[stored_peer.clone(), missing_peer.clone()],
         )?;
         assert_eq!(missing, vec![missing_peer]);
@@ -469,21 +376,21 @@ mod tests {
 
     #[test]
     fn has_all_keys_reports_missing_and_complete() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
+        let env = TestProgramContextEnv::new("sigver-unit")?;
         let globals = &env.context.globals;
         let peers = vec!["peer-a".to_string(), "peer-b".to_string()];
 
-        assert!(!OperatorVerificationStore::has_all_keys(&globals, &peers)?);
-        OperatorVerificationStore::store(&globals, &peers[0], "key-a")?;
-        assert!(!OperatorVerificationStore::has_all_keys(&globals, &peers)?);
-        OperatorVerificationStore::store(&globals, &peers[1], "key-b")?;
-        assert!(OperatorVerificationStore::has_all_keys(&globals, &peers)?);
+        assert!(!OperatorVerificationStore::has_all_keys(globals, &peers)?);
+        OperatorVerificationStore::store(globals, &peers[0], "key-a")?;
+        assert!(!OperatorVerificationStore::has_all_keys(globals, &peers)?);
+        OperatorVerificationStore::store(globals, &peers[1], "key-b")?;
+        assert!(OperatorVerificationStore::has_all_keys(globals, &peers)?);
         Ok(())
     }
 
     #[test]
-    fn verify_message_signature_maps_reconstruction_error() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
+    fn authenticate_message_maps_reconstruction_error() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-unit")?;
         let my_pubkey_hash = env.context.comms.get_pubk_hash();
 
         let outcome = SignatureVerifier::authenticate_message(
@@ -507,8 +414,8 @@ mod tests {
     }
 
     #[test]
-    fn verify_message_signature_rejects_empty_signature() -> Result<(), BitVMXError> {
-        let env = build_test_env()?;
+    fn authenticate_message_rejects_empty_signature() -> Result<(), BitVMXError> {
+        let env = TestProgramContextEnv::new("sigver-unit")?;
         let my_pubkey_hash = env.context.comms.get_pubk_hash();
 
         let outcome = SignatureVerifier::authenticate_message(
