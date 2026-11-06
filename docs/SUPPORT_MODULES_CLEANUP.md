@@ -379,6 +379,7 @@ These are behavior questions, so they are out of scope for a behavior-preserving
   for those types, and `leader_broadcast.rs:392` rejects them earlier. Removing it would make the
   function fail closed if a future caller forgets the filter, but it changes what the function returns
   and `authenticate_message_allows_bootstrap_messages` asserts the current result.
-- **`queued_count` includes duplicates (`leader_broadcast.rs:442-443`):** the `push_new_unique` outcome
-  is ignored, so `AlreadyQueued` counts as queued and the result is `Success` instead of `NoOp`.
-  `apply_message_disposition` settles both the same way, so only the logs are affected.
+- **`queued_count` includes duplicates (fixed):** the `push_new_unique` outcome was ignored, so
+  `AlreadyQueued` counted as queued and the result was `Success` instead of `NoOp`.
+  `apply_message_disposition` settles both the same way, so only the logs were affected. An
+  `AlreadyQueued` original now counts as a no-op.

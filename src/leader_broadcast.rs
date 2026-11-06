@@ -1,6 +1,6 @@
 use crate::comms_helper::{construct_message, request, serialize_msg, CommsMessageType};
 use crate::errors::BitVMXError;
-use crate::message_queue::MessageQueue;
+use crate::message_queue::{MessageQueue, PushOutcome};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::program::{participant::CommsAddress, program::Program};
 use crate::signature_verifier::SignatureVerifier;
@@ -464,11 +464,13 @@ impl LeaderBroadcastHelper {
                         original_msg.original_timestamp,
                         original_msg.original_signature.clone(),
                     )?;
-                    message_queue.push_new_unique(
+                    match message_queue.push_new_unique(
                         Identifier::new(original_msg.sender_pubkey_hash.clone(), COMMS_ID),
                         full_message,
-                    )?;
-                    queued_count += 1;
+                    )? {
+                        PushOutcome::Queued => queued_count += 1,
+                        _ => no_op_count += 1,
+                    }
                 }
                 ResultDisposition::Retry(reason) => {
                     info!("Deferring leader envelope: {:?}", reason);
@@ -1067,6 +1069,32 @@ mod tests {
         assert_eq!(msg_type, CommsMessageType::Keys);
         assert_eq!(queued_program_id, program_id);
         assert_eq!(data, payload);
+        assert!(queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn process_broadcasted_message_reports_pending_duplicate_as_no_op() {
+        let mut env = TestProgramContextEnv::new("leader-broadcast-pending-duplicate").unwrap();
+        let program_id = Uuid::new_v4();
+        let program = install_test_program(&mut env, program_id, vec![]);
+        let original = signed_self_original(&env, &program_id, json!({"step": "keys"}));
+        let broadcast = serde_json::to_value(BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![original],
+        })
+        .unwrap();
+        let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
+
+        assert_eq!(
+            process(&env, &program, program_id, broadcast.clone(), &queue),
+            ResultDisposition::Success
+        );
+        // The leader resends the envelope before the original is consumed
+        assert_eq!(
+            process(&env, &program, program_id, broadcast, &queue),
+            ResultDisposition::NoOp(NoOpReason::ContributionAlreadyAccepted)
+        );
+        assert!(queue.pop_front().unwrap().is_some());
         assert!(queue.is_empty().unwrap());
     }
 
