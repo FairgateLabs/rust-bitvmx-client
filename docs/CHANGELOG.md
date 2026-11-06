@@ -25,13 +25,17 @@ introduce breaking changes between versions.
   default, that fsyncs every write, including transaction commits. The `storage` and `key_storage`
   sections of the client config accept `sync_writes: false` to turn it off. `StorageConfig` has a
   new field, so direct storage-backend consumers must build it with `StorageConfig::new`.
-- `SetVar`, `GetVar`, `SetWitness` and `GetWitness` with an invalid key, and `GenerateZKP` reusing a
-  job id with a different timeout, now return `ApiError(uuid, error)`. They used to block every
-  later API request and dispatcher result.
 - Following the same PR, `StorageError::ReadError` carries the RocksDB message,
   `StorageError::MissingCurrent` is returned when a database directory has no CURRENT file, and
   `Storage::repair` returns a `RepairReport`. The storage-backend CLI exits with 2 when a repair
   lost files and with 1 on errors.
+- `SetVar`, `GetVar`, `SetWitness` and `GetWitness` with an invalid key, and `GenerateZKP` reusing a
+  job id with a different timeout, now return `ApiError(uuid, error)`. They used to block every
+  later API request and dispatcher result.
+- **BREAKING (stored data)**: Expected dispatcher job records moved from `bitvmx/expected_job/<digest>`,
+  indexed by the `bitvmx/expected_job/ids` list, to `bitvmx/expected_job/active/<digest>` while a
+  result is expected and `bitvmx/expected_job/finished/<digest>` once terminal. The ID list is no
+  longer written.
 
 ## 0.8.7
 

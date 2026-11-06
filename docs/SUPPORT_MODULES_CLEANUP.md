@@ -364,10 +364,12 @@ broker_node)`.
 
 These are behavior questions, so they are out of scope for a behavior-preserving refactor.
 
-- **`redispatch_due` reads every job ever registered:** `EXPECTED_JOB_IDS_KEY` is never pruned because
-  terminal records are kept on purpose, and `redispatch_due` loads each record on every application
-  tick (`bitvmx.rs:380`). The cost grows with the node's lifetime job count. A separate index of
-  retry-pending IDs would bound it, but needs a stored-data change.
+- **`redispatch_due` reads every job ever registered (fixed):** `EXPECTED_JOB_IDS_KEY` was never pruned
+  because terminal records are kept on purpose, and `redispatch_due` loaded each record on every
+  application tick (`bitvmx.rs:380`). The cost grew with the node's lifetime job count. Records now
+  live under `bitvmx/expected_job/active/` while a result is expected and move to
+  `bitvmx/expected_job/finished/` once terminal. `redispatch_due` scans only the active prefix, and
+  the ID list is gone.
 - **One bad job blocks all retries:** the errors at `expected_job.rs:313` and `324` abort the shared
   transaction, so every other due job in that pass rolls back too, on every tick. Normal flows can't
   reach either one (`retry_pending` guards the first and `steps.rs:157` the second), so this needs
