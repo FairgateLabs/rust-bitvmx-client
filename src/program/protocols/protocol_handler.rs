@@ -440,6 +440,35 @@ pub trait ProtocolHandler {
             {
                 let message = var.input()?;
 
+                // A value committed in an earlier transaction may be
+                // re-submitted in a later one, which the full-duplex search
+                // makes a party do with its own commitments. Winternitz
+                // signing is deterministic, so the earlier signature is the
+                // signature for this message too: present it again rather than
+                // spending the one-time key a second time.
+                if let Some(witness) = program_context
+                    .witness
+                    .get_witness(&self.context().id, k.name())?
+                {
+                    let signature = witness.winternitz()?;
+                    if signature.message_bytes() == message {
+                        info!(
+                            "Reusing winternitz signature for re-submitted key: {}",
+                            k.name()
+                        );
+                        wots_sigs.push(signature);
+                        continue;
+                    }
+                    // Signing a different message under a spent key is what
+                    // the one-time scheme forbids, and what equivocation
+                    // punishment exists to catch. Refuse rather than do it.
+                    error!(
+                        "Refusing to re-sign key {} with a different message",
+                        k.name()
+                    );
+                    return Err(BitVMXError::KeysNotFound(self.context().id));
+                }
+
                 info!(
                     "Signing message: {}",
                     style(hex::encode(message.clone())).yellow()
@@ -456,6 +485,17 @@ pub trait ProtocolHandler {
                             .ok_or_else(|| BitVMXError::KeysNotFound(self.context().id))?
                             .derivation_index(),
                     )?;
+
+                // Keep our own signature. Only the observing party decodes a
+                // confirmed transaction into the witness store, so without
+                // this the signer has no record of what it signed -- and the
+                // full-duplex search makes a party re-submit its own
+                // commitments in the adjudication message.
+                program_context.witness.set_witness(
+                    &self.context().id,
+                    k.name(),
+                    WitnessTypes::Winternitz(winternitz_signature.clone()),
+                )?;
 
                 wots_sigs.push(winternitz_signature);
             } else {
