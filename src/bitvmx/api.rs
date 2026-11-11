@@ -273,13 +273,22 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             VariableTypes::String(optional_keys),
         )?;
 
-        self.setup(
+        let response = self.setup(
             id,
             PROGRAM_TYPE_AGGREGATED_KEY.to_string(),
             participants,
             leader_idx,
             setup_timeout_secs,
-        )
+        )?;
+
+        // A rejected setup leaves no program behind, so its keys must not linger either.
+        if response.is_some() {
+            self.program_context
+                .globals
+                .unset_var(&id, "optional_keys")?;
+        }
+
+        Ok(response)
     }
 
     fn api_error(id: Uuid, message: String) -> OutgoingBitVMXApiMessages {
@@ -1419,6 +1428,40 @@ mod tests {
         assert!(
             matches!(&replies[3], OutgoingBitVMXApiMessages::ApiError(_, message) if message == "Wallet not available")
         );
+    }
+
+    #[test]
+    fn rejected_setup_key_does_not_keep_optional_keys() {
+        let mut env = TestBitVMXEnv::new("api-setup-rejected-keys").unwrap();
+        let id = Uuid::new_v4();
+        let stranger = CommsAddress {
+            address: env.bitvmx.program_context.comms.get_address(),
+            pubkey_hash: "ab".repeat(32),
+        };
+
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::SetupKey(id, vec![stranger], Some(vec![]), 0, None),
+        )
+        .unwrap();
+
+        let replies = api_replies(&mut env.bitvmx);
+        assert!(
+            matches!(
+                replies.as_slice(),
+                [OutgoingBitVMXApiMessages::ApiError(reply_id, message)]
+                    if *reply_id == id && message.contains("Peer not found")
+            ),
+            "unexpected replies: {replies:?}"
+        );
+        assert!(!env.bitvmx.program_exists(&id).unwrap());
+        assert!(env
+            .bitvmx
+            .program_context
+            .globals
+            .get_var(&id, "optional_keys")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
