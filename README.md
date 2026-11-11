@@ -28,6 +28,39 @@ cargo build --profile release-with-debug
 ```
 
 
+## Client image releases
+
+Normal `vX.Y.Z` tags build the client image and must match the version in
+`Cargo.toml`. To force an image build with a different version, push a
+`force/client/vX.Y.Z` tag (prerelease suffixes are supported). It publishes the
+image with tag `vX.Y.Z` and does not trigger a types release.
+
+## Types releases
+
+The `mirror` workflow exports the wire contract to
+[`rust-bitvmx-client-types`](https://github.com/FairgateLabs/rust-bitvmx-client-types).
+Normal `v*` client release tags publish types only when the exported files change.
+
+To force a types release independently of the client version, push a
+`force/types/vX.Y.Z` tag (prerelease suffixes such as `-rc.1` are supported):
+
+```bash
+git tag force/types/v0.8.8-rc.1
+git push origin refs/tags/force/types/v0.8.8-rc.1
+```
+
+This publishes `v0.8.8-rc.1` on the types repo's `release/v0.8.8-rc.1` branch,
+with crate version `0.8.8-rc.1`, even if the exported files are unchanged.
+The source tag remains `force/types/v0.8.8-rc.1` in generated headers and `mirror.toml`
+so the types repo can verify against the original source. The client image build
+does not run for `force/types/*` tags, and the client's `Cargo.toml` version stays as is.
+Mirrored git dependencies keep the client's existing tags; types-only releases
+require those dependencies to be tag-pinned in the client's manifest.
+
+Manual runs also accept a `force/types/vX.Y.Z` tag input to force publication.
+Select the matching source tag with `--ref` and set `publish=true` to publish,
+or `publish=false` to regenerate and test. Existing output tags are never replaced.
+
 ## Security
 To use encrypted configuration files read the setting [README.md](https://github.com/FairgateLabs/rust-bitvmx-settings/blob/bb216227310a714293aa60dc84107304b336b83f/README.md#security)
 
@@ -89,10 +122,10 @@ This table shows the mapping between request messages and their expected respons
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
 | `Setup(uuid, program_type, participants, leader_idx, setup_timeout_secs)` | `SetupCompleted(uuid)` or `ApiError(uuid, error)` | Setup the program with an optional overall timeout in seconds (`None` defaults to one hour); returns `ApiError` for duplicate identifiers and non-fatal setup failures |
-| `SetVar(uuid, key, value)` | `Variable(uuid, key, value)` | Set a variable in the program |
-| `GetVar(uuid, key)` | `Variable(uuid, key, value)` or `NotFound(uuid, key)` | Get variable value |
-| `SetWitness(uuid, address, witness)` | `Witness(uuid, key, witness)` | Set witness data |
-| `GetWitness(uuid, address)` | `Witness(uuid, key, witness)` or `NotFound(uuid, key)` | Get witness data |
+| `SetVar(uuid, key, value)` | `Variable(uuid, key, value)` or `ApiError(uuid, error)` | Set a variable in the program; returns `ApiError` for an invalid key |
+| `GetVar(uuid, key)` | `Variable(uuid, key, value)`, `NotFound(uuid, key)` or `ApiError(uuid, error)` | Get variable value; returns `ApiError` for an invalid key |
+| `SetWitness(uuid, address, witness)` | `Witness(uuid, key, witness)` or `ApiError(uuid, error)` | Set witness data; returns `ApiError` for an invalid key |
+| `GetWitness(uuid, address)` | `Witness(uuid, key, witness)`, `NotFound(uuid, key)` or `ApiError(uuid, error)` | Get witness data; returns `ApiError` for an invalid key |
 | `GetHashedMessage(uuid, name, vout, leaf)` | `HashedMessage(uuid, name, vout, leaf, _)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get hashed message; returns `NotFound` when the program is absent and `ApiError` for non-fatal lookup failures |
 | `GetProtocolVisualization(uuid)` | `ProtocolVisualization(uuid, visualization)`, `NotFound(uuid, error)`, or `ApiError(uuid, error)` | Get protocol visualization; returns `NotFound` when the program is absent and `ApiError` for non-fatal visualization failures |
 | `DiscardDispatcherJob(uuid, job_id, reason)` | `JobDiscarded(uuid, job_id)` or `ApiError(uuid, error)` | The configured L2 operator stops automatic retries for an unresolved runtime Garbler/Emulator job. Repeated discard is idempotent; setup and ZKP jobs cannot be discarded through this operation. |
@@ -152,9 +185,8 @@ This table shows the mapping between request messages and their expected respons
 
 | Request Message | Expected Response Message | Notes |
 |---|---|---|
-| `GenerateZKP(uuid, payload_to_sign, name, execution_timeout_secs)` | `ProofReady(uuid)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` | Generate zero-knowledge proof; the optional timeout defaults to 900 seconds |
-| `ProofReady(uuid)` | `ProofReady(uuid)` | Check if proof is ready |
-| `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, zkp_result, zkp_proof)` or `ApiError(uuid, error)` | Get ZKP execution result; returns `ApiError` when a successful job is missing its proof or journal |
+| `GenerateZKP(uuid, payload_to_sign, name, execution_timeout_secs)` | `ZKPResult(uuid, proof, journal)`, `ProofGenerationError(uuid, error)` or `ApiError(uuid, error)` | Generate zero-knowledge proof; the response is sent when the job ends and already carries the proof, so no follow-up request is needed. The optional timeout defaults to 900 seconds. Reusing a job id with a different timeout returns `ApiError` |
+| `GetZKPExecutionResult(uuid)` | `ZKPResult(uuid, proof, journal)` or `ProofNotReady(uuid)` or `ProofGenerationError(uuid, error)` or `ApiError(uuid, error)` | Query the status or result of a ZKP job at any time; returns `ApiError` when a successful job is missing its proof or journal |
 
 ### Special Cases
 

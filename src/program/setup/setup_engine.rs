@@ -8,7 +8,7 @@ use crate::{
         participant::{get_comms_address_by_pubkey_hash, get_index_by_pubkey_hash, CommsAddress},
         protocols::protocol_handler::ProtocolType,
     },
-    types::{NoOpReason, ProgramContext, ResultDisposition, RetryReason, SuccessDetail},
+    types::{NoOpReason, ProgramContext, ResultDisposition, RetryReason},
 };
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{Deserialize, Serialize};
@@ -32,29 +32,6 @@ pub enum StepState {
     AllParticipantsCompleted,
     /// Step has received all data and can advance
     Completed,
-}
-
-/// How an incoming setup message relates to the active setup step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SetupMessageState {
-    PendingCurrentContribution,
-    ContributionAlreadyAccepted,
-    NotForCurrentStep,
-    UnauthorizedSender,
-    SetupComplete,
-}
-
-impl SetupMessageState {
-    /// Converts setup states that are safe to consume into the corresponding
-    /// message-level no-op reason.
-    pub fn into_no_op_reason(self) -> Option<NoOpReason> {
-        match self {
-            Self::ContributionAlreadyAccepted => Some(NoOpReason::ContributionAlreadyAccepted),
-            Self::UnauthorizedSender => Some(NoOpReason::UnauthorizedSender),
-            Self::SetupComplete => Some(NoOpReason::SetupAlreadyComplete),
-            Self::PendingCurrentContribution | Self::NotForCurrentStep => None,
-        }
-    }
 }
 
 /// Tracks the state of the setup engine.
@@ -392,27 +369,26 @@ impl SetupEngine {
     }
 
     /// Classifies a participant message against the active setup step without
-    /// inspecting its payload.
+    /// inspecting its payload. Returns why the message can be consumed as a no-op,
+    /// or `None` when it needs further processing.
     pub fn classify_participant_message(
         &self,
         participants: &[CommsAddress],
         from: &PubKeyHash,
         msg_type: CommsMessageType,
-    ) -> SetupMessageState {
+    ) -> Option<NoOpReason> {
         if self.is_complete() {
-            return SetupMessageState::SetupComplete;
+            return Some(NoOpReason::SetupAlreadyComplete);
         }
         let Some(participant_idx) = get_index_by_pubkey_hash(participants, from) else {
-            return SetupMessageState::UnauthorizedSender;
+            return Some(NoOpReason::UnauthorizedSender);
         };
         if !self.current_step_accepts(msg_type) {
-            return SetupMessageState::NotForCurrentStep;
+            return None;
         }
-        if self.state.has_participant_completed(participant_idx) {
-            SetupMessageState::ContributionAlreadyAccepted
-        } else {
-            SetupMessageState::PendingCurrentContribution
-        }
+        self.state
+            .has_participant_completed(participant_idx)
+            .then_some(NoOpReason::ContributionAlreadyAccepted)
     }
 
     /// Receives and verifies data from a participant for the current step.
@@ -450,7 +426,7 @@ impl SetupEngine {
         if self.state.has_participant_completed(participant_idx) {
             if participant_idx == my_idx {
                 warn!("Getting data from ourselves again for step '{}', ignoring since we already processed it.", step_name);
-                return Ok(ResultDisposition::Success(SuccessDetail::Processed));
+                return Ok(ResultDisposition::Success);
             }
 
             info!(
@@ -479,7 +455,7 @@ impl SetupEngine {
             context,
             false,
         )? {
-            ResultDisposition::Success(SuccessDetail::Processed) => {}
+            ResultDisposition::Success => {}
             disposition => return Ok(disposition),
         }
 
@@ -499,7 +475,7 @@ impl SetupEngine {
             self.state.current_step_state
         );
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     /// Checks if the current step can advance to the next step.
@@ -705,7 +681,7 @@ impl SetupEngine {
             participants,
             context,
         )?;
-        if disposition != ResultDisposition::Success(SuccessDetail::Processed) {
+        if disposition != ResultDisposition::Success {
             debug!(
                 "SetupEngine::receive_setup_data() - Data from participant {} was not applied for step '{}': {:?}",
                 from, step_name, disposition
@@ -724,7 +700,7 @@ impl SetupEngine {
             self.send_broadcast_data_to_non_leaders(context, program_id, participants, msg_type)?;
         }
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     fn send_broadcast_data_to_non_leaders<BC: BitcoinCoordinatorApi>(
@@ -833,7 +809,7 @@ impl SetupEngine {
                         context,
                         true,
                     )?;
-                    if own_outcome != ResultDisposition::Success(SuccessDetail::Processed) {
+                    if own_outcome != ResultDisposition::Success {
                         return Err(BitVMXError::InvalidState(format!(
                             "Locally generated data for step '{}' was not accepted: {:?}",
                             step_name, own_outcome
@@ -1116,7 +1092,7 @@ mod tests {
                 &"unknown-participant".to_string(),
                 CommsMessageType::Keys,
             ),
-            SetupMessageState::UnauthorizedSender
+            Some(NoOpReason::UnauthorizedSender)
         );
         assert_eq!(
             engine.classify_participant_message(
@@ -1124,7 +1100,7 @@ mod tests {
                 &peer.pubkey_hash,
                 CommsMessageType::Keys,
             ),
-            SetupMessageState::PendingCurrentContribution
+            None
         );
         let unknown = CommsAddress::new(peer.address, "unknown-participant".to_string());
         assert_eq!(
@@ -1186,7 +1162,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
         assert_eq!(
             engine
@@ -1230,7 +1206,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap(),
-            ResultDisposition::Success(SuccessDetail::Processed)
+            ResultDisposition::Success
         );
     }
 

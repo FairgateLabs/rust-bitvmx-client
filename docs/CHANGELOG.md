@@ -7,6 +7,10 @@ introduce breaking changes between versions.
 
 ### Changed
 
+- **BREAKING**: Removed the `ProofReady` request and response, along with `BitVMXClient::proof_ready`.
+  When a `GenerateZKP` job succeeds, the requester now receives `ZKPResult(uuid, proof, journal)`
+  directly, so no follow-up request is needed. Use `GetZKPExecutionResult(uuid)` to query a job's
+  status or result, which answers `ZKPResult`, `ProofNotReady`, `ProofGenerationError`, or `ApiError`.
 - **BREAKING**: Added operation-specific timeout arguments. `Setup` and `SetupKey` now accept an optional overall
   setup timeout in seconds, `GenerateZKP` accepts an optional prover execution timeout in seconds,
   `Program::new` accepts an optional setup `Duration`, and protocol `execute_job` accepts an optional
@@ -17,6 +21,21 @@ introduce breaking changes between versions.
   to stop automatic retries for unresolved runtime Garbler and Emulator jobs. Successful and
   repeated idempotent requests return `JobDiscarded(request_id, job_id)`; unsupported job types or
   states return `ApiError(request_id, error)`.
+- Following rust-bitvmx-storage-backend PR #43, `StorageConfig` has a `sync_writes` option, on by
+  default, that fsyncs every write, including transaction commits. The `storage` and `key_storage`
+  sections of the client config accept `sync_writes: false` to turn it off. `StorageConfig` has a
+  new field, so direct storage-backend consumers must build it with `StorageConfig::new`.
+- Following the same PR, `StorageError::ReadError` carries the RocksDB message,
+  `StorageError::MissingCurrent` is returned when a database directory has no CURRENT file, and
+  `Storage::repair` returns a `RepairReport`. The storage-backend CLI exits with 2 when a repair
+  lost files and with 1 on errors.
+- `SetVar`, `GetVar`, `SetWitness` and `GetWitness` with an invalid key, and `GenerateZKP` reusing a
+  job id with a different timeout, now return `ApiError(uuid, error)`. They used to block every
+  later API request and dispatcher result.
+- **BREAKING (stored data)**: Expected dispatcher job records moved from `bitvmx/expected_job/<digest>`,
+  indexed by the `bitvmx/expected_job/ids` list, to `bitvmx/expected_job/active/<digest>` while a
+  result is expected and `bitvmx/expected_job/finished/<digest>` once terminal. The ID list is no
+  longer written.
 
 ## 0.8.7
 

@@ -12,7 +12,7 @@
 // program ID that is not installed yet, so they specifically guard unchanged
 // outer-envelope retention at the lifecycle gate. The exact active-program
 // missing-key branch is covered by the non-Docker unit tests in
-// `src/bitvmx.rs`, `src/leader_broadcast.rs`, and `src/message_queue.rs`.
+// `src/bitvmx/peer_messages.rs`, `src/leader_broadcast.rs`, and `src/message_queue.rs`.
 //
 // Tests are marked `#[ignore]` and require bitcoind. Run with:
 //   cargo test --test leader_broadcast_test -- --ignored --test-threads 1

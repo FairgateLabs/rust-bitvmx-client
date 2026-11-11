@@ -22,37 +22,19 @@ pub(crate) enum OperationTimeoutId {
     DispatcherJob(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum OperationTimeoutKind {
-    SetupProcess,
-    JobExecution,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum TimeoutFailurePolicy {
-    FailSetup {
-        program_id: Uuid,
-        job_id: Option<String>,
-    },
-    RetryRuntimeJob {
-        program_id: Uuid,
-        job_id: String,
-    },
-    FailRequestJob {
-        request_id: Uuid,
-        job_id: String,
-    },
-}
-
+/// What happens on expiry follows from the id: a setup process fails its setup, and a
+/// dispatcher job is handled according to its `ExpectedJob::target`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OperationTimeout {
     pub id: OperationTimeoutId,
     pub deadline_ms: u64,
-    pub kind: OperationTimeoutKind,
-    pub policy: TimeoutFailurePolicy,
 }
 
-#[derive(Clone)]
+/// Whole milliseconds in `duration`, saturating at `u64::MAX`.
+pub(crate) fn duration_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 pub(crate) struct OperationTimeouts {
     storage: Rc<Storage>,
 }
@@ -69,34 +51,29 @@ impl OperationTimeouts {
     }
 
     fn deadline(duration: Duration) -> Result<u64, BitVMXError> {
-        let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
-        Ok(bitvmx_broker::retry::now_ms()?.saturating_add(duration_ms))
+        Ok(bitvmx_broker::retry::now_ms()?.saturating_add(duration_ms(duration)))
+    }
+
+    fn load_ids(&self) -> Result<Vec<OperationTimeoutId>, BitVMXError> {
+        Ok(self
+            .storage
+            .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
+            .unwrap_or_default())
     }
 
     fn register(
         &self,
         id: OperationTimeoutId,
-        kind: OperationTimeoutKind,
-        policy: TimeoutFailurePolicy,
         duration: Duration,
         renew: bool,
     ) -> Result<(), BitVMXError> {
         let key = Self::key(&id)?;
         let existing: Option<OperationTimeout> = self.storage.get(&key, None)?;
-        if let Some(existing) = existing {
-            if existing.kind != kind || existing.policy != policy {
-                return Err(BitVMXError::InvalidState(format!(
-                    "operation timeout '{id:?}' is registered with incompatible metadata"
-                )));
-            }
-            if !renew {
-                return Ok(());
-            }
-        } else {
-            let mut ids: Vec<OperationTimeoutId> = self
-                .storage
-                .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
-                .unwrap_or_default();
+        if existing.is_some() && !renew {
+            return Ok(());
+        }
+        if existing.is_none() {
+            let mut ids = self.load_ids()?;
             ids.push(id.clone());
             self.storage
                 .set(OPERATION_TIMEOUT_IDS_KEY.as_ref(), ids, None)?;
@@ -107,8 +84,6 @@ impl OperationTimeouts {
             OperationTimeout {
                 id,
                 deadline_ms: Self::deadline(duration)?,
-                kind,
-                policy,
             },
             None,
         )?;
@@ -122,62 +97,19 @@ impl OperationTimeouts {
     ) -> Result<(), BitVMXError> {
         self.register(
             OperationTimeoutId::SetupProcess(program_id),
-            OperationTimeoutKind::SetupProcess,
-            TimeoutFailurePolicy::FailSetup {
-                program_id,
-                job_id: None,
-            },
             timeout.unwrap_or(DEFAULT_SETUP_TIMEOUT),
             false,
         )
     }
 
-    pub fn register_setup_job(
+    pub fn register_job(
         &self,
-        program_id: Uuid,
         job_id: String,
         timeout: Option<Duration>,
         renew: bool,
     ) -> Result<(), BitVMXError> {
         self.register(
-            OperationTimeoutId::DispatcherJob(job_id.clone()),
-            OperationTimeoutKind::JobExecution,
-            TimeoutFailurePolicy::FailSetup {
-                program_id,
-                job_id: Some(job_id),
-            },
-            timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
-            renew,
-        )
-    }
-
-    pub fn register_request_job(
-        &self,
-        request_id: Uuid,
-        job_id: String,
-        timeout: Option<Duration>,
-        renew: bool,
-    ) -> Result<(), BitVMXError> {
-        self.register(
-            OperationTimeoutId::DispatcherJob(job_id.clone()),
-            OperationTimeoutKind::JobExecution,
-            TimeoutFailurePolicy::FailRequestJob { request_id, job_id },
-            timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
-            renew,
-        )
-    }
-
-    pub fn register_runtime_job(
-        &self,
-        program_id: Uuid,
-        job_id: String,
-        timeout: Option<Duration>,
-        renew: bool,
-    ) -> Result<(), BitVMXError> {
-        self.register(
-            OperationTimeoutId::DispatcherJob(job_id.clone()),
-            OperationTimeoutKind::JobExecution,
-            TimeoutFailurePolicy::RetryRuntimeJob { program_id, job_id },
+            OperationTimeoutId::DispatcherJob(job_id),
             timeout.unwrap_or(DEFAULT_JOB_TIMEOUT),
             renew,
         )
@@ -189,10 +121,7 @@ impl OperationTimeouts {
             return Ok(());
         }
         self.storage.remove(key, None)?;
-        let mut ids: Vec<OperationTimeoutId> = self
-            .storage
-            .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
-            .unwrap_or_default();
+        let mut ids = self.load_ids()?;
         ids.retain(|candidate| candidate != id);
         self.storage
             .set(OPERATION_TIMEOUT_IDS_KEY.as_ref(), ids, None)?;
@@ -214,12 +143,8 @@ impl OperationTimeouts {
     /// Returns a bounded snapshot. Callers must re-read each item in its own transaction.
     pub fn expired(&self, limit: usize) -> Result<Vec<OperationTimeoutId>, BitVMXError> {
         let now = bitvmx_broker::retry::now_ms()?;
-        let ids: Vec<OperationTimeoutId> = self
-            .storage
-            .get(OPERATION_TIMEOUT_IDS_KEY.as_ref(), None)?
-            .unwrap_or_default();
         let mut expired = Vec::new();
-        for id in ids {
+        for id in self.load_ids()? {
             if expired.len() == limit {
                 break;
             }
@@ -256,11 +181,32 @@ mod tests {
     }
 
     #[test]
+    fn job_renewal_moves_the_deadline_without_duplicating_the_id() {
+        let dir = TestStorageDir::new("operation-timeout-renew");
+        let timeouts = OperationTimeouts::new(dir.storage());
+        let job_id = "job".to_string();
+        timeouts
+            .register_job(job_id.clone(), Some(Duration::from_secs(3_600)), false)
+            .unwrap();
+        assert!(timeouts.expired(10).unwrap().is_empty());
+
+        timeouts
+            .register_job(job_id.clone(), Some(Duration::ZERO), true)
+            .unwrap();
+        assert_eq!(
+            timeouts.expired(10).unwrap(),
+            vec![OperationTimeoutId::DispatcherJob(job_id)]
+        );
+    }
+
+    #[test]
     fn cancellation_is_idempotent() {
         let dir = TestStorageDir::new("operation-timeout-cancel");
         let timeouts = OperationTimeouts::new(dir.storage());
         let program_id = Uuid::new_v4();
-        timeouts.register_setup(program_id, None).unwrap();
+        timeouts
+            .register_setup(program_id, Some(Duration::ZERO))
+            .unwrap();
         timeouts.cancel_setup(program_id).unwrap();
         timeouts.cancel_setup(program_id).unwrap();
         assert!(timeouts.expired(10).unwrap().is_empty());

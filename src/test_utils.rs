@@ -53,10 +53,7 @@ impl TestStorageDir {
     }
 
     pub fn config(&self) -> StorageConfig {
-        StorageConfig {
-            path: self.path.clone(),
-            password: None,
-        }
+        StorageConfig::new(self.path.clone(), None)
     }
 
     pub fn storage(&self) -> Rc<Storage> {

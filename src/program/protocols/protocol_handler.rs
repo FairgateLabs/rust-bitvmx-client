@@ -50,8 +50,8 @@ use crate::program::protocols::union::{
 #[cfg(feature = "union")]
 use crate::types::{
     PROGRAM_TYPE_ACCEPT_PEGIN, PROGRAM_TYPE_ADVANCE_FUNDS, PROGRAM_TYPE_DISPUTE_CORE,
-    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_PAIRWISE_PENALIZATION,
-    PROGRAM_TYPE_REJECT_PEGIN, PROGRAM_TYPE_USER_TAKE,
+    PROGRAM_TYPE_FULL_PENALIZATION, PROGRAM_TYPE_PAIRWISE_PENALIZATION, PROGRAM_TYPE_REJECT_PEGIN,
+    PROGRAM_TYPE_USER_TAKE,
 };
 
 #[cfg(feature = "cardinal")]
@@ -59,7 +59,7 @@ use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
 use crate::types::{
     JobDispatcherType, ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP,
-    PROGRAM_TYPE_GC_GENERATION,
+    PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_GC_GENERATION,
 };
 
 use crate::program::setup::steps::SetupStepName;
@@ -1037,7 +1037,6 @@ pub trait ProtocolHandler {
         program_context
             .expected_jobs
             .send_dispatcher_job(
-                &program_context.operation_timeouts,
                 &program_context.broker_channel,
                 dispatcher,
                 destination,
@@ -1258,4 +1257,36 @@ pub fn external_fund_tx(
         internal_key,
         &spending_scripts,
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestStorageDir;
+
+    fn protocol_for(name: &str) -> Result<ProtocolType, BitVMXError> {
+        let dir = TestStorageDir::new("new-protocol-type");
+        new_protocol_type(Uuid::new_v4(), name, 0, dir.storage())
+    }
+
+    /// Runs with every feature set: these types don't depend on `union` or `cardinal`.
+    #[test]
+    fn program_type_names_select_their_own_protocol() {
+        assert!(matches!(
+            protocol_for(PROGRAM_TYPE_GC_DRP),
+            Ok(ProtocolType::GCDisputeResolutionProtocol(_))
+        ));
+        assert!(matches!(
+            protocol_for(PROGRAM_TYPE_GC_GENERATION),
+            Ok(ProtocolType::GCGenerationProtocol(_))
+        ));
+    }
+
+    #[test]
+    fn unknown_program_type_is_not_implemented() {
+        assert!(matches!(
+            protocol_for("no_such_program_type"),
+            Err(BitVMXError::NotImplemented(name)) if name == "no_such_program_type"
+        ));
+    }
 }

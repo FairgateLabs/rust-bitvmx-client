@@ -1,55 +1,39 @@
-#[path = "bitvmx_api.rs"]
-mod bitvmx_api;
-#[path = "bitvmx_job_handler.rs"]
-mod bitvmx_job_handler;
+mod api;
+mod job_handler;
+mod news;
+mod peer_messages;
+mod steps;
+#[cfg(test)]
+mod test_support;
+mod timeouts;
 
-use crate::comms_allow_list;
-use crate::config::ComponentsConfig;
-use crate::error_handling::{classify, Reporter, Severity};
-use crate::ping_helper::PingHelper;
-use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use crate::program::program::{is_active_program, Program};
-use crate::program::variables::VariableTypes;
-use crate::throttle::Throttle;
 use crate::{
-    comms_helper::{deserialize_msg, CommsMessageType},
-    config::Config,
+    comms_allow_list,
+    comms_helper::CommsMessageType,
+    config::{ComponentsConfig, Config},
+    error_handling::{classify, Reporter, Severity},
     errors::BitVMXError,
-    expected_job::{ExpectedJobKind, ExpectedJobOwner, ExpectedJobStatus, ExpectedJobs},
-    leader_broadcast::{LeaderBroadcastHelper, OriginalMessage},
-    message_queue::{MessageQueue, PushOutcome, QueuedMessage},
-    operation_timeout::{OperationTimeoutId, OperationTimeouts, TimeoutFailurePolicy},
+    expected_job::ExpectedJobs,
+    leader_broadcast::LeaderBroadcastHelper,
+    message_queue::MessageQueue,
+    operation_timeout::OperationTimeouts,
+    ping_helper::PingHelper,
+    ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::{
-        participant::CommsAddress,
-        setup::SetupMessageState,
+        program::{is_active_program, Program},
         variables::{Globals, WitnessVars},
     },
-    signature_verifier::{OperatorVerificationStore, SignatureVerifier},
-    types::{
-        DispatcherJobFailure, ErrorReportKind, FailureDetail, NoOpReason,
-        OutgoingBitVMXApiMessages, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
-        ProgramStatus, ResultDisposition, RetryReason, SetupFailureReason, SuccessDetail,
-        RSK_PEGIN_TAG,
-    },
+    throttle::Throttle,
+    types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
-use bitcoin::Txid;
-use bitcoin_coordinator::TransactionStatus;
-use bitcoin_coordinator::{
-    coordinator::BitcoinCoordinator,
-    types::{AckNews, CoordinatorNews},
-    AckMonitorNews, MonitorNews, TypesToMonitor,
-};
-use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
-use bitvmx_broker::retry::RetryPolicy;
-use bitvmx_broker::{BrokerNode, ReceivedMessage};
+use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TypesToMonitor};
+use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, BrokerNode};
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
-use key_manager::create_key_manager_from_config;
-use key_manager::key_manager::KeyManager;
-use key_manager::key_type::BitcoinKeyType;
+use key_manager::{
+    create_key_manager_from_config, key_manager::KeyManager, key_type::BitcoinKeyType,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::time::Instant;
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
 use storage_backend::{
     key::StorageKey,
@@ -71,11 +55,31 @@ pub enum TickOutcome {
     Stopping,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Context {
+    ProgramId(Uuid),
+    RequestId(Uuid, Identifier),
+    Protocol(Uuid, String),
+    SetupStep(Uuid, String, String, CommsMessageType), // protocol_id, step_name, optional sub_step
+    ProgramStep(Uuid, String), // program_id, step identifier (for job deduplication)
+}
+
+impl Context {
+    pub fn to_string(&self) -> Result<String, BitVMXError> {
+        Ok(serde_json::to_string(self)?)
+    }
+
+    pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
+        let msg: Context = serde_json::from_str(msg)?;
+        Ok(msg)
+    }
+}
+
 pub struct BitVMX<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     config: Config,
     program_context: ProgramContext<BC>,
     store: Rc<Storage>,
-    count: u32,
+    tick_count: u32,
     message_queue: MessageQueue,
     coordinator_throttle: Throttle,
     bitvmx_throttle: Throttle,
@@ -135,17 +139,24 @@ impl BitVMX<BitcoinCoordinator> {
     }
 }
 
-#[cfg(test)]
 impl BitVMX<crate::test_utils::BitcoinCoordinatorMock> {
     /// Builds the complete runtime without a wallet or a Bitcoin node.
-    pub(crate) fn new_mock(config: Config) -> Result<Self, BitVMXError> {
+    pub fn new_mock(config: Config) -> Result<Self, BitVMXError> {
         Self::new_with_coordinator_factory(config, false, |_, _, _| {
             Ok(crate::test_utils::BitcoinCoordinatorMock::new())
         })
     }
 
-    pub(crate) fn coordinator_mock(&self) -> &crate::test_utils::BitcoinCoordinatorMock {
+    pub fn coordinator_mock(&self) -> &crate::test_utils::BitcoinCoordinatorMock {
         &self.program_context.bitcoin_coordinator
+    }
+
+    /// The channel L2 uses to talk to this node, without a remote broker connection.
+    pub fn l2_channel(&self) -> Result<bitvmx_broker::LocalChannel, BitVMXError> {
+        Ok(self
+            .program_context
+            .broker_channel
+            .create_local_channel(self.config.components.l2.clone())?)
     }
 }
 
@@ -160,8 +171,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     {
         print_version_info();
         let store = Rc::new(Storage::new(&config.storage)?);
-        let key_manager =
-            create_key_manager_from_config(&config.key_manager, &config.key_storage.clone())?;
+        let key_manager = create_key_manager_from_config(&config.key_manager, &config.key_storage)?;
         let key_manager = Rc::new(key_manager);
         let rsa_public_key = key_manager
             .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
@@ -255,8 +265,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(Self {
             config,
             program_context,
-            store: store.clone(),
-            count: 0,
+            store,
+            tick_count: 0,
             message_queue,
             coordinator_throttle,
             bitvmx_throttle,
@@ -299,756 +309,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Program::load(self.store.clone(), program_id)
     }
 
-    /// Reports a setup failure for a message the node knows it has lost. Unlike the errors
-    /// `Program` catches itself, nothing here raised an error: the message simply never
-    /// arrived or never left, so setup would otherwise wait for it forever.
-    fn fail_program_setup(
-        &mut self,
-        program_id: &Uuid,
-        peer: Option<PubkHash>,
-        reason: SetupFailureReason,
-    ) -> Result<(), BitVMXError> {
-        match self.load_program(program_id)? {
-            Some(mut program) => program.fail_setup(peer, reason, &mut self.program_context),
-            // No local program means no setup to fail, and nobody waiting on one.
-            None => {
-                debug!(
-                    "BitVMX::fail_program_setup() - Program {} not found, nothing to fail",
-                    program_id
-                );
-                Ok(())
-            }
-        }
-    }
-
-    /// Processes a message for a Program and reports whether it was processed
-    /// or should be retried later.
-    fn process_program_message(
-        &mut self,
-        program_id: &Uuid,
-        msg_type: CommsMessageType,
-        data: Value,
-        peer_address: CommsAddress,
-        program: &mut Program,
-        timestamp: i64,
-        signature: Vec<u8>,
-        version: String,
-    ) -> Result<ResultDisposition, BitVMXError> {
-        debug!(
-            "BitVMX::process_program_message() - Processing {:?} for program {} from {}",
-            msg_type, program_id, peer_address.pubkey_hash
-        );
-
-        let my_pubkey_hash = self.program_context.comms.get_pubk_hash();
-        let participants: Vec<_> = program
-            .participants
-            .iter()
-            .filter(|p| p.pubkey_hash != my_pubkey_hash)
-            .map(|p| p.pubkey_hash.clone())
-            .collect();
-        if !SignatureVerifier::has_all_keys(&self.program_context.globals, &participants)? {
-            info!(
-                "BitVMX::process_program_message() - Missing verification keys for program: {:?}",
-                program_id
-            );
-            return Ok(ResultDisposition::Retry(
-                RetryReason::MissingParticipantVerificationKeys,
-            ));
-        }
-
-        // If this operator is the leader and the message type should be broadcast, store the original message
-        if program.my_idx == program.leader {
-            let should_store = msg_type.should_store();
-            if should_store {
-                let original_msg = OriginalMessage {
-                    sender_pubkey_hash: peer_address.pubkey_hash.clone(),
-                    msg_type,
-                    data: data.clone(),
-                    original_timestamp: timestamp,
-                    original_signature: signature.clone(),
-                    version: version.clone(),
-                };
-                if !self
-                    .program_context
-                    .leader_broadcast_helper
-                    .store_original_message(program_id, msg_type, original_msg)?
-                {
-                    info!(
-                        "There is a message already stored for program {}",
-                        program_id
-                    );
-                    return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
-                }
-            }
-        }
-
-        // Process the message
-        /*let data_bytes: Vec<u8> = serde_json::from_value(data.clone()).map_err(|e| {
-            BitVMXError::InvalidMessage(format!(
-                "Failed to parse message data as byte array: {}. Expected JSON array of integers [0-255], got: {}",
-                e,
-                serde_json::to_string(&data).unwrap_or_else(|_| "<unparseable>".to_string())
-            ))
-        })?;*/
-        program.process_comms_message(
-            &peer_address.pubkey_hash,
-            &msg_type,
-            data,
-            &mut self.program_context,
-        )
-    }
-
-    fn request_missing_verification_keys(&self, program_id: &Uuid) -> Result<(), BitVMXError> {
-        let Some(program) = self.load_program(program_id)? else {
-            return Ok(());
-        };
-        OperatorVerificationStore::request_missing_verification_keys(
-            &self.program_context.globals,
-            &self.program_context.comms,
-            &self.program_context.key_manager,
-            &self.program_context.rsa_public_key,
-            program_id,
-            &program.participants,
-        )
-    }
-
-    /// Applies peer-message control flow in one place so handlers only classify outcomes.
-    fn apply_message_disposition(
-        &mut self,
-        msg: QueuedMessage,
-        program_id: &Uuid,
-        msg_type: CommsMessageType,
-        disposition: ResultDisposition,
-    ) -> Result<(), BitVMXError> {
-        match disposition {
-            ResultDisposition::Success(SuccessDetail::Processed) => Ok(()),
-            ResultDisposition::NoOp(reason) => {
-                debug!(
-                    "Consuming no-op peer message {:?} for program {} from {}: {:?}",
-                    msg_type, program_id, msg.identifier.pubkey_hash, reason
-                );
-                Ok(())
-            }
-            ResultDisposition::Retry(reason) => {
-                info!(
-                    "Pending message to back: {:?} for program {:?} from {:?}: {:?}",
-                    msg_type, program_id, msg.identifier.pubkey_hash, reason,
-                );
-                let (peer, failure_reason) = match &reason {
-                    RetryReason::MissingVerificationKey { peer } => {
-                        (peer.clone(), SetupFailureReason::VerificationKeyMissing)
-                    }
-                    _ => (
-                        msg.identifier.pubkey_hash.clone(),
-                        SetupFailureReason::MessageLost,
-                    ),
-                };
-                let retry_needs_keys = matches!(
-                    reason,
-                    RetryReason::MissingVerificationKey { .. }
-                        | RetryReason::MissingParticipantVerificationKeys
-                );
-                match self.message_queue.push_deferred(msg)? {
-                    PushOutcome::Dropped => {
-                        self.fail_program_setup(program_id, Some(peer), failure_reason)?;
-                    }
-                    PushOutcome::Queued | PushOutcome::AlreadyQueued => {
-                        if retry_needs_keys {
-                            // Verification-key requests are intentionally idempotent.
-                            // Re-requesting is harmless, and key presence in
-                            // OperatorVerificationStore naturally stops future requests.
-                            self.request_missing_verification_keys(program_id)?;
-                        }
-                    }
-                }
-                Ok(())
-            }
-            ResultDisposition::Fail(FailureDetail::PeerSetup(PeerSetupFault { peer, reason })) => {
-                warn!(
-                    "Failing setup for program {} after peer fault from {}: {:?}",
-                    program_id, peer, reason
-                );
-                self.fail_program_setup(
-                    program_id,
-                    Some(peer),
-                    SetupFailureReason::StepError(format!("{reason:?}")),
-                )
-            }
-            _ => unreachable!("invalid peer-message disposition"),
-        }
-    }
-
-    pub fn process_msg(&mut self, msg: QueuedMessage) -> Result<(), BitVMXError> {
-        let decoded = deserialize_msg(
-            &msg.data,
-            self.config
-                .broker
-                .settings
-                .msg_size_config
-                .max_frame_size_kb
-                - 1, // Reserve 1kb for headers
-        );
-        let Some((version, msg_type, program_id, data, timestamp, signature)) =
-            Self::discard_if_malformed(decoded)
-        else {
-            return Ok(());
-        };
-        let disposition = self.process_decoded_peer_message(
-            &msg, version, msg_type, program_id, data, timestamp, signature,
-        )?;
-        self.apply_message_disposition(msg, &program_id, msg_type, disposition)
-    }
-
-    fn process_decoded_peer_message(
-        &mut self,
-        msg: &QueuedMessage,
-        version: String,
-        msg_type: CommsMessageType,
-        program_id: Uuid,
-        data: Value,
-        timestamp: i64,
-        signature: Vec<u8>,
-    ) -> Result<ResultDisposition, BitVMXError> {
-        // Apply the lifecycle gate before authentication or message-specific
-        // handling. Terminal setup traffic is stale and cannot mutate state.
-        let Some(mut program) = self.load_program(&program_id)? else {
-            debug!("Program {} not found", program_id);
-            return Ok(ResultDisposition::Retry(RetryReason::ProgramNotInstalled));
-        };
-
-        if let Some(disposition) = program.peer_message_lifecycle_disposition() {
-            return Ok(disposition);
-        }
-
-        let sender_pubkey_hash = msg.identifier.pubkey_hash.clone();
-        let peer_address = match program.get_address_from_pubkey_hash(&sender_pubkey_hash) {
-            Some(address) => address,
-            None => {
-                warn!(
-                    "Consuming peer message {:?} for program {} from non-participant {}",
-                    msg_type, program_id, sender_pubkey_hash
-                );
-                return Ok(ResultDisposition::NoOp(NoOpReason::UnauthorizedSender));
-            }
-        };
-
-        // The broker constructs `Identifier` from the mutually authenticated TLS
-        // connection, so authorization must use that immediate sender rather than
-        // anything claimed inside the payload. Only the configured leader may
-        // forward a Broadcasted envelope for this program.
-        if msg_type == CommsMessageType::Broadcasted
-            && !program.validate_leader_pubkey_hash(&sender_pubkey_hash)?
-        {
-            warn!(
-                "Rejecting Broadcasted message for program {} from non-leader participant {}",
-                program_id, sender_pubkey_hash
-            );
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: sender_pubkey_hash,
-                reason: PeerSetupFaultReason::UnauthorizedMessage,
-            }));
-        }
-
-        let is_verification_msg = matches!(
-            msg_type,
-            CommsMessageType::VerificationKey | CommsMessageType::VerificationKeyRequest
-        );
-
-        if !is_verification_msg {
-            let setup_state = program.classify_setup_message(&sender_pubkey_hash, msg_type);
-            match setup_state {
-                SetupMessageState::PendingCurrentContribution
-                | SetupMessageState::NotForCurrentStep => {}
-                no_op_state @ (SetupMessageState::ContributionAlreadyAccepted
-                | SetupMessageState::SetupComplete
-                | SetupMessageState::UnauthorizedSender) => {
-                    let reason = no_op_state
-                        .into_no_op_reason()
-                        .expect("matched setup no-op state");
-                    return Ok(ResultDisposition::NoOp(reason));
-                }
-            }
-
-            let my_pubkey_hash = self.program_context.comms.get_pubk_hash();
-            match SignatureVerifier::authenticate_message(
-                &self.program_context.globals,
-                &program_id.to_string(),
-                &version,
-                &msg_type,
-                &data,
-                timestamp,
-                &signature,
-                &sender_pubkey_hash,
-                &self.program_context.rsa_public_key,
-                &my_pubkey_hash,
-            )? {
-                ResultDisposition::Success(SuccessDetail::Processed) => {}
-                disposition => return Ok(disposition),
-            }
-        }
-
-        // Broadcasts use the same outer application-signature pipeline as
-        // direct setup messages. Only a verified leader envelope reaches the
-        // embedded-original processor.
-        if msg_type == CommsMessageType::Broadcasted {
-            info!(
-                "Processing authenticated Broadcasted message for program {} from leader {}",
-                program_id, sender_pubkey_hash
-            );
-            return self
-                .program_context
-                .leader_broadcast_helper
-                .process_broadcasted_message(
-                    &self.program_context,
-                    &program,
-                    msg.identifier.clone(),
-                    program_id,
-                    data,
-                    &self.message_queue,
-                );
-        }
-
-        if is_verification_msg {
-            return match SignatureVerifier::handle_verification_messages(
-                &self.program_context,
-                &program_id,
-                &msg_type,
-                &data,
-                &peer_address,
-            )? {
-                ResultDisposition::Success(SuccessDetail::Processed) => {
-                    Ok(ResultDisposition::Success(SuccessDetail::Processed))
-                }
-                failure @ ResultDisposition::Fail(FailureDetail::PeerSetup(_)) => Ok(failure),
-                _ => unreachable!("invalid verification-message disposition"),
-            };
-        }
-
-        self.process_program_message(
-            &program_id,
-            msg_type,
-            data,
-            peer_address,
-            &mut program,
-            timestamp,
-            signature,
-            version,
-        )
-    }
-
-    pub fn process_pending_messages(&mut self) -> Result<bool, BitVMXError> {
-        if self.message_queue.is_empty()? {
-            return Ok(false);
-        }
-
-        if let Some(msg) = self.message_queue.pop_front()? {
-            self.process_msg(msg)?;
-        }
-        Ok(true)
-    }
-
-    /// Processes up to 20 inputs from each comms queue, committing each independently.
-    /// Must be called without an active global transaction.
-    pub fn process_comms_messages(&mut self) -> Result<bool, BitVMXError> {
-        let incoming = self
-            .run_step("comms inbox", Self::process_comms_inbox)?
-            .unwrap_or(true);
-        let deadletters = self
-            .run_step("comms dead letters", Self::process_deadletters)?
-            .unwrap_or(true);
-        Ok(incoming || deadletters)
-    }
-
-    fn process_comms_inbox(&mut self) -> Result<bool, BitVMXError> {
-        const MAX_MESSAGES: usize = 20;
-        let store = self.store.clone();
-        let mut had_work = false;
-        for _ in 0..MAX_MESSAGES {
-            if !Self::run_transaction(&store, || self.process_one_comms_message())? {
-                break;
-            }
-            had_work = true;
-        }
-        Ok(had_work)
-    }
-
-    fn process_deadletters(&mut self) -> Result<bool, BitVMXError> {
-        const MAX_MESSAGES: usize = 20;
-        let store = self.store.clone();
-        let mut had_work = false;
-        for _ in 0..MAX_MESSAGES {
-            if !Self::run_transaction(&store, || self.process_one_deadletter())? {
-                break;
-            }
-            had_work = true;
-        }
-        Ok(had_work)
-    }
-
-    fn process_one_comms_message(&mut self) -> Result<bool, BitVMXError> {
-        let messages = self.program_context.comms.check_receive(Some(1))?;
-        let had_work = !messages.is_empty();
-        for message in messages {
-            match message {
-                ReceivedMessage::Msg(identifier, msg) => {
-                    let msg: QueuedMessage = QueuedMessage::new(identifier, msg)?;
-                    self.process_msg(msg)?;
-                }
-            }
-        }
-
-        Ok(had_work)
-    }
-
-    fn process_one_deadletter(&mut self) -> Result<bool, BitVMXError> {
-        let deadletter_messages = self.program_context.comms.check_deadletter(Some(1))?;
-        let had_work = !deadletter_messages.is_empty();
-        for deadletter in deadletter_messages {
-            match deadletter {
-                (ReceivedMessage::Msg(identifier, _msg), ctx) => {
-                    let Some(context) = Self::discard_if_malformed(Context::from_string(&ctx))
-                    else {
-                        continue;
-                    };
-                    warn!(
-                        "Processing deadletter message for context: {:?} and identifier: {:?}",
-                        context, identifier
-                    );
-                    // Setup traffic is sent with Context::ProgramId; other contexts have no
-                    // program to fail.
-                    if let Context::ProgramId(program_id) = context {
-                        self.fail_program_setup(
-                            &program_id,
-                            Some(identifier.pubkey_hash.clone()),
-                            SetupFailureReason::Undeliverable,
-                        )?;
-                    }
-                }
-            }
-        }
-
-        Ok(had_work)
-    }
-
-    pub fn handle_news(
-        &mut self,
-        tx_id: Txid,
-        tx_status: TransactionStatus,
-        context_data: String,
-        vout: Option<u32>,
-    ) -> Result<bool, BitVMXError> {
-        let context = Context::from_string(&context_data)?;
-        debug!(
-            "Transaction Found: {:?} {:?} for context: {:?}",
-            tx_id, tx_status, context
-        );
-
-        match &context {
-            Context::ProgramId(program_id) => match self.load_program(program_id)? {
-                Some(program) => {
-                    program.notify_news(
-                        tx_id,
-                        vout,
-                        tx_status,
-                        context_data,
-                        &self.program_context,
-                    )?;
-                }
-                None => {
-                    warn!("handle_news: Program {} not found", program_id);
-                }
-            },
-            Context::RequestId(request_id, from) => {
-                info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                // Only a UTXO subscription carries a vout.
-                let response = match vout {
-                    Some(vout) => OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
-                        *request_id,
-                        tx_id,
-                        vout,
-                        tx_status,
-                    ),
-                    None => OutgoingBitVMXApiMessages::Transaction(*request_id, tx_status, None),
-                };
-                self.program_context
-                    .broker_channel
-                    .send_service(from, response.to_string()?)?;
-            }
-            _ => {}
-        }
-        Ok(true)
-    }
-
-    fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
-        let store = self.store.clone();
-        let (ready, monitor_news, coordinator_news) = Self::run_transaction(&store, || {
-            self.program_context.bitcoin_coordinator.tick()?;
-            if let Some(wallet) = self.wallet.as_mut() {
-                wallet.tick()?;
-            }
-            if !self.program_context.bitcoin_coordinator.is_ready()? {
-                return Ok((false, Vec::new(), Vec::new()));
-            }
-            if !self.chain_synced {
-                return Ok((true, Vec::new(), Vec::new()));
-            }
-
-            let news = self.program_context.bitcoin_coordinator.get_news()?;
-            Ok((true, news.monitor_news, news.coordinator_news))
-        })?;
-
-        self.reporter
-            .rpc_recovered(&self.program_context.broker_channel);
-        if !ready {
-            return Ok(true);
-        }
-        if !self.chain_synced {
-            info!("Sync complete, starting normal operation");
-            self.chain_synced = true;
-            return Ok(true);
-        }
-
-        let had_monitor_news = !monitor_news.is_empty();
-        for news in monitor_news {
-            self.run_step("monitor news", |this| {
-                Self::run_transaction(&store, || this.process_monitor_news(news))
-            })?;
-        }
-        let had_coordinator_news = !coordinator_news.is_empty();
-        // Unacknowledged items remain in coordinator storage for the next fetch.
-        for news in coordinator_news {
-            self.run_step("coordinator news", |this| {
-                Self::run_transaction(&store, || this.process_coordinator_news(news))
-            })?;
-        }
-        Ok(had_monitor_news || had_coordinator_news)
-    }
-
-    fn process_monitor_news(&mut self, news: MonitorNews) -> Result<(), BitVMXError> {
-        let ack_news = match news {
-            MonitorNews::Transaction(n) => {
-                self.handle_news(n.tx_id, n.status, n.context.clone(), None)?;
-                //TODO: Handle reorg case with n.resent_due_to_reorg
-                AckMonitorNews::Transaction(n.tx_id, n.context)
-            }
-            MonitorNews::SpendingUTXOTransaction(tx_id, output_index, tx_status, context_data) => {
-                self.handle_news(tx_id, tx_status, context_data.clone(), Some(output_index))?;
-                AckMonitorNews::SpendingUTXOTransaction(tx_id, output_index, context_data)
-            }
-            MonitorNews::OutputPatternTransaction(tx_id, tx_status, tag) => {
-                if tag == RSK_PEGIN_TAG {
-                    let legacy =
-                        OutgoingBitVMXApiMessages::PeginTransactionFound(tx_id, tx_status.clone());
-                    let data = serde_json::to_string(&legacy)?;
-                    self.program_context
-                        .broker_channel
-                        .send_service(&self.config.components.l2, data)?;
-                }
-                let outgoing = OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
-                    tx_id,
-                    tx_status,
-                    tag.clone(),
-                );
-                let data = serde_json::to_string(&outgoing)?;
-                self.program_context
-                    .broker_channel
-                    .send_service(&self.config.components.l2, data)?;
-                AckMonitorNews::OutputPatternTransaction(tx_id, tag)
-            }
-            MonitorNews::NewBlock(block_height, block_hash) => {
-                debug!("New block: {} {}", block_height, block_hash);
-                if self.send_new_block_news(&self.program_context) {
-                    let data = serde_json::to_string(&OutgoingBitVMXApiMessages::NewBlock(
-                        block_hash,
-                        block_height,
-                    ))?;
-                    self.program_context
-                        .broker_channel
-                        .send_service(&self.config.components.l2, data)?;
-                }
-                AckMonitorNews::NewBlock
-            }
-        };
-
-        self.program_context
-            .bitcoin_coordinator
-            .ack_news(AckNews::Monitor(ack_news))?;
-        Ok(())
-    }
-
-    fn process_coordinator_news(
-        &mut self,
-        coordinator_news: CoordinatorNews,
-    ) -> Result<(), BitVMXError> {
-        match coordinator_news.clone() {
-            CoordinatorNews::InsufficientFunds {
-                available,
-                required,
-            } => {
-                info!(
-                    "Insufficient funds for transaction. Available: {}, Required: {}",
-                    available, required
-                );
-                // No txid or context, so the program cannot be identified.
-                self.reporter.coordinator_news(
-                    None,
-                    ErrorReportKind::InsufficientFunds {
-                        available,
-                        required,
-                    },
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            CoordinatorNews::DispatchError { txid, context } => {
-                error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
-                if let Some(wallet) = self.wallet.as_mut() {
-                    if let Some(wallet_tx) = wallet.get_wallet_tx(txid)? {
-                        wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
-                    }
-                }
-                self.reporter.coordinator_news(
-                    Some(&context),
-                    ErrorReportKind::TransactionDispatchFailed { txid },
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            CoordinatorNews::SpeedupDispatchError { txid, context } => {
-                error!("Speedup dispatch error: {:?} {:?}", txid, context);
-                self.reporter.coordinator_news(
-                    Some(&context),
-                    ErrorReportKind::SpeedupDispatchFailed { txid },
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            CoordinatorNews::TransactionStuckInMempool { txid, context } => {
-                warn!("Transaction stuck in mempool: {:?} {:?}", txid, context);
-                self.reporter.coordinator_news(
-                    Some(&context),
-                    ErrorReportKind::TransactionStuckInMempool { txid },
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            CoordinatorNews::MaxFeeRateReached {
-                txid,
-                effective_fee_rate,
-                context,
-            } => {
-                warn!(
-                    "Speedup for {:?} reached the fee rate cap at {} sat/vB. No further boosts",
-                    txid, effective_fee_rate
-                );
-                self.reporter.coordinator_news(
-                    Some(&context),
-                    ErrorReportKind::MaxFeeRateReached {
-                        txid,
-                        effective_fee_rate,
-                    },
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            CoordinatorNews::EstimateFeerateTooHigh {
-                estimated_fee_rate,
-                max_fee_rate,
-            } => {
-                warn!(
-                    "Estimated fee rate {} exceeds the configured maximum {}",
-                    estimated_fee_rate, max_fee_rate
-                );
-                self.reporter.coordinator_news(
-                    None,
-                    ErrorReportKind::FeeRateTooHigh {
-                        estimated: estimated_fee_rate,
-                        max: max_fee_rate,
-                    },
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            CoordinatorNews::FundingNotAvailable => {
-                error!("No funding UTXO is available");
-                self.reporter.coordinator_news(
-                    None,
-                    ErrorReportKind::FundingNotAvailable,
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            CoordinatorNews::InvalidFundingUtxo {
-                amount,
-                min_required,
-            } => {
-                error!(
-                    "Funding UTXO of {} is below the {} minimum",
-                    amount, min_required
-                );
-                self.reporter.coordinator_news(
-                    None,
-                    ErrorReportKind::InvalidFundingUtxo {
-                        amount,
-                        min_required,
-                    },
-                    &self.program_context.broker_channel,
-                )?;
-            }
-            // Not reported: our own invariant broke, which is not L2's problem.
-            CoordinatorNews::InvalidStateTransition { txid, from, to } => {
-                error!(
-                    "Invalid state transition for {:?}: {:?} -> {:?}",
-                    txid, from, to
-                );
-            }
-            // Not reported: bookkeeping after the tx already finalized or failed.
-            CoordinatorNews::TransactionEvicted { txid, context } => {
-                debug!(
-                    "Transaction evicted from tracking: {:?} {:?}",
-                    txid, context
-                );
-            }
-            // Not reported: the caller asked for something invalid.
-            CoordinatorNews::InvalidCancel { txid, reason } => {
-                warn!("Cancel rejected for {:?}: {}", txid, reason);
-            }
-            // Not reported: the coordinator's own store has no row for this txid, which
-            // is internal bookkeeping and not a statement about the chain.
-            CoordinatorNews::TxNotFound { txid } => {
-                error!("Coordinator has no record of transaction {:?}", txid);
-            }
-        }
-
-        self.program_context
-            .bitcoin_coordinator
-            .ack_news(AckNews::Coordinator(coordinator_news))?;
-        Ok(())
-    }
-
     pub fn tick(&mut self) -> Result<TickOutcome, BitVMXError> {
         let result = self.tick_inner();
 
         if let Err(e) = &result {
-            error!("Error in tick(): {e:#?}");
-            let mut source = std::error::Error::source(e);
-            while let Some(err) = source {
-                error!("  Caused by: {err}");
-                source = std::error::Error::source(err);
-            }
-
-            // decide type of error to send
-            let should_stop = match classify(e) {
-                Severity::Fatal => {
-                    self.reporter.fatal(e, &self.program_context.broker_channel);
-                    true
-                }
-                Severity::BitcoinNodeUnreachable => {
-                    self.reporter
-                        .rpc_unavailable(e, &self.program_context.broker_channel);
-                    false
-                }
-                Severity::Other => {
-                    self.reporter
-                        .non_fatal(e, &self.program_context.broker_channel);
-                    false
-                }
-            };
-
-            if !should_stop {
+            Self::log_error_chain(e);
+            if !self.report_tick_error(e) {
                 return Ok(TickOutcome::Operating);
             }
         }
@@ -1056,174 +322,44 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         result
     }
 
-    /// Accepts pure decoding results before handler state changes. Invalid inputs return
-    /// `None`, allowing the receive transaction to commit and consume the malformed event.
-    /// Do not pass results from effectful handlers: their errors require rollback.
-    fn discard_if_malformed<T, E: std::fmt::Display>(decoded: Result<T, E>) -> Option<T> {
-        match decoded {
-            Ok(value) => Some(value),
-            Err(error) => {
-                warn!("Rejected malformed input: {}", error);
-                None
-            }
+    fn log_error_chain(e: &BitVMXError) {
+        error!("Error in tick(): {e:#?}");
+        let mut source = std::error::Error::source(e);
+        while let Some(err) = source {
+            error!("  Caused by: {err}");
+            source = std::error::Error::source(err);
         }
     }
 
-    /// Reports nonfatal step failures without preventing independent work from running.
-    /// The work owns its transactions and must close them before returning.
-    fn run_step<T>(
-        &mut self,
-        name: &str,
-        work: impl FnOnce(&mut Self) -> Result<T, BitVMXError>,
-    ) -> Result<Option<T>, BitVMXError> {
-        let result = work(self);
-        let result = self.settle_failed_attempt(result);
-        Self::finish_step(
-            name,
-            result,
-            &mut self.reporter,
-            &self.program_context.broker_channel,
-        )
-        .map(Option::flatten)
-    }
-
-    /// Requires the attempt transaction to be closed. This records failure policy in a
-    /// fresh transaction only after all effects staged by the failed attempt were rolled
-    /// back. Restored dispatcher inputs are consumed as duplicates on redelivery.
-    fn settle_failed_attempt<T>(
-        &mut self,
-        result: Result<T, BitVMXError>,
-    ) -> Result<Option<T>, BitVMXError> {
-        match result {
-            Err(BitVMXError::SetupAttemptFailed {
-                program_id,
-                peer,
-                source,
-            }) => {
-                let store = self.store.clone();
-                Self::run_transaction(&store, || {
-                    self.fail_program_setup(
-                        &program_id,
-                        peer,
-                        SetupFailureReason::StepError(source.to_string()),
-                    )
-                })?;
-                Ok(None)
+    /// Reports the error by severity and returns whether the node should stop.
+    fn report_tick_error(&mut self, e: &BitVMXError) -> bool {
+        match classify(e) {
+            Severity::Fatal => {
+                self.reporter.fatal(e, &self.program_context.broker_channel);
+                true
             }
-            Err(BitVMXError::RuntimeJobAttemptFailed {
-                program_id,
-                expected_job_id,
-                job_id,
-                reason,
-            }) => {
-                let store = self.store.clone();
-                Self::run_transaction(&store, || {
-                    let expected = self
-                        .program_context
-                        .expected_jobs
-                        .get(&expected_job_id)?
-                        .ok_or_else(|| {
-                            BitVMXError::InvalidState(format!(
-                                "dispatcher job '{expected_job_id}' is not registered"
-                            ))
-                        })?;
-                    if expected.owner != ExpectedJobOwner::Program(program_id)
-                        || expected.kind != ExpectedJobKind::Program
-                    {
-                        return Err(BitVMXError::InvalidState(format!(
-                            "dispatcher job '{expected_job_id}' has incompatible runtime ownership"
-                        )));
-                    }
-                    self.apply_dispatcher_result_disposition(
-                        expected.dispatcher,
-                        ResultDisposition::fail_dispatcher(DispatcherJobFailure {
-                            program_id,
-                            expected_job_id,
-                            job_id,
-                            reason,
-                        }),
-                    )
-                })?;
-                Ok(None)
+            Severity::BitcoinNodeUnreachable => {
+                self.reporter
+                    .rpc_unavailable(e, &self.program_context.broker_channel);
+                false
             }
-            other => other.map(Some),
-        }
-    }
-
-    fn finish_step<T>(
-        name: &str,
-        result: Result<T, BitVMXError>,
-        reporter: &mut Reporter,
-        broker_channel: &BrokerNode,
-    ) -> Result<Option<T>, BitVMXError> {
-        match result {
-            Ok(value) => Ok(Some(value)),
-            Err(error) => {
-                match classify(&error) {
-                    // Let tick report fatal errors once and stop processing.
-                    Severity::Fatal => return Err(error),
-                    Severity::BitcoinNodeUnreachable => {
-                        reporter.rpc_unavailable(&error, broker_channel);
-                    }
-                    Severity::Other => reporter.non_fatal(&error, broker_channel),
-                }
-                error!("Error in {name}: {error:#?}");
-                Ok(None)
+            Severity::Other => {
+                self.reporter
+                    .non_fatal(e, &self.program_context.broker_channel);
+                false
             }
         }
-    }
-
-    /// Commits the work on success and rolls it back on error.
-    /// Requires no active global transaction. Rollback covers database writes only,
-    /// not live memory or external effects.
-    fn run_transaction<T>(
-        store: &Storage,
-        work: impl FnOnce() -> Result<T, BitVMXError>,
-    ) -> Result<T, BitVMXError> {
-        store.begin_global_transaction()?;
-        match work() {
-            Ok(value) => {
-                // Storage consumes the transaction even when commit fails.
-                store.commit_global_transaction()?;
-                Ok(value)
-            }
-            Err(error) => {
-                if let Err(rollback) = store.rollback_global_transaction() {
-                    error!(
-                        "Could not roll back transaction step after {:?}: {:?}",
-                        error, rollback
-                    );
-                    return Err(rollback.into());
-                }
-                Err(error)
-            }
-        }
-    }
-
-    fn measure_time<T>(operation: &str, work: impl FnOnce() -> T) -> T {
-        const WARN_THRESHOLD: Duration = Duration::from_secs(10);
-
-        let instant = Instant::now();
-        let result = work();
-        let duration = instant.elapsed();
-        if duration > WARN_THRESHOLD {
-            warn!(
-                "Processing {operation} took {:?} which is above the threshold",
-                duration
-            );
-        }
-        result
     }
 
     fn tick_inner(&mut self) -> Result<TickOutcome, BitVMXError> {
-        debug!("Ticking BitVMX: {}", self.count);
+        debug!("Ticking BitVMX: {}", self.tick_count);
 
         if self.shutdown {
             info!("BitVMX is shutdown, stopping tick processing.");
             return Ok(TickOutcome::Stopping);
         }
 
-        self.count += 1;
+        self.tick_count += 1;
 
         // Nothing else can run against a chain we have not caught up with, so until the
         // coordinator reaches the tip a tick only advances the sync.
@@ -1236,53 +372,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             });
         }
 
-        let process_application = self.bitvmx_throttle.should_call();
-        if process_application {
-            self.process_broker_queues()?;
-        }
-
-        // Each step commits independently.
-        let store = self.store.clone();
-
-        if process_application {
-            // Failed work stays pending; do not count a failed phase as idle.
-            let mut had_work = false;
-
-            had_work |=
-                Self::measure_time("operation timeouts", || self.process_operation_timeouts())?;
-
-            had_work |= Self::measure_time("dispatcher retries", || {
-                self.run_step("dispatcher retries", |this| {
-                    Self::run_transaction(&store, || {
-                        Ok(this.program_context.expected_jobs.redispatch_due(
-                            &this.program_context.operation_timeouts,
-                            &this.program_context.broker_channel,
-                        )? > 0)
-                    })
-                })
-            })?
-            .unwrap_or(true);
-
-            had_work |= Self::measure_time("programs", || {
-                self.run_step("programs", Self::process_programs)
-            })?
-            .unwrap_or(true);
-
-            had_work |= Self::measure_time("pending messages", || {
-                self.run_step("pending messages", |this| {
-                    Self::run_transaction(&store, || this.process_pending_messages())
-                })
-            })?
-            .unwrap_or(true);
-
-            had_work |= Self::measure_time("comms messages", || self.process_comms_messages())?;
-
-            had_work |= Self::measure_time("API messages", || {
-                self.run_step("API messages", Self::process_api_messages)
-            })?
-            .unwrap_or(true);
-
-            self.bitvmx_throttle.record(had_work);
+        if self.bitvmx_throttle.should_call() {
+            self.process_application_phase()?;
         }
 
         Self::measure_time("bitcoin updates", || {
@@ -1292,141 +383,54 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             )
         })?;
 
-        self.run_step("dispatcher liveness", |this| {
-            Self::run_transaction(&store, || {
-                this.ping_helper
-                    .check_job_dispatchers_liveness(&this.program_context, &this.config.components)
-            })
+        self.run_tx_step("dispatcher liveness", |this| {
+            this.ping_helper
+                .check_job_dispatchers_liveness(&this.program_context, &this.config.components)
         })?;
 
         Ok(TickOutcome::Operating)
     }
 
-    pub fn process_broker_queues(&mut self) -> Result<bool, BitVMXError> {
-        // Deliver committed outgoing work before processing application messages.
-        // Rollback cannot undo delivery, so transport retries may send duplicates.
-        self.run_step("comms transport", |this| {
-            Self::run_transaction(&this.store, || {
-                this.program_context.comms.tick().map_err(BitVMXError::from)
-            })
-        })?;
-        self.run_step("service transport", |this| {
-            Self::run_transaction(&this.store, || {
-                this.program_context
-                    .broker_channel
-                    .tick()
-                    .map_err(BitVMXError::from)
-            })
-        })?;
-        Ok(true)
-    }
+    fn process_application_phase(&mut self) -> Result<(), BitVMXError> {
+        self.process_broker_queues()?;
 
-    /// Owns the coordinator and news transactions; requires no active global transaction.
-    pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<(), BitVMXError> {
-        if self.coordinator_throttle.should_call() {
-            let had_work = self.process_bitcoin_updates()?;
-            self.coordinator_throttle.record(had_work);
-            return Ok(());
-        }
+        let mut had_work = false;
+
+        had_work |= Self::measure_time("operation timeouts", || self.process_operation_timeouts())?;
+
+        had_work |= self.timed_tx_step("dispatcher retries", |this| {
+            Ok(this
+                .program_context
+                .expected_jobs
+                .redispatch_due(&this.program_context.broker_channel)?
+                > 0)
+        })?;
+
+        had_work |= self.timed_step("programs", Self::process_programs)?;
+
+        had_work |= self.timed_tx_step("pending messages", Self::process_pending_messages)?;
+
+        had_work |= Self::measure_time("comms messages", || self.process_comms_messages())?;
+
+        had_work |= self.timed_step("API messages", Self::process_api_messages)?;
+
+        self.bitvmx_throttle.record(had_work);
         Ok(())
     }
 
-    /// Applies a bounded timeout snapshot, settling every expiration in its own
-    /// transaction so one broken operation cannot roll back unrelated deadlines.
-    fn process_operation_timeouts(&mut self) -> Result<bool, BitVMXError> {
-        let ids = self.program_context.operation_timeouts.expired(32)?;
-        let had_work = !ids.is_empty();
-        let store = self.store.clone();
-
-        for id in ids {
-            self.run_step(&format!("operation timeout {id:?}"), |this| {
-                Self::run_transaction(&store, || this.apply_operation_timeout(&id))
-            })?;
-        }
-        Ok(had_work)
-    }
-
-    fn apply_operation_timeout(&mut self, id: &OperationTimeoutId) -> Result<(), BitVMXError> {
-        let Some(timeout) = self.program_context.operation_timeouts.get(id)? else {
-            return Ok(());
-        };
-        if timeout.deadline_ms > bitvmx_broker::retry::now_ms()? {
-            return Ok(());
-        }
-
-        match timeout.policy {
-            TimeoutFailurePolicy::FailSetup { program_id, job_id } => {
-                let Some(program) = self.load_program(&program_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if program.peer_message_lifecycle_disposition().is_some() {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-
-                if let Some(job_id) = job_id {
-                    let valid_pending_setup_job = self
-                        .program_context
-                        .expected_jobs
-                        .get(&job_id)?
-                        .is_some_and(|job| {
-                            job.owner == ExpectedJobOwner::Program(program_id)
-                                && job.kind == ExpectedJobKind::Setup
-                                && matches!(job.status, ExpectedJobStatus::Pending)
-                        });
-                    if !valid_pending_setup_job {
-                        return self.program_context.operation_timeouts.cancel(id);
-                    }
-                    self.program_context.expected_jobs.fail(
-                        &self.program_context.operation_timeouts,
-                        &job_id,
-                        "dispatcher job execution timed out".to_string(),
-                    )?;
-                }
-                self.fail_program_setup(
-                    &program_id,
-                    None,
-                    SetupFailureReason::StepError("setup operation timed out".to_string()),
-                )
-            }
-            TimeoutFailurePolicy::FailRequestJob { request_id, job_id } => {
-                let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if job.owner != ExpectedJobOwner::Request(request_id)
-                    || job.kind != ExpectedJobKind::Zkp
-                    || !matches!(job.status, ExpectedJobStatus::Pending)
-                {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-                self.fail_zkp_timeout(request_id, &job_id)
-            }
-            TimeoutFailurePolicy::RetryRuntimeJob { program_id, job_id } => {
-                let Some(job) = self.program_context.expected_jobs.get(&job_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if job.owner != ExpectedJobOwner::Program(program_id)
-                    || job.kind != ExpectedJobKind::Program
-                    || !matches!(job.status, ExpectedJobStatus::Pending)
-                {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-                let Some(program) = self.load_program(&program_id)? else {
-                    return self.program_context.operation_timeouts.cancel(id);
-                };
-                if program.is_failed() {
-                    return self.program_context.operation_timeouts.cancel(id);
-                }
-                self.apply_dispatcher_result_disposition(
-                    job.dispatcher,
-                    ResultDisposition::fail_dispatcher(DispatcherJobFailure {
-                        program_id,
-                        expected_job_id: job_id.clone(),
-                        job_id,
-                        reason: "dispatcher job execution timed out".to_string(),
-                    }),
-                )
-            }
-        }
+    pub fn process_broker_queues(&mut self) -> Result<(), BitVMXError> {
+        // Deliver committed outgoing work before processing application messages.
+        // Rollback cannot undo delivery, so transport retries may send duplicates.
+        self.run_tx_step("comms transport", |this| {
+            this.program_context.comms.tick().map_err(BitVMXError::from)
+        })?;
+        self.run_tx_step("service transport", |this| {
+            this.program_context
+                .broker_channel
+                .tick()
+                .map_err(BitVMXError::from)
+        })?;
+        Ok(())
     }
 
     /// Advances each program in its own transaction, reporting nonfatal failures locally.
@@ -1436,22 +440,19 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         let mut had_work = false;
 
-        let store = self.store.clone();
         for status in all_programs {
             let program_id = status.program_id;
             had_work |= self
-                .run_step(&format!("program {program_id}"), |this| {
-                    Self::run_transaction(&store, || {
-                        if !is_active_program(&this.store, &program_id)? {
-                            return Ok(false);
-                        }
-                        let Some(mut program) = this.load_program(&program_id)? else {
-                            warn!("Active program {} not found", program_id);
-                            return Ok(false);
-                        };
-                        program.tick(&mut this.program_context)?;
-                        Ok(true)
-                    })
+                .run_tx_step(&format!("program {program_id}"), |this| {
+                    if !is_active_program(&this.store, &program_id)? {
+                        return Ok(false);
+                    }
+                    let Some(mut program) = this.load_program(&program_id)? else {
+                        warn!("Active program {} not found", program_id);
+                        return Ok(false);
+                    };
+                    program.tick(&mut this.program_context)?;
+                    Ok(true)
                 })?
                 .unwrap_or(true);
         }
@@ -1483,1000 +484,5 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         wallet.sync_wallet()?;
         info!("Wallet sync completed.");
         Ok(())
-    }
-
-    fn send_new_block_news(&self, context: &ProgramContext<BC>) -> bool {
-        context
-            .globals
-            .get_var(&CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS)
-            .unwrap_or(None)
-            .unwrap_or(VariableTypes::Bool(false))
-            .bool()
-            .unwrap_or(false)
-    }
-}
-
-#[cfg(test)]
-mod transaction_tests {
-    use super::*;
-    use crate::{
-        comms_helper::{prepare_message, serialize_msg, VerificationKeyAnnouncement},
-        leader_broadcast::BroadcastedMessage,
-        test_utils::{TestBitVMXEnv, TestStorageDir},
-        types::PROGRAM_TYPE_AGGREGATED_KEY,
-    };
-
-    type BitVMX = super::BitVMX<BitcoinCoordinator>;
-    use crate::types::{ErrorReport, ErrorScope, IncomingBitVMXApiMessages};
-    use storage_backend::error::StorageError;
-
-    macro_rules! test_key {
-        ($name:expr) => {
-            StorageKey::new(["bitvmx", "test", $name]).unwrap()
-        };
-    }
-
-    fn test_l2_messages(
-        env: &TestBitVMXEnv,
-    ) -> Result<Vec<OutgoingBitVMXApiMessages>, BitVMXError> {
-        env.bitvmx.program_context.broker_channel.tick()?;
-        let l2 = env
-            .bitvmx
-            .program_context
-            .broker_channel
-            .create_local_channel(env.bitvmx.program_context.components_config.l2.clone())?;
-        l2.get_all()?
-            .into_iter()
-            .map(|message| OutgoingBitVMXApiMessages::from_string(&message.msg))
-            .collect()
-    }
-
-    fn create_single_participant_program(env: &mut TestBitVMXEnv, program_id: Uuid) -> Rc<Storage> {
-        let store = env.bitvmx.get_store();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            env.bitvmx.program_context.comms.get_pubk_hash(),
-        );
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![self_address],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-        store
-    }
-
-    #[test]
-    fn setup_timeout_fails_a_setup_waiting_without_input() {
-        let mut env = TestBitVMXEnv::new("setup-operation-timeout").unwrap();
-        let program_id = Uuid::new_v4();
-        let store = create_single_participant_program(&mut env, program_id);
-        env.bitvmx
-            .program_context
-            .operation_timeouts
-            .cancel_setup(program_id)
-            .unwrap();
-        OperationTimeouts::new(store.clone())
-            .register_setup(program_id, Some(Duration::ZERO))
-            .unwrap();
-
-        assert!(env.bitvmx.process_operation_timeouts().unwrap());
-        assert!(Program::load(store, &program_id)
-            .unwrap()
-            .unwrap()
-            .is_failed());
-        assert!(!env.bitvmx.process_operation_timeouts().unwrap());
-    }
-
-    #[test]
-    fn runtime_job_timeout_enters_retry_without_failing_program() {
-        let mut env = TestBitVMXEnv::new("runtime-operation-timeout").unwrap();
-        let program_id = Uuid::new_v4();
-        let store = create_single_participant_program(&mut env, program_id);
-        env.bitvmx
-            .program_context
-            .globals
-            .set_var(
-                &program_id,
-                "optional_keys",
-                VariableTypes::String("null".to_string()),
-            )
-            .unwrap();
-        let mut program = Program::load(store.clone(), &program_id).unwrap().unwrap();
-        program.tick(&mut env.bitvmx.program_context).unwrap();
-        program.tick(&mut env.bitvmx.program_context).unwrap();
-
-        let job_id = Context::ProgramStep(program_id, "execute-round-1".to_string())
-            .to_string()
-            .unwrap();
-        env.bitvmx
-            .program_context
-            .expected_jobs
-            .register(job_id.clone(), crate::types::JobDispatcherType::Emulator)
-            .unwrap();
-        let timeout_id = OperationTimeoutId::DispatcherJob(job_id.clone());
-        env.bitvmx
-            .program_context
-            .operation_timeouts
-            .cancel(&timeout_id)
-            .unwrap();
-        OperationTimeouts::new(store.clone())
-            .register_runtime_job(program_id, job_id.clone(), Some(Duration::ZERO), false)
-            .unwrap();
-
-        assert!(env.bitvmx.process_operation_timeouts().unwrap());
-        assert!(matches!(
-            env.bitvmx
-                .program_context
-                .expected_jobs
-                .get(&job_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            ExpectedJobStatus::RetryPending(_)
-        ));
-        assert!(!Program::load(store, &program_id)
-            .unwrap()
-            .unwrap()
-            .is_failed());
-    }
-
-    #[test]
-    fn runtime_dispatcher_failure_rolls_back_attempt_before_scheduling_retry() {
-        let mut env = TestBitVMXEnv::new("runtime-dispatcher-rollback-settlement").unwrap();
-        let program_id = Uuid::new_v4();
-        let store = create_single_participant_program(&mut env, program_id);
-        let context = Context::ProgramStep(program_id, "execute-round-1".to_string());
-        let expected_job_id = context.to_string().unwrap();
-        env.bitvmx
-            .program_context
-            .expected_jobs
-            .register(
-                expected_job_id.clone(),
-                crate::types::JobDispatcherType::Emulator,
-            )
-            .unwrap();
-        let staged_key = test_key!("runtime-dispatcher-staged-effect");
-
-        let outcome = env
-            .bitvmx
-            .run_step(
-                "runtime dispatcher result",
-                |_this| -> Result<(), BitVMXError> {
-                    BitVMX::run_transaction(&store, || {
-                        store.set(&staged_key, "must roll back".to_string(), None)?;
-                        Err(BitVMXError::RuntimeJobAttemptFailed {
-                            program_id,
-                            expected_job_id: expected_job_id.clone(),
-                            job_id: "execute-round-1".to_string(),
-                            reason: "invalid emulator output".to_string(),
-                        })
-                    })
-                },
-            )
-            .unwrap();
-
-        assert!(outcome.is_none());
-        assert_eq!(store.get::<String>(&staged_key, None).unwrap(), None);
-        assert!(matches!(
-            env.bitvmx
-                .program_context
-                .expected_jobs
-                .get(&expected_job_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            ExpectedJobStatus::RetryPending(ref reason) if reason == "invalid emulator output"
-        ));
-        assert!(!Program::load(store, &program_id)
-            .unwrap()
-            .unwrap()
-            .is_failed());
-    }
-
-    #[test]
-    fn terminal_programs_discard_peer_messages_before_payload_processing() {
-        let mut env = TestBitVMXEnv::new("peer-lifecycle-gate").unwrap();
-        let store = env.bitvmx.get_store();
-        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            self_hash.clone(),
-        );
-
-        let ready_id = Uuid::new_v4();
-        Program::new(
-            ready_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![self_address.clone()],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-        env.bitvmx
-            .program_context
-            .globals
-            .set_var(
-                &ready_id,
-                "optional_keys",
-                VariableTypes::String("null".to_string()),
-            )
-            .unwrap();
-        let mut ready_program = Program::load(store.clone(), &ready_id).unwrap().unwrap();
-        ready_program.tick(&mut env.bitvmx.program_context).unwrap();
-        ready_program.tick(&mut env.bitvmx.program_context).unwrap();
-        assert_eq!(
-            ready_program.peer_message_lifecycle_disposition(),
-            Some(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete))
-        );
-
-        // The invalid RSA signature would be rejected if authentication ran.
-        let stale_direct = serialize_msg(
-            "1.0",
-            CommsMessageType::Keys,
-            &ready_id,
-            serde_json::json!({"stale": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(
-                QueuedMessage::new(Identifier::new(self_hash.clone(), 0), stale_direct).unwrap(),
-            )
-            .unwrap();
-
-        let failed_id = Uuid::new_v4();
-        Program::new(
-            failed_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![self_address],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-        let mut failed_program = Program::load(store, &failed_id).unwrap().unwrap();
-        failed_program
-            .fail_setup(
-                None,
-                SetupFailureReason::StepError("test failure".to_string()),
-                &mut env.bitvmx.program_context,
-            )
-            .unwrap();
-
-        // This is not a BroadcastedMessage. The lifecycle gate must consume it
-        // before the special broadcast path attempts to deserialize the payload.
-        let stale_broadcast = serialize_msg(
-            "1.0",
-            CommsMessageType::Broadcasted,
-            &failed_id,
-            serde_json::json!({"malformed": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(
-                QueuedMessage::new(Identifier::new(self_hash, 0), stale_broadcast).unwrap(),
-            )
-            .unwrap();
-    }
-
-    #[test]
-    fn attributable_peer_fault_is_terminal_and_notified_once() {
-        let mut env = TestBitVMXEnv::new("peer-fault-terminal").unwrap();
-        let store = env.bitvmx.get_store();
-        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![CommsAddress::new(
-                env.bitvmx.program_context.comms.get_address(),
-                self_hash.clone(),
-            )],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        // The sender is an expected participant and its current contribution is
-        // pending, so malformed signature bytes are an attributable peer fault.
-        let invalid = serialize_msg(
-            "1.0",
-            CommsMessageType::Keys,
-            &program_id,
-            serde_json::json!({"malformed": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        let queued = QueuedMessage::new(Identifier::new(self_hash.clone(), 0), invalid).unwrap();
-        env.bitvmx.process_msg(queued.clone()).unwrap();
-
-        let program = Program::load(store.clone(), &program_id)
-            .unwrap()
-            .expect("program must remain persisted");
-        assert!(program.is_failed());
-        assert!(env.bitvmx.message_queue.is_empty().unwrap());
-
-        let reports = test_l2_messages(&env).unwrap();
-        assert_eq!(reports.len(), 1);
-        match &reports[0] {
-            OutgoingBitVMXApiMessages::Error(ErrorReport {
-                scope: ErrorScope::Program(id),
-                kind: ErrorReportKind::SetupFailed { peer, .. },
-                ..
-            }) => {
-                assert_eq!(*id, program_id);
-                assert_eq!(peer.as_ref(), Some(&self_hash));
-            }
-            other => panic!("expected scoped SetupFailed report, got {other:?}"),
-        }
-
-        // Redelivery is stale after the terminal transition. It must neither
-        // enter the retry queue nor produce another setup-failure report.
-        env.bitvmx.process_msg(queued).unwrap();
-        assert!(env.bitvmx.message_queue.is_empty().unwrap());
-        assert_eq!(test_l2_messages(&env).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn malformed_verification_announcement_fails_active_setup() {
-        let mut env = TestBitVMXEnv::new("verification-bootstrap-rejection").unwrap();
-        let store = env.bitvmx.get_store();
-        let self_hash = env.bitvmx.program_context.comms.get_pubk_hash();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            self_hash.clone(),
-        );
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![self_address],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        let malformed = serialize_msg(
-            "1.0",
-            CommsMessageType::VerificationKey,
-            &program_id,
-            serde_json::json!({"wrong_field": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(QueuedMessage::new(Identifier::new(self_hash, 0), malformed).unwrap())
-            .unwrap();
-
-        let program = Program::load(store, &program_id).unwrap().unwrap();
-        assert!(program.is_failed());
-    }
-
-    #[test]
-    fn verification_key_fingerprint_mismatch_fails_setup_without_storing_key() {
-        let mut env = TestBitVMXEnv::new("verification-bootstrap-fingerprint-mismatch").unwrap();
-        let store = env.bitvmx.get_store();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            env.bitvmx.program_context.comms.get_pubk_hash(),
-        );
-        let peer_hash = "ab".repeat(32);
-        let peer = CommsAddress::new("127.0.0.1:1".parse().unwrap(), peer_hash.clone());
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![self_address, peer],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        // This is a valid RSA public key, but it belongs to this node rather
-        // than to the TLS-authenticated peer fingerprint in `peer_hash`.
-        let announcement = VerificationKeyAnnouncement {
-            verification_key: env.bitvmx.program_context.rsa_public_key.clone(),
-        }
-        .to_value()
-        .unwrap();
-        let message = serialize_msg(
-            "1.0",
-            CommsMessageType::VerificationKey,
-            &program_id,
-            announcement,
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(
-                QueuedMessage::new(Identifier::new(peer_hash.clone(), 0), message).unwrap(),
-            )
-            .unwrap();
-
-        assert!(Program::load(store, &program_id)
-            .unwrap()
-            .unwrap()
-            .is_failed());
-        assert!(
-            !OperatorVerificationStore::has(&env.bitvmx.program_context.globals, &peer_hash,)
-                .unwrap()
-        );
-        let reports = test_l2_messages(&env).unwrap();
-        assert!(matches!(
-            reports.as_slice(),
-            [OutgoingBitVMXApiMessages::Error(ErrorReport {
-                scope: ErrorScope::Program(id),
-                kind: ErrorReportKind::SetupFailed { peer: Some(failed_peer), .. },
-                ..
-            })] if *id == program_id && failed_peer == &peer_hash
-        ));
-    }
-
-    #[test]
-    fn broadcast_from_non_leader_participant_fails_active_setup() {
-        let mut env = TestBitVMXEnv::new("non-leader-broadcast").unwrap();
-        let store = env.bitvmx.get_store();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            env.bitvmx.program_context.comms.get_pubk_hash(),
-        );
-        let non_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "11".repeat(32));
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![self_address, non_leader.clone()],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        // Authorization precedes broadcast payload parsing, so even this
-        // malformed envelope is an attributable leader-role violation.
-        let broadcast = serialize_msg(
-            "1.0",
-            CommsMessageType::Broadcasted,
-            &program_id,
-            serde_json::json!({"malformed": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(
-                QueuedMessage::new(Identifier::new(non_leader.pubkey_hash, 0), broadcast).unwrap(),
-            )
-            .unwrap();
-
-        let program = Program::load(store, &program_id).unwrap().unwrap();
-        assert!(program.is_failed());
-    }
-
-    #[test]
-    fn broadcast_from_configured_leader_is_authorized() {
-        let mut env = TestBitVMXEnv::new("leader-broadcast-authorization").unwrap();
-        let store = env.bitvmx.get_store();
-        let leader_hash = env.bitvmx.program_context.comms.get_pubk_hash();
-        let leader_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            leader_hash.clone(),
-        );
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![leader_address],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        let original_data = serde_json::json!({"declaration": "test"});
-        let (version, data, timestamp, signature) = prepare_message(
-            &env.bitvmx.program_context.key_manager,
-            &env.bitvmx.program_context.rsa_public_key,
-            &program_id,
-            CommsMessageType::Keys,
-            original_data,
-        )
-        .unwrap();
-        let broadcast_data = BroadcastedMessage {
-            original_msg_type: CommsMessageType::Keys,
-            original_messages: vec![OriginalMessage {
-                sender_pubkey_hash: leader_hash.clone(),
-                msg_type: CommsMessageType::Keys,
-                data,
-                original_timestamp: timestamp,
-                original_signature: signature,
-                version,
-            }],
-        };
-        let (outer_version, outer_data, outer_timestamp, outer_signature) = prepare_message(
-            &env.bitvmx.program_context.key_manager,
-            &env.bitvmx.program_context.rsa_public_key,
-            &program_id,
-            CommsMessageType::Broadcasted,
-            serde_json::to_value(broadcast_data).unwrap(),
-        )
-        .unwrap();
-        let broadcast = serialize_msg(
-            &outer_version,
-            CommsMessageType::Broadcasted,
-            &program_id,
-            outer_data,
-            outer_timestamp,
-            outer_signature,
-        )
-        .unwrap();
-
-        env.bitvmx
-            .process_msg(QueuedMessage::new(Identifier::new(leader_hash, 0), broadcast).unwrap())
-            .unwrap();
-
-        let program = Program::load(store, &program_id).unwrap().unwrap();
-        assert!(!program.is_failed());
-    }
-
-    #[test]
-    fn invalid_outer_broadcast_signature_from_leader_fails_setup() {
-        let mut env = TestBitVMXEnv::new("leader-broadcast-invalid-outer-signature").unwrap();
-        let store = env.bitvmx.get_store();
-        let leader_hash = env.bitvmx.program_context.comms.get_pubk_hash();
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![CommsAddress::new(
-                env.bitvmx.program_context.comms.get_address(),
-                leader_hash.clone(),
-            )],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        let broadcast = serialize_msg(
-            "1.0",
-            CommsMessageType::Broadcasted,
-            &program_id,
-            serde_json::json!({"malformed": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(QueuedMessage::new(Identifier::new(leader_hash, 0), broadcast).unwrap())
-            .unwrap();
-
-        let program = Program::load(store, &program_id).unwrap().unwrap();
-        assert!(program.is_failed());
-        assert!(env.bitvmx.message_queue.is_empty().unwrap());
-    }
-
-    #[test]
-    fn broadcast_with_missing_leader_key_is_retried() {
-        let mut env = TestBitVMXEnv::new("leader-broadcast-missing-outer-key").unwrap();
-        let store = env.bitvmx.get_store();
-        let remote_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "22".repeat(32));
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            env.bitvmx.program_context.comms.get_pubk_hash(),
-        );
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![remote_leader.clone(), self_address],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        let broadcast = serialize_msg(
-            "1.0",
-            CommsMessageType::Broadcasted,
-            &program_id,
-            serde_json::json!({"not_processed_without_the_key": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(
-                QueuedMessage::new(Identifier::new(remote_leader.pubkey_hash, 0), broadcast)
-                    .unwrap(),
-            )
-            .unwrap();
-
-        let program = Program::load(store, &program_id).unwrap().unwrap();
-        assert!(!program.is_failed());
-        assert!(!env.bitvmx.message_queue.is_empty().unwrap());
-    }
-
-    #[test]
-    fn non_participant_message_does_not_fail_active_setup() {
-        let mut env = TestBitVMXEnv::new("non-participant-message").unwrap();
-        let store = env.bitvmx.get_store();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            env.bitvmx.program_context.comms.get_pubk_hash(),
-        );
-        let program_id = Uuid::new_v4();
-        Program::new(
-            program_id,
-            PROGRAM_TYPE_AGGREGATED_KEY,
-            vec![self_address],
-            0,
-            None,
-            &mut env.bitvmx.program_context,
-            store.clone(),
-        )
-        .unwrap();
-
-        let unauthorized = serialize_msg(
-            "1.0",
-            CommsMessageType::Keys,
-            &program_id,
-            serde_json::json!({"malformed": true}),
-            0,
-            vec![1],
-        )
-        .unwrap();
-        env.bitvmx
-            .process_msg(
-                QueuedMessage::new(
-                    Identifier::new("non-participant".to_string(), 0),
-                    unauthorized,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-
-        let program = Program::load(store, &program_id).unwrap().unwrap();
-        assert_eq!(program.peer_message_lifecycle_disposition(), None);
-        assert!(env.bitvmx.message_queue.is_empty().unwrap());
-        assert!(test_l2_messages(&env).unwrap().is_empty());
-    }
-
-    #[test]
-    fn news_handler_and_acknowledgement_commit_independently_per_item() {
-        let dir = TestStorageDir::new("news-independent-transactions");
-        let store = dir.storage();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.set(test_key!("handler-first"), true, None)?;
-            store.set(test_key!("ack-first"), true, None)?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
-        assert!(result.is_err());
-        BitVMX::run_transaction(&store, || {
-            store.set(test_key!("handler-second"), true, None)?;
-            store.set(test_key!("ack-second"), true, None)?;
-            Ok(())
-        })
-        .unwrap();
-
-        drop(store);
-        let store = dir.storage();
-        assert_eq!(
-            store.get::<bool>(test_key!("handler-first"), None).unwrap(),
-            None
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("ack-first"), None).unwrap(),
-            None
-        );
-        assert_eq!(
-            store
-                .get::<bool>(test_key!("handler-second"), None)
-                .unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("ack-second"), None).unwrap(),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn malformed_input_is_consumed_and_the_next_input_can_commit() {
-        let dir = TestStorageDir::new("reject-malformed-input");
-        let store = dir.storage();
-        let valid =
-            serde_json::to_string(&IncomingBitVMXApiMessages::Ping(Uuid::new_v4())).unwrap();
-        store.set(test_key!("bad-input"), "not JSON", None).unwrap();
-        store.set(test_key!("next-input"), &valid, None).unwrap();
-
-        for key in ["bad-input", "next-input"] {
-            BitVMX::run_transaction(&store, || {
-                let payload: String = store.get(test_key!(key), None)?.unwrap();
-                store.remove(test_key!(key), None)?;
-                if BitVMX::discard_if_malformed(serde_json::from_str::<IncomingBitVMXApiMessages>(
-                    &payload,
-                ))
-                .is_some()
-                {
-                    store.set(test_key!("handled"), true, None)?;
-                }
-                Ok(())
-            })
-            .unwrap();
-        }
-
-        assert_eq!(
-            store.get::<String>(test_key!("bad-input"), None).unwrap(),
-            None
-        );
-        assert_eq!(
-            store.get::<String>(test_key!("next-input"), None).unwrap(),
-            None
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("handled"), None).unwrap(),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn malformed_input_consumption_rolls_back_with_transaction() {
-        let dir = TestStorageDir::new("reject-rollback");
-        let store = dir.storage();
-        store.set(test_key!("input"), "[]", None).unwrap();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("input"), None)?;
-            assert!(BitVMX::discard_if_malformed(deserialize_msg("[]".into(), 1024)).is_none());
-            Err(BitVMXError::StorageError(StorageError::WriteError))
-        });
-        assert!(result.is_err());
-        assert_eq!(
-            store.get::<String>(test_key!("input"), None).unwrap(),
-            Some("[]".into())
-        );
-    }
-
-    #[test]
-    fn nonfatal_step_reports_after_rollback_and_allows_independent_work() {
-        let env = crate::test_utils::TestProgramContextEnv::new("nonfatal-step").unwrap();
-        let mut reporter = Reporter::new(env.context.components_config.l2.clone());
-        let dir = TestStorageDir::new("nonfatal-step-storage");
-        let store = dir.storage();
-        store.set(test_key!("input"), true, None).unwrap();
-
-        let failed: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("input"), None)?;
-            store.set(test_key!("partial"), true, None)?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
-        assert_eq!(
-            BitVMX::finish_step("input", failed, &mut reporter, &env.context.broker_channel)
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("input"), None).unwrap(),
-            Some(true)
-        );
-        assert_eq!(store.get::<bool>(test_key!("partial"), None).unwrap(), None);
-        assert_eq!(env.l2_messages().unwrap().len(), 1);
-
-        let next = BitVMX::run_transaction(&store, || {
-            store.set(test_key!("independent"), true, None)?;
-            Ok(true)
-        });
-        assert_eq!(
-            BitVMX::finish_step("next", next, &mut reporter, &env.context.broker_channel).unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("independent"), None).unwrap(),
-            Some(true)
-        );
-        assert_eq!(env.l2_messages().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn fatal_step_propagates_without_reporting_twice() {
-        let env = crate::test_utils::TestProgramContextEnv::new("fatal-step").unwrap();
-        let mut reporter = Reporter::new(env.context.components_config.l2.clone());
-        let result = BitVMX::finish_step::<()>(
-            "storage",
-            Err(BitVMXError::StorageError(StorageError::WriteError)),
-            &mut reporter,
-            &env.context.broker_channel,
-        );
-        assert!(matches!(
-            result,
-            Err(BitVMXError::StorageError(StorageError::WriteError))
-        ));
-        // Fatal reporting belongs to tick, not the individual step.
-        assert!(env.l2_messages().unwrap().is_empty());
-    }
-
-    #[test]
-    fn broker_commit_survives_application_rollback() {
-        let dir = TestStorageDir::new("broker-tick-commit");
-        let store = dir.storage();
-        BitVMX::run_transaction(&store, || {
-            store.set(test_key!("broker"), true, None)?;
-            Ok(())
-        })
-        .unwrap();
-
-        store.begin_global_transaction().unwrap();
-        store.set(test_key!("application"), true, None).unwrap();
-        store.rollback_global_transaction().unwrap();
-        assert_eq!(
-            store.get::<bool>(test_key!("broker"), None).unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("application"), None).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn failed_second_broker_does_not_undo_first_broker() {
-        let dir = TestStorageDir::new("broker-tick-independent");
-        let store = dir.storage();
-        BitVMX::run_transaction(&store, || {
-            store.set(test_key!("comms"), true, None)?;
-            Ok(())
-        })
-        .unwrap();
-
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.set(test_key!("services"), true, None)?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-        assert_eq!(
-            store.get::<bool>(test_key!("comms"), None).unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("services"), None).unwrap(),
-            None
-        );
-        // No leaked transaction blocks the next phase.
-        store.begin_global_transaction().unwrap();
-        store.rollback_global_transaction().unwrap();
-    }
-
-    #[test]
-    fn failed_item_preserves_previous_commit_and_unvisited_input() {
-        let dir = TestStorageDir::new("application-item-transactions");
-        let store = dir.storage();
-        for key in ["input-a", "input-b", "input-c"] {
-            store.set(test_key!(key), true, None).unwrap();
-        }
-
-        let value = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("input-a"), None)?;
-            store.set(test_key!("state-a"), true, None)?;
-            Ok(42)
-        })
-        .unwrap();
-        assert_eq!(value, 42);
-
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("input-b"), None)?;
-            store.set(test_key!("partial-b"), true, None)?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
-        assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
-        assert_eq!(store.get::<bool>(test_key!("input-a"), None).unwrap(), None);
-        assert_eq!(
-            store.get::<bool>(test_key!("state-a"), None).unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("partial-b"), None).unwrap(),
-            None
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("input-b"), None).unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            store.get::<bool>(test_key!("input-c"), None).unwrap(),
-            Some(true)
-        );
-
-        // The next step can open its own transaction after the failure.
-        BitVMX::run_transaction(&store, || {
-            store.set(test_key!("next-step"), true, None)?;
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(
-            store.get::<bool>(test_key!("next-step"), None).unwrap(),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn rollback_failure_is_fatal_even_if_the_original_error_was_not() {
-        let dir = TestStorageDir::new("transaction-rollback-failure");
-        let store = dir.storage();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            // Simulate a handler incorrectly consuming its owner's transaction.
-            store.rollback_global_transaction()?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
-        let error = result.unwrap_err();
-        assert!(matches!(
-            error,
-            BitVMXError::StorageError(StorageError::TransactionRollbackFailed)
-        ));
-        assert!(matches!(classify(&error), Severity::Fatal));
-    }
-
-    #[test]
-    fn fatal_broker_error_also_rolls_back() {
-        let dir = TestStorageDir::new("broker-tick-fatal");
-        let store = dir.storage();
-        store.set(test_key!("incoming"), true, None).unwrap();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("incoming"), None)?;
-            Err(BitVMXError::StorageError(StorageError::WriteError))
-        });
-        assert!(matches!(
-            result,
-            Err(BitVMXError::StorageError(StorageError::WriteError))
-        ));
-        assert_eq!(
-            store.get::<bool>(test_key!("incoming"), None).unwrap(),
-            Some(true)
-        );
-        store.begin_global_transaction().unwrap();
-        store.rollback_global_transaction().unwrap();
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum Context {
-    ProgramId(Uuid),
-    RequestId(Uuid, Identifier),
-    Protocol(Uuid, String),
-    SetupStep(Uuid, String, String, CommsMessageType), // protocol_id, step_name, optional sub_step
-    ProgramStep(Uuid, String), // program_id, step identifier (for job deduplication)
-}
-
-impl Context {
-    pub fn to_string(&self) -> Result<String, BitVMXError> {
-        Ok(serde_json::to_string(self)?)
-    }
-
-    pub fn from_string(msg: &str) -> Result<Self, BitVMXError> {
-        let msg: Context = serde_json::from_str(msg)?;
-        Ok(msg)
     }
 }

@@ -12,13 +12,13 @@ use crate::{
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
-        setup::{SetupEngine, SetupEngineState, SetupMessageState, StepState},
+        setup::{SetupEngine, SetupEngineState, StepState},
     },
     signature_verifier::OperatorVerificationStore,
     types::{
         DispatcherJobFailure, ErrorReport, ErrorReportKind, ErrorScope, JobDispatcherType,
         NoOpReason, OutgoingBitVMXApiMessages, ProgramContext, ResultDisposition,
-        SetupFailureReason, SuccessDetail,
+        SetupFailureReason,
     },
 };
 use bitcoin::{Transaction, Txid};
@@ -705,7 +705,7 @@ impl Program {
             return Ok(disposition);
         }
         match self.receive_dispatcher_result_inner(result, &context, dispatcher, program_context) {
-            Ok(()) => Ok(ResultDisposition::Success(SuccessDetail::Processed)),
+            Ok(()) => Ok(ResultDisposition::Success),
             Err(error) => match &context {
                 Context::SetupStep(_, _, _, _) => self.handle_setup_dispatcher_error(error),
                 Context::ProgramStep(_, job_id) => {
@@ -817,7 +817,7 @@ impl Program {
         )?;
 
         // Preserve the previous behavior: save messages reported as processed.
-        if disposition == ResultDisposition::Success(SuccessDetail::Processed) {
+        if disposition == ResultDisposition::Success {
             let is_waiting_for_participants =
                 self.setup_engine.state().current_step_state == StepState::WaitingForParticipants;
             if is_waiting_for_participants {
@@ -865,12 +865,13 @@ impl Program {
     }
 
     /// Classifies a participant message against the current setup step before
-    /// payload validation.
+    /// payload validation. Returns why the message can be consumed as a no-op,
+    /// or `None` when it needs further processing.
     pub fn classify_setup_message(
         &self,
         pubkey_hash: &PubKeyHash,
         msg_type: CommsMessageType,
-    ) -> SetupMessageState {
+    ) -> Option<NoOpReason> {
         self.setup_engine
             .classify_participant_message(&self.participants, pubkey_hash, msg_type)
     }
@@ -894,7 +895,7 @@ impl Program {
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if !self.state.is_setup_complete() => {
                 self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
-                Ok(ResultDisposition::Success(SuccessDetail::Processed))
+                Ok(ResultDisposition::Success)
             }
             other => other,
         }
@@ -933,7 +934,7 @@ impl Program {
             }
         }
 
-        Ok(ResultDisposition::Success(SuccessDetail::Processed))
+        Ok(ResultDisposition::Success)
     }
 
     /// Gets a transaction by name from the protocol
@@ -1414,7 +1415,7 @@ mod tests {
         let mut program = test_program(dir.storage(), Uuid::new_v4());
         program.state = ProgramState::Ready;
 
-        // Reached from bitvmx.rs when a late message for a finished setup exhausts its retries.
+        // Reached from bitvmx/peer_messages.rs when a late message for a finished setup exhausts its retries.
         program
             .fail_setup(None, SetupFailureReason::MessageLost, &mut env.context)
             .unwrap();
@@ -1495,10 +1496,7 @@ mod tests {
                     &mut env.context,
                 )
                 .unwrap();
-            assert_eq!(
-                disposition,
-                ResultDisposition::Success(SuccessDetail::Processed)
-            );
+            assert_eq!(disposition, ResultDisposition::Success);
         }
         assert_eq!(program.setup_engine.state(), &initial_engine_state);
         assert_eq!(program.state, ProgramState::SettingUp);

@@ -18,7 +18,7 @@ const ABSENT_ADDRESS: &str = "127.0.0.1:61999";
 /// The client is the non-leader, so it sends its first step to the leader straight away
 /// (`setup_engine.rs`: non-leaders send only to the leader). Nobody is listening, comms
 /// exhausts its send attempts, and the message lands in the dead letter queue, which is
-/// where `bitvmx.rs` turns it into `SetupFailed`.
+/// where `bitvmx/peer_messages.rs` turns it into `SetupFailed`.
 #[test]
 #[ignore]
 fn undeliverable_setup_message_is_reported_to_l2() -> Result<()> {

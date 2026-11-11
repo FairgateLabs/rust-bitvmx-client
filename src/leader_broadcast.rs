@@ -1,12 +1,11 @@
 use crate::comms_helper::{construct_message, request, serialize_msg, CommsMessageType};
 use crate::errors::BitVMXError;
-use crate::message_queue::{MessageQueue, QueuedMessage};
+use crate::message_queue::{MessageQueue, PushOutcome};
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use crate::program::{participant::CommsAddress, program::Program, setup::SetupMessageState};
+use crate::program::{participant::CommsAddress, program::Program};
 use crate::signature_verifier::SignatureVerifier;
 use crate::types::{
-    FailureDetail, NoOpReason, PeerSetupFault, PeerSetupFaultReason, ProgramContext,
-    ResultDisposition, RetryReason, SuccessDetail,
+    FailureDetail, NoOpReason, PeerSetupFaultReason, ProgramContext, ResultDisposition,
 };
 use bitvmx_broker::identification::identifier::{Identifier, PubkHash};
 use bitvmx_broker::settings::COMMS_ID;
@@ -57,7 +56,6 @@ pub struct OriginalMessage {
 impl BroadcastedMessage {
     /// Validates that the BroadcastedMessage is valid
     pub fn validate(&self) -> Result<(), BitVMXError> {
-        // Validate that there is at least one original message
         if self.original_messages.is_empty() {
             return Err(BitVMXError::InvalidMessage(
                 "No original messages".to_string(),
@@ -90,36 +88,24 @@ impl BroadcastedMessage {
 impl OriginalMessage {
     /// Validates that the OriginalMessage is valid
     pub fn validate(&self) -> Result<(), BitVMXError> {
-        // Validate that the signature is not empty
         if self.original_signature.is_empty() {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Original signature is empty: {:?}",
-                self.original_signature
-            )));
+            return Err(BitVMXError::InvalidMessage(
+                "Original signature is empty".to_string(),
+            ));
         }
-
-        // Validate that the version is not empty
         if self.version.is_empty() {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Version is empty: {:?}",
-                self.version
-            )));
+            return Err(BitVMXError::InvalidMessage("Version is empty".to_string()));
         }
-
-        // Validate that the pubkey_hash is not empty
         if self.sender_pubkey_hash.is_empty() {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Sender pubkey hash is empty: {:?}",
-                self.sender_pubkey_hash
-            )));
+            return Err(BitVMXError::InvalidMessage(
+                "Sender pubkey hash is empty".to_string(),
+            ));
         }
-
-        // Validate that the message type is not Broadcasted (cannot broadcast a broadcast)
+        // A broadcast cannot carry another broadcast.
         if self.msg_type == CommsMessageType::Broadcasted {
-            return Err(BitVMXError::InvalidMessage(format!(
-                "Message type is Broadcasted: {:?}",
-                self.msg_type
-            )));
+            return Err(BitVMXError::InvalidMessage(
+                "Message type is Broadcasted".to_string(),
+            ));
         }
 
         Ok(())
@@ -226,21 +212,18 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
     ) -> Result<Vec<OriginalMessage>, BitVMXError> {
         let prefix = get_original_messages_prefix(context_id, msg_type)?;
-        let stored_messages = self.store.partial_compare(&prefix, None)?;
-
-        let mut messages = Vec::new();
-        for (_, msg_json) in stored_messages.iter() {
-            // Deserialize each message individually
-            let msg: OriginalMessage = serde_json::from_str(msg_json).map_err(|e| {
-                BitVMXError::InvalidMessage(format!(
-                    "Failed to deserialize original message: {:?}",
-                    e
-                ))
-            })?;
-            messages.push(msg);
-        }
-
-        Ok(messages)
+        self.store
+            .partial_compare(&prefix, None)?
+            .into_iter()
+            .map(|(_, msg_json)| {
+                serde_json::from_str(&msg_json).map_err(|e| {
+                    BitVMXError::InvalidMessage(format!(
+                        "Failed to deserialize original message: {:?}",
+                        e
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// Check if all expected messages have been received
@@ -297,7 +280,6 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
         non_leader_participants: &[CommsAddress],
     ) -> Result<(), BitVMXError> {
-        // Get all stored original messages
         let original_messages = self.get_original_messages(context_id, msg_type)?;
 
         if original_messages.is_empty() {
@@ -339,7 +321,6 @@ impl LeaderBroadcastHelper {
             )?;
         }
 
-        // Clear stored messages after successful broadcast
         self.clear_original_messages(context_id, msg_type)?;
 
         info!(
@@ -359,10 +340,9 @@ impl LeaderBroadcastHelper {
     /// contributions are ignored. If any original is malformed, unauthorized, or
     /// has an invalid signature, no originals are queued and setup is failed.
     pub fn process_broadcasted_message<BC: BitcoinCoordinatorApi>(
-        &self,
         program_context: &ProgramContext<BC>,
         program: &Program,
-        leader_identifier: Identifier,
+        leader_pubkey_hash: &PubkHash,
         program_id: Uuid,
         data: Value,
         message_queue: &MessageQueue,
@@ -372,18 +352,18 @@ impl LeaderBroadcastHelper {
             Err(error) => {
                 warn!(
                     "Rejecting malformed BroadcastedMessage from leader {} for {}: {:?}",
-                    leader_identifier.pubkey_hash, program_id, error
+                    leader_pubkey_hash, program_id, error
                 );
-                return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: leader_identifier.pubkey_hash,
-                    reason: PeerSetupFaultReason::MalformedMessage,
-                }));
+                return Ok(ResultDisposition::fail_peer_reason(
+                    leader_pubkey_hash.clone(),
+                    PeerSetupFaultReason::MalformedMessage,
+                ));
             }
         };
 
         info!(
             "Processing BroadcastedMessage from leader {} for context {} with {} original messages",
-            leader_identifier.pubkey_hash,
+            leader_pubkey_hash,
             program_id,
             broadcasted_msg.original_messages.len()
         );
@@ -391,34 +371,19 @@ impl LeaderBroadcastHelper {
         if broadcasted_msg.original_messages.is_empty()
             || !broadcasted_msg.original_msg_type.should_store()
         {
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: leader_identifier.pubkey_hash,
-                reason: PeerSetupFaultReason::UnauthorizedMessage,
-            }));
+            return Ok(ResultDisposition::fail_peer_reason(
+                leader_pubkey_hash.clone(),
+                PeerSetupFaultReason::UnauthorizedMessage,
+            ));
         }
 
-        let mut seen_senders = HashSet::new();
-        let mut outcomes = Vec::with_capacity(broadcasted_msg.original_messages.len());
-        for original_msg in &broadcasted_msg.original_messages {
-            if original_msg.msg_type != broadcasted_msg.original_msg_type
-                || !original_msg.msg_type.should_store()
-                || !seen_senders.insert(&original_msg.sender_pubkey_hash)
-            {
-                outcomes.push(ResultDisposition::fail_peer(PeerSetupFault {
-                    peer: leader_identifier.pubkey_hash.clone(),
-                    reason: PeerSetupFaultReason::UnauthorizedMessage,
-                }));
-                continue;
-            }
-
-            outcomes.push(Self::evaluate_original_message(
-                program_context,
-                program,
-                &leader_identifier.pubkey_hash,
-                &program_id,
-                original_msg,
-            )?);
-        }
+        let outcomes = Self::evaluate_originals(
+            program_context,
+            program,
+            leader_pubkey_hash,
+            &program_id,
+            &broadcasted_msg,
+        )?;
 
         // A single invalid original makes the active setup untrustworthy. Do
         // not queue otherwise valid/deferred originals from the same envelope.
@@ -429,56 +394,115 @@ impl LeaderBroadcastHelper {
             return Ok(ResultDisposition::fail_peer(fault));
         }
 
+        Self::queue_outcomes(
+            leader_pubkey_hash,
+            &program_id,
+            &broadcasted_msg.original_messages,
+            outcomes,
+            message_queue,
+        )
+    }
+
+    /// Evaluates every original in the envelope without queueing any of them, so a
+    /// later fault can still reject the earlier ones. Keeps going after a fault: a
+    /// local failure on a later original is returned as `Err` and takes priority.
+    fn evaluate_originals<BC: BitcoinCoordinatorApi>(
+        program_context: &ProgramContext<BC>,
+        program: &Program,
+        leader_pubkey_hash: &PubkHash,
+        program_id: &Uuid,
+        broadcasted_msg: &BroadcastedMessage,
+    ) -> Result<Vec<ResultDisposition>, BitVMXError> {
+        let mut seen_senders = HashSet::new();
+        let mut outcomes = Vec::with_capacity(broadcasted_msg.original_messages.len());
+        for original_msg in &broadcasted_msg.original_messages {
+            if original_msg.msg_type != broadcasted_msg.original_msg_type
+                || !seen_senders.insert(&original_msg.sender_pubkey_hash)
+            {
+                outcomes.push(ResultDisposition::fail_peer_reason(
+                    leader_pubkey_hash.clone(),
+                    PeerSetupFaultReason::UnauthorizedMessage,
+                ));
+                continue;
+            }
+
+            outcomes.push(Self::evaluate_original_message(
+                program_context,
+                program,
+                leader_pubkey_hash,
+                program_id,
+                original_msg,
+            )?);
+        }
+        Ok(outcomes)
+    }
+
+    /// Queues the verified originals of an envelope with no faults, and derives the
+    /// disposition of the envelope from the outcomes.
+    fn queue_outcomes(
+        leader_pubkey_hash: &PubkHash,
+        program_id: &Uuid,
+        original_messages: &[OriginalMessage],
+        outcomes: Vec<ResultDisposition>,
+        message_queue: &MessageQueue,
+    ) -> Result<ResultDisposition, BitVMXError> {
         let mut queued_count = 0usize;
         let mut no_op_count = 0usize;
-        let mut missing_peers = Vec::new();
-        for outcome in outcomes {
+        let mut retries = Vec::new();
+        for (original_msg, outcome) in original_messages.iter().zip(outcomes) {
             match outcome {
-                ResultDisposition::Success(SuccessDetail::QueuedMessage(message)) => {
+                ResultDisposition::Success => {
                     info!(
                         "Queueing verified embedded original from {}",
-                        message.identifier.pubkey_hash
+                        original_msg.sender_pubkey_hash
                     );
-                    message_queue.push_new_unique(message.identifier, message.data)?;
-                    queued_count += 1;
+                    let full_message = serialize_msg(
+                        &original_msg.version,
+                        original_msg.msg_type,
+                        program_id,
+                        &original_msg.data,
+                        original_msg.original_timestamp,
+                        original_msg.original_signature.clone(),
+                    )?;
+                    match message_queue.push_new_unique(
+                        Identifier::new(original_msg.sender_pubkey_hash.clone(), COMMS_ID),
+                        full_message,
+                    )? {
+                        PushOutcome::Queued => queued_count += 1,
+                        _ => no_op_count += 1,
+                    }
                 }
-                ResultDisposition::Retry(RetryReason::MissingVerificationKey { peer }) => {
-                    info!(
-                        "Deferring leader envelope until the verification key for {} arrives",
-                        peer
-                    );
-                    missing_peers.push(peer);
+                ResultDisposition::Retry(reason) => {
+                    info!("Deferring leader envelope: {:?}", reason);
+                    retries.push(reason);
                 }
                 ResultDisposition::NoOp(reason) => {
                     debug!("Discarding redundant embedded original: {:?}", reason);
                     no_op_count += 1;
                 }
                 ResultDisposition::Fail(_) => unreachable!("handled before queueing"),
-                _ => unreachable!("invalid embedded-original disposition"),
             }
         }
 
         info!(
             "Processed BroadcastedMessage from leader {}: {} queued, {} no-op, {} deferred",
-            leader_identifier.pubkey_hash,
+            leader_pubkey_hash,
             queued_count,
             no_op_count,
-            missing_peers.len()
+            retries.len()
         );
-        if let Some(peer) = missing_peers.into_iter().next() {
+        if let Some(reason) = retries.into_iter().next() {
             // Retry the authenticated outer envelope rather than creating an
             // independently fresh budget for every missing-key original. On a
             // retry, accepted originals are no-ops and pending verified ones are
             // deduplicated by MessageQueue.
-            Ok(ResultDisposition::Retry(
-                crate::types::RetryReason::MissingVerificationKey { peer },
-            ))
+            Ok(ResultDisposition::Retry(reason))
         } else if queued_count == 0 {
             Ok(ResultDisposition::NoOp(
                 NoOpReason::ContributionAlreadyAccepted,
             ))
         } else {
-            Ok(ResultDisposition::Success(SuccessDetail::Processed))
+            Ok(ResultDisposition::Success)
         }
     }
 
@@ -497,26 +521,16 @@ impl LeaderBroadcastHelper {
                 "Leader {} forwarded an original claiming non-participant sender {}",
                 leader_pubkey_hash, original_msg.sender_pubkey_hash
             );
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: leader_pubkey_hash.clone(),
-                reason: PeerSetupFaultReason::UnauthorizedMessage,
-            }));
+            return Ok(ResultDisposition::fail_peer_reason(
+                leader_pubkey_hash.clone(),
+                PeerSetupFaultReason::UnauthorizedMessage,
+            ));
         }
 
-        match program
-            .classify_setup_message(&original_msg.sender_pubkey_hash, original_msg.msg_type)
+        if let Some(reason) =
+            program.classify_setup_message(&original_msg.sender_pubkey_hash, original_msg.msg_type)
         {
-            SetupMessageState::ContributionAlreadyAccepted => {
-                return Ok(ResultDisposition::NoOp(
-                    NoOpReason::ContributionAlreadyAccepted,
-                ));
-            }
-            SetupMessageState::SetupComplete => {
-                return Ok(ResultDisposition::NoOp(NoOpReason::SetupAlreadyComplete));
-            }
-            SetupMessageState::PendingCurrentContribution
-            | SetupMessageState::NotForCurrentStep
-            | SetupMessageState::UnauthorizedSender => {}
+            return Ok(ResultDisposition::NoOp(reason));
         }
 
         if original_msg.validate().is_err()
@@ -529,46 +543,22 @@ impl LeaderBroadcastHelper {
             )
             .is_err()
         {
-            return Ok(ResultDisposition::fail_peer(PeerSetupFault {
-                peer: original_msg.sender_pubkey_hash.clone(),
-                reason: PeerSetupFaultReason::MalformedMessage,
-            }));
+            return Ok(ResultDisposition::fail_peer_reason(
+                original_msg.sender_pubkey_hash.clone(),
+                PeerSetupFaultReason::MalformedMessage,
+            ));
         }
 
-        let authentication = SignatureVerifier::authenticate_message(
-            &program_context.globals,
-            &program_id.to_string(),
+        SignatureVerifier::authenticate_message(
+            program_context,
+            program_id,
             &original_msg.version,
-            &original_msg.msg_type,
+            original_msg.msg_type,
             &original_msg.data,
             original_msg.original_timestamp,
             &original_msg.original_signature,
             &original_msg.sender_pubkey_hash,
-            &program_context.rsa_public_key,
-            &program_context.comms.get_pubk_hash(),
-        )?;
-
-        match authentication {
-            ResultDisposition::Success(SuccessDetail::Processed) => {}
-            disposition => return Ok(disposition),
-        };
-
-        let full_message = serialize_msg(
-            &original_msg.version,
-            original_msg.msg_type,
-            program_id,
-            &original_msg.data,
-            original_msg.original_timestamp,
-            original_msg.original_signature.clone(),
-        )?;
-        let queued_message = QueuedMessage::new(
-            Identifier::new(original_msg.sender_pubkey_hash.clone(), COMMS_ID),
-            full_message,
-        )?;
-
-        Ok(ResultDisposition::Success(SuccessDetail::QueuedMessage(
-            queued_message,
-        )))
+        )
     }
 }
 
@@ -588,7 +578,7 @@ pub fn get_non_leader_participants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::comms_helper::{deserialize_msg, prepare_message};
+    use crate::comms_helper::{deserialize_msg, prepare_message, DecodedPeerMessage};
     use crate::signature_verifier::OperatorVerificationStore;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
@@ -614,6 +604,26 @@ mod tests {
             original_signature: vec![1, 2, 3],
             version: "1.0".to_string(),
         }
+    }
+
+    const LEADER_HASH: &str = "leader-hash";
+
+    fn process(
+        env: &TestProgramContextEnv,
+        program: &Program,
+        program_id: Uuid,
+        data: Value,
+        queue: &MessageQueue,
+    ) -> ResultDisposition {
+        LeaderBroadcastHelper::process_broadcasted_message(
+            &env.context,
+            program,
+            &LEADER_HASH.to_string(),
+            program_id,
+            data,
+            queue,
+        )
+        .unwrap()
     }
 
     fn install_test_program(
@@ -768,12 +778,8 @@ mod tests {
         let msg = BroadcastedMessage {
             original_msg_type: CommsMessageType::Keys,
             original_messages: vec![OriginalMessage {
-                sender_pubkey_hash: "test_hash".to_string(),
-                msg_type: CommsMessageType::PublicNonces, // Different type
-                data: json!({}),
-                original_timestamp: 1234567890,
-                original_signature: vec![1, 2, 3],
-                version: "1.0".to_string(),
+                msg_type: CommsMessageType::PublicNonces,
+                ..test_original_message("test_hash")
             }],
         };
         assert!(msg.validate().is_err());
@@ -784,21 +790,10 @@ mod tests {
         let msg = BroadcastedMessage {
             original_msg_type: CommsMessageType::Keys,
             original_messages: vec![
+                test_original_message("test_hash"),
                 OriginalMessage {
-                    sender_pubkey_hash: "test_hash".to_string(),
-                    msg_type: CommsMessageType::Keys,
-                    data: json!({}),
-                    original_timestamp: 1234567890,
-                    original_signature: vec![1, 2, 3],
-                    version: "1.0".to_string(),
-                },
-                OriginalMessage {
-                    sender_pubkey_hash: "test_hash".to_string(), // Duplicate
-                    msg_type: CommsMessageType::Keys,
-                    data: json!({}),
-                    original_timestamp: 1234567890,
                     original_signature: vec![4, 5, 6],
-                    version: "1.0".to_string(),
+                    ..test_original_message("test_hash")
                 },
             ],
         };
@@ -809,14 +804,7 @@ mod tests {
     fn test_broadcasted_message_validation_valid() {
         let msg = BroadcastedMessage {
             original_msg_type: CommsMessageType::Keys,
-            original_messages: vec![OriginalMessage {
-                sender_pubkey_hash: "test_hash".to_string(),
-                msg_type: CommsMessageType::Keys,
-                data: json!({}),
-                original_timestamp: 1234567890,
-                original_signature: vec![1, 2, 3],
-                version: "1.0".to_string(),
-            }],
+            original_messages: vec![test_original_message("test_hash")],
         };
         assert!(msg.validate().is_ok());
     }
@@ -824,12 +812,8 @@ mod tests {
     #[test]
     fn test_original_message_validation_empty_signature() {
         let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![], // Empty
-            version: "1.0".to_string(),
+            original_signature: vec![],
+            ..test_original_message("test_hash")
         };
         assert!(msg.validate().is_err());
     }
@@ -837,12 +821,8 @@ mod tests {
     #[test]
     fn test_original_message_validation_empty_version() {
         let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3],
-            version: "".to_string(), // Empty
+            version: String::new(),
+            ..test_original_message("test_hash")
         };
         assert!(msg.validate().is_err());
     }
@@ -850,33 +830,21 @@ mod tests {
     #[test]
     fn test_original_message_validation_broadcasted_type() {
         let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Broadcasted, // Not allowed
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3],
-            version: "1.0".to_string(),
+            msg_type: CommsMessageType::Broadcasted,
+            ..test_original_message("test_hash")
         };
         assert!(msg.validate().is_err());
     }
 
     #[test]
     fn test_original_message_validation_valid() {
-        let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3],
-            version: "1.0".to_string(),
-        };
+        let msg = test_original_message("test_hash");
         assert!(msg.validate().is_ok());
     }
 
     #[test]
     fn test_original_message_validation_empty_pubkey_hash() {
-        let mut msg = test_original_message("");
-        msg.sender_pubkey_hash = String::new();
+        let msg = test_original_message("");
         assert!(msg.validate().is_err());
     }
 
@@ -952,8 +920,12 @@ mod tests {
             let (sender, raw) = env.receive_via_peer(index).unwrap();
             assert_eq!(sender.pubkey_hash, leader_hash);
 
-            let (_, msg_type, received_context, data, _, _) =
-                deserialize_msg(&raw, MAX_MSG_LEN_KB).unwrap();
+            let DecodedPeerMessage {
+                msg_type,
+                program_id: received_context,
+                data,
+                ..
+            } = deserialize_msg(&raw, MAX_MSG_LEN_KB).unwrap();
             assert_eq!(msg_type, CommsMessageType::Broadcasted);
             assert_eq!(received_context, context_id);
 
@@ -1072,17 +1044,14 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        env.context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
-            )
-            .unwrap();
+        let disposition = process(
+            &env,
+            &program,
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        );
+        assert_eq!(disposition, ResultDisposition::Success);
 
         // The reconstructed original is queued and round-trips back to the
         // exact message the sender signed
@@ -1091,11 +1060,41 @@ mod tests {
             .unwrap()
             .expect("verified original must be queued");
         assert_eq!(queued.identifier.pubkey_hash, sender_hash);
-        let (_, msg_type, queued_program_id, data, _, _) =
-            deserialize_msg(&queued.data, MAX_MSG_LEN_KB).unwrap();
+        let DecodedPeerMessage {
+            msg_type,
+            program_id: queued_program_id,
+            data,
+            ..
+        } = deserialize_msg(&queued.data, MAX_MSG_LEN_KB).unwrap();
         assert_eq!(msg_type, CommsMessageType::Keys);
         assert_eq!(queued_program_id, program_id);
         assert_eq!(data, payload);
+        assert!(queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn process_broadcasted_message_reports_pending_duplicate_as_no_op() {
+        let mut env = TestProgramContextEnv::new("leader-broadcast-pending-duplicate").unwrap();
+        let program_id = Uuid::new_v4();
+        let program = install_test_program(&mut env, program_id, vec![]);
+        let original = signed_self_original(&env, &program_id, json!({"step": "keys"}));
+        let broadcast = serde_json::to_value(BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![original],
+        })
+        .unwrap();
+        let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
+
+        assert_eq!(
+            process(&env, &program, program_id, broadcast.clone(), &queue),
+            ResultDisposition::Success
+        );
+        // The leader resends the envelope before the original is consumed
+        assert_eq!(
+            process(&env, &program, program_id, broadcast, &queue),
+            ResultDisposition::NoOp(NoOpReason::ContributionAlreadyAccepted)
+        );
+        assert!(queue.pop_front().unwrap().is_some());
         assert!(queue.is_empty().unwrap());
     }
 
@@ -1124,18 +1123,13 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
-            )
-            .unwrap();
+        let disposition = process(
+            &env,
+            &program,
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        );
 
         assert_eq!(
             disposition,
@@ -1172,7 +1166,7 @@ mod tests {
         )
         .unwrap();
         let mut forged = signed_self_original(&env, &program_id, json!({"step": "forged"}));
-        forged.sender_pubkey_hash = mallory;
+        forged.sender_pubkey_hash = mallory.clone();
         forged.data = json!({"step": "tampered"});
 
         let broadcast = BroadcastedMessage {
@@ -1181,19 +1175,20 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
+        let disposition = process(
+            &env,
+            &program,
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        );
+        assert_eq!(
+            disposition,
+            ResultDisposition::fail_peer_reason(
+                mallory,
+                PeerSetupFaultReason::AuthenticationRejected
             )
-            .unwrap();
-        assert!(matches!(disposition, ResultDisposition::Fail(_)));
+        );
 
         // All-or-nothing: the valid message must not have been queued either
         assert!(queue.is_empty().unwrap());
@@ -1212,20 +1207,21 @@ mod tests {
         };
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                serde_json::to_value(&broadcast).unwrap(),
-                &queue,
-            )
-            .unwrap();
+        let disposition = process(
+            &env,
+            &program,
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        );
 
-        assert!(matches!(disposition, ResultDisposition::Fail(_)));
+        assert_eq!(
+            disposition,
+            ResultDisposition::fail_peer_reason(
+                LEADER_HASH.to_string(),
+                PeerSetupFaultReason::UnauthorizedMessage
+            )
+        );
         assert!(queue.is_empty().unwrap());
     }
 
@@ -1236,74 +1232,20 @@ mod tests {
         let program = install_test_program(&mut env, program_id, vec![]);
         let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
 
-        let disposition = env
-            .context
-            .leader_broadcast_helper
-            .process_broadcasted_message(
-                &env.context,
-                &program,
-                Identifier::new("leader-hash".into(), COMMS_ID),
-                program_id,
-                json!("not a broadcasted message"),
-                &queue,
+        let disposition = process(
+            &env,
+            &program,
+            program_id,
+            json!("not a broadcasted message"),
+            &queue,
+        );
+        assert_eq!(
+            disposition,
+            ResultDisposition::fail_peer_reason(
+                LEADER_HASH.to_string(),
+                PeerSetupFaultReason::MalformedMessage
             )
-            .unwrap();
-        assert!(matches!(disposition, ResultDisposition::Fail(_)));
+        );
         assert!(queue.is_empty().unwrap());
-    }
-
-    #[test]
-    fn test_broadcasted_message_serialization() {
-        let msg = BroadcastedMessage {
-            original_msg_type: CommsMessageType::Keys,
-            original_messages: vec![OriginalMessage {
-                sender_pubkey_hash: "test_hash".to_string(),
-                msg_type: CommsMessageType::Keys,
-                data: json!({"key": "value"}),
-                original_timestamp: 1234567890,
-                original_signature: vec![1, 2, 3],
-                version: "1.0".to_string(),
-            }],
-        };
-
-        // Serialize
-        let serialized = serde_json::to_string(&msg).unwrap();
-        assert!(!serialized.is_empty());
-
-        // Deserialize
-        let deserialized: BroadcastedMessage = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.original_msg_type, msg.original_msg_type);
-        assert_eq!(
-            deserialized.original_messages.len(),
-            msg.original_messages.len()
-        );
-        assert_eq!(
-            deserialized.original_messages[0].sender_pubkey_hash,
-            msg.original_messages[0].sender_pubkey_hash
-        );
-    }
-
-    #[test]
-    fn test_original_message_serialization() {
-        let msg = OriginalMessage {
-            sender_pubkey_hash: "test_hash".to_string(),
-            msg_type: CommsMessageType::Keys,
-            data: json!({"key": "value"}),
-            original_timestamp: 1234567890,
-            original_signature: vec![1, 2, 3, 4, 5],
-            version: "1.0".to_string(),
-        };
-
-        // Serialize
-        let serialized = serde_json::to_string(&msg).unwrap();
-        assert!(!serialized.is_empty());
-
-        // Deserialize
-        let deserialized: OriginalMessage = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.sender_pubkey_hash, msg.sender_pubkey_hash);
-        assert_eq!(deserialized.msg_type, msg.msg_type);
-        assert_eq!(deserialized.original_timestamp, msg.original_timestamp);
-        assert_eq!(deserialized.original_signature, msg.original_signature);
-        assert_eq!(deserialized.version, msg.version);
     }
 }
