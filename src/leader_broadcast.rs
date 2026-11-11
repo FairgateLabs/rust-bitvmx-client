@@ -203,6 +203,18 @@ impl LeaderBroadcastHelper {
         Ok(true)
     }
 
+    /// Remove the original message stored for one sender, context and message type.
+    pub fn remove_original_message(
+        &self,
+        context_id: &Uuid,
+        msg_type: CommsMessageType,
+        pub_key_hash: &PubkHash,
+    ) -> Result<(), BitVMXError> {
+        let key = get_original_message_key(context_id, msg_type, pub_key_hash)?;
+        self.store.remove(key, None)?;
+        Ok(())
+    }
+
     /// Get all original messages stored for a given context and message type
     /// Iterates over all keys with the prefix to collect individual messages
     /// Each message is deserialized individually, avoiding large bulk operations
