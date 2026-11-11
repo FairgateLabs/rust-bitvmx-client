@@ -83,35 +83,40 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             ));
         }
 
-        // If this operator is the leader and the message type should be broadcast, store the original message
-        if program.my_idx == program.leader && msg_type.should_store() {
-            let original_msg = OriginalMessage {
-                sender_pubkey_hash: sender_pubkey_hash.clone(),
-                msg_type,
-                data: data.clone(),
-                original_timestamp: timestamp,
-                original_signature: signature,
-                version,
-            };
-            if !self
+        // The leader stores the original before the engine runs, because the engine broadcasts
+        // once every original for the step is stored. An original the engine does not accept is
+        // removed again: kept, it would block the sender's retries as "already stored" and be
+        // broadcast without ever being verified for the active step.
+        let stored_original = program.my_idx == program.leader
+            && msg_type.should_store()
+            && self
                 .program_context
                 .leader_broadcast_helper
-                .store_original_message(&program_id, msg_type, original_msg)?
-            {
-                info!(
-                    "There is a message already stored for program {}",
-                    program_id
-                );
-                return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
-            }
-        }
+                .store_original_message(
+                    &program_id,
+                    msg_type,
+                    OriginalMessage {
+                        sender_pubkey_hash: sender_pubkey_hash.clone(),
+                        msg_type,
+                        data: data.clone(),
+                        original_timestamp: timestamp,
+                        original_signature: signature,
+                        version,
+                    },
+                )?;
 
-        program.process_comms_message(
+        let disposition = program.process_comms_message(
             sender_pubkey_hash,
             &msg_type,
             data,
             &mut self.program_context,
-        )
+        )?;
+        if stored_original && disposition != ResultDisposition::Success {
+            self.program_context
+                .leader_broadcast_helper
+                .remove_original_message(&program_id, msg_type, sender_pubkey_hash)?;
+        }
+        Ok(disposition)
     }
 
     fn request_missing_verification_keys(&self, program_id: &Uuid) -> Result<(), BitVMXError> {
@@ -705,6 +710,76 @@ mod tests {
         let program = Program::load(store, &program_id).unwrap().unwrap();
         assert!(!program.is_failed());
         assert!(!env.bitvmx.message_queue.is_empty().unwrap());
+    }
+
+    /// A non-leader's next-step message reaching the leader early is deferred. The leader must
+    /// not keep its original stored: every retry would then stop at "already stored" without
+    /// reaching the engine, and the next broadcast would carry an original never verified.
+    #[test]
+    fn leader_does_not_keep_original_of_deferred_message() {
+        let mut env = TestBitVMXEnv::new("leader-deferred-original").unwrap();
+        let peer_a = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "aa".repeat(32));
+        let peer_b = CommsAddress::new("127.0.0.1:2".parse().unwrap(), "bb".repeat(32));
+        let participants = vec![self_address(&env), peer_a.clone(), peer_b.clone()];
+        let program_id = Uuid::new_v4();
+        let store = create_program(&mut env, program_id, participants);
+
+        // Both peers sign with this node's key, so their messages authenticate.
+        for peer in [&peer_a, &peer_b] {
+            OperatorVerificationStore::store(
+                &env.bitvmx.program_context.globals,
+                &peer.pubkey_hash,
+                &env.bitvmx.program_context.rsa_public_key,
+            )
+            .unwrap();
+        }
+
+        // The leader is still on the keys step, so peer A's nonces are early.
+        let (version, data, timestamp, signature) = prepare_message(
+            &env.bitvmx.program_context.key_manager,
+            &env.bitvmx.program_context.rsa_public_key,
+            &program_id,
+            CommsMessageType::PublicNonces,
+            serde_json::json!({"early": true}),
+        )
+        .unwrap();
+        let early_nonces = QueuedMessage::new(
+            Identifier::new(peer_a.pubkey_hash.clone(), 0),
+            serialize_msg(
+                &version,
+                CommsMessageType::PublicNonces,
+                &program_id,
+                data,
+                timestamp,
+                signature,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let stored = |env: &TestBitVMXEnv| {
+            env.bitvmx
+                .program_context
+                .leader_broadcast_helper
+                .has_all_expected_messages(
+                    &program_id,
+                    CommsMessageType::PublicNonces,
+                    &[peer_a.pubkey_hash.clone()],
+                )
+                .unwrap()
+        };
+
+        env.bitvmx.process_msg(early_nonces.clone()).unwrap();
+        assert!(!stored(&env), "deferred original must not stay stored");
+
+        // A retry must reach the engine again and be deferred for the same reason.
+        env.bitvmx.process_msg(early_nonces).unwrap();
+        assert!(!stored(&env));
+        assert!(!env.bitvmx.message_queue.is_empty().unwrap());
+        assert!(!Program::load(store, &program_id)
+            .unwrap()
+            .unwrap()
+            .is_failed());
     }
 
     #[test]

@@ -290,9 +290,14 @@ These are behavior questions, so they are out of scope for a behavior-preserving
    If the slowest participant takes longer than the retry budget, the message is dropped and setup
    fails with `MessageLost` against a sender that did nothing wrong. With two participants the
    leader's own contribution completes the set, so this needs three or more. The same order also
-   lets the leader broadcast an original it never verified for the active step. One fix: when the
-   stored original is identical, carry on to `process_comms_message` instead of retrying. Needs a
-   test first to confirm the timing.
+   lets the leader broadcast an original it never verified for the active step.
+
+   **Fixed:** the leader still stores the original before the engine runs, because the engine
+   broadcasts once every original for the step is stored. When the engine returns anything but
+   `Success`, the original is removed again, so a stored original always means the engine
+   accepted it. A duplicate of an accepted contribution is already consumed by
+   `classify_setup_message` as `ContributionAlreadyAccepted`. Covered by
+   `leader_does_not_keep_original_of_deferred_message`.
 
 2. **Nonce and signature entries aren't bound to the sender
    (`nonces_step.rs:158-223`, `signatures_step.rs:171-268`):** each entry carries a participant public
