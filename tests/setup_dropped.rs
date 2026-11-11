@@ -53,7 +53,7 @@ impl RawPeer {
             config.broker.settings.clone(),
         )?;
 
-        let address = CommsAddress::new(node.get_address(), node.get_pubk_hash()?);
+        let address = CommsAddress::new(node.get_address(), node.get_pubk_hash());
         info!("Raw peer listening as {:?}", address);
         Ok(Self { node, address })
     }
@@ -91,9 +91,12 @@ impl RawPeer {
         let mut heard = false;
         for message in self.node.check_receive(None)? {
             let ReceivedMessage::Msg(_, raw) = message;
-            if let Ok((_, msg_type, id, _, _, _)) = deserialize_msg(raw, 200000) {
-                info!("Raw peer received {:?} for program {}", msg_type, id);
-                heard |= id == *program_id;
+            if let Ok(decoded) = deserialize_msg(&raw, 200000) {
+                info!(
+                    "Raw peer received {:?} for program {}",
+                    decoded.msg_type, decoded.program_id
+                );
+                heard |= decoded.program_id == *program_id;
             }
         }
         Ok(heard)
@@ -143,6 +146,7 @@ fn start_program(
             vec![me, peer.address.clone()],
             None,
             leader,
+            None,
         )
         .to_string()?,
     )?;
@@ -191,7 +195,7 @@ fn assert_setup_failed(
     }
 }
 
-/// Both drop paths in `bitvmx.rs`: a queued setup message whose retries run out is
+/// Both drop paths in `bitvmx/peer_messages.rs`: a queued setup message whose retries run out is
 /// reported to L2 rather than vanishing. The two differ in why the message is queued.
 ///
 /// Kept in one test because each `prepare_bitcoin()` call creates the same

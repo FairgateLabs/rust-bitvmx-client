@@ -223,17 +223,11 @@ impl InternalWallet {
         if self.mines_on_demand {
             return Ok(self.wallet.mine(num_blocks)?);
         } else {
-            let initial = self
-                .client
-                .get_best_block()
-                .map_err(|x| bitvmx_client::errors::BitcoinClientError::RpcError(x))?;
+            let initial = self.client.get_best_block()?;
             let target = initial + 1;
             loop {
                 thread::sleep(Duration::from_millis(500));
-                let current = self
-                    .client
-                    .get_best_block()
-                    .map_err(|x| bitvmx_client::errors::BitcoinClientError::RpcError(x))?;
+                let current = self.client.get_best_block()?;
                 if current >= target {
                     break;
                 }

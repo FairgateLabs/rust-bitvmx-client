@@ -3,11 +3,11 @@ use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
-        participant::{get_index_by_pubkey_hash, CommsAddress},
+        participant::CommsAddress,
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::SetupStep,
+        setup::{decode_contribution, SetupStep},
     },
-    types::ProgramContext,
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition},
 };
 use bitcoin::PublicKey;
 use key_manager::musig2::{types::MessageId, PubNonce};
@@ -38,16 +38,11 @@ impl NoncesStep {
         Self
     }
 
-    fn validate_received_nonces(
+    /// Validates each entry in a contribution already known to be non-empty.
+    fn validate_received_nonce_entries(
         nonces: &PubNonceMessage,
         expected_aggregated_keys: &HashSet<PublicKey>,
     ) -> Result<(), BitVMXError> {
-        if nonces.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                "Received empty nonces from participant".to_string(),
-            ));
-        }
-
         let mut received_aggregated_keys = HashSet::new();
 
         for (aggregated, _, message_nonces) in nonces {
@@ -91,6 +86,10 @@ impl SetupStep for NoncesStep {
         "nonces"
     }
 
+    fn accepted_message_type(&self) -> CommsMessageType {
+        CommsMessageType::PublicNonces
+    }
+
     fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,
@@ -101,7 +100,7 @@ impl SetupStep for NoncesStep {
         debug!("NoncesStep: Generating nonces for protocol {}", protocol_id);
 
         // Get the participant's keys from the previous KeysStep
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before nonces (KeysStep must complete first)",
@@ -156,22 +155,15 @@ impl SetupStep for NoncesStep {
         Ok(Some((serialized, CommsMessageType::PublicNonces)))
     }
 
-    fn verify_received<BC: BitcoinCoordinatorApi>(
+    fn verify_received_impl<BC: BitcoinCoordinatorApi>(
         &self,
         data: Value,
-        msg_type: CommsMessageType,
         from_participant: &CommsAddress,
+        idx: usize,
         protocol: &ProtocolType,
-        participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
         _your_data: bool,
-    ) -> Result<bool, BitVMXError> {
-        if !matches!(msg_type, CommsMessageType::PublicNonces) {
-            info!(
-                "Received message with type {msg_type:?} in NoncesStep, ignoring. Expected type: PublicNonces"
-            );
-            return Ok(false);
-        }
+    ) -> Result<ResultDisposition, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -179,18 +171,20 @@ impl SetupStep for NoncesStep {
             from_participant.pubkey_hash
         );
 
-        // Deserialize the received nonces
-        let nonces: PubNonceMessage = serde_json::from_value(data).map_err(|e| {
-            BitVMXError::InvalidMessage(format!("Failed to deserialize nonces: {}", e))
-        })?;
-
+        // Deserialize the received nonces. Wire-format failures are attributable
+        // to the participant, not local processing failures.
+        let nonces: PubNonceMessage = match decode_contribution(data, from_participant) {
+            Ok(nonces) => nonces,
+            Err(outcome) => return Ok(outcome),
+        };
         if nonces.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                "Received empty nonces from participant".to_string(),
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
 
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before nonces can be verified",
@@ -200,12 +194,17 @@ impl SetupStep for NoncesStep {
             .values()
             .copied()
             .collect::<HashSet<_>>();
-        Self::validate_received_nonces(&nonces, &expected_aggregated_keys)?;
+        if let Err(error) =
+            Self::validate_received_nonce_entries(&nonces, &expected_aggregated_keys)
+        {
+            info!("Rejecting invalid nonce contribution: {}", error);
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
+            ));
+        }
 
         debug!("NoncesStep: Received {} nonces", nonces.len());
-
-        // Find participant index
-        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_nonces"
         self.store_participant_data(
@@ -220,7 +219,7 @@ impl SetupStep for NoncesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(true)
+        Ok(ResultDisposition::Success)
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -316,7 +315,8 @@ impl SetupStep for NoncesStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{participant::ParticipantKeys, variables::VariableTypes};
+    use crate::program::{participant::ParticipantKeys, setup::MY_KEYS, variables::VariableTypes};
+    use crate::types::{NoOpReason, PeerSetupFault, PeerSetupFaultReason, RetryReason};
     use key_manager::key_type::BitcoinKeyType;
     use std::rc::Rc;
     use storage_backend::storage::Storage;
@@ -342,7 +342,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&keys).unwrap()),
             )
             .unwrap();
@@ -370,7 +370,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&empty_keys).unwrap()),
             )
             .unwrap();
@@ -466,8 +466,8 @@ mod tests {
         second_address.pubkey_hash = "second-participant".to_string();
         let participants = vec![first_address.clone(), second_address.clone()];
 
-        assert!(!step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 first_data.clone(),
                 CommsMessageType::Keys,
                 &first_address,
@@ -476,13 +476,15 @@ mod tests {
                 &mut first.context,
                 true,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+        );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
             .unwrap());
 
-        assert!(step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 first_data,
                 first_type,
                 &first_address,
@@ -491,27 +493,31 @@ mod tests {
                 &mut first.context,
                 true,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Success
+        );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
             .unwrap());
 
         let mut outsider = second_address.clone();
         outsider.pubkey_hash = "unknown-participant".to_string();
-        assert!(step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 second_data.clone(),
-                second_type.clone(),
+                second_type,
                 &outsider,
                 &first_protocol,
                 &participants,
                 &mut first.context,
                 false,
             )
-            .is_err());
+            .unwrap(),
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
+        );
 
-        assert!(step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 second_data,
                 second_type,
                 &second_address,
@@ -520,7 +526,9 @@ mod tests {
                 &mut first.context,
                 false,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Success
+        );
         assert!(step
             .can_advance(&first_protocol, &participants, &first.context)
             .unwrap());
@@ -538,8 +546,8 @@ mod tests {
         let participants = vec![participant.clone(), participant.clone()];
         let step = NoncesStep::new();
 
-        let err = step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 serde_json::json!({"not": "nonces"}),
                 CommsMessageType::PublicNonces,
                 &participant,
@@ -548,13 +556,15 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap_err();
-        assert!(
-            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("deserialize"))
+            .unwrap(),
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
         );
 
-        let err = step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 serde_json::to_value(PubNonceMessage::new()).unwrap(),
                 CommsMessageType::PublicNonces,
                 &participant,
@@ -563,9 +573,11 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap_err();
-        assert!(
-            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("empty nonces"))
+            .unwrap(),
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::InvalidSetupContribution,
+            })
         );
 
         let err = step

@@ -102,9 +102,6 @@ pub enum BitVMXError {
         program_id: String,
     },
 
-    #[error("Missing verification key for sender {peer}. Known keys: {known_count}")]
-    MissingVerificationKey { peer: String, known_count: usize },
-
     #[error("Participant key '{name}' not found (expected {expected_type})")]
     ParticipantKeyNotFound {
         name: String,
@@ -117,9 +114,6 @@ pub enum BitVMXError {
         expected_type: &'static str,
         actual_type: &'static str,
     },
-
-    #[error("Failed to extract verification key from VerificationKey message: {reason}")]
-    VerificationKeyExtractionError { reason: String },
 
     #[error("Failed to reconstruct message for signature verification: {reason}")]
     MessageReconstructionError { reason: String },
@@ -161,11 +155,26 @@ pub enum BitVMXError {
     #[error("Program already exists: {0}")]
     ProgramAlreadyExists(Uuid),
 
+    #[error("Setup attempt failed for program {program_id}: {source}")]
+    SetupAttemptFailed {
+        program_id: Uuid,
+        peer: Option<bitvmx_broker::identification::identifier::PubkHash>,
+        #[source]
+        source: Box<BitVMXError>,
+    },
+
+    /// Internal transaction-boundary signal. The failed result attempt must be rolled
+    /// back before the expected job is moved to its durable retry state.
+    #[error("Runtime dispatcher job {job_id} failed for program {program_id}: {reason}")]
+    RuntimeJobAttemptFailed {
+        program_id: Uuid,
+        expected_job_id: String,
+        job_id: String,
+        reason: String,
+    },
+
     #[error("Program {0} is not ready to run. Please install it first.")]
     ProgramNotReady(Uuid),
-
-    #[error("Cannot find program with id {0}")]
-    ProgramNotFound(Uuid),
 
     #[error("Cannot find protocol with name {0}")]
     ProtocolNotFound(String),
@@ -188,9 +197,6 @@ pub enum BitVMXError {
     #[error("Execution error: {0}")]
     ExecutionError(#[from] emulator::ExecutionResult),
 
-    #[error("Inconsistent data retrieved of ZKP execution result from job {0}")]
-    InconsistentZKPData(Uuid),
-
     /* =========================
      * Witness / Merkle / Scripts
      * ========================= */
@@ -200,8 +206,8 @@ pub enum BitVMXError {
     #[error("Invalid witness: {0:?}")]
     InvalidWitness(Witness),
 
-    #[error("Invalid merkle tree")]
-    InvalidMerkleTree,
+    #[error("SPV proof error: {0}")]
+    SPVError(#[from] crate::spv_proof::SPVError),
 
     #[error("Script not found for program id {0}")]
     ScriptNotFound(Uuid),
@@ -217,6 +223,9 @@ pub enum BitVMXError {
      * ========================= */
     #[error("Job type error {0}")]
     DispatcherError(#[from] DispatcherError),
+
+    #[error("Dispatcher result error: {0}")]
+    DispatcherResultError(#[from] DispatcherResultError),
 
     #[error("Job Dispatcher {0} is not responding")]
     JobDispatcherNotResponding(String),
@@ -258,7 +267,7 @@ pub enum BitVMXError {
      * Bitcoin / Transactions
      * ========================= */
     #[error("Error when using Bitcoin client: {0}")]
-    BitcoinError(#[from] BitcoinClientError),
+    BitcoinError(#[from] bitvmx_bitcoin_rpc::errors::BitcoinClientError),
 
     #[error("Failed to use Bitcoin Coordinator: {0}")]
     BitcoinCoordinatorError(#[from] BitcoinCoordinatorError),
@@ -271,9 +280,6 @@ pub enum BitVMXError {
 
     #[error("Invalid transaction status {0}")]
     InvalidTransactionStatus(String),
-
-    #[error("Transaction not found in block")]
-    TransactionNotFoundInBlock,
 
     #[error("Insufficient amount to send the transaction")]
     InsufficientAmount,
@@ -298,6 +304,9 @@ pub enum BitVMXError {
      * ========================= */
     #[error("Invalid state: {0}")]
     InvalidState(String),
+
+    #[error("Dispatcher job id '{0}' is registered with incompatible metadata")]
+    DispatcherJobConflict(String),
 
     #[error("Invalid variable type: {0}")]
     InvalidVariableType(String),
@@ -356,11 +365,36 @@ pub enum BitVMXError {
     #[error("Rom data {0} not found")]
     RomDataNotFound(u32),
 
-    #[error("Instruction {0} not found")]
-    InstructionNotFound(String),
-
     #[error("Not found {0}")]
     NotFound(String),
+}
+
+/// A permanent failure attributable to an authenticated dispatcher's result.
+///
+/// Producers must create this error explicitly. Local storage, broker, key-manager,
+/// and other infrastructure failures continue to use their ordinary `BitVMXError`
+/// variants and therefore remain retryable at the dispatcher ingress boundary.
+#[derive(Error, Debug)]
+pub enum DispatcherResultError {
+    #[error("dispatcher reported job failure: {0}")]
+    DeclaredFailure(String),
+
+    #[error("invalid dispatcher output: {0}")]
+    InvalidOutput(String),
+
+    #[error("could not read declared dispatcher artifact '{path}': {details}")]
+    MissingArtifact { path: String, details: String },
+}
+
+/// Adds dispatcher-output context to errors produced while decoding a result.
+pub trait DispatcherResultExt<T> {
+    fn invalid_output(self, context: impl std::fmt::Display) -> Result<T, DispatcherResultError>;
+}
+
+impl<T, E: std::fmt::Display> DispatcherResultExt<T> for Result<T, E> {
+    fn invalid_output(self, context: impl std::fmt::Display) -> Result<T, DispatcherResultError> {
+        self.map_err(|error| DispatcherResultError::InvalidOutput(format!("{context}: {error}")))
+    }
 }
 
 impl<T> From<PoisonError<T>> for BitVMXError {
@@ -419,44 +453,8 @@ pub enum ProgramError {
     #[error("Error loading Program: {0}")]
     LoadError(#[from] StorageError),
 
-    #[error("Program not found in storage. Program id: {0}")]
-    ProgramNotFound(Uuid),
-
     #[error("Storage unavailable")]
     StorageUnavailable,
-}
-
-#[derive(Error, Debug)]
-pub enum BitcoinClientError {
-    #[error("Failed to fund address")]
-    FailedToFundAddress { error: String },
-
-    #[error("Failed to send transaction")]
-    FailedToSendTransaction { error: String },
-
-    #[error("Failed to create new wallet")]
-    FailedToCreateWallet { error: String },
-
-    #[error("Failed to get new address")]
-    FailedToGetNewAddress { error: String },
-
-    #[error("Failed to mine blocks")]
-    FailedToMineBlocks { error: String },
-
-    #[error("Failed to get transaction details")]
-    FailedToGetTransactionDetails { error: String },
-
-    #[error("Failed to create client")]
-    FailedToCreateClient { error: String },
-
-    #[error("Failed to load wallet")]
-    FailedToLoadWallet { error: String },
-
-    #[error("Failed to list wallets")]
-    FailedToListWallets { error: String },
-
-    #[error("Rpc error: {0}")]
-    RpcError(#[from] bitvmx_bitcoin_rpc::errors::BitcoinClientError),
 }
 
 #[derive(Error, Debug)]

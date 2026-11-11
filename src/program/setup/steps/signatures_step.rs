@@ -3,14 +3,17 @@ use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
-        participant::{get_index_by_pubkey_hash, CommsAddress},
+        participant::CommsAddress,
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::SetupStep,
+        setup::{decode_contribution, SetupStep},
     },
-    types::ProgramContext,
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition},
 };
 use bitcoin::PublicKey;
-use key_manager::musig2::{types::MessageId, PartialSignature};
+use key_manager::{
+    errors::KeyManagerError,
+    musig2::{errors::Musig2SignerError, types::MessageId, PartialSignature},
+};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
@@ -91,6 +94,10 @@ impl SetupStep for SignaturesStep {
         "signatures"
     }
 
+    fn accepted_message_type(&self) -> CommsMessageType {
+        CommsMessageType::PartialSignatures
+    }
+
     fn generate_data<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &mut ProtocolType,
@@ -104,7 +111,7 @@ impl SetupStep for SignaturesStep {
         );
 
         // Get the participant's keys from the previous KeysStep
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before signatures (KeysStep must complete first)",
@@ -161,22 +168,15 @@ impl SetupStep for SignaturesStep {
         Ok(Some((serialized, CommsMessageType::PartialSignatures)))
     }
 
-    fn verify_received<BC: BitcoinCoordinatorApi>(
+    fn verify_received_impl<BC: BitcoinCoordinatorApi>(
         &self,
         data: Value,
-        msg_type: CommsMessageType,
         from_participant: &CommsAddress,
+        idx: usize,
         protocol: &ProtocolType,
-        participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
         _your_data: bool,
-    ) -> Result<bool, BitVMXError> {
-        if !matches!(msg_type, CommsMessageType::PartialSignatures) {
-            info!(
-                "Received message with type {msg_type:?} in SignaturesStep, ignoring. Expected type: PartialSignatures"
-            );
-            return Ok(false);
-        }
+    ) -> Result<ResultDisposition, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -184,18 +184,21 @@ impl SetupStep for SignaturesStep {
             from_participant.pubkey_hash
         );
 
-        // Deserialize the received signatures
-        let signatures: PartialSignatureMessage = serde_json::from_value(data).map_err(|e| {
-            BitVMXError::InvalidMessage(format!("Failed to deserialize signatures: {}", e))
-        })?;
-
+        // Deserialize the received signatures. Wire-format failures are peer
+        // rejections rather than retryable local errors.
+        let signatures: PartialSignatureMessage = match decode_contribution(data, from_participant)
+        {
+            Ok(signatures) => signatures,
+            Err(outcome) => return Ok(outcome),
+        };
         if signatures.is_empty() {
-            return Err(BitVMXError::InvalidMessage(
-                "Received empty signatures from participant".to_string(),
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
             ));
         }
 
-        let my_keys = super::load_my_keys(
+        let my_keys = super::require_my_keys(
             &protocol_id,
             context,
             "Keys must be exchanged before signatures can be verified",
@@ -205,15 +208,48 @@ impl SetupStep for SignaturesStep {
             .values()
             .copied()
             .collect::<HashSet<_>>();
-        Self::validate_received_signatures(&signatures, &expected_aggregated_keys)?;
+        if let Err(error) =
+            Self::validate_received_signatures(&signatures, &expected_aggregated_keys)
+        {
+            info!("Rejecting invalid signature contribution: {}", error);
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
+            ));
+        }
+
+        for (aggregated, participant_pub_key, partial_signatures) in &signatures {
+            match context.key_manager.verify_partial_signatures(
+                aggregated,
+                &protocol.context().protocol_name,
+                *participant_pub_key,
+                partial_signatures.clone(),
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Ok(ResultDisposition::fail_peer_reason(
+                        from_participant.pubkey_hash.clone(),
+                        PeerSetupFaultReason::InvalidSetupContribution,
+                    ));
+                }
+                Err(KeyManagerError::Musig2SignerError(
+                    Musig2SignerError::InvalidPublicKey
+                    | Musig2SignerError::InvalidMessageId
+                    | Musig2SignerError::InvalidPartialSignature,
+                )) => {
+                    return Ok(ResultDisposition::fail_peer_reason(
+                        from_participant.pubkey_hash.clone(),
+                        PeerSetupFaultReason::InvalidSetupContribution,
+                    ));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
 
         debug!(
             "SignaturesStep: Received {} partial signatures",
             signatures.len()
         );
-
-        // Find participant index
-        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
 
         // Save to globals with the convention "participant_{idx}_signatures"
         self.store_participant_data(
@@ -228,7 +264,7 @@ impl SetupStep for SignaturesStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(true)
+        Ok(ResultDisposition::Success)
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -329,10 +365,11 @@ mod tests {
     use super::*;
     use crate::program::{
         participant::ParticipantKeys, protocols::protocol_handler::new_protocol_type,
-        variables::VariableTypes,
+        setup::MY_KEYS, variables::VariableTypes,
     };
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
     use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
+    use crate::types::{NoOpReason, PeerSetupFault, PeerSetupFaultReason, RetryReason};
     use key_manager::{key_type::BitcoinKeyType, musig2::musig::MuSig2SignerApi};
     use uuid::Uuid;
 
@@ -348,7 +385,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&keys).unwrap()),
             )
             .unwrap();
@@ -377,7 +414,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&empty_keys).unwrap()),
             )
             .unwrap();
@@ -529,8 +566,8 @@ mod tests {
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
             .unwrap());
-        assert!(step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 first_data.clone(),
                 first_type,
                 &first_address,
@@ -539,26 +576,30 @@ mod tests {
                 &mut first.context,
                 true,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Success
+        );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)
             .unwrap());
 
         let mut outsider = second_address.clone();
         outsider.pubkey_hash = "unknown-participant".to_string();
-        assert!(step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 second_data.clone(),
-                second_type.clone(),
+                second_type,
                 &outsider,
                 &first_protocol,
                 &participants,
                 &mut first.context,
                 false,
             )
-            .is_err());
-        assert!(step
-            .verify_received(
+            .unwrap(),
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
+        );
+        assert_eq!(
+            step.verify_received(
                 second_data.clone(),
                 second_type,
                 &second_address,
@@ -567,7 +608,9 @@ mod tests {
                 &mut first.context,
                 false,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Success
+        );
         assert!(step
             .can_advance(&first_protocol, &participants, &first.context)
             .unwrap());
@@ -718,8 +761,8 @@ mod tests {
         let participants = vec![participant.clone(), participant.clone()];
         let step = SignaturesStep::new();
 
-        assert!(!step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 Value::Null,
                 CommsMessageType::PublicNonces,
                 &participant,
@@ -728,10 +771,12 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+        );
 
-        let err = step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 serde_json::json!({"not": "signatures"}),
                 CommsMessageType::PartialSignatures,
                 &participant,
@@ -740,13 +785,15 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap_err();
-        assert!(
-            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("deserialize"))
+            .unwrap(),
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
         );
 
-        let err = step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 serde_json::to_value(PartialSignatureMessage::new()).unwrap(),
                 CommsMessageType::PartialSignatures,
                 &participant,
@@ -755,9 +802,11 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap_err();
-        assert!(
-            matches!(err, BitVMXError::InvalidMessage(message) if message.contains("empty signatures"))
+            .unwrap(),
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::InvalidSetupContribution,
+            })
         );
 
         assert!(!step

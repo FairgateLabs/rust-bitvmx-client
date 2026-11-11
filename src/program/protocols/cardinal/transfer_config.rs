@@ -143,6 +143,7 @@ impl TransferConfig {
                 PROGRAM_TYPE_TRANSFER.to_string(),
                 addresses,
                 leader,
+                None,
             )
             .to_string()?,
         );

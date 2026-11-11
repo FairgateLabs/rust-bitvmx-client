@@ -188,8 +188,9 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
 
     //ask the peers to generate the aggregated public key
     let aggregation_id = Uuid::new_v4();
-    let command = IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
-        .to_string()?;
+    let command =
+        IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0, None)
+            .to_string()?;
 
     info!("Command to all: {:?}", command);
     send_all(&id_channel_pairs, &command)?;
@@ -221,7 +222,7 @@ pub fn test_lock_aux(independent: bool, fake_hapy_path: bool) -> Result<()> {
         //aggregated for happy path
         let aggregation_id = Uuid::new_v4();
         let command =
-            IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0)
+            IncomingBitVMXApiMessages::SetupKey(aggregation_id, addresses.clone(), None, 0, None)
                 .to_string()?;
         send_all(&id_channel_pairs, &command)?;
         let msgs = get_all(&channels, &mut instances, false)?;

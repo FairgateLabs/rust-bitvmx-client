@@ -78,6 +78,7 @@ pub fn test_gc_generation() -> Result<()> {
             PROGRAM_TYPE_GC_GENERATION.to_string(),
             pair_0_1.clone(),
             1,
+            None,
         );
         chan.channel.send(&chan.id, setup_msg.to_string()?)?;
     }

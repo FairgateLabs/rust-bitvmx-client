@@ -5,24 +5,132 @@ use std::rc::Rc;
 
 use crate::config::ComponentsConfig;
 use bitcoin_coordinator::coordinator::BitcoinCoordinator;
-use bitvmx_broker::{identification::identifier::Identifier, BrokerNode, RemoteChannel};
+use bitvmx_broker::{
+    identification::identifier::{Identifier, PubkHash},
+    BrokerNode, RemoteChannel,
+};
 use key_manager::key_manager::KeyManager;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    expected_job::ExpectedJobs,
     leader_broadcast::LeaderBroadcastHelper,
+    operation_timeout::OperationTimeouts,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     program::variables::{Globals, WitnessVars},
 };
 
-/// Outcome of handling an incoming message.
+/// The common result of handling externally supplied input.
+///
+/// Domain-controlled outcomes are values so transaction owners can decide whether to
+/// consume, retry, or reject the input. Infrastructure and local-state failures remain
+/// regular `Result::Err` values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResultDisposition {
+    Success,
+    NoOp(NoOpReason),
+    Retry(RetryReason),
+    Fail(FailureDetail),
+}
+
+impl ResultDisposition {
+    pub fn fail_peer(fault: PeerSetupFault) -> Self {
+        Self::Fail(FailureDetail::PeerSetup(fault))
+    }
+
+    pub fn fail_peer_reason(peer: PubkHash, reason: PeerSetupFaultReason) -> Self {
+        Self::fail_peer(PeerSetupFault { peer, reason })
+    }
+
+    pub fn fail_dispatcher(failure: DispatcherJobFailure) -> Self {
+        Self::Fail(FailureDetail::DispatcherJob(failure))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureDetail {
+    PeerSetup(PeerSetupFault),
+    DispatcherJob(DispatcherJobFailure),
+}
+
+/// A runtime job rejection reported by the dispatcher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatcherJobFailure {
+    pub program_id: Uuid,
+    /// Exact wire id used to retrieve the durable expected-job record.
+    pub expected_job_id: String,
+    /// Human-readable protocol job name used in reports.
+    pub job_id: String,
+    pub reason: String,
+}
+
+/// Why processing the unchanged message may succeed later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetryReason {
+    /// The sender's application verification key has not arrived yet.
+    MissingVerificationKey { peer: PubkHash },
+    /// One or more participant verification keys needed by setup are absent.
+    MissingParticipantVerificationKeys,
+    /// The referenced program has not been installed locally yet.
+    ProgramNotInstalled,
+    /// Setup has not reached the state that can consume this message.
+    SetupNotReady,
+    /// The active setup step accepts a different message type.
+    UnexpectedSetupMessageType,
+    /// The active setup step is still waiting for a prerequisite.
+    MissingSetupPrerequisite,
+}
+
+impl RetryReason {
+    pub(crate) fn needs_verification_keys(&self) -> bool {
+        matches!(
+            self,
+            Self::MissingVerificationKey { .. } | Self::MissingParticipantVerificationKeys
+        )
+    }
+
+    /// The peer to blame and the failure to report when `sender`'s message runs out of retries.
+    pub(crate) fn setup_failure(&self, sender: &PubkHash) -> (PubkHash, SetupFailureReason) {
+        match self {
+            Self::MissingVerificationKey { peer } => {
+                (peer.clone(), SetupFailureReason::VerificationKeyMissing)
+            }
+            _ => (sender.clone(), SetupFailureReason::MessageLost),
+        }
+    }
+}
+
+/// Why consuming a message without applying it is safe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageDisposition {
-    /// The message was processed and should not be retried.
-    Processed,
-    /// The message could not be processed yet and should be queued for retry.
-    RetryLater,
+pub enum NoOpReason {
+    ContributionAlreadyAccepted,
+    SetupAlreadyComplete,
+    SetupAlreadyFailed,
+    UnauthorizedSender,
+    Duplicate,
+    Stale,
+    Orphaned,
+    MalformedEnvelope,
+    Uncorrelatable,
+}
+
+/// A protocol violation attributable to an authenticated peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerSetupFault {
+    pub peer: PubkHash,
+    pub reason: PeerSetupFaultReason,
+}
+
+/// Peer-controlled failures that make active setup untrustworthy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PeerSetupFaultReason {
+    AuthenticationRejected,
+    MalformedMessage,
+    InvalidVerificationKey,
+    VerificationKeyFingerprintMismatch,
+    UnauthorizedMessage,
+    InvalidSetupContribution,
 }
 
 // The coordinator is statically dispatched: production code uses the default
@@ -38,10 +146,12 @@ pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub witness: WitnessVars,
     pub components_config: ComponentsConfig,
     pub leader_broadcast_helper: LeaderBroadcastHelper,
+    pub(crate) operation_timeouts: OperationTimeouts,
+    pub(crate) expected_jobs: ExpectedJobs,
 }
 
 impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
-    pub fn new(
+    pub(crate) fn new(
         comms: BrokerNode,
         key_manager: Rc<KeyManager>,
         rsa_public_key: String,
@@ -51,6 +161,8 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
         witness: WitnessVars,
         components_config: ComponentsConfig,
         leader_broadcast_helper: LeaderBroadcastHelper,
+        operation_timeouts: OperationTimeouts,
+        expected_jobs: ExpectedJobs,
     ) -> Self {
         Self {
             comms,
@@ -62,6 +174,8 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
             witness,
             components_config,
             leader_broadcast_helper,
+            operation_timeouts,
+            expected_jobs,
         }
     }
 }
@@ -77,12 +191,51 @@ impl ProgramStatus {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
-pub struct RequestId(Uuid);
+/// ZKP-specific API correlation and output. Dispatcher lifecycle and failure
+/// state are owned by the corresponding expected-job record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ZKPExecution {
+    requester: Identifier,
+    output: Option<ZKPOutput>,
+}
 
-impl RequestId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
+impl ZKPExecution {
+    pub(crate) fn new(requester: Identifier) -> Self {
+        Self {
+            requester,
+            output: None,
+        }
+    }
+
+    pub(crate) fn with_output(requester: Identifier, proof: Vec<u8>, journal: Vec<u8>) -> Self {
+        Self {
+            requester,
+            output: Some(ZKPOutput::new(proof, journal)),
+        }
+    }
+
+    pub(crate) fn requester(&self) -> &Identifier {
+        &self.requester
+    }
+
+    pub(crate) fn into_output(self) -> Option<ZKPOutput> {
+        self.output
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ZKPOutput {
+    proof: Vec<u8>,
+    journal: Vec<u8>,
+}
+
+impl ZKPOutput {
+    pub(crate) fn new(proof: Vec<u8>, journal: Vec<u8>) -> Self {
+        Self { proof, journal }
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Vec<u8>) {
+        (self.proof, self.journal)
     }
 }
 
@@ -93,6 +246,7 @@ pub struct ParticipantChannel {
 }
 
 pub const PROGRAM_TYPE_AGGREGATED_KEY: &str = "aggregated_key";
+pub const FINAL_AGGREGATED_KEY: &str = "final_aggregated_key";
 pub const PROGRAM_TYPE_LOCK: &str = "lock";
 pub const PROGRAM_TYPE_DRP: &str = "drp";
 pub const PROGRAM_TYPE_SLOT: &str = "slot";

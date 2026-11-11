@@ -5,16 +5,17 @@ pub mod comms_helper;
 pub mod config;
 pub mod error_handling;
 pub mod errors;
+pub(crate) mod expected_job;
 pub mod helper;
 pub mod leader_broadcast;
 pub mod message_queue;
+pub(crate) mod operation_timeout;
 pub mod ping_helper;
 pub mod ports;
 pub mod program;
 pub mod signature_verifier;
 pub mod spv_proof;
-#[cfg(test)]
-pub(crate) mod test_utils;
+pub mod test_utils;
 pub mod throttle;
 pub mod types;
 

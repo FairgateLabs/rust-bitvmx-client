@@ -41,6 +41,7 @@ impl RejectPegin {
             PROGRAM_TYPE_REJECT_PEGIN.to_string(),
             vec![my_address],
             0,
+            None,
         )?;
 
         Ok(())

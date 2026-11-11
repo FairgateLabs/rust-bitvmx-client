@@ -3,14 +3,12 @@ use crate::{
     comms_helper::CommsMessageType,
     errors::BitVMXError,
     program::{
-        participant::{
-            get_index_by_pubkey_hash, CommsAddress, ParticipantKeyDeclaration, ParticipantKeys,
-        },
+        participant::{CommsAddress, ParticipantKeyDeclaration, ParticipantKeys},
         protocols::protocol_handler::{ProtocolHandler, ProtocolType},
-        setup::SetupStep,
+        setup::{decode_contribution, SetupStep, MY_KEYS},
         variables::VariableTypes,
     },
-    types::ProgramContext,
+    types::{PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason},
 };
 use serde_json::Value;
 use tracing::{debug, info};
@@ -136,7 +134,7 @@ impl KeysStep {
     ) -> Result<(), BitVMXError> {
         context.globals.set_var(
             protocol_id,
-            "my_keys",
+            MY_KEYS,
             VariableTypes::String(serde_json::to_string(my_keys)?),
         )
     }
@@ -145,6 +143,10 @@ impl KeysStep {
 impl SetupStep for KeysStep {
     fn step_name(&self) -> &str {
         "keys"
+    }
+
+    fn accepted_message_type(&self) -> CommsMessageType {
+        CommsMessageType::Keys
     }
 
     fn generate_data<BC: BitcoinCoordinatorApi>(
@@ -181,22 +183,15 @@ impl SetupStep for KeysStep {
         Ok(Some((serialized, CommsMessageType::Keys)))
     }
 
-    fn verify_received<BC: BitcoinCoordinatorApi>(
+    fn verify_received_impl<BC: BitcoinCoordinatorApi>(
         &self,
         data: Value,
-        msg_type: CommsMessageType,
         from_participant: &CommsAddress,
+        idx: usize,
         protocol: &ProtocolType,
-        participants: &[CommsAddress],
         context: &mut ProgramContext<BC>,
         _your_data: bool,
-    ) -> Result<bool, BitVMXError> {
-        if !matches!(msg_type, CommsMessageType::Keys) {
-            info!(
-                "Received message with type {msg_type:?} in KeysStep, ignoring. Expected type: Keys"
-            );
-            return Ok(false);
-        }
+    ) -> Result<ResultDisposition, BitVMXError> {
         let protocol_id = protocol.context().id;
 
         debug!(
@@ -206,9 +201,10 @@ impl SetupStep for KeysStep {
 
         // Deserialize only the wire-safe declaration. In particular, reject
         // peer-supplied locally derived fields such as computed_aggregated.
-        let keys: ParticipantKeyDeclaration = serde_json::from_value(data).map_err(|e| {
-            BitVMXError::InvalidMessage(format!("Failed to deserialize key declaration: {}", e))
-        })?;
+        let keys: ParticipantKeyDeclaration = match decode_contribution(data, from_participant) {
+            Ok(keys) => keys,
+            Err(outcome) => return Ok(outcome),
+        };
 
         debug!(
             "KeysStep: Received {} individual keys and {} aggregated keys",
@@ -216,8 +212,24 @@ impl SetupStep for KeysStep {
             keys.aggregated.len()
         );
 
-        // Find participant index
-        let idx = get_index_by_pubkey_hash(participants, &from_participant.pubkey_hash)?;
+        let Some(my_keys) = super::load_my_keys(&protocol_id, context)? else {
+            return Ok(ResultDisposition::Retry(
+                RetryReason::MissingSetupPrerequisite,
+            ));
+        };
+        if keys.aggregated != my_keys.aggregated
+            || keys.aggregated.iter().any(|name| {
+                keys.mapping
+                    .get(name)
+                    .and_then(|key| key.public())
+                    .is_none()
+            })
+        {
+            return Ok(ResultDisposition::fail_peer_reason(
+                from_participant.pubkey_hash.clone(),
+                PeerSetupFaultReason::InvalidSetupContribution,
+            ));
+        }
 
         // Save to globals with the convention "participant_{idx}_keys"
         self.store_participant_data(
@@ -232,7 +244,7 @@ impl SetupStep for KeysStep {
             from_participant.pubkey_hash, idx
         );
 
-        Ok(true)
+        Ok(ResultDisposition::Success)
     }
 
     fn can_advance<BC: BitcoinCoordinatorApi>(
@@ -273,7 +285,7 @@ impl SetupStep for KeysStep {
 
         let all_keys = self.collect_participant_keys(&protocol_id, participants, context)?;
         let mut my_keys =
-            super::load_my_keys(&protocol_id, context, "my_keys not found in globals")?;
+            super::require_my_keys(&protocol_id, context, "my_keys not found in globals")?;
         let mut computed_aggregated = Self::compute_aggregated_keys(&my_keys, &all_keys, context)?;
 
         computed_aggregated.extend(protocol.get_pregenerated_aggregated_keys(context)?);
@@ -303,7 +315,10 @@ mod tests {
 
     use crate::program::protocols::protocol_handler::new_protocol_type;
     use crate::test_utils::{TestProgramContextEnv, TestStorageDir};
-    use crate::types::{PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION};
+    use crate::types::{
+        NoOpReason, PeerSetupFault, PeerSetupFaultReason, FINAL_AGGREGATED_KEY,
+        PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_GC_GENERATION,
+    };
     use std::collections::HashSet;
 
     fn protocol(name: &str, id: Uuid, storage: Rc<Storage>) -> ProtocolType {
@@ -364,15 +379,15 @@ mod tests {
         assert_eq!(generated.mapping.len(), 1);
         assert_eq!(generated.aggregated, HashSet::from([id.to_string()]));
         assert_eq!(
-            stored_keys(&id, "my_keys", &env.context),
+            stored_keys(&id, MY_KEYS, &env.context),
             generated.clone().into()
         );
 
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
             .unwrap());
-        assert!(step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 data,
                 msg_type,
                 &participant,
@@ -381,7 +396,9 @@ mod tests {
                 &mut env.context,
                 true,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Success
+        );
         assert!(step
             .can_advance(&protocol, &participants, &env.context)
             .unwrap());
@@ -389,7 +406,7 @@ mod tests {
         step.on_step_complete(&protocol, &participants, &mut env.context)
             .unwrap();
 
-        let completed = stored_keys(&id, "my_keys", &env.context);
+        let completed = stored_keys(&id, MY_KEYS, &env.context);
         let aggregate = completed.computed_aggregated[&id.to_string()];
         assert_eq!(
             aggregate,
@@ -400,7 +417,7 @@ mod tests {
         assert_eq!(
             env.context
                 .globals
-                .get_var(&id, "final_aggregated_key")
+                .get_var(&id, FINAL_AGGREGATED_KEY)
                 .unwrap()
                 .unwrap()
                 .pubkey()
@@ -434,8 +451,8 @@ mod tests {
         let participants = vec![participant.clone()];
         let valid = serde_json::to_value(ParticipantKeyDeclaration::empty()).unwrap();
 
-        assert!(!step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 valid.clone(),
                 CommsMessageType::PublicNonces,
                 &participant,
@@ -444,13 +461,28 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap());
+            .unwrap(),
+            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+        );
         assert!(!step
             .has_participant_data(&env.context.globals, &id, 0)
             .unwrap());
+        assert_eq!(
+            step.verify_received(
+                valid.clone(),
+                CommsMessageType::Keys,
+                &participant,
+                &protocol,
+                &participants,
+                &mut env.context,
+                false,
+            )
+            .unwrap(),
+            ResultDisposition::Retry(RetryReason::MissingSetupPrerequisite)
+        );
 
-        let err = step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 serde_json::json!({"not": "participant keys"}),
                 CommsMessageType::Keys,
                 &participant,
@@ -459,16 +491,20 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap_err();
-        assert!(matches!(err, BitVMXError::InvalidMessage(_)));
+            .unwrap(),
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
+        );
 
         let injected_derived_key = serde_json::json!({
             "mapping": {},
             "aggregated": [],
             "computed_aggregated": {}
         });
-        let err = step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 injected_derived_key,
                 CommsMessageType::Keys,
                 &participant,
@@ -477,13 +513,17 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .unwrap_err();
-        assert!(matches!(err, BitVMXError::InvalidMessage(_)));
+            .unwrap(),
+            ResultDisposition::fail_peer(PeerSetupFault {
+                peer: participant.pubkey_hash.clone(),
+                reason: PeerSetupFaultReason::MalformedMessage,
+            })
+        );
 
         let mut outsider = participant.clone();
         outsider.pubkey_hash = "unknown-participant".to_string();
-        assert!(step
-            .verify_received(
+        assert_eq!(
+            step.verify_received(
                 valid,
                 CommsMessageType::Keys,
                 &outsider,
@@ -492,7 +532,9 @@ mod tests {
                 &mut env.context,
                 false,
             )
-            .is_err());
+            .unwrap(),
+            ResultDisposition::NoOp(NoOpReason::UnauthorizedSender)
+        );
     }
 
     #[test]
@@ -602,7 +644,7 @@ mod tests {
             .globals
             .set_var(
                 &id,
-                "my_keys",
+                MY_KEYS,
                 VariableTypes::String(serde_json::to_string(&my_keys).unwrap()),
             )
             .unwrap();

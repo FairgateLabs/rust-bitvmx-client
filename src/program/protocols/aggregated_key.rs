@@ -23,7 +23,7 @@ use crate::{
         setup::steps::SetupStepName,
         variables::VariableTypes,
     },
-    types::{OutgoingBitVMXApiMessages, ProgramContext},
+    types::{OutgoingBitVMXApiMessages, ProgramContext, FINAL_AGGREGATED_KEY},
 };
 
 /// AggregatedKeyProtocol - Manages aggregated key generation
@@ -108,7 +108,7 @@ impl ProtocolHandler for AggregatedKeyProtocol {
         // Store the aggregated key in globals for easy retrieval
         context.globals.set_var(
             &self.ctx.id,
-            "final_aggregated_key",
+            FINAL_AGGREGATED_KEY,
             VariableTypes::PubKey(*aggregated_key),
         )?;
 
@@ -135,8 +135,8 @@ impl ProtocolHandler for AggregatedKeyProtocol {
 
     // Override setup_steps to only use KeysStep
     // No Nonces or Signatures needed - we're only generating a key, not signing
-    fn setup_steps(&self) -> Option<Vec<SetupStepName>> {
-        Some(vec![SetupStepName::Keys])
+    fn setup_steps(&self) -> Vec<SetupStepName> {
+        vec![SetupStepName::Keys]
     }
 }
 
@@ -193,7 +193,7 @@ mod tests {
         );
         assert_eq!(declaration.aggregated, HashSet::from([id.to_string()]));
         assert!(!protocol.send_setup_completed());
-        assert_eq!(protocol.setup_steps(), Some(vec![SetupStepName::Keys]));
+        assert_eq!(protocol.setup_steps(), vec![SetupStepName::Keys]);
     }
 
     #[test]
@@ -242,7 +242,7 @@ mod tests {
         assert!(!env
             .context
             .globals
-            .contains_var(&id, "final_aggregated_key")
+            .contains_var(&id, FINAL_AGGREGATED_KEY)
             .unwrap());
     }
 
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(
             env.context
                 .globals
-                .get_var_or_err(&id, "final_aggregated_key")
+                .get_var_or_err(&id, FINAL_AGGREGATED_KEY)
                 .unwrap()
                 .pubkey()
                 .unwrap(),
