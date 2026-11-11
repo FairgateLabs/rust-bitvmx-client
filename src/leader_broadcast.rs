@@ -545,7 +545,10 @@ impl LeaderBroadcastHelper {
             return Ok(ResultDisposition::NoOp(reason));
         }
 
-        if original_msg.validate().is_err()
+        // The leader authenticated and validated every original before storing it,
+        // and forwards it unchanged. An original that fails here was altered by the
+        // leader, so the fault is the leader's, never the claimed sender's.
+        let reason = if original_msg.validate().is_err()
             || construct_message(
                 &program_id.to_string(),
                 &original_msg.version,
@@ -555,22 +558,31 @@ impl LeaderBroadcastHelper {
             )
             .is_err()
         {
-            return Ok(ResultDisposition::fail_peer_reason(
-                original_msg.sender_pubkey_hash.clone(),
-                PeerSetupFaultReason::MalformedMessage,
-            ));
-        }
+            PeerSetupFaultReason::MalformedMessage
+        } else {
+            match SignatureVerifier::authenticate_message(
+                program_context,
+                program_id,
+                &original_msg.version,
+                original_msg.msg_type,
+                &original_msg.data,
+                original_msg.original_timestamp,
+                &original_msg.original_signature,
+                &original_msg.sender_pubkey_hash,
+            )? {
+                ResultDisposition::Fail(FailureDetail::PeerSetup(fault)) => fault.reason,
+                disposition => return Ok(disposition),
+            }
+        };
 
-        SignatureVerifier::authenticate_message(
-            program_context,
-            program_id,
-            &original_msg.version,
-            original_msg.msg_type,
-            &original_msg.data,
-            original_msg.original_timestamp,
-            &original_msg.original_signature,
-            &original_msg.sender_pubkey_hash,
-        )
+        warn!(
+            "Leader {} apparently tampered with the original {:?} from participant {} in program {}: {:?}",
+            leader_pubkey_hash, original_msg.msg_type, original_msg.sender_pubkey_hash, program_id, reason
+        );
+        Ok(ResultDisposition::fail_peer_reason(
+            leader_pubkey_hash.clone(),
+            reason,
+        ))
     }
 }
 
@@ -1168,9 +1180,9 @@ mod tests {
 
         let good = signed_self_original(&env, &program_id, json!({"step": "keys"}));
 
-        // Mallory has a known verification key (the env's own RSA key), but
-        // her message carries a signature taken from a different payload, so
-        // verification runs and fails.
+        // The participant has a known verification key (the env's own RSA key)
+        // and signed its original, but the leader altered the data before
+        // forwarding it, so verification runs and fails.
         OperatorVerificationStore::store(
             &env.context.globals,
             &mallory,
@@ -1178,7 +1190,7 @@ mod tests {
         )
         .unwrap();
         let mut forged = signed_self_original(&env, &program_id, json!({"step": "forged"}));
-        forged.sender_pubkey_hash = mallory.clone();
+        forged.sender_pubkey_hash = mallory;
         forged.data = json!({"step": "tampered"});
 
         let broadcast = BroadcastedMessage {
@@ -1194,10 +1206,12 @@ mod tests {
             serde_json::to_value(&broadcast).unwrap(),
             &queue,
         );
+        // The leader authenticated the original before storing it and forwards it
+        // unchanged, so the fault is the leader's, not the participant's.
         assert_eq!(
             disposition,
             ResultDisposition::fail_peer_reason(
-                mallory,
+                LEADER_HASH.to_string(),
                 PeerSetupFaultReason::AuthenticationRejected
             )
         );
@@ -1232,6 +1246,40 @@ mod tests {
             ResultDisposition::fail_peer_reason(
                 LEADER_HASH.to_string(),
                 PeerSetupFaultReason::UnauthorizedMessage
+            )
+        );
+        assert!(queue.is_empty().unwrap());
+    }
+
+    #[test]
+    fn process_broadcasted_message_blames_leader_for_invalid_original() {
+        let mut env = TestProgramContextEnv::new("leader-broadcast-invalid-original").unwrap();
+        let program_id = Uuid::new_v4();
+        let program = install_test_program(&mut env, program_id, vec![]);
+        let good = signed_self_original(&env, &program_id, json!({"step": "keys"}));
+        // The leader stores only originals that pass validate(), so an invalid
+        // one in the envelope was altered by the leader, not by its sender.
+        let mut stripped = good.clone();
+        stripped.version = String::new();
+        let broadcast = BroadcastedMessage {
+            original_msg_type: CommsMessageType::Keys,
+            original_messages: vec![stripped],
+        };
+        let queue = test_message_queue(env.context.leader_broadcast_helper.store.clone());
+
+        let disposition = process(
+            &env,
+            &program,
+            program_id,
+            serde_json::to_value(&broadcast).unwrap(),
+            &queue,
+        );
+
+        assert_eq!(
+            disposition,
+            ResultDisposition::fail_peer_reason(
+                LEADER_HASH.to_string(),
+                PeerSetupFaultReason::MalformedMessage
             )
         );
         assert!(queue.is_empty().unwrap());
