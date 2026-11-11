@@ -538,7 +538,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         input: Vec<u8>,
         elf_file_path: String,
         execution_timeout_secs: Option<u64>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
         info!("Generating ZKP for input: {:?}", input);
 
         let registration = self.program_context.expected_jobs.send_dispatcher_job(
@@ -550,14 +550,23 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             execution_timeout_secs.map(Duration::from_secs),
         )?;
 
-        if registration == ExpectedJobRegistration::Registered {
-            self.store.set(
-                StoreKey::ZKPExecution(id).get_key()?,
-                ZKPExecution::new(from),
-                None,
-            )?;
+        match registration {
+            // The result is pushed to the requester when the job settles.
+            ExpectedJobRegistration::Registered => {
+                self.store.set(
+                    StoreKey::ZKPExecution(id).get_key()?,
+                    ZKPExecution::new(from),
+                    None,
+                )?;
+                Ok(None)
+            }
+            // A repeated request may come from a caller that lost the reply, so it
+            // gets the current state: ProofNotReady while the job runs, otherwise
+            // the result it settled with.
+            ExpectedJobRegistration::AlreadyExists(_) => {
+                self.get_zkp_execution_result(id).map(Some)
+            }
         }
-        Ok(())
     }
 
     fn discard_dispatcher_job(
@@ -1101,7 +1110,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                         Err(error @ BitVMXError::DispatcherJobConflict(_)) => {
                             Ok(Some(Self::api_error(id, error.to_string())))
                         }
-                        result => result.map(|()| None),
+                        result => result,
                     }
                 }
                 IncomingBitVMXApiMessages::GetZKPExecutionResult(id) => {
@@ -1814,7 +1823,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_zkp_request_is_an_idempotent_no_op() {
+    fn repeated_zkp_request_reports_not_ready_without_redispatch() {
         let mut env = TestBitVMXEnv::new("api-zkp-repeat").unwrap();
         let prover = env
             .bitvmx
@@ -1849,6 +1858,71 @@ mod tests {
             .unwrap();
         assert_eq!(execution.requester(), &env.bitvmx.config.components.l2);
         assert!(execution.into_output().is_none());
+        // Only the repeated request is answered, so the caller knows it arrived.
+        assert!(matches!(
+            api_replies(&mut env.bitvmx).as_slice(),
+            [OutgoingBitVMXApiMessages::ProofNotReady(response_id)] if *response_id == id
+        ));
+    }
+
+    #[test]
+    fn repeated_zkp_request_for_finished_job_replies_with_its_result() {
+        let mut env = TestBitVMXEnv::new("api-zkp-repeat-finished").unwrap();
+        let prover = env
+            .bitvmx
+            .program_context
+            .broker_channel
+            .create_local_channel(env.bitvmx.config.components.prover.clone())
+            .unwrap();
+        let generate = |id| {
+            IncomingBitVMXApiMessages::GenerateZKP(id, vec![1, 2, 3], "test.elf".to_string(), None)
+        };
+
+        let completed = Uuid::new_v4();
+        send_api(&mut env.bitvmx, generate(completed)).unwrap();
+        env.bitvmx
+            .store
+            .set(
+                StoreKey::ZKPExecution(completed).get_key().unwrap(),
+                ZKPExecution::with_output(
+                    env.bitvmx.config.components.l2.clone(),
+                    vec![4],
+                    vec![5],
+                ),
+                None,
+            )
+            .unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .complete(&completed.to_string())
+            .unwrap();
+
+        let failed = Uuid::new_v4();
+        send_api(&mut env.bitvmx, generate(failed)).unwrap();
+        env.bitvmx
+            .program_context
+            .expected_jobs
+            .fail(&failed.to_string(), "FAILED: boom".to_string())
+            .unwrap();
+
+        // The caller lost the pushed results and asks again.
+        send_api(&mut env.bitvmx, generate(completed)).unwrap();
+        send_api(&mut env.bitvmx, generate(failed)).unwrap();
+
+        assert!(matches!(
+            api_replies(&mut env.bitvmx).as_slice(),
+            [
+                OutgoingBitVMXApiMessages::ZKPResult(completed_id, seal, journal),
+                OutgoingBitVMXApiMessages::ProofGenerationError(failed_id, reason),
+            ] if *completed_id == completed
+                && *seal == vec![4]
+                && *journal == vec![5]
+                && *failed_id == failed
+                && reason == "FAILED: boom"
+        ));
+        // A finished job is answered from storage, never dispatched again.
+        assert_eq!(prover.get_all().unwrap().len(), 2);
     }
 
     #[test]
