@@ -38,22 +38,43 @@ For example, to run the committee setup:
 ./examples/union/scripts/run-example.sh committee
 ```
 
-- Challenge example:
+### Challenge example
 
-In the case of `challenge` example you should provide who is the winning party `op` or `wt`:
+The `challenge` example uses the Dispute Resolution Protocol (DRP). Before
+running it, disable the high-fee regtest node in
+`examples/union/bitcoin.rs`:
+
+```rust
+pub const HIGH_FEE_NODE_ENABLED: bool = false;
+```
+
+Build the emulator dispatcher once before starting the example. From the
+`rust-bitvmx-job-dispatcher` repository root, run:
+
+```bash
+cargo build --release --bin bitvmx-emulator-dispatcher
+```
+
+Then, from the `rust-bitvmx-client` repository root, start the example and
+specify the winning party (`op` or `wt`):
 
 ```bash
 ./examples/union/scripts/run-example.sh challenge op
 ```
 
-Also, in the examples that involve DRP (Dispute Resolution Protocol) it is needed to run job dispatcher emulators in a separated terminal.
-There is a script for that as well, inside `/rust-bitvmx-workspace/rust-bitvmx-job-dispatcher/` run:
+Keep that process running. After it prints
+`Running union example: challenge...`, open a separate terminal and start the
+four dispatcher instances from the `rust-bitvmx-job-dispatcher` repository
+root:
 
 ```bash
 ./dev/scripts/run-emulator-dispatcher-all.sh
 ```
 
-NOTE: This script should be run after all BitVMX clients are running and point to the same port as the clients.
+The dispatchers listen on ports `22222`, `33333`, `44444`, and `55554`, which
+must match the broker ports configured for `op_1` through `op_4`. The launcher
+runs them in the background and writes their output under the job dispatcher
+repository's `logs/` directory, so returning to the shell prompt is expected.
 
 - Port to solidity:
 

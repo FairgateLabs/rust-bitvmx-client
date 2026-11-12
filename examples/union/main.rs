@@ -65,9 +65,9 @@ pub const NETWORK: Network = Network::Regtest;
 pub const STREAM_DENOMINATION: u64 = 100_000;
 
 // Challenge tests settings
-const GROTH16_PROOF: &str = "391c2bcb0ce5ee75955a9f934e6fe3f8741df14c24e5aa3047967350299a331df71c0b8404abd565633d37910b29e014b624b9899fa527d085e729e283e7650475bd3e656c62d1dd87125db42326522d09f93c74600e32bb685f23f75425a2aa04eb448e3a8cca6181eebcdf6a96d1a216ea93c11b61f6424928ecf2a6992e95";
+const GROTH16_PROOF: &str = "de5f497725660a77bedc6f8ae66b792dc67a33f9f4fb219cc3d9578e060e55a8d784400c4bff0a58dfdb7148c3f69ed724a79ccc5cfafa5cb80a294edc308605bc2724e2b0823bf415b25a9a6a1b529dfe06b2d2e11d47463343ba1c4db6971b195673398dc9efbd958b3f24fcc99be432ac778b11ecf1e77c6d63d9fc53d9ab";
 const PEGOUT_ID_CHALLENGED: &str =
-    "da4ecdaa161ab0bd912d53d26f632aab38ad114d092187d12bd422ccc1504d5f";
+    "c0fa6e8e79ec89544b173f6f17f30c4c8acfa14d4abf519d41c587ae35cc995c";
 const SLOT_ID_CHALLENGED: usize = 4; // It should be set in the journal
 
 // Fixed pegout ID used for testing (equivalent to bytes32(uint256(1)) in Solidity)
