@@ -203,7 +203,11 @@ impl RawPeer {
     }
 
     fn address(&self) -> CommsAddress {
-        bitvmx_client::test_utils::dev_comms_address(&self.node.get_address().to_string(), PEER_KEY_PATH).unwrap()
+        bitvmx_client::test_utils::dev_comms_address(
+            &self.node.get_address().to_string(),
+            PEER_KEY_PATH,
+        )
+        .unwrap()
     }
 
     fn send(

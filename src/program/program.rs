@@ -9,7 +9,7 @@ use crate::{
     comms_helper::CommsMessageType,
     error_handling::{classify, try_send_error_report, Severity},
     errors::{BitVMXError, DispatcherResultError, ProgramError},
-    helper::compute_pubkey_hash,
+    helper::{canonical_verification_key, compute_pubkey_hash},
     program::{
         participant::{get_comms_address_by_pubkey_hash, validate_participants},
         protocols::protocol_handler::{new_protocol_type, ProtocolHandler, ProtocolType},
@@ -328,7 +328,7 @@ impl Program {
             OperatorVerificationStore::store(
                 &context.globals,
                 &peer.pubkey_hash,
-                &peer.pubkey_pem,
+                &canonical_verification_key(&peer.pubkey_pem)?,
             )?;
         }
 
@@ -1244,6 +1244,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![forged],
             0,
+            None,
             &mut env.context,
             dir.storage(),
         );
@@ -1264,6 +1265,7 @@ mod tests {
                 PROGRAM_TYPE_AGGREGATED_KEY,
                 vec![garbage],
                 0,
+                None,
                 &mut env.context,
                 dir.storage(),
             );
@@ -1314,6 +1316,7 @@ mod tests {
             PROGRAM_TYPE_AGGREGATED_KEY,
             vec![env.self_address().unwrap(), peer.clone()],
             0,
+            None,
             &mut env.context,
             dir.storage(),
         )
@@ -1322,6 +1325,34 @@ mod tests {
         assert_eq!(
             OperatorVerificationStore::get(&env.context.globals, &peer.pubkey_hash).unwrap(),
             Some(peer.pubkey_pem)
+        );
+        env.assert_no_delivery_via_peer(0);
+    }
+
+    #[test]
+    fn test_new_normalizes_pkcs1_peer_keys_for_signature_verification() {
+        use rsa::{pkcs1::EncodeRsaPublicKey, pkcs8::DecodePublicKey};
+        let mut env = TestProgramContextEnv::new_with_peers("program-new-pkcs1-key", 1).unwrap();
+        let dir = TestStorageDir::new("program-new-pkcs1-key-storage");
+        let mut peer = env.peer_address(0).unwrap();
+        let expected = peer.pubkey_pem.clone();
+        peer.pubkey_pem = rsa::RsaPublicKey::from_public_key_pem(&peer.pubkey_pem)
+            .unwrap()
+            .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+            .unwrap();
+        Program::new(
+            Uuid::new_v4(),
+            PROGRAM_TYPE_AGGREGATED_KEY,
+            vec![env.self_address().unwrap(), peer.clone()],
+            0,
+            None,
+            &mut env.context,
+            dir.storage(),
+        )
+        .unwrap();
+        assert_eq!(
+            OperatorVerificationStore::get(&env.context.globals, &peer.pubkey_hash).unwrap(),
+            Some(expected)
         );
         env.assert_no_delivery_via_peer(0);
     }

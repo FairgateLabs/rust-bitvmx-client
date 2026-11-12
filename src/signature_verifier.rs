@@ -45,6 +45,14 @@ impl OperatorVerificationStore {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn remove(globals: &Globals, pubkey_hash: &PubkHash) -> Result<(), BitVMXError> {
+        globals.unset_var(
+            &GLOBAL_VERIFICATIONS_KEYS_UUID,
+            &Self::storage_key(pubkey_hash),
+        )
+    }
+
     pub fn get(globals: &Globals, pubkey_hash: &PubkHash) -> Result<Option<String>, BitVMXError> {
         globals
             .get_var(
@@ -633,7 +641,11 @@ mod tests {
     fn handle_verification_messages_stores_pkcs1_announcement_as_spki() -> Result<(), BitVMXError> {
         let env = TestProgramContextEnv::new("sigver-hvm-pkcs1")?;
         let peer_hash = compute_pubkey_hash(&env.context.rsa_public_key)?;
-        let peer_address = CommsAddress::new(env.context.comms.get_address(), peer_hash.clone());
+        let peer_address = CommsAddress::new(
+            env.context.comms.get_address(),
+            peer_hash.clone(),
+            env.context.rsa_public_key.clone(),
+        );
         let data = VerificationKeyAnnouncement {
             verification_key: pkcs1_pem(&env.context.rsa_public_key),
         }
@@ -725,6 +737,7 @@ mod tests {
         let peer_address = CommsAddress::new(
             env.context.comms.get_address(),
             "peer-fingerprint".to_string(),
+            env.context.rsa_public_key.clone(),
         );
         let program_id = Uuid::new_v4();
 

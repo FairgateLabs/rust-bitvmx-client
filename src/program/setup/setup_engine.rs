@@ -1102,7 +1102,11 @@ mod tests {
             ),
             None
         );
-        let unknown = CommsAddress::new(peer.address, "unknown-participant".to_string());
+        let unknown = CommsAddress::new(
+            peer.address,
+            "unknown-participant".to_string(),
+            peer.pubkey_pem.clone(),
+        );
         assert_eq!(
             engine
                 .receive_current_step_data(

@@ -25,14 +25,18 @@ use crate::{
         variables::{Globals, WitnessVars},
     },
     throttle::Throttle,
-    types::{ErrorReport, ErrorReportKind, ErrorScope, OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
+    types::{
+        ErrorReport, ErrorReportKind, ErrorScope, OutgoingBitVMXApiMessages, ProgramContext,
+        ProgramStatus,
+    },
 };
 use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TypesToMonitor};
 use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, BrokerNode};
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
 use key_manager::{
-    create_key_manager_from_config, errors::KeyManagerError, key_manager::KeyManager, key_type::BitcoinKeyType,
+    create_key_manager_from_config, errors::KeyManagerError, key_manager::KeyManager,
+    key_type::BitcoinKeyType,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};

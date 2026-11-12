@@ -355,7 +355,7 @@ mod tests {
     use super::*;
     use crate::{
         comms_helper::CommsMessageType,
-        program::{participant::CommsAddress, program::Program},
+        program::program::Program,
         test_utils::TestBitVMXEnv,
         types::{
             ErrorReport, ErrorReportKind, ErrorScope, IncomingBitVMXApiMessages,
@@ -470,10 +470,7 @@ mod tests {
     fn cross_dispatcher_result_does_not_change_the_expected_job() {
         let mut env = TestBitVMXEnv::new("dispatcher-route-before-payload").unwrap();
         let store = env.bitvmx.get_store();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            env.bitvmx.program_context.comms.get_pubk_hash(),
-        );
+        let self_address = env.bitvmx.comms_address().unwrap();
         let program_id = Uuid::new_v4();
         Program::new(
             program_id,
@@ -790,10 +787,7 @@ mod tests {
     fn setup_plain_text_dispatcher_error_is_settled_then_consumed() {
         let mut env = TestBitVMXEnv::new("setup-dispatcher-error").unwrap();
         let store = env.bitvmx.get_store();
-        let self_address = CommsAddress::new(
-            env.bitvmx.program_context.comms.get_address(),
-            env.bitvmx.program_context.comms.get_pubk_hash(),
-        );
+        let self_address = env.bitvmx.comms_address().unwrap();
         let program_id = Uuid::new_v4();
         Program::new(
             program_id,
@@ -890,10 +884,7 @@ mod tests {
         ] {
             let mut env = TestBitVMXEnv::new(prefix).unwrap();
             let store = env.bitvmx.get_store();
-            let self_address = CommsAddress::new(
-                env.bitvmx.program_context.comms.get_address(),
-                env.bitvmx.program_context.comms.get_pubk_hash(),
-            );
+            let self_address = env.bitvmx.comms_address().unwrap();
             let program_id = Uuid::new_v4();
             Program::new(
                 program_id,
