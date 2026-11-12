@@ -5,11 +5,11 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::{env, fs};
 
-use bitcoin::{Transaction, Txid};
+use bitcoin::{BlockHash, Transaction, Txid};
 use bitcoin_coordinator::{
     errors::BitcoinCoordinatorError,
     types::{AckNews, News},
-    TransactionStatus, TypesToMonitor,
+    FullBlock, MonitorTarget, TransactionStatus,
 };
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::identifier::Identifier;
@@ -223,6 +223,21 @@ pub struct MockDispatch {
     pub stuck_in_mempool_blocks: Option<u32>,
 }
 
+/// A `monitor` call on the [`BitcoinCoordinatorMock`], with every argument the caller passed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MockMonitor {
+    pub targets: Vec<MonitorTarget>,
+    pub context: String,
+    pub confirmation_trigger: Option<u32>,
+}
+
+/// A `cancel` call on the [`BitcoinCoordinatorMock`], with every argument the caller passed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MockCancel {
+    pub targets: Vec<MonitorTarget>,
+    pub context: String,
+}
+
 /// In-memory mock of the bitcoin coordinator port. Records every call so unit
 /// tests can assert on the interactions, and lets tests stage the values
 /// returned by the query methods (`is_ready`, `get_transaction`, `get_news`).
@@ -231,8 +246,8 @@ pub struct BitcoinCoordinatorMock {
     ready: Cell<bool>,
     tick_count: Cell<u32>,
     dispatched: RefCell<Vec<MockDispatch>>,
-    cancelled: RefCell<Vec<TypesToMonitor>>,
-    monitored: RefCell<Vec<TypesToMonitor>>,
+    cancelled: RefCell<Vec<MockCancel>>,
+    monitored: RefCell<Vec<MockMonitor>>,
     funding: RefCell<Vec<Utxo>>,
     acked: RefCell<Vec<AckNews>>,
     transactions: RefCell<HashMap<Txid, TransactionStatus>>,
@@ -302,11 +317,11 @@ impl BitcoinCoordinatorMock {
         self.dispatched.borrow().clone()
     }
 
-    pub fn cancelled(&self) -> Vec<TypesToMonitor> {
+    pub fn cancelled(&self) -> Vec<MockCancel> {
         self.cancelled.borrow().clone()
     }
 
-    pub fn monitored(&self) -> Vec<TypesToMonitor> {
+    pub fn monitored(&self) -> Vec<MockMonitor> {
         self.monitored.borrow().clone()
     }
 
@@ -399,8 +414,15 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
         }
     }
 
-    fn cancel(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError> {
-        self.cancelled.borrow_mut().push(data);
+    fn cancel(
+        &self,
+        targets: &[MonitorTarget],
+        context: &str,
+    ) -> Result<(), BitcoinCoordinatorError> {
+        self.cancelled.borrow_mut().push(MockCancel {
+            targets: targets.to_vec(),
+            context: context.to_string(),
+        });
         Ok(())
     }
 
@@ -425,7 +447,15 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
             })
     }
 
-    fn get_news(&self) -> Result<News, BitcoinCoordinatorError> {
+    fn get_block(
+        &self,
+        _height: u32,
+        _hash: &BlockHash,
+    ) -> Result<Option<FullBlock>, BitcoinCoordinatorError> {
+        Ok(None)
+    }
+
+    fn get_news(&self, _max_keys: Option<usize>) -> Result<News, BitcoinCoordinatorError> {
         Ok(self.news.borrow().clone())
     }
 
@@ -434,11 +464,20 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
         Ok(())
     }
 
-    fn monitor(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError> {
+    fn monitor(
+        &self,
+        targets: &[MonitorTarget],
+        context: String,
+        confirmation_trigger: Option<u32>,
+    ) -> Result<(), BitcoinCoordinatorError> {
         if let Some(error) = self.next_monitor_error.borrow_mut().take() {
             return Err(error);
         }
-        self.monitored.borrow_mut().push(data);
+        self.monitored.borrow_mut().push(MockMonitor {
+            targets: targets.to_vec(),
+            context,
+            confirmation_trigger,
+        });
         Ok(())
     }
 }
@@ -611,6 +650,7 @@ mod tests {
     use bitcoin::transaction::Version;
     use bitcoin_coordinator::types::CoordinatorNews;
 
+    use crate::bitvmx::NEW_BLOCK_CONTEXT;
     use crate::helper::compute_pubkey_hash;
     use crate::program::protocols::protocol_handler::{new_protocol_type, ProtocolHandler};
     use crate::program::setup::steps::{KeysStep, SetupStepEnum};
@@ -629,11 +669,14 @@ mod tests {
     #[test]
     fn test_bitvmx_env_uses_mock_and_registers_new_blocks() {
         let env = TestBitVMXEnv::new("bitvmx-env").unwrap();
-        assert_eq!(env.coordinator_mock().monitored().len(), 1);
-        assert!(matches!(
-            env.coordinator_mock().monitored()[0],
-            TypesToMonitor::NewBlock
-        ));
+        assert_eq!(
+            env.coordinator_mock().monitored(),
+            vec![MockMonitor {
+                targets: vec![MonitorTarget::NewBlock],
+                context: NEW_BLOCK_CONTEXT.to_string(),
+                confirmation_trigger: None,
+            }]
+        );
     }
 
     #[test]
@@ -730,13 +773,7 @@ mod tests {
 
         // staged status is returned (built via serde: the blockchain status
         // enum is not re-exported through bitcoin_coordinator)
-        let status: TransactionStatus = serde_json::from_value(serde_json::json!({
-            "tx": null,
-            "block_info": null,
-            "confirmations": 0,
-            "status": "NotFound",
-        }))
-        .unwrap();
+        let status = TransactionStatus::NotFound;
         mock.set_transaction_status(txid, status.clone());
         assert_eq!(mock.get_transaction(txid).unwrap(), status);
 
@@ -758,16 +795,30 @@ mod tests {
             coordinator_news: vec![CoordinatorNews::TxNotFound { txid }],
         };
         mock.set_news(news.clone());
-        assert_eq!(mock.get_news().unwrap(), news);
+        assert_eq!(mock.get_news(None).unwrap(), news);
         mock.ack_news(AckNews::Coordinator(CoordinatorNews::TxNotFound { txid }))
             .unwrap();
         assert_eq!(mock.acked_count(), 1);
 
         // monitor / cancel are recorded
-        mock.monitor(TypesToMonitor::NewBlock).unwrap();
-        assert_eq!(mock.monitored(), vec![TypesToMonitor::NewBlock]);
-        mock.cancel(TypesToMonitor::NewBlock).unwrap();
-        assert_eq!(mock.cancelled(), vec![TypesToMonitor::NewBlock]);
+        mock.monitor(&[MonitorTarget::NewBlock], "blocks".to_string(), None)
+            .unwrap();
+        assert_eq!(
+            mock.monitored(),
+            vec![MockMonitor {
+                targets: vec![MonitorTarget::NewBlock],
+                context: "blocks".to_string(),
+                confirmation_trigger: None,
+            }]
+        );
+        mock.cancel(&[MonitorTarget::NewBlock], "blocks").unwrap();
+        assert_eq!(
+            mock.cancelled(),
+            vec![MockCancel {
+                targets: vec![MonitorTarget::NewBlock],
+                context: "blocks".to_string(),
+            }]
+        );
 
         // the context is wired to the same config the comms env loaded
         assert_eq!(

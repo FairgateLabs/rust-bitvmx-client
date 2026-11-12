@@ -107,13 +107,13 @@ impl ProtocolHandler for LockProtocol {
         _program_context: &ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
-        if tx_status.confirmations == 1 {
+        if tx_status.confirmations() == 1 {
             info!(
                 "Program {}: Transaction {} has been seen on-chain",
                 self.ctx.id, name
             );
         }
-        if name == LOCK_TX && tx_status.confirmations == 1 {
+        if name == LOCK_TX && tx_status.confirmations() == 1 {
             let witness = tx_status.tx_or_err()?.input[0].witness.clone();
             info!(
                 "secret witness {:?}",

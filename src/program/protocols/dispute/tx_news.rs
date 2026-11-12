@@ -111,15 +111,15 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
     program_context: &ProgramContext<BC>,
 ) -> Result<(), BitVMXError> {
     let name = drp.get_transaction_name_by_id(tx_id)?;
-    let current_height = tx_status
-        .block_info
-        .as_ref()
-        .ok_or_else(|| {
-            BitVMXError::InvalidTransactionStatus(
-                "TransactionStatus missing block_info".to_string(),
-            )
-        })?
-        .height;
+    let TransactionStatus::Confirmed {
+        block_height: current_height,
+        ..
+    } = tx_status
+    else {
+        return Err(BitVMXError::InvalidTransactionStatus(format!(
+            "Transaction {tx_id} is not confirmed"
+        )));
+    };
     info!(
         "Program {}: Transaction name: {}  id: {}:{:?} has been seen on-chain {}. Height: {}",
         drp.ctx.id,

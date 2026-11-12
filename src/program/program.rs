@@ -21,8 +21,8 @@ use crate::{
         SetupFailureReason,
     },
 };
-use bitcoin::{Transaction, Txid};
-use bitcoin_coordinator::{TransactionStatus, TypesToMonitor};
+use bitcoin::{OutPoint, Transaction, Txid};
+use bitcoin_coordinator::{MonitorTarget, TransactionStatus};
 use bitvmx_broker::identification::identifier::PubkHash as PubKeyHash;
 use serde::{
     de::Error as _, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer,
@@ -528,11 +528,15 @@ impl Program {
                 txns_to_monitor.len(),
                 self.program_id
             );
-            let txs_to_monitor =
-                TypesToMonitor::Transactions(txns_to_monitor, context_str.clone(), confirmations);
-            program_context
-                .bitcoin_coordinator
-                .monitor(txs_to_monitor)?;
+            let targets: Vec<MonitorTarget> = txns_to_monitor
+                .into_iter()
+                .map(MonitorTarget::Transaction)
+                .collect();
+            program_context.bitcoin_coordinator.monitor(
+                &targets,
+                context_str.clone(),
+                confirmations,
+            )?;
         }
 
         // Register specific UTXOs (vouts) to monitor for spending
@@ -541,15 +545,11 @@ impl Program {
                 "Program: Monitoring vout {} of txid {} for program {}",
                 vout, txid, self.program_id
             );
-            let vout_to_monitor = TypesToMonitor::SpendingUTXOTransaction(
-                txid,
-                vout,
+            program_context.bitcoin_coordinator.monitor(
+                &[MonitorTarget::SpendingUtxo(OutPoint { txid, vout })],
                 context_str.clone(),
                 confirmations,
-            );
-            program_context
-                .bitcoin_coordinator
-                .monitor(vout_to_monitor)?;
+            )?;
         }
 
         self.send_setup_completed(program_context)?;
@@ -1748,13 +1748,7 @@ mod tests {
             .is_err());
         assert!(env.coordinator_mock().dispatched().is_empty());
 
-        let status: TransactionStatus = serde_json::from_value(serde_json::json!({
-            "tx": null,
-            "block_info": null,
-            "confirmations": 0,
-            "status": "NotFound"
-        }))
-        .unwrap();
+        let status = TransactionStatus::NotFound;
         program
             .notify_news(
                 txid,

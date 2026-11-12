@@ -9,7 +9,7 @@ use crate::{
 use bitcoin::Txid;
 use bitcoin_coordinator::{
     types::{AckNews, CoordinatorNews},
-    AckMonitorNews, MonitorNews, TransactionStatus,
+    BlockRef, MonitorNews, MonitorTarget, NewsKind, TransactionStatus,
 };
 use tracing::{debug, error, info, warn};
 
@@ -86,7 +86,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 return Ok((true, Vec::new(), Vec::new()));
             }
 
-            let news = self.program_context.bitcoin_coordinator.get_news()?;
+            let news = self.program_context.bitcoin_coordinator.get_news(None)?;
             Ok((true, news.monitor_news, news.coordinator_news))
         })?;
 
@@ -116,41 +116,49 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     }
 
     fn process_monitor_news(&mut self, news: MonitorNews) -> Result<(), BitVMXError> {
-        let ack_news = match news {
-            MonitorNews::Transaction(n) => {
-                self.handle_news(n.tx_id, n.status, n.context.clone(), None)?;
-                //TODO: Handle reorg case with n.resent_due_to_reorg
-                AckMonitorNews::Transaction(n.tx_id, n.context)
+        // The coordinator acknowledges by value, so the item is kept as it was received.
+        let ack_news = news.clone();
+        let MonitorNews {
+            target,
+            context,
+            kind,
+        } = news;
+
+        match (target, kind) {
+            (MonitorTarget::Transaction(_), NewsKind::Transaction { txid, status, .. }) => {
+                self.handle_news(txid, status, context, None)?;
+                //TODO: Handle reorg case with due_to_reorg
             }
-            MonitorNews::SpendingUTXOTransaction(tx_id, output_index, tx_status, context_data) => {
-                self.handle_news(tx_id, tx_status, context_data.clone(), Some(output_index))?;
-                AckMonitorNews::SpendingUTXOTransaction(tx_id, output_index, context_data)
+            (MonitorTarget::SpendingUtxo(outpoint), NewsKind::Transaction { status, .. }) => {
+                // Consumers expect the spent output's txid and vout. The spender comes inside the status.
+                self.handle_news(outpoint.txid, status, context, Some(outpoint.vout))?;
             }
-            MonitorNews::OutputPatternTransaction(tx_id, tx_status, tag) => {
-                if tag == RSK_PEGIN_TAG {
+            (MonitorTarget::OutputPattern(filter), NewsKind::Transaction { txid, status, .. }) => {
+                if filter.tag == RSK_PEGIN_TAG {
                     self.notify_l2(&OutgoingBitVMXApiMessages::PeginTransactionFound(
-                        tx_id,
-                        tx_status.clone(),
+                        txid,
+                        status.clone(),
                     ))?;
                 }
                 self.notify_l2(&OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
-                    tx_id,
-                    tx_status,
-                    tag.clone(),
+                    txid,
+                    status,
+                    filter.tag,
                 ))?;
-                AckMonitorNews::OutputPatternTransaction(tx_id, tag)
             }
-            MonitorNews::NewBlock(block_height, block_hash) => {
-                debug!("New block: {} {}", block_height, block_hash);
+            (_, NewsKind::Block(BlockRef { height, hash })) => {
+                debug!("New block: {} {}", height, hash);
                 if self.send_new_block_news() {
-                    self.notify_l2(&OutgoingBitVMXApiMessages::NewBlock(
-                        block_hash,
-                        block_height,
-                    ))?;
+                    self.notify_l2(&OutgoingBitVMXApiMessages::NewBlock(hash, height))?;
                 }
-                AckMonitorNews::NewBlock
             }
-        };
+            (target, kind) => {
+                warn!(
+                    "Unhandled monitor news {:?} for target {:?} and context {}",
+                    kind, target, context
+                );
+            }
+        }
 
         self.program_context
             .bitcoin_coordinator

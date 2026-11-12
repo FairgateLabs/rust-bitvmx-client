@@ -55,14 +55,12 @@ pub fn send_dispute_tx_notification<BC: BitcoinCoordinatorApi>(
     slot_index: usize,
     tx_type: DisputeTxType,
 ) -> Result<(), BitVMXError> {
-    let proof = match context.bitcoin_coordinator.get_transaction(txid) {
-        Ok(tx) => match tx.block_info {
-            Some(block_info) => Some(get_spv_proof(txid, block_info)?),
-            None => {
-                warn!("Transaction {txid} has no block info yet, skipping SPV proof");
-                None
-            }
-        },
+    let proof = match context.bitcoin_coordinator.get_confirming_block(txid) {
+        Ok(Some(block)) => Some(get_spv_proof(txid, block)?),
+        Ok(None) => {
+            warn!("Transaction {txid} is not confirmed yet, skipping SPV proof");
+            None
+        }
         Err(error) => {
             warn!("Failed to retrieve transaction info for txid {txid}: {error:?}");
             None

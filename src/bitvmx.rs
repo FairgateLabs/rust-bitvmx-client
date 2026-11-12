@@ -26,7 +26,7 @@ use crate::{
     throttle::Throttle,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
-use bitcoin_coordinator::{coordinator::BitcoinCoordinator, TypesToMonitor};
+use bitcoin_coordinator::{coordinator::BitcoinCoordinator, MonitorTarget};
 use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, BrokerNode};
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
@@ -46,6 +46,10 @@ pub const WALLET_INDEX: u32 = 100;
 pub const WALLET_CHANGE_INDEX: u32 = 101;
 pub const CLIENT_GLOBAL_SETTINGS_UUID: Uuid = Uuid::from_bytes(*b"GLOBAL_SETTINGS-");
 pub const SEND_NEW_BLOCK_NEWS: &str = "send_new_block_news";
+/// Monitor context of the client's own new block subscription. Cancelling it needs this same context.
+pub const NEW_BLOCK_CONTEXT: &str = "new_block";
+/// Monitor context of every output pattern subscription. Cancelling one needs this same context.
+pub const OUTPUT_PATTERN_CONTEXT: &str = "output_pattern";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickOutcome {
@@ -225,7 +229,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )?;
         info!("Broker services initialized successfully");
 
-        bitcoin_coordinator.monitor(TypesToMonitor::NewBlock)?;
+        bitcoin_coordinator.monitor(
+            &[MonitorTarget::NewBlock],
+            NEW_BLOCK_CONTEXT.to_string(),
+            None,
+        )?;
 
         let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
         let operation_timeouts = OperationTimeouts::new(store.clone());

@@ -18,10 +18,10 @@ comms:
   storage_path: /tmp/testnet4/op_4/comms.db
   allow_list: config/comms_allow_list.yaml
 coordinator_settings:
-  max_feerate_sat_vb: 2
-  monitor_settings:
-    indexer_settings:
-      checkpoint_height: 140250
+  fee:
+    max_feerate_sat_vb: 2
+    base_fee_multiplier: 1.0
+    min_safe_fee_rate: 1
 
 
 coordinator_throttle:

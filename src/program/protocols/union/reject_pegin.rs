@@ -156,7 +156,7 @@ impl ProtocolHandler for RejectPegInProtocol {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Reject Pegin protocol received news of transaction: {}, txid: {} with {} confirmations",
-            tx_name, tx_id, tx_status.confirmations
+            tx_name, tx_id, tx_status.confirmations()
         );
 
         Ok(())

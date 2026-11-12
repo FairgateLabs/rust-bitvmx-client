@@ -457,12 +457,12 @@ pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> 
 
         info!(
             "Received message from channel: {:?}",
-            status.tx_id_or_error()
+            status.tx_id_or_err()
         );
         info!("happy path secret: {}", fake_secret);
         info!("happy path public: {}", aggregated_happy_path);
 
-        let txid = status.tx_id_or_error()?;
+        let txid = status.tx_id_or_err()?;
         let msg = serde_json::to_string(&(txid, fake_secret))?;
         channel.send(&identifier, msg)?;
     }

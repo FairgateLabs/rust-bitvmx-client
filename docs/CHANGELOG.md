@@ -36,6 +36,32 @@ introduce breaking changes between versions.
   indexed by the `bitvmx/expected_job/ids` list, to `bitvmx/expected_job/active/<digest>` while a
   result is expected and `bitvmx/expected_job/finished/<digest>` once terminal. The ID list is no
   longer written.
+- Following the rust-bitvmx-bitcoin indexer, monitor and coordinator refactor:
+  - **BREAKING (wire format)**: `TransactionStatus` is an enum, internally tagged on `"status"`:
+    `Confirmed { tx, block_height, block_hash, confirmations }`, `InMempool` or `NotFound`. The old
+    `tx`, `block_info` and `confirmations` fields only exist inside `Confirmed`, and the `Orphan` and
+    `Finalized` states are gone. This changes every API message that carries a status:
+    `Transaction`, `SpendingUTXOTransactionFound`, `PeginTransactionFound` and
+    `OutputPatternTransactionFound`. A not found status serializes as `{ "status": "NotFound" }`.
+  - **Notification order is not guaranteed.** Monitor news is grouped by the txid or block height it
+    is about, and groups come in txid order. A transaction's own notification and the notification
+    that one of its outputs was spent can arrive in either order, even when both happen in the same
+    block. Consumers must not depend on the order between notifications of different subscriptions.
+  - **A subscription with a confirmation trigger notifies once**, at the first block where the
+    confirmations reach it, and is never restated, not even after a reorg. Before it fires it
+    notifies nothing, including a reorg that takes the transaction out of its block.
+  - The confirmation trigger of `SubscribeToTransaction`, `SubscribeToSpendingUTXO`,
+    `SubscribeToOutputPattern` and `SubscribeToRskPegin` must satisfy
+    `finality <= trigger <= max_monitoring_confirmations` (defaults 6 and 100), or be `None`. A
+    trigger outside that range is answered with `ApiError`.
+  - `GetTransaction` returns `NotFound` for an unknown txid instead of an error. 
+  - `GetSPVProof` answers without a proof while the transaction is not confirmed in the chain the
+    monitor knows.
+  - **BREAKING (config)**: `coordinator_settings.monitor` accepts `finality`,
+    `max_monitoring_confirmations` and `indexer_settings.retention_depth`, and rejects unknown keys.
+    `checkpoint_height` is gone, so a config that sets it fails to load. A fresh indexer starts at
+    the node's tip minus `retention_depth`. A `coordinator_settings` section given needs all its
+    fields, so a fee cap is set with a full `fee:` section.
 
 ## 0.8.7
 
