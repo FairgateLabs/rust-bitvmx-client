@@ -405,7 +405,7 @@ mod tests {
         },
         comms_helper::{prepare_message, serialize_msg, VerificationKeyAnnouncement},
         leader_broadcast::BroadcastedMessage,
-        program::{participant::CommsAddress, variables::VariableTypes},
+        program::variables::VariableTypes,
         test_utils::TestBitVMXEnv,
         types::{ErrorReport, ErrorReportKind, ErrorScope, OutgoingBitVMXApiMessages},
     };
@@ -456,7 +456,8 @@ mod tests {
         assert!(env.bitvmx.message_queue.is_empty().unwrap());
         assert_eq!(test_l2_messages(&env).unwrap().len(), reports_before);
 
-        let remote_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "22".repeat(32));
+        let remote_leader =
+            crate::test_utils::dev_comms_address("127.0.0.1:1", "config/keys/op_2.key").unwrap();
         let participants = vec![remote_leader.clone(), self_address(&env)];
         let failed_id = Uuid::new_v4();
         create_program(&mut env, failed_id, participants);
@@ -550,10 +551,12 @@ mod tests {
     }
 
     #[test]
-    fn verification_key_fingerprint_mismatch_fails_setup_without_storing_key() {
+    fn verification_key_fingerprint_mismatch_fails_setup_without_replacing_key() {
         let mut env = TestBitVMXEnv::new("verification-bootstrap-fingerprint-mismatch").unwrap();
-        let peer_hash = "ab".repeat(32);
-        let peer = CommsAddress::new("127.0.0.1:1".parse().unwrap(), peer_hash.clone());
+        let peer =
+            crate::test_utils::dev_comms_address("127.0.0.1:1", "config/keys/op_2.key").unwrap();
+        let peer_hash = peer.pubkey_hash.clone();
+        let peer_key = peer.pubkey_pem.clone();
         let participants = vec![self_address(&env), peer];
         let program_id = Uuid::new_v4();
         let store = create_program(&mut env, program_id, participants);
@@ -578,9 +581,10 @@ mod tests {
             .unwrap()
             .unwrap()
             .is_failed());
-        assert!(
-            !OperatorVerificationStore::has(&env.bitvmx.program_context.globals, &peer_hash,)
-                .unwrap()
+        assert_eq!(
+            OperatorVerificationStore::get(&env.bitvmx.program_context.globals, &peer_hash)
+                .unwrap(),
+            Some(peer_key)
         );
         let reports = test_l2_messages(&env).unwrap();
         assert!(matches!(
@@ -596,7 +600,8 @@ mod tests {
     #[test]
     fn broadcast_from_non_leader_participant_fails_active_setup() {
         let mut env = TestBitVMXEnv::new("non-leader-broadcast").unwrap();
-        let non_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "11".repeat(32));
+        let non_leader =
+            crate::test_utils::dev_comms_address("127.0.0.1:1", "config/keys/op_2.key").unwrap();
         let participants = vec![self_address(&env), non_leader.clone()];
         let program_id = Uuid::new_v4();
         let store = create_program(&mut env, program_id, participants);
@@ -693,10 +698,17 @@ mod tests {
     #[test]
     fn broadcast_with_missing_leader_key_is_retried() {
         let mut env = TestBitVMXEnv::new("leader-broadcast-missing-outer-key").unwrap();
-        let remote_leader = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "22".repeat(32));
+        let remote_leader =
+            crate::test_utils::dev_comms_address("127.0.0.1:1", "config/keys/op_2.key").unwrap();
         let participants = vec![remote_leader.clone(), self_address(&env)];
         let program_id = Uuid::new_v4();
         let store = create_program(&mut env, program_id, participants);
+        // Model a persisted program created before setup carried peer verification keys.
+        OperatorVerificationStore::remove(
+            &env.bitvmx.program_context.globals,
+            &remote_leader.pubkey_hash,
+        )
+        .unwrap();
 
         env.bitvmx
             .process_msg(peer_message(
@@ -718,8 +730,10 @@ mod tests {
     #[test]
     fn leader_does_not_keep_original_of_deferred_message() {
         let mut env = TestBitVMXEnv::new("leader-deferred-original").unwrap();
-        let peer_a = CommsAddress::new("127.0.0.1:1".parse().unwrap(), "aa".repeat(32));
-        let peer_b = CommsAddress::new("127.0.0.1:2".parse().unwrap(), "bb".repeat(32));
+        let peer_a =
+            crate::test_utils::dev_comms_address("127.0.0.1:1", "config/keys/op_2.key").unwrap();
+        let peer_b =
+            crate::test_utils::dev_comms_address("127.0.0.1:2", "config/keys/op_3.key").unwrap();
         let participants = vec![self_address(&env), peer_a.clone(), peer_b.clone()];
         let program_id = Uuid::new_v4();
         let store = create_program(&mut env, program_id, participants);

@@ -897,9 +897,12 @@ mod tests {
 
     #[test]
     fn get_non_leader_participants_filters_out_leader() {
-        let leader = CommsAddress::new("127.0.0.1:1000".parse().unwrap(), "leader".into());
-        let bob = CommsAddress::new("127.0.0.1:1001".parse().unwrap(), "bob".into());
-        let carol = CommsAddress::new("127.0.0.1:1002".parse().unwrap(), "carol".into());
+        let address = |port: &str, hash: &str| {
+            CommsAddress::new(port.parse().unwrap(), hash.into(), String::new())
+        };
+        let leader = address("127.0.0.1:1000", "leader");
+        let bob = address("127.0.0.1:1001", "bob");
+        let carol = address("127.0.0.1:1002", "carol");
 
         let non_leaders = get_non_leader_participants(
             &[leader.clone(), bob.clone(), carol.clone()],
@@ -1126,15 +1129,12 @@ mod tests {
     fn process_broadcasted_message_retries_envelope_with_missing_original_key() {
         let mut env = TestProgramContextEnv::new("leader-broadcast-missing-key").unwrap();
         let program_id = Uuid::new_v4();
-        let unknown_peer = "33".repeat(32);
-        let program = install_test_program(
-            &mut env,
-            program_id,
-            vec![CommsAddress::new(
-                "127.0.0.1:1".parse().unwrap(),
-                unknown_peer.clone(),
-            )],
-        );
+        let peer =
+            crate::test_utils::dev_comms_address("127.0.0.1:1", "config/keys/op_2.key").unwrap();
+        let unknown_peer = peer.pubkey_hash.clone();
+        let program = install_test_program(&mut env, program_id, vec![peer]);
+
+        OperatorVerificationStore::remove(&env.context.globals, &unknown_peer).unwrap();
 
         // Sender whose verification key has not arrived yet: keep the outer
         // envelope as the bounded unit of retry rather than giving the
@@ -1168,15 +1168,10 @@ mod tests {
     fn process_broadcasted_message_rejects_whole_broadcast_on_bad_signature() {
         let mut env = TestProgramContextEnv::new("leader-broadcast-bad-sig").unwrap();
         let program_id = Uuid::new_v4();
-        let mallory = "44".repeat(32);
-        let program = install_test_program(
-            &mut env,
-            program_id,
-            vec![CommsAddress::new(
-                "127.0.0.1:1".parse().unwrap(),
-                mallory.clone(),
-            )],
-        );
+        let peer =
+            crate::test_utils::dev_comms_address("127.0.0.1:1", "config/keys/op_2.key").unwrap();
+        let mallory = peer.pubkey_hash.clone();
+        let program = install_test_program(&mut env, program_id, vec![peer]);
 
         let good = signed_self_original(&env, &program_id, json!({"step": "keys"}));
 

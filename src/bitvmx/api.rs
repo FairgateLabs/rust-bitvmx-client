@@ -487,13 +487,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         message: Vec<u8>,
         public_key: String,
     ) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        let result = self
-            .program_context
-            .key_manager
-            .decrypt_rsa_message(&message, &public_key);
-        Self::key_manager_response(id, result, "Failed to decrypt message", |decrypted| {
-            OutgoingBitVMXApiMessages::Decrypted(id, decrypted)
-        })
+        super::decrypt_reply(&self.program_context.key_manager, id, &message, &public_key)
     }
 
     fn get_aggregated_pubkey(
@@ -976,15 +970,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 IncomingBitVMXApiMessages::GetHashedMessage(id, name, vout, leaf) => {
                     self.get_hashed_message(id, name, vout, leaf).map(Some)
                 }
-                IncomingBitVMXApiMessages::GetCommInfo(id) => {
-                    Ok(Some(OutgoingBitVMXApiMessages::CommInfo(
-                        id,
-                        CommsAddress {
-                            address: self.program_context.comms.get_address(),
-                            pubkey_hash: self.program_context.comms.get_pubk_hash(),
-                        },
-                    )))
-                }
+                IncomingBitVMXApiMessages::GetCommInfo(id) => Ok(Some(
+                    OutgoingBitVMXApiMessages::CommInfo(id, self.comms_address()?),
+                )),
                 IncomingBitVMXApiMessages::Ping(id) => Ok(Some(Self::ping(id))),
                 IncomingBitVMXApiMessages::SetVar(id, key, value) => {
                     debug!("Setting variable {}: {:?}", key, value);
@@ -1397,7 +1385,10 @@ mod tests {
             matches!(&replies[2], OutgoingBitVMXApiMessages::Pong(response_id) if *response_id == ping_id)
         );
         assert!(
-            matches!(&replies[3], OutgoingBitVMXApiMessages::CommInfo(response_id, _) if *response_id == comm_id)
+            matches!(&replies[3], OutgoingBitVMXApiMessages::CommInfo(response_id, address)
+                if *response_id == comm_id
+                    && address.pubkey_pem == env.bitvmx.program_context.rsa_public_key
+                    && crate::helper::compute_pubkey_hash(&address.pubkey_pem).unwrap() == address.pubkey_hash)
         );
     }
 
@@ -1434,10 +1425,11 @@ mod tests {
     fn rejected_setup_key_does_not_keep_optional_keys() {
         let mut env = TestBitVMXEnv::new("api-setup-rejected-keys").unwrap();
         let id = Uuid::new_v4();
-        let stranger = CommsAddress {
-            address: env.bitvmx.program_context.comms.get_address(),
-            pubkey_hash: "ab".repeat(32),
-        };
+        let stranger = crate::test_utils::dev_comms_address(
+            &env.bitvmx.address().to_string(),
+            "config/keys/op_10.key",
+        )
+        .unwrap();
 
         send_api(
             &mut env.bitvmx,
@@ -1470,10 +1462,7 @@ mod tests {
         let empty_id = Uuid::new_v4();
         let leader_id = Uuid::new_v4();
         let duplicate_id = Uuid::new_v4();
-        let participant = CommsAddress {
-            address: env.bitvmx.program_context.comms.get_address(),
-            pubkey_hash: env.bitvmx.program_context.comms.get_pubk_hash(),
-        };
+        let participant = env.bitvmx.comms_address().unwrap();
 
         send_api(
             &mut env.bitvmx,
@@ -1668,6 +1657,29 @@ mod tests {
             OutgoingBitVMXApiMessages::Decrypted(response_id, plaintext)
                 if response_id == id && plaintext == b"secret"
         ));
+    }
+
+    #[test]
+    fn failed_decrypt_is_reported_and_the_next_api_request_is_processed() {
+        let mut env = TestBitVMXEnv::new("api-decrypt-failed").unwrap();
+        let id = Uuid::new_v4();
+        let ping_id = Uuid::new_v4();
+        let key = env.bitvmx.program_context.rsa_public_key.clone();
+        send_api(
+            &mut env.bitvmx,
+            IncomingBitVMXApiMessages::Decrypt(id, vec![7; 256], key),
+        )
+        .unwrap();
+        send_api(&mut env.bitvmx, IncomingBitVMXApiMessages::Ping(ping_id)).unwrap();
+        let replies = api_replies(&mut env.bitvmx);
+        assert!(
+            matches!(&replies[0], OutgoingBitVMXApiMessages::Error(report)
+            if report.scope == crate::types::ErrorScope::Request(id)
+                && report.kind == crate::types::ErrorReportKind::DecryptFailed)
+        );
+        assert!(
+            matches!(&replies[1], OutgoingBitVMXApiMessages::Pong(reply_id) if *reply_id == ping_id)
+        );
     }
 
     #[test]
