@@ -1839,12 +1839,29 @@ impl DisputeResolutionProtocol {
         let leaves = Self::publication_slot_leaves(publisher, aggregated, timelock_blocks);
         let slot = OutputType::taproot(dust, aggregated, &leaves)?;
         protocol.add_transaction_output(stage_tx, &slot)?;
+        let slot_vout = protocol.get_output_count(stage_tx)? - 1;
 
-        // The timeout is pre-signable, so it goes in the graph.
+        // And a second output for the data transaction's other input.
+        //
+        // The publication is committed by a SIGHASH_SINGLE signature,
+        // which signs the output at the signing input's own index and
+        // leaves the rest of the transaction open -- so a transaction
+        // pinned by that alone could be reshaped by whoever relays it.
+        // The second input carries an ordinary SIGHASH_ALL signature,
+        // which fixes the whole of it. One input with two CHECKSIGs in a
+        // leaf would be cheaper and is deliberately not done; the
+        // companion paper's Remark 11.2 measures why.
+        let fee_leaf = scripts::check_signature(publisher, SignMode::Single);
+        let fee = OutputType::taproot(dust, aggregated, &[fee_leaf])?;
+        protocol.add_transaction_output(stage_tx, &fee)?;
+
+        // The timeout is pre-signable, so it goes in the graph. It takes
+        // the slot, not the fee output: what it punishes is a stage that
+        // offers a publication and never makes one.
         protocol.add_connection(
             &format!("{}__MISSING_DATA", stage_tx),
             stage_tx,
-            OutputSpec::Last,
+            OutputSpec::Index(slot_vout as usize),
             &missing_data_tx(stage),
             InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
             Some(timelock_blocks),
