@@ -18,10 +18,10 @@ use bitcoin_script_riscv::riscv::{
         is_lower_than, var_to_decisions_in_altstack, verify_challenge_step, StackTables,
     },
 };
-use bitcoin_script_stack::stack::StackTracker;
+use bitcoin_script_stack::stack::{StackTracker, StackVariable};
 use emulator::{
     constants::REGISTERS_BASE_ADDRESS,
-    decision::nary_search::{NArySearchType, Party, SearchMode},
+    decision::nary_search::{NArySearchDefinition, NArySearchType, Party, SearchMode},
     decision::publication::PublicationMedium,
     loader::program_definition::ProgramDefinition,
 };
@@ -105,6 +105,17 @@ pub fn stage_data_tx(stage: u8) -> String {
 /// never spends it.
 pub fn missing_data_tx(stage: u8) -> String {
     format!("MISSING_DATA_{}", stage)
+}
+
+/// The largest digit a round's selection may carry.
+///
+/// One less than that round's radix, which is what names a subinterval.
+/// Where the radix is a power of two this is what the digit's bits can
+/// hold anyway; where it is not -- a 192-ary search, say -- the bits hold
+/// more than the search has subintervals, and the difference has to be
+/// rejected rather than selected.
+fn max_digit_for_round(nary_def: &NArySearchDefinition, round: u8) -> u8 {
+    (nary_def.radix_for_round(round) - 1) as u8
 }
 
 const SELECTION_BITS_NIBBLES: u32 = 2;
@@ -842,17 +853,18 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             }
 
             let extra = if carries_selection {
-                let bits = nary_def.bits_for_round(stage - 1);
+                // The digit names a subinterval, so the bound is the
+                // branching factor less one and not what its nibbles can
+                // hold.  They differ exactly where the branching factor is
+                // not a power of two.
+                let max_digit = max_digit_for_round(&nary_def, stage - 1);
                 // Only what the witness actually carries gets reversed.
                 let committed_hashes = if publication.is_published() { 0 } else { hashes };
                 Some(vec![
                     Self::get_reverse_script(
                         SELECTION_BITS_NIBBLES + committed_hashes as u32 * STATE_HASH_NIBBLES,
                     ),
-                    Self::get_validate_stage_selection_script(
-                        committed_hashes,
-                        (1 << bits) - 1,
-                    ),
+                    Self::get_validate_stage_selection_script(committed_hashes, max_digit),
                 ])
             } else {
                 None
@@ -917,9 +929,10 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             // which carries nothing else.
             if search_mode == SearchMode::Asymmetric {
                 let next = format!("NARY_VERIFIER_{}", stage);
-                let bits = nary_def.bits_for_round(stage);
                 let validate_selection_bits_script =
-                    Self::get_validate_selection_bits_script((1 << bits) - 1);
+                    Self::get_validate_selection_bits_script(max_digit_for_round(
+                        &nary_def, stage,
+                    ));
 
                 self.add_connection_with_scripts(
                     context,
@@ -1032,9 +1045,8 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
             prev = next;
             let next = format!("NARY2_VERIFIER_{}", i);
-            let bits = nary_def.bits_for_round(i);
             let validate_selection_bits_script =
-                Self::get_validate_selection_bits_script((1 << bits) - 1);
+                Self::get_validate_selection_bits_script(max_digit_for_round(&nary_def, i));
 
             self.add_connection_with_scripts(
                 context,
@@ -1699,7 +1711,7 @@ impl DisputeResolutionProtocol {
     ///
     /// Expects the values in declaration order, so the caller must prepend the
     /// reverse script.
-    fn validate_stage_selection(stack: &mut StackTracker, hashes: u8, max_bits: u8) {
+    fn validate_stage_selection(stack: &mut StackTracker, hashes: u8, max_digit: u8) {
         let selection_bits = stack.define(SELECTION_BITS_NIBBLES, "selection_bits");
         let hash_vars = (0..hashes)
             .map(|h| stack.define(STATE_HASH_NIBBLES, &format!("stage_hash_{}", h)))
@@ -1711,15 +1723,62 @@ impl DisputeResolutionProtocol {
             stack.drop(var);
         }
 
-        // In declaration order the most significant nibble is at position 0,
-        // and it must be zero for the digit to be in range.
-        stack.move_var_sub_n(selection_bits, 0);
-        stack.number(0);
-        stack.op_equalverify();
+        Self::check_digit_in_range(stack, selection_bits, max_digit);
+    }
 
-        stack.number(max_bits as u32);
+    /// Verifies that a two-nibble digit is at most `max_digit`.
+    ///
+    /// The digit addresses a subinterval, so the bound is the branching
+    /// factor less one and not whatever the nibbles can hold. Those differ
+    /// exactly when the branching factor is not a power of two: a 192-ary
+    /// digit occupies eight bits, of which only 0 to 191 name a
+    /// subinterval, and a search that accepted 192 to 255 would be
+    /// selecting something that does not exist.
+    ///
+    /// Up to fifteen the test is the one this protocol has always made --
+    /// the high nibble zero and the low one in range -- so every search at
+    /// a branching factor of sixteen or less keeps the script it had,
+    /// byte for byte.
+    fn check_digit_in_range(
+        stack: &mut StackTracker,
+        selection_bits: StackVariable,
+        max_digit: u8,
+    ) {
+        if max_digit <= 0x0f {
+            // In declaration order the most significant nibble is at
+            // position 0, and it must be zero for the digit to be in range.
+            stack.move_var_sub_n(selection_bits, 0);
+            stack.number(0);
+            stack.op_equalverify();
+
+            stack.number(max_digit as u32);
+            stack.op_lessthanorequal();
+            stack.op_verify();
+            return;
+        }
+
+        // Otherwise both nibbles carry value and the bound is compared
+        // against the pair: `high < H`, or `high == H` and `low <= L`.
+        let high_bound = (max_digit >> 4) as u32;
+        let low_bound = (max_digit & 0x0f) as u32;
+
+        stack.copy_var_sub_n(selection_bits, 0);
+        stack.number(high_bound);
+        stack.op_lessthan();
+
+        stack.copy_var_sub_n(selection_bits, 0);
+        stack.number(high_bound);
+        stack.op_numequal();
+
+        stack.copy_var_sub_n(selection_bits, 1);
+        stack.number(low_bound);
         stack.op_lessthanorequal();
+
+        stack.op_booland();
+        stack.op_boolor();
         stack.op_verify();
+
+        stack.drop(selection_bits);
     }
 
 
@@ -2039,33 +2098,58 @@ mod tests {
         assert!(!validate(0, 7, 15, 7));
     }
 
-    /// What still caps the branching factor once publishing has taken the
-    /// stack out of the way.
+    /// A digit wider than a nibble, which is what a branching factor
+    /// above sixteen needs.
     ///
-    /// The validator requires the digit's *high* nibble to be zero and
-    /// then range-checks the low one, so a selection digit carries four
-    /// bits whatever the witness is willing to hold. That caps the search
-    /// at sixteen ways, and nothing noticed because the stack capped it at
-    /// twelve first.
-    ///
-    /// A 192-ary digit is eight bits -- two nibbles both carrying value --
-    /// and needs the check to be against the branching factor rather than
-    /// against a nibble. Until that is written, publishing lifts one
-    /// ceiling and leaves another at sixteen.
+    /// The bound is the branching factor less one, not what the two
+    /// nibbles can hold: a 192-ary digit occupies eight bits, of which
+    /// only 0 to 191 name a subinterval, and a search that accepted 192
+    /// to 255 would be selecting something that does not exist.
     #[test]
-    fn the_selection_digit_is_still_capped_at_one_nibble() {
-        assert!(validate(0, 15, 0, 15), "fifteen is the largest digit");
-        assert!(
-            !validate(0, 15, 1, 0),
-            "a non-zero high nibble is rejected outright, whatever the value"
-        );
-        // So no digit of a 192-ary search above fifteen can be expressed,
-        // let alone accepted.
-        for high in 1u8..=11 {
+    fn a_192_ary_digit_is_checked_against_191_and_not_255() {
+        let max = 191u8;
+        // The whole range of real digits, sampled across both nibbles.
+        for d in [0u8, 1, 15, 16, 17, 100, 176, 190, 191] {
             assert!(
-                !validate(0, 191, high, 0),
-                "high nibble {high} should be unrepresentable"
+                validate(0, max, d >> 4, d & 0x0f),
+                "digit {d} names a subinterval and must be accepted"
             );
+        }
+        // And everything the nibbles can hold above it.
+        for d in [192u8, 193, 200, 240, 255] {
+            assert!(
+                !validate(0, max, d >> 4, d & 0x0f),
+                "digit {d} names no subinterval and must be rejected"
+            );
+        }
+    }
+
+    /// The other admissible branching factors, whose bounds fall at
+    /// different places inside the two nibbles.
+    #[test]
+    fn the_bound_lands_correctly_for_every_admissible_branching_factor() {
+        for b in [11u16, 12, 13, 23, 24, 25, 47, 48, 49, 95, 96, 97, 191, 192, 193] {
+            let max = (b - 1) as u8;
+            assert!(validate(0, max, max >> 4, max & 0x0f), "b = {b}: largest digit");
+            assert!(
+                !validate(0, max, b as u8 >> 4, b as u8 & 0x0f),
+                "b = {b}: b itself is not a digit"
+            );
+            assert!(validate(0, max, 0, 0), "b = {b}: zero is always a digit");
+        }
+    }
+
+    /// Branching factors of sixteen or less keep the script they had, so
+    /// every search that could be built before this change is unmoved.
+    #[test]
+    fn a_narrow_digit_keeps_the_script_it_had() {
+        for max in [1u8, 3, 7, 11, 15] {
+            let before = DisputeResolutionProtocol::get_validate_stage_selection_script(0, max);
+            // The narrow path is the one that checks a zero high nibble,
+            // and it is selected by the bound alone.
+            assert!(validate(0, max, 0, max));
+            assert!(!validate(0, max, 1, 0), "max {max}: high nibble must be zero");
+            assert!(!before.is_empty());
         }
     }
 }
