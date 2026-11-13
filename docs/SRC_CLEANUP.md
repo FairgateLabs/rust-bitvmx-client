@@ -109,8 +109,13 @@ The wire bytes don't change: the signature covers the sorted-key string of the s
   record. Generation always moves `current_step_state`, advancing moves the index or the completion
   flag, and `process_produced_data` marks this participant. Compare once at the end, after
   `process_produced_data`, and drop the flags.
-- **Setup checks repeated in three layers:** membership and the step's message type are checked by
-  `classify_participant_message` at the peer boundary, again by `receive_current_step_data`
+- **Setup checks repeated in three layers:**
+
+  Status: applied. The step-level checks remain for direct `SetupStep::verify_received` callers;
+  wrong message types now consistently return `SetupNotReady`.
+
+  Membership and the step's message type are checked by `classify_participant_message` at the peer
+  boundary, again by `receive_current_step_data`
   (`setup_engine.rs:413-423`), and again by `SetupStep::verify_received` (`setup_step.rs:110-131`).
   The second and third return different retry reasons for the same condition (`SetupNotReady` and
   `UnexpectedSetupMessageType`). The engine always runs its checks first, so the step's checks only

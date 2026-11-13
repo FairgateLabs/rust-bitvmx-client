@@ -389,7 +389,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
         assert!(!step
             .can_advance(&first_protocol, &participants, &first.context)

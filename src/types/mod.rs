@@ -76,8 +76,6 @@ pub enum RetryReason {
     ProgramNotInstalled,
     /// Setup has not reached the state that can consume this message.
     SetupNotReady,
-    /// The active setup step accepts a different message type.
-    UnexpectedSetupMessageType,
     /// The active setup step is still waiting for a prerequisite.
     MissingSetupPrerequisite,
 }

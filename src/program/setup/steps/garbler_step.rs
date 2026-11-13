@@ -1003,7 +1003,7 @@ mod tests {
                 true,
             )
             .unwrap(),
-            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
 
         let mut outsider = participant.clone();

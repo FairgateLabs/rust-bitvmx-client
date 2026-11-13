@@ -108,8 +108,9 @@ pub trait SetupStep {
     ///
     /// - a sender outside the participant list cannot contribute to this
     ///   program and is consumed as a no-op;
-    /// - a message for another step's `accepted_message_type` stays retryable,
-    ///   because the engine may still advance to the step that consumes it.
+    /// - a message for another step's `accepted_message_type` returns
+    ///   [`RetryReason::SetupNotReady`], because the engine may still advance
+    ///   to the step that consumes it.
     ///
     /// Steps implement `verify_received_impl` and must not repeat these checks.
     fn verify_received<BC: BitcoinCoordinatorApi>(
@@ -140,9 +141,7 @@ pub trait SetupStep {
                 self.step_name(),
                 accepted
             );
-            return Ok(ResultDisposition::Retry(
-                RetryReason::UnexpectedSetupMessageType,
-            ));
+            return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
         }
 
         self.verify_received_impl(
@@ -442,7 +441,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
 
         let mut outsider = participant;

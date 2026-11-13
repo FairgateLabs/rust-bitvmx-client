@@ -687,7 +687,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
 
         assert_eq!(

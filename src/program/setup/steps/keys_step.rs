@@ -436,7 +436,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
         assert!(!step
             .has_participant_data(&env.context.globals, &id, 0)
