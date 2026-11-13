@@ -7,13 +7,14 @@ use bitvmx_client::program::participant::{
     ParticipantRole::{self, Verifier},
 };
 use bitvmx_client::program::protocols::dispute::{
-    program_input, program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
+    program_input, program_input_prev_prefix, program_input_prev_protocol,
+    protocol_cost_from_config,
 };
 use bitvmx_client::program::protocols::protocol_handler::action_wins;
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_wallet::wallet::Destination;
-use common::dispute::{prepare_dispute, ForcedChallenges};
+use common::dispute::{prepare_dispute, program_definition_path, ForcedChallenges};
 use common::helper::{Mode, TestHelper};
 use common::init_utxo_new;
 use common::{config_trace, send_all};
@@ -130,11 +131,14 @@ pub fn test_all_aux(
         scripts::check_aggregated_signature(&pair_0_1_agg_pub_key, SignMode::Aggregate),
         scripts::check_aggregated_signature(&pair_0_1_agg_pub_key, SignMode::Aggregate),
     ];
+    let forced_challenge = force_challenge.unwrap_or(ForcedChallenges::Execution);
+    let program_definition = program_definition_path(&forced_challenge, program.clone());
+
     let (utxo, initial_out_type) = init_utxo_new(
         &mut helper.wallet,
         &pair_0_1_agg_pub_key,
         spending_condition.clone(),
-        protocol_cost(),
+        protocol_cost_from_config(&program_definition)?,
     )?;
 
     info!("Wait for the first funding ready");
@@ -191,7 +195,6 @@ pub fn test_all_aux(
     .set_msg(prog_id, &program_input(1, None))?;
     let _ = send_all(&pair_0_1_channels, &const_input);
 
-    let forced_challenge = force_challenge.unwrap_or(ForcedChallenges::Execution);
     prepare_dispute(
         prog_id,
         pair_0_1,

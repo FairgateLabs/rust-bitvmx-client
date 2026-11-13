@@ -51,7 +51,8 @@ use crate::{
                 config::DisputeConfiguration,
                 execution::execution_result,
                 input_handler::{
-                    get_required_keys, get_txs_configuration, set_inputs, split_input,
+                    generate_input_owner_list, get_required_keys, get_txs_configuration,
+                    set_inputs, split_input, ProgramInputType,
                 },
             },
             protocol_handler::{
@@ -230,9 +231,49 @@ pub struct DisputeResolutionProtocol {
     ctx: ProtocolContext,
 }
 
-// Measured requirement for a 10 round, 1 input program (test_generic_verifier).
-pub fn protocol_cost() -> u64 {
-    44_800
+// Cost of the dispute graph, derived from the program that will be disputed.
+//
+// The graph is a chain of connector outputs and its cost is linear in two things only: the number of nary search
+// rounds, and the number of input transactions committed on chain. Everything else is the same for every program
+// and lives in COST_BASE. The constants are measured. The calibration test is in tests/protocol_cost.rs
+pub const COST_BASE: u64 = 14_495;
+pub const COST_PER_ROUND: u64 = 2_956;
+pub const COST_PER_INPUT_TX: u64 = 739;
+pub const COST_MARGIN: u64 = 1_000; // The sum of the outputs of START_CHALLENGE and its own relay fee
+
+/// Cost of the dispute graph for a program with the given number of nary search rounds and input transactions.
+pub const fn protocol_cost_for(rounds: u8, input_txs: u64) -> u64 {
+    COST_BASE + COST_PER_ROUND * rounds as u64 + COST_PER_INPUT_TX * input_txs + COST_MARGIN
+}
+
+// Protocols that reserve the funding of a dispute before knowing which program will run in it (DONT USE IN PRODUCTION)
+pub const DEFAULT_PROTOCOL_COST: u64 = protocol_cost_for(10, 3);
+
+/// Input transactions the graph will hold. A verifier owned input needs two, the verifier commitment and the
+/// prover cosign of it. Const and prover_prev inputs are never committed on chain, so they add no transaction.
+pub fn input_tx_count(program_def: &ProgramDefinition) -> Result<u64, BitVMXError> {
+    let (inputs, _) = generate_input_owner_list(program_def)?;
+    Ok(inputs
+        .iter()
+        .map(|input| match input {
+            ProgramInputType::Prover(..) => 1,
+            ProgramInputType::Verifier(..) => 2,
+            ProgramInputType::Const(..) | ProgramInputType::ProverPrev(..) => 0,
+        })
+        .sum())
+}
+
+/// Amount the funding utxo of a dispute needs for the given program.
+pub fn protocol_cost(program_def: &ProgramDefinition) -> Result<u64, BitVMXError> {
+    Ok(protocol_cost_for(
+        program_def.nary_def().total_rounds(),
+        input_tx_count(program_def)?,
+    ))
+}
+
+/// for callers that hold the path of the program definition instead of the loaded one.
+pub fn protocol_cost_from_config(program_definition: &str) -> Result<u64, BitVMXError> {
+    protocol_cost(&ProgramDefinition::from_config(program_definition)?)
 }
 
 fn get_role(my_idx: usize) -> ParticipantRole {
