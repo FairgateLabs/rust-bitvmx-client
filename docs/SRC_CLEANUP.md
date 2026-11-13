@@ -82,6 +82,8 @@ specific parts: the signature verification loop (signatures 221-247), and the tw
 
 ### 5. Collapse `comms_helper::request` onto `prepare_message`
 
+Status: applied.
+
 `comms_helper.rs:116-176`
 
 `request` repeats the body of `prepare_message` (88-114) inline: it builds the canonical message, then

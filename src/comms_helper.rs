@@ -101,7 +101,7 @@ pub fn prepare_message(
         timestamp,
     )?;
 
-    let signature = &key_manager
+    let signature = key_manager
         .sign_rsa_message(message.as_bytes(), rsa_public_key)?
         .to_bytes()
         .to_vec();
@@ -109,7 +109,7 @@ pub fn prepare_message(
         CURRENT_PROTOCOL_VERSION.to_string(),
         msg,
         timestamp,
-        signature.to_vec(),
+        signature,
     ))
 }
 
@@ -122,29 +122,11 @@ pub fn request<T: Serialize>(
     msg_type: CommsMessageType,
     msg: T,
 ) -> Result<(), BitVMXError> {
-    // Serialize with sorted keys for consistent ordering during signature verification
-    let msg_value = serde_json::to_value(&msg).map_err(|_| BitVMXError::SerializationError)?;
-    let timestamp = Utc::now().timestamp_millis();
-    let message = construct_message(
-        &program_id.to_string(),
-        CURRENT_PROTOCOL_VERSION,
-        msg_type,
-        &msg_value,
-        timestamp,
-    )?;
-
-    let signature = &key_manager
-        .sign_rsa_message(message.as_bytes(), rsa_public_key)?
-        .to_bytes()
-        .to_vec();
-
+    let msg_value = serde_json::to_value(msg).map_err(|_| BitVMXError::SerializationError)?;
+    let (version, msg_value, timestamp, signature) =
+        prepare_message(key_manager, rsa_public_key, program_id, msg_type, msg_value)?;
     let serialize_msg = serialize_msg(
-        CURRENT_PROTOCOL_VERSION,
-        msg_type,
-        program_id,
-        msg,
-        timestamp,
-        signature.to_vec(),
+        &version, msg_type, program_id, msg_value, timestamp, signature,
     )?;
     comms.send_peer(
         &Context::ProgramId(*program_id).to_string()?,
@@ -153,26 +135,6 @@ pub fn request<T: Serialize>(
         serialize_msg,
     )?;
     Ok(())
-}
-
-pub fn response<T: Serialize>(
-    comms: &BrokerNode,
-    key_manager: &Rc<KeyManager>,
-    rsa_public_key: &str,
-    program_id: &Uuid,
-    comms_address: CommsAddress,
-    msg_type: CommsMessageType,
-    msg: T,
-) -> Result<(), BitVMXError> {
-    request(
-        comms,
-        key_manager,
-        rsa_public_key,
-        program_id,
-        comms_address,
-        msg_type,
-        msg,
-    ) // In this version, response is identical to request. Keeping it separate for clarity.
 }
 
 /// COMPATIBILITY: renaming or removing variants of this enum breaks
@@ -300,7 +262,7 @@ pub fn send_verification_key_to_peer(
         verification_key: rsa_public_key.to_string(),
     };
 
-    response(
+    request(
         comms,
         key_manager,
         rsa_public_key,
