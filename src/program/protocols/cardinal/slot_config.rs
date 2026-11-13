@@ -14,7 +14,7 @@ use crate::{
                 FUND_UTXO, OPERATORS, OPERATORS_AGGREGATED_PUB, PAIR_0_1_AGGREGATED,
             },
             dispute::{
-                program_input_prev_prefix, program_input_prev_protocol, protocol_cost,
+                program_input_prev_prefix, program_input_prev_protocol, DEFAULT_PROTOCOL_COST,
                 TIMELOCK_BLOCKS, TIMELOCK_BLOCKS_KEY,
             },
             protocol_handler::external_fund_tx,
@@ -131,7 +131,7 @@ impl SlotProtocolConfiguration {
     ) -> Result<(Utxo, OutputType, Utxo, OutputType, &PublicKey), BitVMXError> {
         //TODO: Compute proper vouts from prover and verifier
         let pair_aggregated_pub_key = &self.operators_pairs[0];
-        let initial_utxo = Utxo::new(txid, 4, protocol_cost(), pair_aggregated_pub_key);
+        let initial_utxo = Utxo::new(txid, 4, DEFAULT_PROTOCOL_COST, pair_aggregated_pub_key);
         let prover_win_utxo_value = dust_claim_stop() as u64;
         let prover_win_utxo = Utxo::new(txid, 2, prover_win_utxo_value, pair_aggregated_pub_key);
 
@@ -146,7 +146,7 @@ impl SlotProtocolConfiguration {
         let initial_output_type = external_fund_tx(
             &self.operators_aggregated_pub,
             initial_spending_condition,
-            protocol_cost(),
+            DEFAULT_PROTOCOL_COST,
         )?;
 
         let prover_win_spending_condition = vec![

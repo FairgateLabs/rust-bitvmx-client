@@ -1,13 +1,13 @@
 #![cfg(test)]
 use anyhow::Result;
 use bitvmx_client::{
-    program::protocols::dispute::protocol_cost,
+    program::protocols::dispute::protocol_cost_from_config,
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
 use bitvmx_wallet::wallet::Destination;
 use common::{
     config_trace,
-    dispute::{execute_dispute, prepare_dispute, ForcedChallenges},
+    dispute::{execute_dispute, prepare_dispute, program_definition_path, ForcedChallenges},
     get_all, init_bitvmx, init_utxo_new, prepare_bitcoin, send_all, wait_message_from_channel,
 };
 use protocol_builder::{
@@ -112,11 +112,14 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
         scripts::check_aggregated_signature(&aggregated_pub_key, SignMode::Aggregate),
     ];
+    let forced_challenge = ForcedChallenges::Execution;
+    let program_definition = program_definition_path(&forced_challenge, None);
+
     let (utxo, initial_out_type) = init_utxo_new(
         &mut wallet,
         &aggregated_pub_key,
         spending_condition.clone(),
-        protocol_cost(),
+        protocol_cost_from_config(&program_definition)?,
     )?;
 
     info!("Initializing UTXO for the prover action");
@@ -128,7 +131,6 @@ fn test_drp_aux(last_tx_to_dispatch: Option<&str>) -> Result<()> {
     )?;
 
     let prog_id = Uuid::new_v4();
-    let forced_challenge = ForcedChallenges::Execution;
     prepare_dispute(
         prog_id,
         participants,
