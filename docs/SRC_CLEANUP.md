@@ -63,6 +63,8 @@ name in the log. Make it the default method on `SetupStep`, using `self.step_nam
 
 ### 4. Merge the nonce and signature step bodies
 
+Status: applied.
+
 `program/setup/steps/nonces_step.rs`, `signatures_step.rs`
 
 The two files differ mostly in the payload type and the key-manager call:

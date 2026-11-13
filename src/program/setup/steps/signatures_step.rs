@@ -12,17 +12,13 @@ use crate::{
 use bitcoin::PublicKey;
 use key_manager::{
     errors::KeyManagerError,
-    musig2::{errors::Musig2SignerError, types::MessageId, PartialSignature},
+    musig2::{errors::Musig2SignerError, PartialSignature},
 };
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tracing::{debug, info, warn};
 
-pub type PartialSignatureMessage = Vec<(
-    bitcoin::PublicKey,
-    bitcoin::PublicKey,
-    Vec<(MessageId, PartialSignature)>,
-)>;
+pub type PartialSignatureMessage = super::ContributionMessage<PartialSignature>;
 
 /// Template step for exchanging MuSig2 partial signatures.
 ///
@@ -51,41 +47,12 @@ impl SignaturesStep {
             ));
         }
 
-        let mut received_aggregated_keys = HashSet::new();
-
-        for (aggregated, _, message_signatures) in signatures {
-            if !expected_aggregated_keys.contains(aggregated) {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received signatures for unexpected aggregated key {}",
-                    aggregated
-                )));
-            }
-            if !received_aggregated_keys.insert(*aggregated) {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received duplicate signatures for aggregated key {}",
-                    aggregated
-                )));
-            }
-            if message_signatures.is_empty() {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received no message signatures for aggregated key {}",
-                    aggregated
-                )));
-            }
-
-            let mut message_ids = HashSet::new();
-            if message_signatures
-                .iter()
-                .any(|(message_id, _)| !message_ids.insert(message_id))
-            {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received duplicate signature message IDs for aggregated key {}",
-                    aggregated
-                )));
-            }
-        }
-
-        Ok(())
+        super::validate_entries(
+            signatures,
+            expected_aggregated_keys,
+            "signatures",
+            "signature",
+        )
     }
 }
 
@@ -278,40 +245,13 @@ impl SetupStep for SignaturesStep {
 
         debug!("SignaturesStep: Step complete, adding all participant signatures to key_manager");
 
-        // Build map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>>
-        // First PublicKey is aggregated key, second is participant's public key
-        let mut map_of_maps: HashMap<
-            PublicKey,
-            HashMap<PublicKey, Vec<(MessageId, PartialSignature)>>,
-        > = HashMap::new();
-
-        // Collect signatures from all participants (except ourselves)
-        for (idx, _) in participants.iter().enumerate() {
-            if idx == my_idx {
-                continue; // Skip our own signatures
-            }
-
-            let signatures_json = self.get_participant_data(&context.globals, &protocol_id, idx)?;
-
-            let participant_signatures: PartialSignatureMessage =
-                serde_json::from_str(&signatures_json)?;
-
-            // PartialSignatureMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PartialSignature)>)>
-            // where first PublicKey is aggregated key, second is participant's public key
-            for (aggregated, participant_pub_key, signatures) in participant_signatures {
-                if map_of_maps
-                    .entry(aggregated)
-                    .or_default()
-                    .insert(participant_pub_key, signatures)
-                    .is_some()
-                {
-                    return Err(BitVMXError::InvalidMessage(format!(
-                        "Received duplicate signatures from participant key {}",
-                        participant_pub_key
-                    )));
-                }
-            }
-        }
+        let map_of_maps = super::collect_other_participants::<PartialSignature>(
+            participants,
+            my_idx,
+            &context.globals,
+            &protocol_id,
+            self.step_name(),
+        )?;
 
         // Add all signatures to key_manager for each aggregated key
         for (aggregated, partial_map) in map_of_maps {
@@ -345,6 +285,7 @@ mod tests {
     use crate::types::PROGRAM_TYPE_AGGREGATED_KEY;
     use crate::types::{NoOpReason, PeerSetupFault, PeerSetupFaultReason, RetryReason};
     use key_manager::{key_type::BitcoinKeyType, musig2::musig::MuSig2SignerApi};
+    use std::collections::HashMap;
     use uuid::Uuid;
 
     fn store_aggregated_key<BC: BitcoinCoordinatorApi>(

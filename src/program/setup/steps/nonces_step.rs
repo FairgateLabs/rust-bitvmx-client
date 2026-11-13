@@ -10,16 +10,12 @@ use crate::{
     types::{PeerSetupFaultReason, ProgramContext, ResultDisposition},
 };
 use bitcoin::PublicKey;
-use key_manager::musig2::{types::MessageId, PubNonce};
+use key_manager::musig2::PubNonce;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tracing::{debug, info};
 
-pub type PubNonceMessage = Vec<(
-    bitcoin::PublicKey,
-    bitcoin::PublicKey,
-    Vec<(MessageId, PubNonce)>,
-)>;
+pub type PubNonceMessage = super::ContributionMessage<PubNonce>;
 
 /// Template step for exchanging MuSig2 public nonces.
 ///
@@ -43,41 +39,7 @@ impl NoncesStep {
         nonces: &PubNonceMessage,
         expected_aggregated_keys: &HashSet<PublicKey>,
     ) -> Result<(), BitVMXError> {
-        let mut received_aggregated_keys = HashSet::new();
-
-        for (aggregated, _, message_nonces) in nonces {
-            if !expected_aggregated_keys.contains(aggregated) {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received nonces for unexpected aggregated key {}",
-                    aggregated
-                )));
-            }
-            if !received_aggregated_keys.insert(*aggregated) {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received duplicate nonces for aggregated key {}",
-                    aggregated
-                )));
-            }
-            if message_nonces.is_empty() {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received no message nonces for aggregated key {}",
-                    aggregated
-                )));
-            }
-
-            let mut message_ids = HashSet::new();
-            if message_nonces
-                .iter()
-                .any(|(message_id, _)| !message_ids.insert(message_id))
-            {
-                return Err(BitVMXError::InvalidMessage(format!(
-                    "Received duplicate nonce message IDs for aggregated key {}",
-                    aggregated
-                )));
-            }
-        }
-
-        Ok(())
+        super::validate_entries(nonces, expected_aggregated_keys, "nonces", "nonce")
     }
 }
 
@@ -233,37 +195,13 @@ impl SetupStep for NoncesStep {
 
         debug!("NoncesStep: Step complete, adding all participant nonces to key_manager");
 
-        // Build map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(MessageId, PubNonce)>>>
-        // First PublicKey is aggregated key, second is participant's public key
-        let mut map_of_maps: HashMap<PublicKey, HashMap<PublicKey, Vec<(MessageId, PubNonce)>>> =
-            HashMap::new();
-
-        // Collect nonces from all participants (except ourselves)
-        for (idx, _) in participants.iter().enumerate() {
-            if idx == my_idx {
-                continue; // Skip our own nonces
-            }
-
-            let nonces_json = self.get_participant_data(&context.globals, &protocol_id, idx)?;
-
-            let participant_nonces: PubNonceMessage = serde_json::from_str(&nonces_json)?;
-
-            // PubNonceMessage is Vec<(PublicKey, PublicKey, Vec<(MessageId, PubNonce)>)>
-            // where first PublicKey is aggregated key, second is participant's public key
-            for (aggregated, participant_pub_key, nonces) in participant_nonces {
-                if map_of_maps
-                    .entry(aggregated)
-                    .or_default()
-                    .insert(participant_pub_key, nonces)
-                    .is_some()
-                {
-                    return Err(BitVMXError::InvalidMessage(format!(
-                        "Received duplicate nonces from participant key {}",
-                        participant_pub_key
-                    )));
-                }
-            }
-        }
+        let map_of_maps = super::collect_other_participants::<PubNonce>(
+            participants,
+            my_idx,
+            &context.globals,
+            &protocol_id,
+            self.step_name(),
+        )?;
 
         // Add all nonces to key_manager for each aggregated key
         for (aggregated, pubkey_nonce_map) in map_of_maps {

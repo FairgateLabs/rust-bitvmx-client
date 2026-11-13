@@ -57,6 +57,21 @@ where
     })
 }
 
+pub(crate) fn load_participant_data(
+    globals: &Globals,
+    uuid: &Uuid,
+    idx: usize,
+    step_name: &str,
+) -> Result<String, BitVMXError> {
+    let key = format!("participant_{}_{}", idx, step_name);
+    globals
+        .get_var(uuid, &key)?
+        .ok_or_else(|| {
+            BitVMXError::InvalidMessage(format!("Missing {} for participant {}", step_name, idx))
+        })?
+        .string()
+}
+
 /// Trait that defines a generic step of a protocol setup.
 ///
 /// Each step manages its own lifecycle in 4 phases:
@@ -248,17 +263,7 @@ pub trait SetupStep {
         uuid: &Uuid,
         idx: usize,
     ) -> Result<String, BitVMXError> {
-        let step_name = self.step_name();
-        let key = format!("participant_{}_{}", idx, step_name);
-        globals
-            .get_var(uuid, &key)?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!(
-                    "Missing {} for participant {}",
-                    step_name, idx
-                ))
-            })?
-            .string()
+        load_participant_data(globals, uuid, idx, self.step_name())
     }
 
     fn has_participant_data(
