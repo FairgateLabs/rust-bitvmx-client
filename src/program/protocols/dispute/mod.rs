@@ -2007,4 +2007,65 @@ mod tests {
             }
         }
     }
+
+    /// A published dissection leaves nothing on the stack above the digit,
+    /// so the validator is handed zero hashes and must still find it.
+    ///
+    /// This is the case the medium introduced: the witness carries the
+    /// selection digit alone, because the state hashes travel as data and
+    /// are never read by Script.
+    #[test]
+    fn stage_selection_accepts_a_published_stage_with_no_hashes() {
+        for max_bits in [1u8, 3, 7, 15] {
+            for digit in [0u8, 1, max_bits] {
+                assert!(
+                    validate(0, max_bits, 0, digit),
+                    "published stage, max_bits {} digit {}",
+                    max_bits,
+                    digit
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_published_stage_still_rejects_an_out_of_range_digit() {
+        // Above the maximum.
+        assert!(!validate(0, 3, 0, 4));
+        assert!(!validate(0, 7, 0, 8));
+        // And a non-zero high nibble, which is how a digit overflows its
+        // two nibbles in the first place.
+        assert!(!validate(0, 7, 1, 0));
+        assert!(!validate(0, 7, 15, 7));
+    }
+
+    /// What still caps the branching factor once publishing has taken the
+    /// stack out of the way.
+    ///
+    /// The validator requires the digit's *high* nibble to be zero and
+    /// then range-checks the low one, so a selection digit carries four
+    /// bits whatever the witness is willing to hold. That caps the search
+    /// at sixteen ways, and nothing noticed because the stack capped it at
+    /// twelve first.
+    ///
+    /// A 192-ary digit is eight bits -- two nibbles both carrying value --
+    /// and needs the check to be against the branching factor rather than
+    /// against a nibble. Until that is written, publishing lifts one
+    /// ceiling and leaves another at sixteen.
+    #[test]
+    fn the_selection_digit_is_still_capped_at_one_nibble() {
+        assert!(validate(0, 15, 0, 15), "fifteen is the largest digit");
+        assert!(
+            !validate(0, 15, 1, 0),
+            "a non-zero high nibble is rejected outright, whatever the value"
+        );
+        // So no digit of a 192-ary search above fifteen can be expressed,
+        // let alone accepted.
+        for high in 1u8..=11 {
+            assert!(
+                !validate(0, 191, high, 0),
+                "high nibble {high} should be unrepresentable"
+            );
+        }
+    }
 }
