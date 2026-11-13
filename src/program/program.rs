@@ -400,15 +400,13 @@ impl Program {
     }
 
     /// Errors past `Ready` propagate unchanged; setup-phase errors go through
-    /// `handle_setup_error`.
+    /// `setup_error`.
     pub fn tick<BC: BitcoinCoordinatorApi>(
         &mut self,
         program_context: &mut ProgramContext<BC>,
     ) -> Result<(), BitVMXError> {
         match self.tick_inner(program_context) {
-            Err(e) if !self.state.is_setup_complete() => {
-                self.handle_setup_error(e, None, program_context)
-            }
+            Err(e) if !self.state.is_setup_complete() => Err(self.setup_error(e, None)),
             other => other,
         }
     }
@@ -476,26 +474,21 @@ impl Program {
 
     /// Returns errors without persisting partial setup state. Terminal failures carry
     /// the program and peer so the caller can record failure after rolling back.
-    fn handle_setup_error<BC: BitcoinCoordinatorApi>(
-        &mut self,
-        error: BitVMXError,
-        peer: Option<PubKeyHash>,
-        _program_context: &mut ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
+    fn setup_error(&self, error: BitVMXError, peer: Option<PubKeyHash>) -> BitVMXError {
         match classify(&error) {
-            Severity::Fatal => Err(error),
+            Severity::Fatal => error,
             Severity::BitcoinNodeUnreachable => {
                 warn!(
                     "Program {} cannot advance while bitcoin is unreachable: {:?}",
                     self.program_id, error
                 );
-                Err(error)
+                error
             }
-            Severity::Other => Err(BitVMXError::SetupAttemptFailed {
+            Severity::Other => BitVMXError::SetupAttemptFailed {
                 program_id: self.program_id,
                 peer,
                 source: Box::new(error),
-            }),
+            },
         }
     }
 
@@ -689,7 +682,7 @@ impl Program {
 
     /// Receives results from job dispatchers (Garbler, Emulator).
     /// Terminal setup errors request failure recording after rollback; see
-    /// `handle_setup_error`.
+    /// `setup_error`.
     pub fn receive_dispatcher_result<BC: BitcoinCoordinatorApi>(
         &mut self,
         result: Value,
@@ -878,8 +871,7 @@ impl Program {
         }
         match self.process_comms_message_inner(comms_address, msg_type, data, program_context) {
             Err(e) if !self.state.is_setup_complete() => {
-                self.handle_setup_error(e, Some(comms_address.clone()), program_context)?;
-                Ok(ResultDisposition::Success)
+                Err(self.setup_error(e, Some(comms_address.clone())))
             }
             other => other,
         }
@@ -1292,10 +1284,10 @@ mod tests {
         use bitcoincore_rpc::{jsonrpc, Error as BitcoinRpcError};
         use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
 
-        let mut env = TestProgramContextEnv::new("program-setup-rpc-outage").unwrap();
+        let env = TestProgramContextEnv::new("program-setup-rpc-outage").unwrap();
         let dir = TestStorageDir::new("program-setup-rpc-outage-storage");
         let storage = dir.storage();
-        let mut program = test_program(storage.clone(), Uuid::new_v4());
+        let program = test_program(storage.clone(), Uuid::new_v4());
         program.save().unwrap();
         let error = BitVMXError::BitcoinCoordinatorError(
             BitcoinCoordinatorError::BitcoinClientError(BitcoinClientError::RpcError(
@@ -1306,9 +1298,7 @@ mod tests {
             )),
         );
 
-        let error = program
-            .handle_setup_error(error, None, &mut env.context)
-            .unwrap_err();
+        let error = program.setup_error(error, None);
         assert_eq!(classify(&error), Severity::BitcoinNodeUnreachable);
         assert_eq!(program.state, ProgramState::SettingUp);
         assert_eq!(

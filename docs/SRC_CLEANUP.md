@@ -18,6 +18,8 @@ Line numbers refer to commit `c9d7976`. Items are proposed unless marked as appl
 
 ### 1. Keep `ProgramState` in step with the engine in one place
 
+Status: applied.
+
 `program/program.rs`
 
 After the setup engine changes, three places derive `ProgramState` from the engine's step state with
@@ -32,6 +34,8 @@ Add `fn sync_state_with_engine(&mut self)`. `tick_inner` can then drop the block
 `current_step_state`.
 
 ### 2. `handle_setup_error` never returns `Ok`
+
+Status: applied.
 
 `program/program.rs:483-504`
 
