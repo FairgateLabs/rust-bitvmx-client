@@ -284,7 +284,7 @@ impl BitcoinCoordinatorMock {
     }
 
     /// Stage the status returned by `get_transaction` for `txid`. Unstaged
-    /// txids make `get_transaction` return an error.
+    /// txids return `NotFound`.
     pub fn set_transaction_status(&self, txid: Txid, status: TransactionStatus) {
         self.transactions.borrow_mut().insert(txid, status);
     }
@@ -435,16 +435,12 @@ impl BitcoinCoordinatorApi for BitcoinCoordinatorMock {
         if let Some(error) = self.next_transaction_error.borrow_mut().take() {
             return Err(error);
         }
-        self.transactions
+        Ok(self
+            .transactions
             .borrow()
             .get(&txid)
             .cloned()
-            .ok_or_else(|| {
-                BitcoinCoordinatorError::Internal(format!(
-                    "BitcoinCoordinatorMock: no status staged for txid {}",
-                    txid
-                ))
-            })
+            .unwrap_or(TransactionStatus::NotFound))
     }
 
     fn get_block(
@@ -769,12 +765,14 @@ mod tests {
         assert_eq!(dispatched[0].stuck_in_mempool_blocks, None);
         assert_eq!(dispatched[1].stuck_in_mempool_blocks, Some(7));
 
-        // unstaged txid is an error instead of a silent default
-        assert!(mock.get_transaction(txid).is_err());
+        // unstaged txid is NotFound
+        assert_eq!(
+            mock.get_transaction(txid).unwrap(),
+            TransactionStatus::NotFound
+        );
 
-        // staged status is returned (built via serde: the blockchain status
-        // enum is not re-exported through bitcoin_coordinator)
-        let status = TransactionStatus::NotFound;
+        // staged status is returned
+        let status = TransactionStatus::InMempool;
         mock.set_transaction_status(txid, status.clone());
         assert_eq!(mock.get_transaction(txid).unwrap(), status);
 
@@ -835,7 +833,10 @@ mod tests {
             env.env.storage.clone(),
         )
         .unwrap();
-        assert_eq!(protocol.requested_confirmations(&env.context), Some(1));
+        assert_eq!(
+            protocol.requested_confirmations(&env.context),
+            Some(env.env.config.finality())
+        );
 
         let setup_step = SetupStepEnum::Keys(KeysStep::new());
         assert!(setup_step
