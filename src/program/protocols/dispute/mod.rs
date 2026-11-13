@@ -774,6 +774,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let mut prev = POST_COMMITMENT.to_string();
         let search_mode = program_def.0.search_mode();
+        let publication = program_def.0.publication();
         let rounds = nary_def.total_rounds();
 
         for stage in 1..rounds + 1 {
@@ -790,15 +791,30 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if carries_selection {
                 vars.push(selection_bits_var(search_mode, rounds, stage - 1));
             }
-            vars.extend((1..hashes + 1).map(|h| stage_hash_var(search_mode, rounds, stage, h)));
+            // A committed dissection is read by Script, so every hash needs
+            // a one-time commitment in the witness and the stack limit --
+            // not the fee -- is what caps the branching factor.  A
+            // published one is seen rather than read, so the stage commits
+            // only its selection digit and the hashes travel as data.  That
+            // is the whole of why publishing admits a wide dissection.
+            if !publication.is_published() {
+                vars.extend(
+                    (1..hashes + 1).map(|h| stage_hash_var(search_mode, rounds, stage, h)),
+                );
+            }
 
             let extra = if carries_selection {
                 let bits = nary_def.bits_for_round(stage - 1);
+                // Only what the witness actually carries gets reversed.
+                let committed_hashes = if publication.is_published() { 0 } else { hashes };
                 Some(vec![
                     Self::get_reverse_script(
-                        SELECTION_BITS_NIBBLES + hashes as u32 * STATE_HASH_NIBBLES,
+                        SELECTION_BITS_NIBBLES + committed_hashes as u32 * STATE_HASH_NIBBLES,
                     ),
-                    Self::get_validate_stage_selection_script(hashes, (1 << bits) - 1),
+                    Self::get_validate_stage_selection_script(
+                        committed_hashes,
+                        (1 << bits) - 1,
+                    ),
                 ])
             } else {
                 None
@@ -1620,6 +1636,10 @@ impl DisputeResolutionProtocol {
     /// Validates the selection digit carried by a full-duplex stage, where the
     /// digit is followed on the stack by the `hashes` state hashes of the
     /// sender's own dissection.
+    ///
+    /// `hashes` is what the *witness* carries, which is zero when the
+    /// dissection is published rather than committed: there is then nothing
+    /// on the stack above the digit and nothing to drop.
     ///
     /// Expects the values in declaration order, so the caller must prepend the
     /// reverse script.
