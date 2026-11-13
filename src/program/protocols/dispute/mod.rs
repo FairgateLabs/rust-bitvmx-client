@@ -22,11 +22,12 @@ use bitcoin_script_stack::stack::StackTracker;
 use emulator::{
     constants::REGISTERS_BASE_ADDRESS,
     decision::nary_search::{NArySearchType, Party, SearchMode},
+    decision::publication::PublicationMedium,
     loader::program_definition::ProgramDefinition,
 };
 use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
 use protocol_builder::{
-    builder::ProtocolBuilder,
+    builder::{Protocol, ProtocolBuilder},
     graph::graph::GraphOptions,
     scripts::{self, ProtocolScript, SignMode},
     types::{
@@ -82,6 +83,30 @@ pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
 pub static TRACE_VARS: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
 /// Nibble widths of the values committed by the search.
+/// The key a stage's publication slot is spent with.
+///
+/// One per stage, and so one per instance too, since each dispute
+/// instance declares its own. That is the whole of what ties a profile
+/// witness to the slot it is about: two slots spent the same way give
+/// signature-hash messages whose final blocks are identical, so the
+/// window the dispute reads names no slot and the verifying key is the
+/// only thing that does.
+pub fn publication_key_var(stage: u8) -> String {
+    format!("publication_{}", stage)
+}
+
+/// The transaction carrying a stage's dissection, when it is published in
+/// an output rather than an annex.
+pub fn stage_data_tx(stage: u8) -> String {
+    format!("STAGE_DATA_{}", stage)
+}
+
+/// Taken by the counterparty when a stage creates its data output and
+/// never spends it.
+pub fn missing_data_tx(stage: u8) -> String {
+    format!("MISSING_DATA_{}", stage)
+}
+
 const SELECTION_BITS_NIBBLES: u32 = 2;
 const STATE_HASH_NIBBLES: u32 = 40;
 /// Substring identifying a first-search selection digit variable. Deliberately
@@ -325,6 +350,19 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             ("aggregated_1".to_string(), aggregated_1.into()),
             ("speedup".to_string(), speedup.into()),
         ];
+
+        // A published dissection is spent out of a slot of its own, under a
+        // key of its own. Both parties declare one per stage and each uses
+        // only the stages it owns, which costs a key and avoids having the
+        // declaration depend on the role.
+        if program_def.publication().is_published() {
+            for stage in 1..=nary_def.total_rounds() {
+                let key = program_context
+                    .key_manager
+                    .next_keypair(BitcoinKeyType::P2tr)?;
+                keys.push((publication_key_var(stage), key.into()));
+            }
+        }
 
         for required_input in
             get_required_keys(&self.ctx.id, &program_def, program_context, &self.role())?
@@ -855,6 +893,24 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 )?,
                 speedups,
             )?;
+            // A published dissection cannot ride in the stage transaction's
+            // own outputs: its bytes are decided at dispute time and an
+            // output is part of the txid, so the stage would not be
+            // pre-signable. The stage therefore emits a slot, and a second
+            // transaction spends it carrying the data.
+            if publication == PublicationMedium::OpReturn {
+                self.add_publication_slot(
+                    &mut protocol,
+                    &next,
+                    stage,
+                    owner_keys,
+                    aggregated,
+                    timelock_blocks,
+                    speedup_dust,
+                    speedups.1,
+                )?;
+            }
+
             prev = next;
 
             // The asymmetric search spends a second message on the selection,
@@ -1664,6 +1720,62 @@ impl DisputeResolutionProtocol {
         stack.number(max_bits as u32);
         stack.op_lessthanorequal();
         stack.op_verify();
+    }
+
+
+    /// The slot a published dissection is spent out of, and the timeout
+    /// that punishes a stage which creates one and never uses it.
+    ///
+    /// Two leaves. The publisher spends the first with the transaction
+    /// carrying its dissection, under the per-stage key of
+    /// [`publication_key_var`] -- that key is the only thing binding the
+    /// signature to this slot, since two slots spent the same way produce
+    /// identical final blocks. The counterparty takes the second after a
+    /// challenge period if no publication appears.
+    ///
+    /// The transaction that carries the data is deliberately not in the
+    /// graph. Its `OP_RETURN` holds bytes nobody knows at setup, so its
+    /// txid is not fixed and nothing can be pre-signed against it; the
+    /// publisher builds and signs it when the dispute reaches this stage.
+    /// An annex publication needs none of this, a segwit txid not
+    /// covering the witness, which is the sharpest argument for the annex.
+    #[allow(clippy::too_many_arguments)]
+    fn add_publication_slot(
+        &self,
+        protocol: &mut Protocol,
+        stage_tx: &str,
+        stage: u8,
+        owner_keys: &ParticipantKeys,
+        aggregated: &PublicKey,
+        timelock_blocks: u16,
+        dust: u64,
+        other_speedup: &PublicKey,
+    ) -> Result<(), BitVMXError> {
+        let publisher = owner_keys.get_public(&publication_key_var(stage))?;
+
+        let mut publish_leaf = scripts::check_signature(publisher, SignMode::Single);
+        publish_leaf.set_assert_leaf_id(0);
+        let mut missing_leaf =
+            scripts::timelock(timelock_blocks, aggregated, SignMode::Aggregate);
+        missing_leaf.set_assert_leaf_id(1);
+
+        let slot = OutputType::taproot(dust, aggregated, &[publish_leaf, missing_leaf])?;
+        protocol.add_transaction_output(stage_tx, &slot)?;
+
+        // The timeout is pre-signable, so it goes in the graph.
+        protocol.add_connection(
+            &format!("{}__MISSING_DATA", stage_tx),
+            stage_tx,
+            OutputSpec::Last,
+            &missing_data_tx(stage),
+            InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 1 }),
+            Some(timelock_blocks),
+            None,
+        )?;
+
+        let pb = ProtocolBuilder {};
+        pb.add_speedup_output(protocol, &missing_data_tx(stage), dust, other_speedup)?;
+        Ok(())
     }
 
     fn get_validate_stage_selection_script(hashes: u8, max_bits: u8) -> ScriptBuf {

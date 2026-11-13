@@ -231,13 +231,20 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
             }
 
 
-            for (i, h) in hashes.iter().enumerate() {
-                set_input_hex(
-                    id,
-                    context,
-                    &stage_hash_var(mode, rounds, *stage, i as u8 + 1),
-                    h,
-                )?;
+            // Where the dissection is committed, each hash is a witness
+            // value under a one-time key declared for it. Where it is
+            // published, the stage commits the digit alone and the hashes
+            // travel as data, so there is no key to sign them with and
+            // nothing to set here.
+            if !program_definition.publication().is_published() {
+                for (i, h) in hashes.iter().enumerate() {
+                    set_input_hex(
+                        id,
+                        context,
+                        &stage_hash_var(mode, rounds, *stage, i as u8 + 1),
+                        h,
+                    )?;
+                }
             }
 
             let owner = mode.dissector(rounds, *stage);
