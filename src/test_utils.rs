@@ -576,6 +576,7 @@ impl TestProgramContextEnv {
             LeaderBroadcastHelper::new(env.storage.clone()),
             operation_timeouts,
             expected_jobs,
+            env.config.finality(),
         );
 
         let peers = (0..peer_count)

@@ -251,6 +251,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             leader_broadcast_helper,
             operation_timeouts,
             expected_jobs,
+            config.finality(),
         );
 
         info!("Program context initialized successfully");
