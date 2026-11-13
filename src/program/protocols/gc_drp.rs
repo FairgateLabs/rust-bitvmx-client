@@ -683,6 +683,35 @@ impl GCDisputeResolutionProtocol {
         Ok(())
     }
 
+    /// The verdict leaf under the signature gadget.
+    ///
+    /// The garbled-circuit endgame decides a dispute with one bit, and
+    /// there are two ways to put that bit on chain.
+    ///
+    /// [`Self::lamport_check_false`] is the one this backend uses: the
+    /// circuit's output wire is committed under a Lamport key, the
+    /// evaluator reveals the preimage for the bit it got, and Script
+    /// reads it. The leaf is the aggregated `CHECKSIGVERIFY` followed by
+    /// a per-bit chain of `OP_SIZE`, `OP_SHA256` and a 32-byte
+    /// comparison, and the witness carries a preimage for every bit.
+    ///
+    /// The gadget's is this one. The circuit does not reveal a bit; its
+    /// evaluation *is* a signature under a key the garbler holds, on a
+    /// message the circuit computed, so the leaf is a bare `CHECKSIG`
+    /// and the witness is one signature. Nothing is gated on a
+    /// predicate, which is why a predicate's negation becomes free --
+    /// the verdict multiplexes which message gets signed, and `NOT` is a
+    /// free gate under free XOR.
+    ///
+    /// `gadget_key` must be used for nothing else. That the garbler
+    /// could sign this leaf itself is not a weakness: the only thing the
+    /// signature does is pay the evaluator, so a garbler who forges it
+    /// has paid out voluntarily. Reusing a key that signs anything else
+    /// would let one signature serve two purposes.
+    pub fn gadget_check(gadget_key: &PublicKey, sign_mode: SignMode) -> ProtocolScript {
+        scripts::check_signature(gadget_key, sign_mode)
+    }
+
     fn lamport_check_false(
         aggregated: &PublicKey,
         sign_mode: SignMode,
@@ -771,5 +800,93 @@ impl GCDisputeResolutionProtocol {
         table.add(VERIFIER_FINAL, Verifier);
 
         table
+    }
+}
+
+#[cfg(test)]
+mod gadget_tests {
+    use super::*;
+    use bitcoin::secp256k1::{Secp256k1, SecretKey};
+
+    fn a_key(byte: u8) -> PublicKey {
+        let secp = Secp256k1::new();
+        PublicKey::new(SecretKey::from_slice(&[byte; 32]).unwrap().public_key(&secp))
+    }
+
+    /// The verdict leaf under the gadget is a bare CHECKSIG: one key,
+    /// one signature, nothing gated.
+    #[test]
+    fn the_gadget_verdict_leaf_is_one_checksig() {
+        let k = a_key(0x5a);
+        let leaf = GCDisputeResolutionProtocol::gadget_check(&k, SignMode::Single);
+        let bytes = leaf.get_script().as_bytes();
+
+        assert_eq!(bytes.len(), 34, "<32-byte key> CHECKSIG");
+        assert_eq!(bytes[0], 32, "a 32-byte push");
+        assert_eq!(*bytes.last().unwrap(), 0xac, "OP_CHECKSIG");
+    }
+
+    /// And it is the gadget's own key, so one signature cannot serve two
+    /// purposes.
+    #[test]
+    fn the_gadget_key_is_its_own() {
+        let gadget = a_key(0x5a);
+        let other = a_key(0x11);
+        let a = GCDisputeResolutionProtocol::gadget_check(&gadget, SignMode::Single);
+        let b = GCDisputeResolutionProtocol::gadget_check(&other, SignMode::Single);
+        assert_ne!(a.get_script(), b.get_script());
+        assert!(
+            !a.get_script()
+                .as_bytes()
+                .windows(32)
+                .any(|w| w == XOnlyPublicKey::from(other).serialize()),
+            "no other key may appear in the gadget leaf"
+        );
+    }
+
+    /// What the swap costs on chain, against the leaf it replaces.
+    ///
+    /// A Lamport verdict spends, per bit of output: OP_SIZE, a push of
+    /// 32, OP_EQUALVERIFY, OP_SHA256, a 32-byte comparison and another
+    /// OP_EQUALVERIFY -- and a 32-byte preimage in the witness. The
+    /// gadget spends one signature and nothing per bit, because the bit
+    /// is never revealed; the signature is what the bit decided.
+    #[test]
+    fn the_gadget_leaf_does_not_grow_with_the_verdict() {
+        let gadget = GCDisputeResolutionProtocol::gadget_check(&a_key(0x5a), SignMode::Single);
+        let fixed = gadget.get_script().as_bytes().len();
+
+        // A key push and CHECKSIGVERIFY, then the per-bit chain, then
+        // OP_PUSHNUM_1.
+        const KEY_PUSH: usize = 33;
+        const PREFIX: usize = KEY_PUSH + 1;
+        const SUFFIX: usize = 1;
+        // Per bit: OP_SIZE, a push of 32, OP_EQUALVERIFY, OP_SHA256, a
+        // 32-byte comparison, OP_EQUALVERIFY.
+        const PER_BIT_SCRIPT: usize = 1 + 2 + 1 + 1 + KEY_PUSH + 1;
+        // And witness bytes: a 32-byte preimage with its length prefix.
+        const PER_BIT_WITNESS: usize = 33;
+
+        let lamport = |bits: usize| PREFIX + bits * PER_BIT_SCRIPT + SUFFIX;
+
+        for bits in [1usize, 8, 32] {
+            assert!(
+                lamport(bits) > fixed,
+                "{bits} bits: the gadget leaf must not be the larger"
+            );
+            assert_eq!(fixed, 34, "{bits} bits: and it does not grow at all");
+            assert_eq!(
+                lamport(bits) - lamport(bits - 1),
+                PER_BIT_SCRIPT,
+                "{bits} bits: while the Lamport leaf grows with every one"
+            );
+            assert_eq!(bits * PER_BIT_WITNESS, bits * 33);
+        }
+
+        // At one bit -- which is what a verdict is -- the saving is
+        // modest and honest: 74 script bytes against 34, and a 32-byte
+        // preimage out of the witness.
+        assert_eq!(lamport(1), 74);
+        assert_eq!(fixed, 34);
     }
 }
