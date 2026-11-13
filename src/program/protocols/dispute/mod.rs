@@ -1782,6 +1782,31 @@ impl DisputeResolutionProtocol {
     }
 
 
+
+    /// The two ways a publication slot may be spent.
+    ///
+    /// Leaf 0 is the publisher's alone, under the per-stage key: it is
+    /// the publisher who decides what to publish and the publisher who
+    /// signs for it, and the key is what ties that signature to this slot
+    /// rather than another. Leaf 1 is the aggregated key behind a
+    /// challenge period, so the counterparty can take the slot if no
+    /// publication appears.
+    ///
+    /// The order is load-bearing and the assert leaf ids say so: a spend
+    /// names the leaf it uses, so swapping them would let the publisher
+    /// claim its own timeout.
+    pub(crate) fn publication_slot_leaves(
+        publisher: &PublicKey,
+        aggregated: &PublicKey,
+        timelock_blocks: u16,
+    ) -> Vec<ProtocolScript> {
+        let mut publish = scripts::check_signature(publisher, SignMode::Single);
+        publish.set_assert_leaf_id(0);
+        let mut missing = scripts::timelock(timelock_blocks, aggregated, SignMode::Aggregate);
+        missing.set_assert_leaf_id(1);
+        vec![publish, missing]
+    }
+
     /// The slot a published dissection is spent out of, and the timeout
     /// that punishes a stage which creates one and never uses it.
     ///
@@ -1811,14 +1836,8 @@ impl DisputeResolutionProtocol {
         other_speedup: &PublicKey,
     ) -> Result<(), BitVMXError> {
         let publisher = owner_keys.get_public(&publication_key_var(stage))?;
-
-        let mut publish_leaf = scripts::check_signature(publisher, SignMode::Single);
-        publish_leaf.set_assert_leaf_id(0);
-        let mut missing_leaf =
-            scripts::timelock(timelock_blocks, aggregated, SignMode::Aggregate);
-        missing_leaf.set_assert_leaf_id(1);
-
-        let slot = OutputType::taproot(dust, aggregated, &[publish_leaf, missing_leaf])?;
+        let leaves = Self::publication_slot_leaves(publisher, aggregated, timelock_blocks);
+        let slot = OutputType::taproot(dust, aggregated, &leaves)?;
         protocol.add_transaction_output(stage_tx, &slot)?;
 
         // The timeout is pre-signable, so it goes in the graph.
@@ -2151,5 +2170,91 @@ mod tests {
             assert!(!validate(0, max, 1, 0), "max {max}: high nibble must be zero");
             assert!(!before.is_empty());
         }
+    }
+
+    fn a_key(byte: u8) -> PublicKey {
+        use bitcoin::secp256k1::{Secp256k1, SecretKey};
+        let secp = Secp256k1::new();
+        let sk = SecretKey::from_slice(&[byte; 32]).unwrap();
+        PublicKey::new(sk.public_key(&secp))
+    }
+
+    /// The publication slot has two ways out and they belong to different
+    /// parties: the publisher's own key, and the aggregated key behind a
+    /// challenge period.
+    #[test]
+    fn a_publication_slot_offers_a_spend_and_a_timeout() {
+        let publisher = a_key(0x11);
+        let aggregated = a_key(0x22);
+        let leaves =
+            DisputeResolutionProtocol::publication_slot_leaves(&publisher, &aggregated, 144);
+
+        assert_eq!(leaves.len(), 2, "a spend and a timeout, and nothing else");
+        assert_ne!(
+            leaves[0].get_script(), leaves[1].get_script(),
+            "the two ways out must differ"
+        );
+        // The timeout leaf carries the challenge period; the publish leaf
+        // does not, which is the only structural difference Script sees.
+        assert!(
+            leaves[1].get_script().len() > leaves[0].get_script().len(),
+            "the timelock makes the timeout leaf the longer of the two"
+        );
+    }
+
+    /// Leaf 0 is the publisher's and nobody else's. If it were the
+    /// aggregated key the counterparty could publish on the publisher's
+    /// behalf; if it carried the timelock the publisher could not publish
+    /// until its own deadline had passed.
+    #[test]
+    fn the_publish_leaf_is_the_publishers_alone_and_unlocked() {
+        let publisher = a_key(0x11);
+        let aggregated = a_key(0x22);
+        let leaves =
+            DisputeResolutionProtocol::publication_slot_leaves(&publisher, &aggregated, 144);
+
+        let publish = DisputeResolutionProtocol::publication_slot_leaves(
+            &publisher, &aggregated, 999,
+        );
+        assert_eq!(
+            leaves[0].get_script(), publish[0].get_script(),
+            "the publish leaf does not depend on the challenge period"
+        );
+        assert_ne!(
+            leaves[1].get_script(), publish[1].get_script(),
+            "but the timeout leaf does"
+        );
+    }
+
+    /// And it is bound to this slot by its key. Two stages give two keys,
+    /// so a signature made for one slot does not verify against another --
+    /// which is the whole of what ties a profile witness to the slot it is
+    /// about, since two slots spent the same way produce identical final
+    /// blocks.
+    #[test]
+    fn a_different_stage_gives_a_different_publish_leaf() {
+        let aggregated = a_key(0x22);
+        let first =
+            DisputeResolutionProtocol::publication_slot_leaves(&a_key(0x11), &aggregated, 144);
+        let second =
+            DisputeResolutionProtocol::publication_slot_leaves(&a_key(0x33), &aggregated, 144);
+        assert_ne!(first[0].get_script(), second[0].get_script());
+        assert_eq!(
+            first[1].get_script(), second[1].get_script(),
+            "only the publish leaf moves; the timeout is the aggregate's"
+        );
+    }
+
+    #[test]
+    fn the_key_and_transaction_names_are_per_stage() {
+        for stage in 1u8..=5 {
+            assert_eq!(publication_key_var(stage), format!("publication_{stage}"));
+            assert_eq!(stage_data_tx(stage), format!("STAGE_DATA_{stage}"));
+            assert_eq!(missing_data_tx(stage), format!("MISSING_DATA_{stage}"));
+        }
+        // Distinct across stages, which is what makes them per-slot.
+        let keys: std::collections::HashSet<_> =
+            (1u8..=5).map(publication_key_var).collect();
+        assert_eq!(keys.len(), 5);
     }
 }
