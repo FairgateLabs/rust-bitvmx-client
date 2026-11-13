@@ -149,6 +149,15 @@ impl<'de> Deserialize<'de> for Program {
 }
 
 impl Program {
+    fn sync_state_with_engine(&mut self) {
+        self.state =
+            if self.setup_engine.state().current_step_state == StepState::WaitingForParticipants {
+                ProgramState::WaitingData
+            } else {
+                ProgramState::SettingUp
+            };
+    }
+
     fn program_key<'a>(
         program_id: &Uuid,
         tail: impl IntoIterator<Item = &'a str>,
@@ -412,39 +421,26 @@ impl Program {
 
         match &self.state {
             ProgramState::SettingUp => {
-                // Run the engine tick (uses block scope to avoid borrow conflict
-                // between setup_engine and other self fields)
-                let (setup_state_changed, is_complete, engine_state) = {
-                    let engine = &mut self.setup_engine;
+                let setup_state_changed = self.setup_engine.tick(
+                    &mut self.protocol,
+                    &self.participants,
+                    self.my_idx,
+                    &self.program_id,
+                    self.leader,
+                    program_context,
+                )?;
+                let is_complete = self.setup_engine.is_complete();
 
-                    let setup_state_changed = engine.tick(
-                        &mut self.protocol,
-                        &self.participants,
-                        self.my_idx,
-                        &self.program_id,
-                        self.leader,
-                        program_context,
-                    )?;
-
-                    let is_complete = engine.is_complete();
-
-                    debug!(
-                        "Program: SetupEngine tick - is_complete: {}, step: {}/{}",
-                        is_complete,
-                        engine.state().current_step_index,
-                        engine.total_steps()
-                    );
-
-                    (setup_state_changed, is_complete, engine.state().clone())
-                };
+                debug!(
+                    "Program: SetupEngine tick - is_complete: {}, step: {}/{}",
+                    is_complete,
+                    self.setup_engine.state().current_step_index,
+                    self.setup_engine.total_steps()
+                );
 
                 if setup_state_changed {
                     state_changed = true;
-                    if engine_state.current_step_state == StepState::WaitingForParticipants {
-                        self.state = ProgramState::WaitingData;
-                    } else {
-                        self.state = ProgramState::SettingUp;
-                    }
+                    self.sync_state_with_engine();
                 }
 
                 // After all setup steps complete, sign and finalize
@@ -737,13 +733,7 @@ impl Program {
                             &self.participants,
                             program_context,
                         )? {
-                            if self.setup_engine.state().current_step_state.clone()
-                                == StepState::WaitingForParticipants
-                            {
-                                self.state = ProgramState::WaitingData;
-                            } else {
-                                self.state = ProgramState::SettingUp;
-                            }
+                            self.sync_state_with_engine();
                             self.save()?;
                             info!("Program::receive_dispatcher_result() - SetupEngine state changed, saved program with state {:?}", self.state);
                         }
@@ -818,13 +808,7 @@ impl Program {
 
         // Preserve the previous behavior: save messages reported as processed.
         if disposition == ResultDisposition::Success {
-            let is_waiting_for_participants =
-                self.setup_engine.state().current_step_state == StepState::WaitingForParticipants;
-            if is_waiting_for_participants {
-                self.state = ProgramState::WaitingData;
-            } else {
-                self.state = ProgramState::SettingUp;
-            }
+            self.sync_state_with_engine();
             self.save()?;
             info!(
                 "Program::receive_setup_data() - Saved program state {:?}",
