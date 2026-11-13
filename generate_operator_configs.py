@@ -86,6 +86,11 @@ class OperatorConfigGenerator:
                     "id": 0
                 }
             },
+            "coordinator_settings": {
+                "monitor": {
+                    "finality": 1
+                }
+            },
             "coordinator_throttle": {
                 "init_interval": 10,
                 "busy_interval": 50,
