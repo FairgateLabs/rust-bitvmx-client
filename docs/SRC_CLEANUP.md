@@ -100,8 +100,12 @@ The wire bytes don't change: the signature covers the sorted-key string of the s
 
 ## Medium value
 
-- **`SetupEngine::tick` change tracking (`setup_engine.rs:777-883`):** the before/after comparison of
-  the engine state (860-867) already catches every change the explicit `state_changed = true` lines
+- **`SetupEngine::tick` change tracking (`setup_engine.rs:777-883`):**
+
+  Status: applied.
+
+  The before/after comparison of the engine state (860-867) already catches every change the
+  explicit `state_changed = true` lines
   record. Generation always moves `current_step_state`, advancing moves the index or the completion
   flag, and `process_produced_data` marks this participant. Compare once at the end, after
   `process_produced_data`, and drop the flags.
