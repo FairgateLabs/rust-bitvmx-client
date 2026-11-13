@@ -114,7 +114,7 @@ pub fn missing_data_tx(stage: u8) -> String {
 /// hold anyway; where it is not -- a 192-ary search, say -- the bits hold
 /// more than the search has subintervals, and the difference has to be
 /// rejected rather than selected.
-fn max_digit_for_round(nary_def: &NArySearchDefinition, round: u8) -> u8 {
+pub(crate) fn max_digit_for_round(nary_def: &NArySearchDefinition, round: u8) -> u8 {
     (nary_def.radix_for_round(round) - 1) as u8
 }
 

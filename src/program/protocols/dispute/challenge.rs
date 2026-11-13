@@ -8,7 +8,7 @@ use bitvmx_cpu_definitions::{
     challenge::{ChallengeType, EquivocationKind},
     constants::CHUNK_SIZE,
 };
-use super::stage_hash_var;
+use super::{max_digit_for_round, stage_hash_var};
 
 use emulator::{
     decision::nary_search::{NArySearchType, Party},
@@ -634,10 +634,12 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                 let bits = stack.define(2, "bits");
                                 // the reverse script was used, but the function that verifies the bits doesn't expect the reverse
                                 stack.move_var_sub_n(bits, 0);
-                                let bits = nary_def.bits_for_round(1);
+                                // The same bound the leaf was built with,
+                                // which is the branching factor less one
+                                // and not what the digit's bits can hold.
                                 let verification_script =
                                     DisputeResolutionProtocol::get_validate_selection_bits_script(
-                                        (1 << bits) - 1,
+                                        max_digit_for_round(&nary_def, 1),
                                     );
                                 stack.custom(verification_script, 1, false, 0, "");
                             }
