@@ -591,10 +591,10 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                 let entry_point = program.pc.get_address();
                                 entry_point_challenge(&mut stack, entry_point)
                             }
-                            "program_counter" => program_counter_challenge(&mut stack),
+                            "program_counter" => program_counter_challenge(&mut stack, program.memory_model),
                             "halt" => halt_challenge(&mut stack),
-                            "trace_hash" => trace_hash_challenge(&mut stack),
-                            "trace_hash_zero" => trace_hash_zero_challenge(&mut stack),
+                            "trace_hash" => trace_hash_challenge(&mut stack, program.memory_model),
+                            "trace_hash_zero" => trace_hash_zero_challenge(&mut stack, program.memory_model),
                             "addresses_sections" => {
                                 let read_write_sections = &program.read_write_sections;
                                 let read_only_sections = &program.read_only_sections;
@@ -779,7 +779,7 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                 read_value_challenge(&mut stack);
                             }
                             "correct_hash" => {
-                                correct_hash_challenge(&mut stack);
+                                correct_hash_challenge(&mut stack, program.memory_model);
                             }
                             "equivocation_hash" => {
                                 equivocation_hash_challenge(&mut stack);
