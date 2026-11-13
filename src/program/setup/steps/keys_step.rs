@@ -247,32 +247,6 @@ impl SetupStep for KeysStep {
         Ok(ResultDisposition::Success)
     }
 
-    fn can_advance<BC: BitcoinCoordinatorApi>(
-        &self,
-        protocol: &ProtocolType,
-        participants: &[CommsAddress],
-        context: &ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
-        let protocol_id = protocol.context().id;
-
-        // Verify that all participants have sent their keys
-        for (idx, participant) in participants.iter().enumerate() {
-            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
-                debug!(
-                    "KeysStep: Still waiting for keys from participant {} (index {})",
-                    participant.pubkey_hash, idx
-                );
-                return Ok(false);
-            }
-        }
-
-        debug!(
-            "KeysStep: All {} participants have sent their keys",
-            participants.len()
-        );
-        Ok(true)
-    }
-
     fn on_step_complete<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &ProtocolType,

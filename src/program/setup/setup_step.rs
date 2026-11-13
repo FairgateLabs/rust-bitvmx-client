@@ -5,7 +5,7 @@ use crate::{
 use enum_dispatch::enum_dispatch;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracing::info;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
-        protocols::protocol_handler::ProtocolType,
+        protocols::protocol_handler::{ProtocolHandler, ProtocolType},
     },
     types::{NoOpReason, PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason},
 };
@@ -165,7 +165,30 @@ pub trait SetupStep {
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError>;
+    ) -> Result<bool, BitVMXError> {
+        let protocol_id = protocol.context().id;
+
+        for (idx, participant) in participants.iter().enumerate() {
+            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
+                debug!(
+                    "{} step: Still waiting for {} from participant {} (index {})",
+                    self.step_name(),
+                    self.step_name(),
+                    participant.pubkey_hash,
+                    idx
+                );
+                return Ok(false);
+            }
+        }
+
+        debug!(
+            "{} step: All {} participants have sent their {}",
+            self.step_name(),
+            participants.len(),
+            self.step_name()
+        );
+        Ok(true)
+    }
 
     /// **Optional hook**: Called when the step completes successfully.
     ///
@@ -290,15 +313,6 @@ mod tests {
                 RetryReason::MissingSetupPrerequisite,
             ))
         }
-
-        fn can_advance<BC: BitcoinCoordinatorApi>(
-            &self,
-            _protocol: &ProtocolType,
-            _participants: &[CommsAddress],
-            _context: &ProgramContext<BC>,
-        ) -> Result<bool, BitVMXError> {
-            Ok(false)
-        }
     }
 
     #[test]
@@ -380,6 +394,11 @@ mod tests {
             ResultDisposition::Retry(RetryReason::MissingSetupPrerequisite)
         );
         assert!(!step
+            .can_advance(&protocol, &participants, &env.context)
+            .unwrap());
+        step.store_participant_data(&env.context.globals, &id, 0, "payload")
+            .unwrap();
+        assert!(step
             .can_advance(&protocol, &participants, &env.context)
             .unwrap());
         step.on_step_complete(&protocol, &participants, &mut env.context)

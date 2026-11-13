@@ -267,32 +267,6 @@ impl SetupStep for SignaturesStep {
         Ok(ResultDisposition::Success)
     }
 
-    fn can_advance<BC: BitcoinCoordinatorApi>(
-        &self,
-        protocol: &ProtocolType,
-        participants: &[CommsAddress],
-        context: &ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError> {
-        let protocol_id = protocol.context().id;
-
-        // Verify that all participants have sent their signatures
-        for (idx, participant) in participants.iter().enumerate() {
-            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
-                debug!(
-                    "SignaturesStep: Still waiting for signatures from participant {} (index {})",
-                    participant.pubkey_hash, idx
-                );
-                return Ok(false);
-            }
-        }
-
-        debug!(
-            "SignaturesStep: All {} participants have sent their signatures",
-            participants.len()
-        );
-        Ok(true)
-    }
-
     fn on_step_complete<BC: BitcoinCoordinatorApi>(
         &self,
         protocol: &ProtocolType,

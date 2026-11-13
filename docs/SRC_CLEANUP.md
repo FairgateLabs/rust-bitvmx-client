@@ -52,6 +52,8 @@ to a plain call.
 
 ### 3. Share `can_advance` across the setup steps
 
+Status: applied.
+
 `program/setup/steps/{keys,nonces,signatures}_step.rs`
 
 `KeysStep::can_advance` (250-274), `NoncesStep::can_advance` (225-249) and
