@@ -277,7 +277,20 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
     // Wallet::clear_db may fail if the directory doesn't exist, which is fine
     let _ = Wallet::clear_db(&wallet_config.wallet);
 
-    let is_ci = std::env::var("GITHUB_ACTIONS").is_ok();
+    // Whether to use a bitcoind that is already running, rather than
+    // starting one in Docker.
+    //
+    // CI supplies one via docker-compose, and `GITHUB_ACTIONS` used to be
+    // the only way to ask for it -- which also opted into CI *timings*,
+    // and those are five times slower: `helper.rs` multiplies the automine
+    // interval by five under the same variable. Mining is the dominant
+    // cost of a dispute test, so asking for an external node cost a 5x
+    // slowdown that had nothing to do with the node.
+    //
+    // `BITVMX_EXTERNAL_BITCOIND` asks for the node alone. Set it to run
+    // against a local regtest daemon at the speed the local path runs at.
+    let is_ci = std::env::var("GITHUB_ACTIONS").is_ok()
+        || std::env::var("BITVMX_EXTERNAL_BITCOIND").is_ok();
 
     let bitcoind = if is_ci {
         info!("Running in CI - using external bitcoind from docker-compose");

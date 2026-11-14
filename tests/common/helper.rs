@@ -276,6 +276,23 @@ pub struct TestHelper {
     pub id_channel_pairs: Vec<ParticipantChannel>,
 }
 
+/// Whether to use a bitcoind that is already running rather than starting
+/// one in Docker.
+///
+/// CI supplies one via docker-compose, and `GITHUB_ACTIONS` used to be the
+/// only way to ask for it. That also opted into CI *timings*, and those are
+/// five times slower -- `run_auto_mine`'s interval is multiplied by five
+/// under the same variable, and mining is the dominant cost of a dispute
+/// test. Asking for an external node therefore bought a 5x slowdown that
+/// had nothing to do with the node.
+///
+/// `BITVMX_EXTERNAL_BITCOIND` asks for the node alone, so a local regtest
+/// daemon can be used at the speed the local path runs at.
+pub fn uses_external_bitcoind() -> bool {
+    std::env::var("GITHUB_ACTIONS").is_ok()
+        || std::env::var("BITVMX_EXTERNAL_BITCOIND").is_ok()
+}
+
 impl TestHelper {
     pub fn clear_regtest_dbs() -> Result<()> {
         let network = Network::Regtest;
@@ -319,7 +336,7 @@ impl TestHelper {
         let bitcoind = if mode.spawns_own_bitcoind() {
             // In CI, bitcoind is provided by docker-compose on the same port.
             // Spawning another container would collide on 0.0.0.0:18443.
-            if std::env::var("GITHUB_ACTIONS").is_ok() {
+            if uses_external_bitcoind() {
                 info!("Running in CI - using external bitcoind from docker-compose");
                 None
             } else {
@@ -361,9 +378,9 @@ impl TestHelper {
 
         if mode.spawns_own_bitcoind() {
             let address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
-            if std::env::var("GITHUB_ACTIONS").is_err() {
-                // Locally we control bitcoind; in CI the shared bitcoind is already
-                // funded by the test harness, so skip the extra mining.
+            if !uses_external_bitcoind() {
+                // When we start bitcoind ourselves we must fund it; an
+                // external one is already funded by whoever started it.
                 bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
             }
             bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
@@ -422,11 +439,18 @@ impl TestHelper {
             let (mine_stop_tx, mine_stop_rx) = channel::<()>();
             let (mine_ready_tx, mine_ready_rx) = channel::<()>();
             let mine_handle = thread::spawn(move || {
-                let interval = if env::var("GITHUB_ACTIONS").is_ok() {
-                    automine_interval * 5
-                } else {
-                    automine_interval
-                };
+                // Mining faster than the coordinator settles produces
+                // `bad-txns-inputs-missingorspent` and underpaying RBF
+                // replacements: a child is dispatched before its parent
+                // confirms. The CI multiplier is not arbitrary padding,
+                // it is what gives the dispatcher time. It is tunable so
+                // a local run can trade wall-clock against that margin
+                // without editing code.
+                let mult: u64 = env::var("BITVMX_AUTOMINE_MULT")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(if env::var("GITHUB_ACTIONS").is_ok() { 5 } else { 1 });
+                let interval = automine_interval * mult;
 
                 // if 500 blocks mined, stop
                 run_auto_mine(network, mine_stop_rx, mine_ready_tx, interval, Some(500))
