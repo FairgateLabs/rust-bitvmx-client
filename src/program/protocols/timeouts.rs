@@ -1,5 +1,6 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use crate::{
+    bitvmx::Context,
     errors::BitVMXError,
     program::{
         participant::ParticipantRole,
@@ -9,6 +10,7 @@ use crate::{
     },
     types::ProgramContext,
 };
+use bitcoin_coordinator::MonitorTarget;
 use tracing::info;
 
 pub fn dispatch_timeout_tx<T: ProtocolHandler, BC: BitcoinCoordinatorApi>(
@@ -183,6 +185,9 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoord
         return Ok(());
     }
 
+    // Timeout transactions are dispatched under the program context, and the coordinator only cancels under it.
+    let dispatch_context = Context::ProgramId(protocol_handler.context().id).to_string()?;
+
     let is_other_tx = ownership_table.is_other_tx(name, protocol_handler.role());
     if is_other_tx {
         let tx_to_cancel = if vout.is_none() {
@@ -193,7 +198,8 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoord
         info!("Cancel timeout tx: {}", tx_to_cancel);
         let tx_id = protocol_handler.get_transaction_id_by_name(&tx_to_cancel)?;
         program_context.bitcoin_coordinator.cancel(
-            bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default(), None),
+            &[MonitorTarget::Transaction(tx_id)],
+            &dispatch_context,
         )?;
     }
 
@@ -213,7 +219,8 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoord
         let tx_id = protocol_handler.get_transaction_id_by_name(&tx_to_cancel)?;
 
         program_context.bitcoin_coordinator.cancel(
-            bitcoin_coordinator::TypesToMonitor::Transactions(vec![tx_id], String::default(), None),
+            &[MonitorTarget::Transaction(tx_id)],
+            &dispatch_context,
         )?;
     }
 

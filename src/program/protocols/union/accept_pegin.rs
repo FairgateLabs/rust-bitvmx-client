@@ -344,7 +344,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Accept Pegin protocol for slot {} received news of transaction: {}, txid: {} with {} confirmations",
-            self.pegin_request(context)?.slot_index, tx_name, tx_id, tx_status.confirmations
+            self.pegin_request(context)?.slot_index, tx_name, tx_id, tx_status.confirmations()
         );
 
         if tx_name.starts_with(CANCEL_TAKE0_TX) {
@@ -999,10 +999,8 @@ impl AcceptPegInProtocol {
         txid: Txid,
         tx_type: UnionTxType,
     ) -> Result<(), BitVMXError> {
-        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
-
-        let proof = match tx_info {
-            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+        let proof = match context.bitcoin_coordinator.get_confirming_block(txid) {
+            Ok(block) => Some(get_spv_proof(txid, block.unwrap())?),
             Err(e) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",

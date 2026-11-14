@@ -1,4 +1,4 @@
-use super::{BitVMX, Context, StoreKey};
+use super::{BitVMX, Context, StoreKey, OUTPUT_PATTERN_CONTEXT};
 use crate::comms_allow_list;
 use crate::error_handling::is_fatal;
 use crate::errors::BitVMXError;
@@ -14,8 +14,8 @@ use crate::types::{
     ZKPExecution, FINAL_AGGREGATED_KEY, PROGRAM_TYPE_AGGREGATED_KEY, RSK_PEGIN_TAG,
 };
 use bitcoin::secp256k1::Message;
-use bitcoin::{PublicKey, Transaction, Txid};
-use bitcoin_coordinator::{errors::BitcoinCoordinatorError, TypesToMonitor};
+use bitcoin::{OutPoint, PublicKey, Transaction, Txid};
+use bitcoin_coordinator::{errors::BitcoinCoordinatorError, MonitorTarget};
 use bitvmx_broker::identification::allow_list::AllowList;
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_job_dispatcher_types::prover_messages::ProverJobType;
@@ -674,7 +674,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         match result {
             Ok(()) => Ok(None),
             Err(BitcoinCoordinatorError::MonitorError(
-                error @ MonitorError::InvalidConfirmationTrigger(_, _),
+                error @ (MonitorError::InvalidConfirmationTrigger(_, _, _)
+                | MonitorError::InvalidSubscription(_)),
             )) => Ok(Some(Self::api_error(
                 id,
                 format!("Failed to subscribe: {error}"),
@@ -694,14 +695,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             "Subscribing to transaction: {:?} from: {} id: {}",
             txid, from, id
         );
-        let result =
-            self.program_context
-                .bitcoin_coordinator
-                .monitor(TypesToMonitor::Transactions(
-                    vec![txid],
-                    Context::RequestId(id, from).to_string()?,
-                    confirmation_threshold,
-                ));
+        let result = self.program_context.bitcoin_coordinator.monitor(
+            &[MonitorTarget::Transaction(txid)],
+            Context::RequestId(id, from).to_string()?,
+            confirmation_threshold,
+        );
 
         Self::subscription_response(id, result)
     }
@@ -719,12 +717,9 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             txid, vout, from, id
         );
         let result = self.program_context.bitcoin_coordinator.monitor(
-            TypesToMonitor::SpendingUTXOTransaction(
-                txid,
-                vout,
-                Context::RequestId(id, from).to_string()?,
-                confirmation_threshold,
-            ),
+            &[MonitorTarget::SpendingUtxo(OutPoint { txid, vout })],
+            Context::RequestId(id, from).to_string()?,
+            confirmation_threshold,
         );
 
         Self::subscription_response(id, result)
@@ -736,13 +731,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         filter: bitcoin_coordinator::OutputPatternFilter,
         confirmation_threshold: Option<u32>,
     ) -> Result<Option<OutgoingBitVMXApiMessages>, BitVMXError> {
-        let result =
-            self.program_context
-                .bitcoin_coordinator
-                .monitor(TypesToMonitor::OutputPattern(
-                    filter,
-                    confirmation_threshold,
-                ));
+        let result = self.program_context.bitcoin_coordinator.monitor(
+            &[MonitorTarget::OutputPattern(filter)],
+            OUTPUT_PATTERN_CONTEXT.to_string(),
+            confirmation_threshold,
+        );
         Self::subscription_response(id, result)
     }
 
@@ -860,7 +853,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             Err(
                 error @ BitVMXError::BitcoinCoordinatorError(
                     BitcoinCoordinatorError::MonitorError(
-                        MonitorError::InvalidConfirmationTrigger(_, _),
+                        MonitorError::InvalidConfirmationTrigger(_, _, _),
                     ),
                 ),
             ) => Ok(Some(Self::api_error(
@@ -935,14 +928,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     }
 
     fn get_spv_proof(&mut self, txid: Txid) -> Result<OutgoingBitVMXApiMessages, BitVMXError> {
-        let tx_info = self
+        let block = self
             .program_context
             .bitcoin_coordinator
-            .get_transaction(txid)?;
+            .get_confirming_block(txid)?;
 
-        match tx_info.block_info {
-            Some(block_info) => {
-                let proof = match get_spv_proof(txid, block_info) {
+        match block {
+            Some(block) => {
+                let proof = match get_spv_proof(txid, block) {
                     Ok(proof) => Some(proof),
                     Err(error) => {
                         warn!("Failed to build SPV proof for txid {}: {}", txid, error);
@@ -952,7 +945,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 Ok(OutgoingBitVMXApiMessages::SPVProof(txid, proof))
             }
             None => {
-                warn!("Missing block info for txid {}", txid);
+                warn!("Transaction {} is not confirmed, no SPV proof yet", txid);
                 Ok(OutgoingBitVMXApiMessages::SPVProof(txid, None))
             }
         }
@@ -1252,8 +1245,9 @@ mod tests {
     #[test]
     fn invalid_subscription_confirmation_threshold_is_an_api_error() {
         let id = Uuid::new_v4();
-        let error =
-            BitcoinCoordinatorError::MonitorError(MonitorError::InvalidConfirmationTrigger(10, 10));
+        let error = BitcoinCoordinatorError::MonitorError(
+            MonitorError::InvalidConfirmationTrigger(200, 6, 100),
+        );
 
         let response = BitVMX::subscription_response(id, Err(error))
             .unwrap()
@@ -1264,7 +1258,7 @@ mod tests {
                 assert_eq!(response_id, id);
                 assert_eq!(
                     message,
-                    "Failed to subscribe: Invalid confirmation trigger: requested 10, max allowed 10"
+                    "Failed to subscribe: Invalid confirmation trigger 200: it must be at least the finality of 6 and at most the maximum of 100"
                 );
             }
             other => panic!("expected ApiError, got {other:?}"),
@@ -1304,12 +1298,12 @@ mod tests {
     #[test]
     fn invalid_dispatch_confirmation_threshold_is_an_api_error() {
         let error = BitVMXError::BitcoinCoordinatorError(BitcoinCoordinatorError::MonitorError(
-            MonitorError::InvalidConfirmationTrigger(10, 10),
+            MonitorError::InvalidConfirmationTrigger(200, 6, 100),
         ));
 
         assert_eq!(
             expect_dispatch_api_error(error),
-            "Failed to dispatch transaction: Failed to use Bitcoin Coordinator: Monitor Error: Invalid confirmation trigger: requested 10, max allowed 10"
+            "Failed to dispatch transaction: Failed to use Bitcoin Coordinator: Monitor Error: Invalid confirmation trigger 200: it must be at least the finality of 6 and at most the maximum of 100"
         );
     }
 
@@ -1711,20 +1705,24 @@ mod tests {
         let monitored = env.coordinator_mock().monitored();
         assert_eq!(monitored.len(), 4); // NewBlock is registered during construction.
         assert!(matches!(
-            &monitored[1],
-            TypesToMonitor::SpendingUTXOTransaction(monitored_txid, 4, _, Some(2))
-                if *monitored_txid == txid
+            &monitored[1].targets[..],
+            [MonitorTarget::SpendingUtxo(outpoint)]
+                if outpoint.txid == txid && outpoint.vout == 4
         ));
+        assert_eq!(monitored[1].confirmation_trigger, Some(2));
+        assert_eq!(
+            monitored[2].targets,
+            vec![MonitorTarget::OutputPattern(filter.clone())]
+        );
+        assert_eq!(monitored[2].context, OUTPUT_PATTERN_CONTEXT);
+        assert_eq!(monitored[2].confirmation_trigger, Some(3));
         assert!(matches!(
-            &monitored[2],
-            TypesToMonitor::OutputPattern(monitored_filter, Some(3))
-                if monitored_filter == &filter
-        ));
-        assert!(matches!(
-            &monitored[3],
-            TypesToMonitor::OutputPattern(monitored_filter, Some(4))
+            &monitored[3].targets[..],
+            [MonitorTarget::OutputPattern(monitored_filter)]
                 if monitored_filter.output_index == 1 && monitored_filter.tag == RSK_PEGIN_TAG
         ));
+        assert_eq!(monitored[3].context, OUTPUT_PATTERN_CONTEXT);
+        assert_eq!(monitored[3].confirmation_trigger, Some(4));
         assert!(api_replies(&mut env.bitvmx).is_empty());
     }
 
@@ -1733,14 +1731,7 @@ mod tests {
         let mut env = TestBitVMXEnv::new("api-transaction-status").unwrap();
         let id = Uuid::new_v4();
         let txid = dummy_transaction().compute_txid();
-        let status: bitcoin_coordinator::TransactionStatus =
-            serde_json::from_value(serde_json::json!({
-                "tx": null,
-                "block_info": null,
-                "confirmations": 0,
-                "status": "NotFound",
-            }))
-            .unwrap();
+        let status = bitcoin_coordinator::TransactionStatus::NotFound;
         env.coordinator_mock()
             .set_transaction_status(txid, status.clone());
 
@@ -1775,7 +1766,7 @@ mod tests {
         let txid = dummy_transaction().compute_txid();
         env.coordinator_mock()
             .fail_next_monitor(BitcoinCoordinatorError::MonitorError(
-                MonitorError::InvalidConfirmationTrigger(5, 3),
+                MonitorError::InvalidConfirmationTrigger(5, 6, 100),
             ));
         let sender = env.bitvmx.config.components.l2.clone();
         let request = IncomingBitVMXApiMessages::SubscribeToTransaction(id, txid, Some(5));
@@ -1822,7 +1813,7 @@ mod tests {
         let id = Uuid::new_v4();
         env.coordinator_mock()
             .fail_next_dispatch(BitcoinCoordinatorError::MonitorError(
-                MonitorError::InvalidConfirmationTrigger(5, 3),
+                MonitorError::InvalidConfirmationTrigger(5, 6, 100),
             ));
         let sender = env.bitvmx.config.components.l2.clone();
         let request =

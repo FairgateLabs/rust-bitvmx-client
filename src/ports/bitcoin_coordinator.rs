@@ -1,9 +1,9 @@
-use bitcoin::{Transaction, Txid};
+use bitcoin::{BlockHash, Transaction, Txid};
 use bitcoin_coordinator::{
     coordinator::BitcoinCoordinator,
     errors::BitcoinCoordinatorError,
     types::{AckNews, News},
-    TransactionStatus, TypesToMonitor,
+    FullBlock, MonitorTarget, TransactionStatus,
 };
 use protocol_builder::types::{output::SpeedupData, Utxo};
 
@@ -50,7 +50,11 @@ pub trait BitcoinCoordinatorApi {
 
     /// Cancels monitoring and removes the targeted transactions from
     /// coordinator storage.
-    fn cancel(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError>;
+    fn cancel(
+        &self,
+        targets: &[MonitorTarget],
+        context: &str,
+    ) -> Result<(), BitcoinCoordinatorError>;
 
     /// Registers a funding UTXO available to pay future speedup fees.
     fn add_funding(&self, utxo: Utxo) -> Result<(), BitcoinCoordinatorError>;
@@ -58,14 +62,43 @@ pub trait BitcoinCoordinatorApi {
     /// Queries the current blockchain status of a transaction.
     fn get_transaction(&self, txid: Txid) -> Result<TransactionStatus, BitcoinCoordinatorError>;
 
-    /// Returns all unacknowledged monitor and coordinator news.
-    fn get_news(&self) -> Result<News, BitcoinCoordinatorError>;
+    /// Returns the block at this height and hash, `None` when it is above the indexed height or a reorg replaced it.
+    fn get_block(
+        &self,
+        height: u32,
+        hash: &BlockHash,
+    ) -> Result<Option<FullBlock>, BitcoinCoordinatorError>;
+
+    /// Returns the block that confirms `txid`. `None` when the transaction is not
+    /// confirmed in the chain the monitor knows right now, or its block is no longer available.
+    fn get_confirming_block(
+        &self,
+        txid: Txid,
+    ) -> Result<Option<FullBlock>, BitcoinCoordinatorError> {
+        match self.get_transaction(txid)? {
+            TransactionStatus::Confirmed {
+                block_height,
+                block_hash,
+                ..
+            } => self.get_block(block_height, &block_hash),
+            _ => Ok(None),
+        }
+    }
+
+    /// Returns unacknowledged monitor and coordinator news. `max_keys` limits the monitor news to the first
+    /// `max_keys` transactions and block heights, `None` returns all of it.
+    fn get_news(&self, max_keys: Option<usize>) -> Result<News, BitcoinCoordinatorError>;
 
     /// Acknowledges a news item so it is not returned again.
     fn ack_news(&self, news: AckNews) -> Result<(), BitcoinCoordinatorError>;
 
     /// Registers data to be monitored without scheduling a dispatch.
-    fn monitor(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError>;
+    fn monitor(
+        &self,
+        targets: &[MonitorTarget],
+        context: String,
+        confirmation_trigger: Option<u32>,
+    ) -> Result<(), BitcoinCoordinatorError>;
 }
 
 /// Adapter: the real coordinator satisfies the port by delegating to its
@@ -133,8 +166,12 @@ impl BitcoinCoordinatorApi for BitcoinCoordinator {
         )
     }
 
-    fn cancel(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError> {
-        BitcoinCoordinator::cancel(self, data)
+    fn cancel(
+        &self,
+        targets: &[MonitorTarget],
+        context: &str,
+    ) -> Result<(), BitcoinCoordinatorError> {
+        BitcoinCoordinator::cancel(self, targets, context)
     }
 
     fn add_funding(&self, utxo: Utxo) -> Result<(), BitcoinCoordinatorError> {
@@ -145,15 +182,28 @@ impl BitcoinCoordinatorApi for BitcoinCoordinator {
         BitcoinCoordinator::get_transaction(self, txid)
     }
 
-    fn get_news(&self) -> Result<News, BitcoinCoordinatorError> {
-        BitcoinCoordinator::get_news(self)
+    fn get_block(
+        &self,
+        height: u32,
+        hash: &BlockHash,
+    ) -> Result<Option<FullBlock>, BitcoinCoordinatorError> {
+        BitcoinCoordinator::get_block(self, height, hash)
+    }
+
+    fn get_news(&self, max_keys: Option<usize>) -> Result<News, BitcoinCoordinatorError> {
+        BitcoinCoordinator::get_news(self, max_keys)
     }
 
     fn ack_news(&self, news: AckNews) -> Result<(), BitcoinCoordinatorError> {
         BitcoinCoordinator::ack_news(self, news)
     }
 
-    fn monitor(&self, data: TypesToMonitor) -> Result<(), BitcoinCoordinatorError> {
-        BitcoinCoordinator::monitor(self, data)
+    fn monitor(
+        &self,
+        targets: &[MonitorTarget],
+        context: String,
+        confirmation_trigger: Option<u32>,
+    ) -> Result<(), BitcoinCoordinatorError> {
+        BitcoinCoordinator::monitor(self, targets, context, confirmation_trigger)
     }
 }

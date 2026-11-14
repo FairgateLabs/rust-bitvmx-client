@@ -7,6 +7,7 @@ use bitvmx_broker::{
     rpc::{config::BrokerSettings, tls_helper::Cert},
 };
 use bitvmx_settings::settings;
+use bitvmx_transaction_monitor::config::settings::DEFAULT_FINALITY;
 use bitvmx_wallet::wallet::config::WalletConfig;
 use key_manager::config::KeyManagerConfig;
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,14 @@ impl Config {
 
     pub fn comms_key(&self) -> &str {
         self.comms.priv_key.as_str()
+    }
+
+    /// The monitor's finality from the yaml, or the monitor's own default when the yaml leaves it out.
+    pub fn finality(&self) -> u32 {
+        self.coordinator_settings
+            .as_ref()
+            .and_then(|settings| settings.monitor.finality)
+            .unwrap_or(DEFAULT_FINALITY)
     }
 }
 

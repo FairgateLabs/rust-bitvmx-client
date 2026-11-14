@@ -1,8 +1,8 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
-use bitcoin::{hashes::Hash, PublicKey, Sequence, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin::{hashes::Hash, OutPoint, PublicKey, Sequence, Transaction, Txid};
+use bitcoin_coordinator::{MonitorTarget, TransactionStatus};
 use bitcoin_script_stack::stack::StackTracker;
 use console::style;
 use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
@@ -302,12 +302,12 @@ impl ProtocolHandler for SlotProtocol {
                 for i in 0..total_operators - 1 {
                     info!("Subscribe to vout {}", i + 2);
                     program_context.bitcoin_coordinator.monitor(
-                        bitcoin_coordinator::TypesToMonitor::SpendingUTXOTransaction(
+                        &[MonitorTarget::SpendingUtxo(OutPoint {
                             txid,
-                            i + 2, // the first stop is at pos 2
-                            Context::ProgramId(self.ctx.id).to_string()?,
-                            self.requested_confirmations(program_context),
-                        ),
+                            vout: i + 2, // the first stop is at pos 2
+                        })],
+                        Context::ProgramId(self.ctx.id).to_string()?,
+                        self.requested_confirmations(program_context),
                     )?;
                 }
 
@@ -452,12 +452,17 @@ impl ProtocolHandler for SlotProtocol {
                 &ClaimGate::tx_success(&claim_name(operator as usize)),
                 vec![1.into()],
             )?;
+            let TransactionStatus::Confirmed { block_height, .. } = tx_status else {
+                return Err(BitVMXError::InvalidTransactionStatus(format!(
+                    "Transaction {tx_id} is not confirmed"
+                )));
+            };
             let speedup_data = self.get_speedup_data_from_tx(&tx, program_context, None)?;
             program_context.bitcoin_coordinator.dispatch(
                 tx,
                 Some(speedup_data),
                 Context::ProgramId(self.ctx.id).to_string()?,
-                Some(tx_status.clone().block_info.unwrap().height + timelock_blocks),
+                Some(block_height + timelock_blocks),
                 self.requested_confirmations(program_context),
             )?;
         }

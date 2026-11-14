@@ -221,7 +221,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Advance funds protocol received news of transaction: {}, txid: {} with {} confirmations",
-            tx_name, tx_id, tx_status.confirmations
+            tx_name, tx_id, tx_status.confirmations()
         );
 
         if tx_name == ADVANCE_FUNDS_TX {
@@ -240,7 +240,16 @@ impl ProtocolHandler for AdvanceFundsProtocol {
                 )?;
 
                 // In the first reimbursement delay one block to ensure the initial deposit is dispatched
-                block_height = Some(tx_status.block_info.as_ref().unwrap().height + 1);
+                let TransactionStatus::Confirmed {
+                    block_height: tx_height,
+                    ..
+                } = tx_status
+                else {
+                    return Err(BitVMXError::InvalidTransactionStatus(format!(
+                        "Transaction {tx_id} is not confirmed"
+                    )));
+                };
+                block_height = Some(tx_height + 1);
             }
 
             let dispute_protocol_id =
@@ -601,10 +610,8 @@ impl AdvanceFundsProtocol {
         context: &ProgramContext<BC>,
         txid: Txid,
     ) -> Result<(), BitVMXError> {
-        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
-
-        let proof = match tx_info {
-            Ok(utx) => Some(get_spv_proof(txid, utx.block_info.unwrap())?),
+        let proof = match context.bitcoin_coordinator.get_confirming_block(txid) {
+            Ok(block) => Some(get_spv_proof(txid, block.unwrap())?),
             Err(e) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",
