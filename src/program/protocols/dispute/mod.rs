@@ -123,6 +123,26 @@ const STATE_HASH_NIBBLES: u32 = 40;
 /// Substring identifying a first-search selection digit variable. Deliberately
 /// does not match the second search's `_selection_bits2_` variables.
 const SELECTION_BITS_INFIX: &str = "_selection_bits_";
+/// Substring identifying a selection digit variable of *either* search.
+///
+/// The second search names its digits `verifier_selection_bits2_{i}`, which
+/// [`SELECTION_BITS_INFIX`] deliberately excludes. Anything that has to cover
+/// both searches -- notably the set of keys a leaf verifies -- must use this
+/// one instead, or the leaf is built committing to fewer values than its
+/// reverse/strip scripts consume, and the spend fails on stack size.
+const ANY_SELECTION_BITS_INFIX: &str = "_selection_bits";
+
+/// A value the prover commits to in a search message: everything it signs that
+/// is not a selection digit. Keyed to the prover.
+fn is_prover_value(name: &str) -> bool {
+    name.starts_with("prover") && !name.contains(SELECTION_BITS_INFIX)
+}
+
+/// A selection digit of either search. Keyed to whichever party owns it, which
+/// the name carries, because the full-duplex mode alternates the selector.
+fn is_selection_digit(name: &str) -> bool {
+    name.contains(ANY_SELECTION_BITS_INFIX)
+}
 
 pub static PROVER_CHALLENGE_STEP1: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
 
@@ -423,7 +443,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 // which knows whose turn each round is. Under the full-duplex
                 // mode some of them are the prover's, so they would be
                 // generated twice if claimed here as well.
-                if name.starts_with("prover") && !name.contains(SELECTION_BITS_INFIX) {
+                if is_prover_value(name) {
                     let key = program_context
                         .key_manager
                         .next_winternitz(*size, WinternitzType::HASH160)?;
@@ -1569,7 +1589,7 @@ impl DisputeResolutionProtocol {
 
         let vars_names = vars
             .iter()
-            .filter(|(name, _)| name.starts_with("prover") && !name.contains(SELECTION_BITS_INFIX))
+            .filter(|(name, _)| is_prover_value(name))
             .map(|(name, _)| name.as_str())
             .collect::<Vec<&str>>();
 
@@ -1581,7 +1601,7 @@ impl DisputeResolutionProtocol {
 
         names_and_keys.extend(
             vars.iter()
-                .filter(|(name, _)| name.contains(SELECTION_BITS_INFIX))
+                .filter(|(name, _)| is_selection_digit(name))
                 .map(|(name, _)| {
                     // In the full-duplex mode the digits alternate between the
                     // parties, so the owning key is read from the variable name
@@ -1927,6 +1947,74 @@ impl DisputeResolutionProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `execute_script` splits a search's variables into two groups: the
+    /// prover's committed values, keyed to the prover, and the selection
+    /// digits, keyed to whoever owns each digit. The leaf it builds verifies
+    /// exactly the union, while the reverse/strip scripts it pairs with that
+    /// leaf are laid out over *every* variable in the list.
+    ///
+    /// So the two groups have to partition the list. If one slips through
+    /// neither filter the leaf commits to fewer values than its scripts
+    /// consume, and the only symptom is a `mandatory-script-verify-flag-failed
+    /// (Operation not valid with the current stack size)` when the speedup that
+    /// publishes the data is relayed -- at which point the parent transaction
+    /// is already on-chain-bound and unminable, since protocol transactions are
+    /// built below `blockmintxfee` and depend on that speedup to be mined.
+    ///
+    /// Regression: the second search names its digits `_selection_bits2_`, and
+    /// a filter written with the first search's `_selection_bits_` infix
+    /// silently dropped all four of them.
+    fn assert_partitions(label: &str, vars: &[(String, usize)]) {
+        for (name, _) in vars {
+            let prover_value = is_prover_value(name);
+            let selection_digit = is_selection_digit(name);
+            assert!(
+                prover_value != selection_digit,
+                "{label}: variable {name:?} is claimed by {} filter(s), expected exactly 1",
+                prover_value as u8 + selection_digit as u8
+            );
+        }
+    }
+
+    #[test]
+    fn search_variables_partition_into_prover_values_and_selection_digits() {
+        for rounds in 1..=8u8 {
+            for mode in [SearchMode::Asymmetric, SearchMode::FullDuplex] {
+                assert_partitions(
+                    &format!("trace rounds={rounds} mode={mode:?}"),
+                    &build_trace_vars(rounds, mode),
+                );
+                assert_partitions(
+                    &format!("tk2 rounds={rounds}"),
+                    &build_translation_keys_2nd_nary(rounds),
+                );
+            }
+        }
+    }
+
+    /// The second search's digits exist and are owned by the verifier, so the
+    /// digit filter must actually reach them.
+    #[test]
+    fn second_search_selection_digits_are_matched() {
+        let vars = build_translation_keys_2nd_nary(4);
+        let digits: Vec<&str> = vars
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .filter(|n| is_selection_digit(n))
+            .collect();
+        assert_eq!(
+            digits,
+            vec![
+                "verifier_selection_bits2_1",
+                "verifier_selection_bits2_2",
+                "verifier_selection_bits2_3",
+                "verifier_selection_bits2_4",
+            ]
+        );
+        // The narrow infix is the one that must not match them.
+        assert!(!digits.iter().any(|n| n.contains(SELECTION_BITS_INFIX)));
+    }
 
     /// Pushes a full-duplex stage witness in declaration order -- the selection
     /// digit followed by the sender's dissection -- and runs the validation
