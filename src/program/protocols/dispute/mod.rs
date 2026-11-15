@@ -13,6 +13,7 @@ use std::{
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script_riscv::riscv::{
+    challenges::VERIFIER_RESIGNED_PREFIX,
     instruction_mapping::create_verification_script_mapping,
     script_utils::{
         is_lower_than, var_to_decisions_in_altstack, verify_challenge_step, StackTables,
@@ -171,6 +172,23 @@ fn stage_hash_var(mode: SearchMode, rounds: u8, stage: u8, index: u8) -> String 
         stage,
         index
     )
+}
+
+/// Name of a second signature produced under the positional key of
+/// [`stage_hash_var`].
+///
+/// A party is bound to what it signed under a one-time key only if signing a
+/// second message is punishable, and punishing it means holding both
+/// signatures at once. They need distinct variable names to be held at once,
+/// and the same key to be the same equivocation, so this name shares a key
+/// with the stage variable rather than having one of its own.
+///
+/// Only the verifier's dissections need it. The prover never supplies a
+/// signature under its own positional key inside a leaf -- the verifier
+/// presents the prover's on-chain signatures instead -- so a prover
+/// positional key is already bound by having no other way to be used.
+fn resigned_stage_hash_var(stage: u8, index: u8) -> String {
+    format!("{}{}_{}", VERIFIER_RESIGNED_PREFIX, stage, index)
 }
 
 fn build_trace_vars(rounds: u8, mode: SearchMode) -> Vec<(String, usize)> {
@@ -506,7 +524,23 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                         let key = program_context
                             .key_manager
                             .next_winternitz(20, WinternitzType::HASH160)?;
-                        keys.push((stage_hash_var(mode, rounds, i, h), key.into()));
+                        keys.push((stage_hash_var(mode, rounds, i, h), key.clone().into()));
+                        // The same one-time key under a second name, so that a
+                        // verifier which signs its dissection a second time --
+                        // which the resign leaf lets it do, and which no leaf
+                        // can prevent -- can be shown to have signed twice.
+                        // Asymmetric never reaches here for the verifier,
+                        // since there the prover dissects every stage.
+                        if !is_prover {
+                            let resigned = resigned_stage_hash_var(i, h);
+                            info!(
+                                "Positional key {} also bound to {}, so signing \
+                                 it twice is provable",
+                                stage_hash_var(mode, rounds, i, h),
+                                resigned
+                            );
+                            keys.push((resigned, key.into()));
+                        }
                     }
                     if is_prover {
                         let key2 = program_context
