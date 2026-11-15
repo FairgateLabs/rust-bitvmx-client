@@ -13,7 +13,7 @@ use std::{
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script_riscv::riscv::{
-    challenges::{verifier_equivocation_challenge, VERIFIER_RESIGNED_PREFIX},
+    challenges::{resigned_name_for, verifier_equivocation_challenge, VERIFIER_RESIGNED_PREFIX},
     instruction_mapping::create_verification_script_mapping,
     script_utils::{
         is_lower_than, var_to_decisions_in_altstack, verify_challenge_step, StackTables,
@@ -1373,6 +1373,53 @@ impl DisputeResolutionProtocol {
         );
 
         Ok((tx, speedup_data))
+    }
+
+    /// The leaf of [`VERIFIER_EQUIVOCATION`] proving the verifier signed one
+    /// of its dissection positions twice, if it did.
+    ///
+    /// Both names bind to one positional key, so holding a signature under
+    /// each is holding two under that key. The witness store only ever has
+    /// both when a second signature arrived over a different message, which
+    /// is the equivocation itself -- an honest verifier re-presents what it
+    /// stored, so the messages match and only the first name is filled.
+    ///
+    /// Leaves are laid out in the order they were built: verifier-dissected
+    /// stages in order, positions within a stage in order.
+    pub fn verifier_equivocation_leaf<BC: BitcoinCoordinatorApi>(
+        &self,
+        context: &ProgramContext<BC>,
+    ) -> Result<Option<u32>, BitVMXError> {
+        let program_def = self.get_program_definition(context)?.0;
+        let mode = program_def.search_mode();
+        if mode != SearchMode::FullDuplex {
+            return Ok(None);
+        }
+        let nary_def = program_def.nary_def();
+        let rounds = nary_def.total_rounds();
+
+        let mut leaf = 0u32;
+        for stage in 1..rounds + 1 {
+            if mode.dissector(rounds, stage) != Party::Verifier {
+                continue;
+            }
+            for h in 1..nary_def.hashes_for_round(stage) + 1 {
+                let published = stage_hash_var(mode, rounds, stage, h);
+                if let Some(companion) = resigned_name_for(&published) {
+                    let first = context.witness.get_witness(&self.ctx.id, &published)?;
+                    let second = context.witness.get_witness(&self.ctx.id, &companion)?;
+                    if first.is_some() && second.is_some() {
+                        warn!(
+                            "Verifier signed {} twice: punishing at leaf {}",
+                            published, leaf
+                        );
+                        return Ok(Some(leaf));
+                    }
+                }
+                leaf += 1;
+            }
+        }
+        Ok(None)
     }
 
     fn winternitz_check_extra_script<T: AsRef<str> + std::fmt::Debug>(

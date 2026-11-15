@@ -14,7 +14,8 @@ use crate::{
                 },
                 input_tx_name, program_input, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
                 COMMITMENT, EXECUTE, GET_HASHES_AND_STEP, INPUT_TX, POST_COMMITMENT,
-                PRE_COMMITMENT, START_CH, TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
+                PRE_COMMITMENT, START_CH, TK_2NARY, TRACE_VARS, VERIFIER_EQUIVOCATION,
+                VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::{timeout_input_tx, ProtocolHandler, WithClaimGateConfig},
             timeouts::{auto_dispatch_timeout, cancel_timeout, TxOwnershipTable},
@@ -516,6 +517,27 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                     }
 
                     CHALLENGE => {
+                        // The verifier has just spent a leaf that reads its own
+                        // commitment, so if it signed that position a second
+                        // time both signatures are now on chain. Punishing it
+                        // ends the dispute, so look before carrying the search
+                        // on.
+                        if drp.role() == ParticipantRole::Prover {
+                            if let Some(leaf) =
+                                drp.verifier_equivocation_leaf(program_context)?
+                            {
+                                let (tx, sp) = drp.get_tx_with_speedup_data(
+                                    program_context,
+                                    VERIFIER_EQUIVOCATION,
+                                    0,
+                                    leaf,
+                                    true,
+                                )?;
+                                drp.dispatch(program_context, tx, Some(sp), None)?;
+                                return Ok(());
+                            }
+                        }
+
                         let read_value_nary_search_leaf = program_context
                             .globals
                             .get_var_or_err(
