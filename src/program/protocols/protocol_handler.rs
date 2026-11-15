@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use bitcoin_script_riscv::riscv::challenges::resigned_name_for;
 use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -23,7 +24,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use storage_backend::error::StorageError;
 use storage_backend::storage::Storage;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::super::participant::{ParticipantKeyDeclaration, ParticipantKeys};
@@ -654,9 +655,40 @@ pub trait ProtocolHandler {
                 names[i],
                 hex::encode(&data[i].message_bytes())
             );
+            // A one-time key that already carries a signature over a
+            // different message has been used twice. That is not an update to
+            // overwrite -- it is the equivocation, and it is only provable
+            // while both signatures are held, so the second goes under the
+            // companion name the punishment leaf reads.
+            //
+            // Only a verifier's dissection positions have a companion name.
+            // They are the one place a party signs under its own positional
+            // key inside a leaf it spends, which is what makes a second
+            // signature reachable there and nowhere else.
+            let mut store_as = names[i].clone();
+            if let Some(companion) = resigned_name_for(&names[i]) {
+                let previous = program_context
+                    .witness
+                    .get_witness(&self.context().id, &names[i])?;
+                if let Some(previous) = previous {
+                    let differs = previous
+                        .winternitz()
+                        .map(|w| w.message_bytes() != data[i].message_bytes())
+                        .unwrap_or(false);
+                    if differs {
+                        warn!(
+                            "{} carries a second signature over a different \
+                             message: keeping it as {} so the pair can be \
+                             presented",
+                            names[i], companion
+                        );
+                        store_as = companion;
+                    }
+                }
+            }
             program_context.witness.set_witness(
                 &self.context().id,
-                &names[i],
+                &store_as,
                 WitnessTypes::Winternitz(data[i].clone()),
             )?;
         }
