@@ -1,6 +1,7 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
 use std::collections::HashMap;
 
+use super::{max_digit_for_round, stage_hash_var};
 use bitcoin::{PublicKey, ScriptBuf};
 use bitcoin_script_riscv::riscv::challenges::*;
 use bitcoin_script_stack::stack::StackTracker;
@@ -8,7 +9,6 @@ use bitvmx_cpu_definitions::{
     challenge::{ChallengeType, EquivocationKind},
     constants::CHUNK_SIZE,
 };
-use super::{max_digit_for_round, stage_hash_var};
 
 use emulator::{
     decision::nary_search::{NArySearchType, Party},
@@ -591,10 +591,14 @@ pub fn challenge_scripts<BC: BitcoinCoordinatorApi>(
                                 let entry_point = program.pc.get_address();
                                 entry_point_challenge(&mut stack, entry_point)
                             }
-                            "program_counter" => program_counter_challenge(&mut stack, program.memory_model),
+                            "program_counter" => {
+                                program_counter_challenge(&mut stack, program.memory_model)
+                            }
                             "halt" => halt_challenge(&mut stack),
                             "trace_hash" => trace_hash_challenge(&mut stack, program.memory_model),
-                            "trace_hash_zero" => trace_hash_zero_challenge(&mut stack, program.memory_model),
+                            "trace_hash_zero" => {
+                                trace_hash_zero_challenge(&mut stack, program.memory_model)
+                            }
                             "addresses_sections" => {
                                 let read_write_sections = &program.read_write_sections;
                                 let read_only_sections = &program.read_only_sections;

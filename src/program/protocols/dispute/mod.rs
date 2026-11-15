@@ -40,7 +40,7 @@ use protocol_builder::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     bitvmx::Context,
@@ -192,6 +192,39 @@ fn stage_hash_var(mode: SearchMode, rounds: u8, stage: u8, index: u8) -> String 
 /// positional key is already bound by having no other way to be used.
 fn resigned_stage_hash_var(stage: u8, index: u8) -> String {
     format!("{}{}_{}", VERIFIER_RESIGNED_PREFIX, stage, index)
+}
+
+/// Index of the [`VERIFIER_EQUIVOCATION`] leaf for the first verifier
+/// position `doubly_signed` reports as carrying two signatures.
+///
+/// Walks the positions in exactly the order the leaves were built --
+/// verifier-dissected stages ascending, positions within a stage ascending --
+/// because the leaf chosen has to be the leaf that hard-codes this position.
+/// An off-by-one here spends the wrong leaf and convicts nobody, with nothing
+/// to show for it on chain, so the walk is separated from the witness lookup
+/// to be testable on its own.
+fn equivocation_leaf_index(
+    mode: SearchMode,
+    nary_def: &NArySearchDefinition,
+    rounds: u8,
+    mut doubly_signed: impl FnMut(&str) -> bool,
+) -> Option<u32> {
+    if mode != SearchMode::FullDuplex {
+        return None;
+    }
+    let mut leaf = 0u32;
+    for stage in 1..rounds + 1 {
+        if mode.dissector(rounds, stage) != Party::Verifier {
+            continue;
+        }
+        for h in 1..nary_def.hashes_for_round(stage) + 1 {
+            if doubly_signed(&stage_hash_var(mode, rounds, stage, h)) {
+                return Some(leaf);
+            }
+            leaf += 1;
+        }
+    }
+    None
 }
 
 fn build_trace_vars(rounds: u8, mode: SearchMode) -> Vec<(String, usize)> {
@@ -630,6 +663,20 @@ impl ProtocolHandler for DisputeResolutionProtocol {
 
         let config = DisputeConfiguration::load(&self.ctx.id, &context.globals)?;
         config.fail_force_config.map(|fail_force_config| {
+            info!(
+                "Fail/force config at build: verifier_resigns_positional={}",
+                fail_force_config.verifier_resigns_positional
+            );
+            if fail_force_config.verifier_resigns_positional {
+                match context.globals.set_var(
+                    &self.ctx.id,
+                    "fail_resign_positional",
+                    VariableTypes::Bool(true),
+                ) {
+                    Ok(_) => info!("Standing in for an adversary: armed"),
+                    Err(e) => error!("Could not arm the adversary: {e}"),
+                }
+            }
             fail_force_config.fail_input_tx.map(|fail_input_tx| {
                 context.globals.set_var(
                     &self.ctx.id,
@@ -904,9 +951,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             // only its selection digit and the hashes travel as data.  That
             // is the whole of why publishing admits a wide dissection.
             if !publication.is_published() {
-                vars.extend(
-                    (1..hashes + 1).map(|h| stage_hash_var(search_mode, rounds, stage, h)),
-                );
+                vars.extend((1..hashes + 1).map(|h| stage_hash_var(search_mode, rounds, stage, h)));
             }
 
             let extra = if carries_selection {
@@ -916,7 +961,11 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 // not a power of two.
                 let max_digit = max_digit_for_round(&nary_def, stage - 1);
                 // Only what the witness actually carries gets reversed.
-                let committed_hashes = if publication.is_published() { 0 } else { hashes };
+                let committed_hashes = if publication.is_published() {
+                    0
+                } else {
+                    hashes
+                };
                 Some(vec![
                     Self::get_reverse_script(
                         SELECTION_BITS_NIBBLES + committed_hashes as u32 * STATE_HASH_NIBBLES,
@@ -987,9 +1036,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             if search_mode == SearchMode::Asymmetric {
                 let next = format!("NARY_VERIFIER_{}", stage);
                 let validate_selection_bits_script =
-                    Self::get_validate_selection_bits_script(max_digit_for_round(
-                        &nary_def, stage,
-                    ));
+                    Self::get_validate_selection_bits_script(max_digit_for_round(&nary_def, stage));
 
                 self.add_connection_with_scripts(
                     context,
@@ -1097,8 +1144,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             // continuing the search down the path below.
             let mut connection_leaf = scripts::check_signature(aggregated, SignMode::Aggregate);
             connection_leaf.set_assert_leaf_id(0);
-            let connector =
-                OutputType::taproot(speedup_dust, aggregated, &vec![connection_leaf])?;
+            let connector = OutputType::taproot(speedup_dust, aggregated, &vec![connection_leaf])?;
             protocol.add_connection(
                 &format!("{}__{}", CHALLENGE, VERIFIER_EQUIVOCATION),
                 CHALLENGE,
@@ -1398,28 +1444,37 @@ impl DisputeResolutionProtocol {
         let nary_def = program_def.nary_def();
         let rounds = nary_def.total_rounds();
 
-        let mut leaf = 0u32;
-        for stage in 1..rounds + 1 {
-            if mode.dissector(rounds, stage) != Party::Verifier {
-                continue;
-            }
-            for h in 1..nary_def.hashes_for_round(stage) + 1 {
-                let published = stage_hash_var(mode, rounds, stage, h);
-                if let Some(companion) = resigned_name_for(&published) {
-                    let first = context.witness.get_witness(&self.ctx.id, &published)?;
-                    let second = context.witness.get_witness(&self.ctx.id, &companion)?;
-                    if first.is_some() && second.is_some() {
-                        warn!(
-                            "Verifier signed {} twice: punishing at leaf {}",
-                            published, leaf
-                        );
-                        return Ok(Some(leaf));
-                    }
+        let mut failed = None;
+        let found = equivocation_leaf_index(mode, &nary_def, rounds, |published| {
+            let companion = match resigned_name_for(published) {
+                Some(c) => c,
+                None => return false,
+            };
+            let both = (|| -> Result<bool, BitVMXError> {
+                Ok(context
+                    .witness
+                    .get_witness(&self.ctx.id, published)?
+                    .is_some()
+                    && context
+                        .witness
+                        .get_witness(&self.ctx.id, &companion)?
+                        .is_some())
+            })();
+            match both {
+                Ok(b) => b,
+                Err(e) => {
+                    failed = Some(e);
+                    false
                 }
-                leaf += 1;
             }
+        });
+        if let Some(e) = failed {
+            return Err(e);
         }
-        Ok(None)
+        if let Some(leaf) = found {
+            warn!("Verifier signed a dissection position twice: punishing at leaf {leaf}");
+        }
+        Ok(found)
     }
 
     fn winternitz_check_extra_script<T: AsRef<str> + std::fmt::Debug>(
@@ -1954,8 +2009,6 @@ impl DisputeResolutionProtocol {
         stack.drop(selection_bits);
     }
 
-
-
     /// The two ways a publication slot may be spent.
     ///
     /// Leaf 0 is the publisher's alone, under the per-stage key: it is
@@ -2100,6 +2153,71 @@ impl DisputeResolutionProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The leaf index has to match the order the leaves were built, because
+    /// each leaf hard-codes the position it convicts. Spending the wrong one
+    /// fails the round/index check inside the script and convicts nobody --
+    /// an outcome indistinguishable, from the chain, from not having tried.
+    #[test]
+    fn the_punishment_leaf_index_follows_the_build_order() {
+        let nary = NArySearchDefinition::new(2048, 8);
+        let rounds = nary.total_rounds();
+        let mode = SearchMode::FullDuplex;
+
+        // Rebuild the order independently of the function under test.
+        let mut expected: Vec<String> = vec![];
+        for stage in 1..rounds + 1 {
+            if mode.dissector(rounds, stage) == Party::Verifier {
+                for h in 1..nary.hashes_for_round(stage) + 1 {
+                    expected.push(stage_hash_var(mode, rounds, stage, h));
+                }
+            }
+        }
+        assert!(!expected.is_empty(), "the verifier must dissect something");
+
+        for (index, name) in expected.iter().enumerate() {
+            let found = equivocation_leaf_index(mode, &nary, rounds, |p| p == name);
+            assert_eq!(
+                found,
+                Some(index as u32),
+                "{name} should be punished at leaf {index}"
+            );
+        }
+    }
+
+    /// Nothing doubly signed is the honest case, and it must not spend.
+    #[test]
+    fn no_punishment_when_nothing_was_signed_twice() {
+        let nary = NArySearchDefinition::new(2048, 8);
+        let rounds = nary.total_rounds();
+        assert_eq!(
+            equivocation_leaf_index(SearchMode::FullDuplex, &nary, rounds, |_| false),
+            None
+        );
+    }
+
+    /// The asymmetric search has no verifier dissections, so the leaf does not
+    /// exist and must never be reached even if something claims a pair.
+    #[test]
+    fn the_asymmetric_search_has_no_punishment_leaf() {
+        let nary = NArySearchDefinition::new(2048, 8);
+        let rounds = nary.total_rounds();
+        assert_eq!(
+            equivocation_leaf_index(SearchMode::Asymmetric, &nary, rounds, |_| true),
+            None
+        );
+    }
+
+    /// Only the verifier's own positions can be punished here: the prover's
+    /// are bound by never being supplied inside a leaf it spends.
+    #[test]
+    fn prover_positions_are_not_punishable_by_this_leaf() {
+        let nary = NArySearchDefinition::new(2048, 8);
+        let rounds = nary.total_rounds();
+        let mode = SearchMode::FullDuplex;
+        let found = equivocation_leaf_index(mode, &nary, rounds, |p| p.starts_with("prover_"));
+        assert_eq!(found, None, "a prover position has no leaf in this output");
+    }
 
     /// `execute_script` splits a search's variables into two groups: the
     /// prover's committed values, keyed to the prover, and the selection
@@ -2405,9 +2523,14 @@ mod tests {
     /// different places inside the two nibbles.
     #[test]
     fn the_bound_lands_correctly_for_every_admissible_branching_factor() {
-        for b in [11u16, 12, 13, 23, 24, 25, 47, 48, 49, 95, 96, 97, 191, 192, 193] {
+        for b in [
+            11u16, 12, 13, 23, 24, 25, 47, 48, 49, 95, 96, 97, 191, 192, 193,
+        ] {
             let max = (b - 1) as u8;
-            assert!(validate(0, max, max >> 4, max & 0x0f), "b = {b}: largest digit");
+            assert!(
+                validate(0, max, max >> 4, max & 0x0f),
+                "b = {b}: largest digit"
+            );
             assert!(
                 !validate(0, max, b as u8 >> 4, b as u8 & 0x0f),
                 "b = {b}: b itself is not a digit"
@@ -2425,7 +2548,10 @@ mod tests {
             // The narrow path is the one that checks a zero high nibble,
             // and it is selected by the bound alone.
             assert!(validate(0, max, 0, max));
-            assert!(!validate(0, max, 1, 0), "max {max}: high nibble must be zero");
+            assert!(
+                !validate(0, max, 1, 0),
+                "max {max}: high nibble must be zero"
+            );
             assert!(!before.is_empty());
         }
     }
@@ -2449,7 +2575,8 @@ mod tests {
 
         assert_eq!(leaves.len(), 2, "a spend and a timeout, and nothing else");
         assert_ne!(
-            leaves[0].get_script(), leaves[1].get_script(),
+            leaves[0].get_script(),
+            leaves[1].get_script(),
             "the two ways out must differ"
         );
         // The timeout leaf carries the challenge period; the publish leaf
@@ -2471,15 +2598,16 @@ mod tests {
         let leaves =
             DisputeResolutionProtocol::publication_slot_leaves(&publisher, &aggregated, 144);
 
-        let publish = DisputeResolutionProtocol::publication_slot_leaves(
-            &publisher, &aggregated, 999,
-        );
+        let publish =
+            DisputeResolutionProtocol::publication_slot_leaves(&publisher, &aggregated, 999);
         assert_eq!(
-            leaves[0].get_script(), publish[0].get_script(),
+            leaves[0].get_script(),
+            publish[0].get_script(),
             "the publish leaf does not depend on the challenge period"
         );
         assert_ne!(
-            leaves[1].get_script(), publish[1].get_script(),
+            leaves[1].get_script(),
+            publish[1].get_script(),
             "but the timeout leaf does"
         );
     }
@@ -2498,7 +2626,8 @@ mod tests {
             DisputeResolutionProtocol::publication_slot_leaves(&a_key(0x33), &aggregated, 144);
         assert_ne!(first[0].get_script(), second[0].get_script());
         assert_eq!(
-            first[1].get_script(), second[1].get_script(),
+            first[1].get_script(),
+            second[1].get_script(),
             "only the publish leaf moves; the timeout is the aggregate's"
         );
     }
@@ -2511,8 +2640,7 @@ mod tests {
             assert_eq!(missing_data_tx(stage), format!("MISSING_DATA_{stage}"));
         }
         // Distinct across stages, which is what makes them per-slot.
-        let keys: std::collections::HashSet<_> =
-            (1u8..=5).map(publication_key_var).collect();
+        let keys: std::collections::HashSet<_> = (1u8..=5).map(publication_key_var).collect();
         assert_eq!(keys.len(), 5);
     }
 }

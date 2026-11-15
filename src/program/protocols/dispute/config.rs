@@ -119,6 +119,11 @@ pub struct ConfigResult {
 pub struct ForceFailConfiguration {
     pub prover_force_second_nary: bool,
     pub fail_input_tx: Option<String>,
+    /// Stand in for an adversary that signs one of its dissection positions a
+    /// second time, which an honest client refuses to do. Without it the
+    /// punishment for that act can only be shown to build, never to bite.
+    #[serde(default)]
+    pub verifier_resigns_positional: bool,
     pub main: ConfigResult,
     pub read: ConfigResult, // for read challenge (2nd n-ary search)
 }
@@ -139,6 +144,7 @@ impl Default for ForceFailConfiguration {
         Self {
             prover_force_second_nary: false,
             fail_input_tx: None,
+            verifier_resigns_positional: false,
             main: ConfigResult::default(),
             read: ConfigResult::default(),
         }

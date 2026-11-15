@@ -289,8 +289,7 @@ pub struct TestHelper {
 /// `BITVMX_EXTERNAL_BITCOIND` asks for the node alone, so a local regtest
 /// daemon can be used at the speed the local path runs at.
 pub fn uses_external_bitcoind() -> bool {
-    std::env::var("GITHUB_ACTIONS").is_ok()
-        || std::env::var("BITVMX_EXTERNAL_BITCOIND").is_ok()
+    std::env::var("GITHUB_ACTIONS").is_ok() || std::env::var("BITVMX_EXTERNAL_BITCOIND").is_ok()
 }
 
 impl TestHelper {
@@ -449,7 +448,11 @@ impl TestHelper {
                 let mult: u64 = env::var("BITVMX_AUTOMINE_MULT")
                     .ok()
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(if env::var("GITHUB_ACTIONS").is_ok() { 5 } else { 1 });
+                    .unwrap_or(if env::var("GITHUB_ACTIONS").is_ok() {
+                        5
+                    } else {
+                        1
+                    });
                 let interval = automine_interval * mult;
 
                 // if 500 blocks mined, stop

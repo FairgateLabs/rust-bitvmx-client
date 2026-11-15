@@ -14,7 +14,7 @@ use bitvmx_client::program::protocols::protocol_handler::action_wins;
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::IncomingBitVMXApiMessages;
 use bitvmx_wallet::wallet::Destination;
-use common::dispute::{prepare_dispute, ForcedChallenges};
+use common::dispute::{full_duplex_program, prepare_dispute, ForcedChallenges};
 use common::helper::Mode;
 use common::helper::TestHelper;
 use common::init_utxo_new;
@@ -487,6 +487,7 @@ fn test_const_fail_input() -> Result<()> {
     let fail_config = ForceFailConfiguration {
         prover_force_second_nary: false,
         fail_input_tx: None,
+        verifier_resigns_positional: false,
         main: main_config,
         read: ConfigResult::default(),
     };
@@ -1001,6 +1002,35 @@ fn challenge_verifier_out_of_bounds_bits() -> Result<()> {
 #[test]
 fn challenge_verifier_out_of_bounds_bits_in_challenge() -> Result<()> {
     test_challenge(ForcedChallenges::VerifierOutOfBoundsBitsInChallenge)
+}
+
+/// An honest prover against a verifier told to sign one of its own dissection
+/// positions a second time, inside the challenge leaf that reads it.
+///
+/// With the key manager's `wots_idx_check` feature on -- it is on by default
+/// -- the verifier never manages it: the key manager tracks spent one-time
+/// indices and refuses the second signature, after `protocol_handler` has
+/// already refused to ask for one. So what this exercises is the honest
+/// client being unable to perform the attack at all, which is worth keeping:
+/// it is the reason the attack needs an adversary that builds its own client.
+///
+/// It is NOT evidence that the punishment fires, and must not be read as
+/// such. Build the key manager without default features and the same test
+/// becomes that, because the verifier then really does sign twice. The
+/// punishment path itself is covered without a dispute, by
+/// `the_punishment_leaf_index_follows_the_build_order` here and
+/// `two_values_under_one_positional_key_are_punishable` in the script crate.
+#[ignore]
+#[test]
+fn full_duplex_verifier_cannot_sign_twice_under_the_index_guard() -> Result<()> {
+    test_all_aux(
+        Mode::Regtest,
+        Some(full_duplex_program()?),
+        vec![InputType::hello_world()],
+        Some(ForcedChallenges::VerifierResignsPositional),
+        None,
+    )?;
+    Ok(())
 }
 
 #[ignore]

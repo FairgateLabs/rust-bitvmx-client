@@ -523,9 +523,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
                         // ends the dispute, so look before carrying the search
                         // on.
                         if drp.role() == ParticipantRole::Prover {
-                            if let Some(leaf) =
-                                drp.verifier_equivocation_leaf(program_context)?
-                            {
+                            if let Some(leaf) = drp.verifier_equivocation_leaf(program_context)? {
                                 let (tx, sp) = drp.get_tx_with_speedup_data(
                                     program_context,
                                     VERIFIER_EQUIVOCATION,

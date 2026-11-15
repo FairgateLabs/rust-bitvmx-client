@@ -810,7 +810,11 @@ mod gadget_tests {
 
     fn a_key(byte: u8) -> PublicKey {
         let secp = Secp256k1::new();
-        PublicKey::new(SecretKey::from_slice(&[byte; 32]).unwrap().public_key(&secp))
+        PublicKey::new(
+            SecretKey::from_slice(&[byte; 32])
+                .unwrap()
+                .public_key(&secp),
+        )
     }
 
     /// The verdict leaf under the gadget is a bare CHECKSIG: one key,

@@ -35,65 +35,63 @@ fn handle_final_trace<BC: BitcoinCoordinatorApi>(
     context: &ProgramContext<BC>,
     prover_final_trace: &ProverFinalTraceType,
 ) -> Result<(), BitVMXError> {
+    info!("Final trace: {:?}", prover_final_trace);
+    if let ProverFinalTraceType::ChallengeStep = prover_final_trace {
+        info!("Prover will challenge the selected step");
+        let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, 0, true)?;
 
-            info!("Final trace: {:?}", prover_final_trace);
-            if let ProverFinalTraceType::ChallengeStep = prover_final_trace {
-                info!("Prover will challenge the selected step");
-                let (tx, sp) = drp.get_tx_with_speedup_data(context, EXECUTE, 0, 0, true)?;
+        drp.dispatch(context, tx, Some(sp), None)?;
+    } else {
+        let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
+            prover_final_trace.as_final_trace_with_hashes_and_step()?;
+        let mut inputs: Vec<InputPair> = vec![
+            ("prover_write_address", trace.trace_step.get_write().address).into(),
+            ("prover_write_value", trace.trace_step.get_write().value).into(),
+            ("prover_write_pc", trace.trace_step.get_pc().get_address()).into(),
+            ("prover_write_micro", trace.trace_step.get_pc().get_micro()).into(),
+            ("prover_mem_witness", trace.mem_witness.byte()).into(),
+            ("prover_read_1_address", trace.read_1.address).into(),
+            ("prover_read_1_value", trace.read_1.value).into(),
+            ("prover_read_1_last_step", trace.read_1.last_step).into(),
+            ("prover_read_2_address", trace.read_2.address).into(),
+            ("prover_read_2_value", trace.read_2.value).into(),
+            ("prover_read_2_last_step", trace.read_2.last_step).into(),
+            ("prover_read_pc_address", trace.read_pc.pc.get_address()).into(),
+            ("prover_read_pc_micro", trace.read_pc.pc.get_micro()).into(),
+            ("prover_read_pc_opcode", trace.read_pc.opcode).into(),
+            ("prover_step_number", trace.step_number).into(),
+        ];
+        if let Some(witness) = trace.witness {
+            inputs.push(("prover_witness", witness).into());
+        }
+        inputs.extend([
+            ("prover_step_hash_tk", resigned_step_hash.clone()).into(),
+            ("prover_next_hash_tk", resigned_next_hash.clone()).into(),
+            ("prover_conflict_step_tk", conflict_step).into(),
+        ]);
+        set_inputs(id, context, inputs)?;
+        let instruction = get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
+            .ok_or_else(|| {
+            BitVMXError::InstructionNotFound(format!(
+                "{}_{}",
+                trace.read_pc.opcode,
+                trace.read_pc.pc.get_micro()
+            ))
+        })?;
+        let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
+        let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
+        instruction_names.sort();
+        let index = instruction_names
+            .iter()
+            .position(|i| i == &instruction)
+            .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
+        // first index leaf is the challenge_step, we have to skip it
+        let (tx, sp) =
+            drp.get_tx_with_speedup_data(context, EXECUTE, 0, (index + 1) as u32, true)?;
 
-                drp.dispatch(context, tx, Some(sp), None)?;
-            } else {
-                let (trace, resigned_step_hash, resigned_next_hash, conflict_step) =
-                    prover_final_trace.as_final_trace_with_hashes_and_step()?;
-                let mut inputs: Vec<InputPair> = vec![
-                    ("prover_write_address", trace.trace_step.get_write().address).into(),
-                    ("prover_write_value", trace.trace_step.get_write().value).into(),
-                    ("prover_write_pc", trace.trace_step.get_pc().get_address()).into(),
-                    ("prover_write_micro", trace.trace_step.get_pc().get_micro()).into(),
-                    ("prover_mem_witness", trace.mem_witness.byte()).into(),
-                    ("prover_read_1_address", trace.read_1.address).into(),
-                    ("prover_read_1_value", trace.read_1.value).into(),
-                    ("prover_read_1_last_step", trace.read_1.last_step).into(),
-                    ("prover_read_2_address", trace.read_2.address).into(),
-                    ("prover_read_2_value", trace.read_2.value).into(),
-                    ("prover_read_2_last_step", trace.read_2.last_step).into(),
-                    ("prover_read_pc_address", trace.read_pc.pc.get_address()).into(),
-                    ("prover_read_pc_micro", trace.read_pc.pc.get_micro()).into(),
-                    ("prover_read_pc_opcode", trace.read_pc.opcode).into(),
-                    ("prover_step_number", trace.step_number).into(),
-                ];
-                if let Some(witness) = trace.witness {
-                    inputs.push(("prover_witness", witness).into());
-                }
-                inputs.extend([
-                    ("prover_step_hash_tk", resigned_step_hash.clone()).into(),
-                    ("prover_next_hash_tk", resigned_next_hash.clone()).into(),
-                    ("prover_conflict_step_tk", conflict_step).into(),
-                ]);
-                set_inputs(id, context, inputs)?;
-                let instruction =
-                    get_key_from_opcode(trace.read_pc.opcode, trace.read_pc.pc.get_micro())
-                        .ok_or_else(|| {
-                            BitVMXError::InstructionNotFound(format!(
-                                "{}_{}",
-                                trace.read_pc.opcode,
-                                trace.read_pc.pc.get_micro()
-                            ))
-                        })?;
-                let mapping = create_verification_script_mapping(REGISTERS_BASE_ADDRESS);
-                let mut instruction_names: Vec<_> = mapping.keys().cloned().collect();
-                instruction_names.sort();
-                let index = instruction_names
-                    .iter()
-                    .position(|i| i == &instruction)
-                    .ok_or_else(|| BitVMXError::InstructionNotFound(instruction.to_string()))?;
-                // first index leaf is the challenge_step, we have to skip it
-                let (tx, sp) =
-                    drp.get_tx_with_speedup_data(context, EXECUTE, 0, (index + 1) as u32, true)?;
+        drp.dispatch(context, tx, Some(sp), None)?;
+    }
 
-                drp.dispatch(context, tx, Some(sp), None)?;
-            }
-        
     Ok(())
 }
 
@@ -229,7 +227,6 @@ pub fn execution_result<BC: BitcoinCoordinatorApi>(
                     *d as u8,
                 )?;
             }
-
 
             // Where the dissection is committed, each hash is a witness
             // value under a one-time key declared for it. Where it is

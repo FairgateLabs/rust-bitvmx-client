@@ -76,6 +76,10 @@ pub enum ForcedChallenges {
     EquivocationResignNext2(ParticipantRole),
     ProverChallengeStep2(ParticipantRole),
     ProverForceSecondNary,
+    /// An adversarial verifier that signs one of its own dissection positions
+    /// a second time inside the challenge leaf that reads it. The prover is
+    /// honest throughout; the question is whether it can punish this.
+    VerifierResignsPositional,
     // Default
     No,
     Execution,
@@ -112,12 +116,74 @@ impl ForcedChallenges {
             | EquivocationResignNext2(role) => Some(role.clone()),
             No | Execution | Personalized(_) => None,
             ProverForceSecondNary => Some(ParticipantRole::Prover),
-            VerifierOutOfBoundsBits | VerifierOutOfBoundsBitsInChallenge => {
-                Some(ParticipantRole::Verifier)
-            }
+            VerifierOutOfBoundsBits
+            | VerifierOutOfBoundsBitsInChallenge
+            | VerifierResignsPositional => Some(ParticipantRole::Verifier),
             InputTimeOut(_, role) => Some(role.clone()),
         }
     }
+}
+
+/// Re-points a program definition at a different search mode, when
+/// `BITVMX_SEARCH_MODE` asks for one.
+///
+/// The whole suite otherwise runs whichever mode the committed fixtures
+/// default to, which is the asymmetric search. That leaves the alternating
+/// search with no challenge coverage at all, and the two share the
+/// transaction graph, the key schedule and the timeout machinery -- so a
+/// challenge that passes under one mode is not evidence about the other.
+///
+/// A definition is rewritten rather than edited in place, and its ELF is
+/// copied beside it, because the ELF path is resolved relative to the
+/// definition. The relative path is preserved, since some fixtures name an
+/// ELF in a subdirectory. A definition that already states a mode is left
+/// alone, so a test that deliberately picks one keeps it.
+fn with_search_mode(definition: &str) -> Result<String> {
+    let Ok(mode) = std::env::var("BITVMX_SEARCH_MODE") else {
+        return Ok(definition.to_string());
+    };
+
+    let src = std::path::Path::new(definition);
+    let src_dir = src.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let text =
+        std::fs::read_to_string(src).map_err(|e| anyhow::anyhow!("reading {definition}: {e}"))?;
+
+    if text
+        .lines()
+        .any(|l| l.trim_start().starts_with("search_mode:"))
+    {
+        return Ok(definition.to_string());
+    }
+
+    let elf = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("elf:"))
+        .map(|v| v.trim().to_string())
+        .ok_or_else(|| anyhow::anyhow!("no elf: entry in {definition}"))?;
+
+    let dir = std::env::temp_dir().join(format!("bitvmx-mode-{}", Uuid::new_v4()));
+    let elf_dst = dir.join(&elf);
+    std::fs::create_dir_all(
+        elf_dst
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("elf path {elf} has no parent"))?,
+    )?;
+    std::fs::copy(src_dir.join(&elf), &elf_dst)
+        .map_err(|e| anyhow::anyhow!("copying {elf}: {e}"))?;
+
+    let dst = dir.join(
+        src.file_name()
+            .ok_or_else(|| anyhow::anyhow!("{definition} has no file name"))?,
+    );
+    std::fs::write(
+        &dst,
+        format!("{}\nsearch_mode: {}\n", text.trim_end(), mode),
+    )?;
+    info!(
+        "Search mode override: {definition} -> {} ({mode})",
+        dst.display()
+    );
+    Ok(dst.to_string_lossy().into_owned())
 }
 
 pub fn prepare_dispute(
@@ -145,7 +211,7 @@ pub fn prepare_dispute(
             _ => "hello-world.yaml",
         }
     );
-    let program_definition = program_path.unwrap_or(program.to_string());
+    let program_definition = with_search_mode(&program_path.unwrap_or(program.to_string()))?;
 
     let config_results = get_fail_force_config(fail_force_config.clone());
 
@@ -473,11 +539,37 @@ fn wait_msg_channel(
     Ok(())
 }
 
+/// A program definition that runs the full-duplex search, beside a copy of
+/// the program it names, since the ELF path resolves relative to it.
+pub fn full_duplex_program() -> Result<String> {
+    let fixtures = "../BitVMX-CPU/docker-riscv32/riscv32/build";
+    let dir = std::env::temp_dir().join(format!("bitvmx-fd-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(
+        format!("{}/hello-world.elf", fixtures),
+        dir.join("hello-world.elf"),
+    )?;
+    let definition = dir.join("hello-world-full-duplex.yaml");
+    std::fs::write(
+        &definition,
+        "elf: hello-world.elf\n\
+         nary_search: 8\n\
+         search_mode: full-duplex\n\
+         max_steps: 2000\n\
+         input_section_name: .input\n\
+         inputs:\n\
+         \x20 - size: 4\n\
+         \x20   owner: prover\n",
+    )?;
+    Ok(definition.to_string_lossy().into_owned())
+}
+
 pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailConfiguration {
     match fail_force_config {
         ForcedChallenges::InputTimeOut(name, _) => ForceFailConfiguration {
             prover_force_second_nary: false,
             fail_input_tx: Some(name),
+            verifier_resigns_positional: false,
             main: ConfigResult {
                 force_condition: ForceCondition::Always,
                 ..Default::default()
@@ -708,6 +800,20 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
                 ForceCondition::ValidInputWrongStepOrHash,
             )
         }
+        ForcedChallenges::VerifierResignsPositional => ForceFailConfiguration {
+            prover_force_second_nary: false,
+            fail_input_tx: None,
+            verifier_resigns_positional: true,
+            main: ConfigResult {
+                fail_config_prover: None,
+                fail_config_verifier: None,
+                // The verifier has no honest reason to challenge here, so it
+                // is told to, and then cheats in how it spends the leaf.
+                force_challenge: ForceChallenge::EquivocationResign(EquivocationKind::StepHash),
+                force_condition: ForceCondition::Always,
+            },
+            read: ConfigResult::default(),
+        },
         ForcedChallenges::CorrectHash(role) => {
             let fail_read_args = vec!["1106", "0xaa000000", "0x11111100", "0xaa000000", "600"]
                 .iter()
@@ -898,6 +1004,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
                 ParticipantRole::Prover => ForceFailConfiguration {
                     prover_force_second_nary: false,
                     fail_input_tx: None,
+                    verifier_resigns_positional: false,
                     main: ConfigResult {
                         // We want to test that if the prover tries to challenge the selected step when it doesn't correspond, he fails.
                         // If he doesn't try to challenge, the test should fail. To achieve that, we make the verifier also fail on a future read,
@@ -920,6 +1027,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
                 ParticipantRole::Verifier => ForceFailConfiguration {
                     prover_force_second_nary: false,
                     fail_input_tx: None,
+                    verifier_resigns_positional: false,
                     main: ConfigResult {
                         // Same logic as before but inverted, if the prover doesn't challenge the step, he will fail cause he will fail to correctly resign the hash
                         fail_config_prover: Some(FailConfiguration::new_fail_resign_hash(1792)),
@@ -951,6 +1059,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
                 ParticipantRole::Prover => ForceFailConfiguration {
                     prover_force_second_nary: false,
                     fail_input_tx: None,
+                    verifier_resigns_positional: false,
                     main: ConfigResult {
                         fail_config_prover: None,
                         fail_config_verifier: Some(fail_read_1.clone()),
@@ -969,6 +1078,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
                 ParticipantRole::Verifier => ForceFailConfiguration {
                     prover_force_second_nary: false,
                     fail_input_tx: None,
+                    verifier_resigns_positional: false,
                     main: ConfigResult {
                         fail_config_prover: None,
                         // the fail is in the first nary search but since round is None it will fail in the ReadNArySearch challenge's bits corresponding to the second nary search
@@ -1001,6 +1111,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
             ForceFailConfiguration {
                 prover_force_second_nary: true,
                 fail_input_tx: None,
+                verifier_resigns_positional: false,
                 main: ConfigResult {
                     // The prover will fail with a future read, the verifier will successfully challenge it
                     fail_config_prover: Some(fail_future_read),
@@ -1038,6 +1149,7 @@ pub fn get_fail_force_config(fail_force_config: ForcedChallenges) -> ForceFailCo
         ForcedChallenges::Execution => ForceFailConfiguration {
             prover_force_second_nary: false,
             fail_input_tx: None,
+            verifier_resigns_positional: false,
             main: ConfigResult {
                 fail_config_prover: None,
                 fail_config_verifier: None,
@@ -1064,6 +1176,7 @@ fn get_config_with_read(
         ParticipantRole::Prover => ForceFailConfiguration {
             prover_force_second_nary: false,
             fail_input_tx: None,
+            verifier_resigns_positional: false,
             main: ConfigResult {
                 fail_config_prover: Some(fail_prover),
                 fail_config_verifier: None,
@@ -1080,6 +1193,7 @@ fn get_config_with_read(
         ParticipantRole::Verifier => ForceFailConfiguration {
             prover_force_second_nary: false,
             fail_input_tx: None,
+            verifier_resigns_positional: false,
             main: ConfigResult {
                 fail_config_prover: None,
                 fail_config_verifier: Some(fail_verifier),

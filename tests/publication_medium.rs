@@ -33,8 +33,13 @@ fn committed_stack(hashes: u32) -> u32 {
 
 #[test]
 fn the_committed_stack_matches_the_measured_ladder() {
-    for (b, leaf, peak) in [(4u32, 275, 293), (8, 627, 645), (12, 979, 997),
-                            (16, 1331, 1349), (32, 2739, 2757)] {
+    for (b, leaf, peak) in [
+        (4u32, 275, 293),
+        (8, 627, 645),
+        (12, 979, 997),
+        (16, 1331, 1349),
+        (32, 2739, 2757),
+    ] {
         assert_eq!((b - 1) * ELEMENTS_PER_HASH + 11, leaf, "b = {b}");
         assert_eq!(committed_stack(b - 1), peak, "b = {b}");
     }

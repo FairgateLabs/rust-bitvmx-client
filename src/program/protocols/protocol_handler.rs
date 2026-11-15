@@ -1,8 +1,8 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
-use bitcoin_script_riscv::riscv::challenges::resigned_name_for;
 use bitcoin::script::read_scriptint;
 use bitcoin::{PublicKey, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
+use bitcoin_script_riscv::riscv::challenges::resigned_name_for;
 use bitcoin_scriptexec::scriptint_vec;
 use bitvmx_broker::identification::identifier::Identifier;
 use bitvmx_job_dispatcher::dispatcher_job::DispatcherJob;
@@ -457,6 +457,39 @@ pub trait ProtocolHandler {
                             "Reusing winternitz signature for re-submitted key: {}",
                             k.name()
                         );
+                        // Unless a test is standing in for an adversary.
+                        // An adversary writes its own client and is bound by
+                        // none of this; the punishment has to be exercised
+                        // against a party that really does sign twice, or it
+                        // is only ever shown to build.
+                        let adversary = program_context
+                            .globals
+                            .get_var(&self.context().id, "fail_resign_positional")?
+                            .is_some_and(|v| matches!(v, VariableTypes::Bool(true)));
+                        if adversary && resigned_name_for(k.name()).is_some() {
+                            let mut other = message.clone();
+                            other[0] ^= 0xff;
+                            warn!(
+                                "Standing in for an adversary: signing {} a \
+                                 second time, over a different message",
+                                k.name()
+                            );
+                            wots_sigs.push(
+                                program_context
+                                    .key_manager
+                                    .sign_winternitz_message_by_index(
+                                        &other,
+                                        WinternitzType::HASH160,
+                                        protocol_script
+                                            .get_key(k.name())
+                                            .ok_or_else(|| {
+                                                BitVMXError::KeysNotFound(self.context().id)
+                                            })?
+                                            .derivation_index(),
+                                    )?,
+                            );
+                            continue;
+                        }
                         wots_sigs.push(signature);
                         continue;
                     }
@@ -1254,7 +1287,7 @@ pub fn new_protocol_type(
     my_idx: usize,
     storage: Rc<Storage>,
 ) -> Result<ProtocolType, BitVMXError> {
-     // Also used as musig2's session id, which must be a single StorageKey
+    // Also used as musig2's session id, which must be a single StorageKey
     // segment, so `_` rather than `/`.
     let protocol_name = format!("{}_{}", name, id);
     let ctx = ProtocolContext::new(id, &protocol_name, my_idx, storage);
