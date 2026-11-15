@@ -13,7 +13,7 @@ use std::{
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
 use bitcoin_script_riscv::riscv::{
-    challenges::VERIFIER_RESIGNED_PREFIX,
+    challenges::{verifier_equivocation_challenge, VERIFIER_RESIGNED_PREFIX},
     instruction_mapping::create_verification_script_mapping,
     script_utils::{
         is_lower_than, var_to_decisions_in_altstack, verify_challenge_step, StackTables,
@@ -79,6 +79,9 @@ pub const VERIFIER_WINS: &str = "VERIFIER_WINS";
 pub const CHALLENGE: &str = "CHALLENGE";
 pub const GET_HASHES_AND_STEP: &str = "GET_HASHES_AND_STEP";
 pub const CHALLENGE_READ: &str = "CHALLENGE_READ"; // For the second N-ary search
+/// Punishes a verifier that signed one of its dissection positions twice.
+/// Only built for the full-duplex search, where the verifier dissects.
+pub const VERIFIER_EQUIVOCATION: &str = "VERIFIER_EQUIVOCATION";
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
@@ -1054,6 +1057,75 @@ impl ProtocolHandler for DisputeResolutionProtocol {
             )?,
             (&verifier_speedup_pub, &prover_speedup_pub),
         )?;
+
+        // Punishing a verifier that signs a dissection twice.
+        //
+        // Cases 2 and 3 of the resign leaf read the verifier's own commitment,
+        // and the verifier is the party spending that leaf, so it supplies the
+        // signature itself. No leaf can bind that value: a script cannot read
+        // a previous transaction's witness. What binds it is this output --
+        // both signatures under one positional key, and the signer is
+        // convicted. Only the full-duplex search builds it, because only there
+        // does the verifier dissect and so commit state hashes of its own.
+        if search_mode == SearchMode::FullDuplex {
+            let mut leaves = vec![];
+            for stage in 1..rounds + 1 {
+                if search_mode.dissector(rounds, stage) != Party::Verifier {
+                    continue;
+                }
+                for h in 1..nary_def.hashes_for_round(stage) + 1 {
+                    let mut stack = StackTracker::new();
+                    verifier_equivocation_challenge(&mut stack, stage, h);
+                    leaves.extend(Self::winternitz_check_extra_script(
+                        agg_or_prover,
+                        sign_mode,
+                        &keys[1],
+                        &vec![
+                            stage_hash_var(search_mode, rounds, stage, h),
+                            resigned_stage_hash_var(stage, h),
+                        ],
+                        Some(vec![stack.get_script()]),
+                    )?);
+                }
+            }
+            for (pos, leaf) in leaves.iter_mut().enumerate() {
+                leaf.set_assert_leaf_id(pos as u32);
+            }
+
+            // Spending this is the prover's option, not an obligation, so the
+            // connector carries no timeout: declining to punish is simply
+            // continuing the search down the path below.
+            let mut connection_leaf = scripts::check_signature(aggregated, SignMode::Aggregate);
+            connection_leaf.set_assert_leaf_id(0);
+            let connector =
+                OutputType::taproot(speedup_dust, aggregated, &vec![connection_leaf])?;
+            protocol.add_connection(
+                &format!("{}__{}", CHALLENGE, VERIFIER_EQUIVOCATION),
+                CHALLENGE,
+                connector.into(),
+                VERIFIER_EQUIVOCATION,
+                InputSpec::Auto(SighashType::taproot_all(), SpendMode::Script { leaf: 0 }),
+                None,
+                None,
+            )?;
+
+            // The pair of signatures rides in the data spend, as every other
+            // challenge's evidence does, so the leaf is chosen when spent.
+            let evidence = OutputType::taproot(speedup_dust, aggregated, &leaves)?;
+            protocol.add_transaction_output(VERIFIER_EQUIVOCATION, &evidence)?;
+            let last = protocol.get_output_count(VERIFIER_EQUIVOCATION)? - 1;
+            self.add_vout_to_monitor(context, VERIFIER_EQUIVOCATION, last)?;
+
+            // Publishing it wins the dispute for the prover.
+            claim_prover.add_claimer_win_connection(&mut protocol, VERIFIER_EQUIVOCATION)?;
+            let pb = ProtocolBuilder {};
+            pb.add_speedup_output(
+                &mut protocol,
+                VERIFIER_EQUIVOCATION,
+                speedup_dust,
+                &prover_speedup_pub,
+            )?;
+        }
 
         prev = CHALLENGE.to_string();
         for i in 2..nary_def.total_rounds() + 1 {
