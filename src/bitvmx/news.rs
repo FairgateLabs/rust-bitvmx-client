@@ -1,6 +1,6 @@
 //! Bitcoin coordinator and monitor news.
 
-use super::{BitVMX, Context, CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS};
+use super::{BitVMX, Context, CLIENT_GLOBAL_SETTINGS_UUID, NEW_BLOCK_CONTEXT, SEND_NEW_BLOCK_NEWS};
 use crate::{
     errors::BitVMXError,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
@@ -103,6 +103,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             return Ok(true);
         }
         if !self.chain_synced {
+            // The coordinator has ticked and caught up, so the indexer is initialized. Runs once per start.
+            Self::run_transaction(&store, || self.subscribe_to_new_blocks())?;
             info!("Sync complete, starting normal operation");
             self.chain_synced = true;
             return Ok(true);
@@ -131,6 +133,18 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             })?;
         }
         Ok(had_monitor_news || had_coordinator_news)
+    }
+
+    /// Subscribes the client to every new block. Called only after the coordinator has ticked and caught up, because
+    /// before the first tick the indexer is not initialized. On a restart the subscription is already stored, and
+    /// registering it again only refreshes it.
+    fn subscribe_to_new_blocks(&self) -> Result<(), BitVMXError> {
+        self.program_context.bitcoin_coordinator.monitor(
+            &[MonitorTarget::NewBlock],
+            NEW_BLOCK_CONTEXT.to_string(),
+            None,
+        )?;
+        Ok(())
     }
 
     /// Handles a monitor news, an observation on chain: transactions go to their owner, output pattern

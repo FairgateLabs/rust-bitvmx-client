@@ -26,7 +26,7 @@ use crate::{
     throttle::Throttle,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
-use bitcoin_coordinator::{coordinator::BitcoinCoordinator, MonitorTarget};
+use bitcoin_coordinator::coordinator::BitcoinCoordinator;
 use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, BrokerNode};
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
@@ -228,12 +228,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             config.broker.settings.clone(),
         )?;
         info!("Broker services initialized successfully");
-
-        bitcoin_coordinator.monitor(
-            &[MonitorTarget::NewBlock],
-            NEW_BLOCK_CONTEXT.to_string(),
-            None,
-        )?;
 
         let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
         let operation_timeouts = OperationTimeouts::new(store.clone());
