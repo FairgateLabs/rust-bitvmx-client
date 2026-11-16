@@ -23,12 +23,17 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
-    fn handle_news(
+    /// Sends a transaction news from the monitor to whoever subscribed to it, read from the context: the
+    /// program for a `ProgramId`, or the API requester for a `RequestId`.
+    ///
+    /// `spent_vout` is set when the news comes from a SpendingUtxo subscription, and then `tx_id` is the
+    /// spent output's txid. It is `None` for a plain transaction subscription.
+    fn route_tx_news_to_owner(
         &mut self,
         tx_id: Txid,
         tx_status: TransactionStatus,
         context_data: String,
-        vout: Option<u32>,
+        spent_vout: Option<u32>,
     ) -> Result<(), BitVMXError> {
         let context = Context::from_string(&context_data)?;
         debug!(
@@ -41,20 +46,20 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 Some(program) => {
                     program.notify_news(
                         tx_id,
-                        vout,
+                        spent_vout,
                         tx_status,
                         context_data,
                         &self.program_context,
                     )?;
                 }
                 None => {
-                    warn!("handle_news: Program {} not found", program_id);
+                    warn!("route_tx_news_to_owner: Program {} not found", program_id);
                 }
             },
             Context::RequestId(request_id, from) => {
                 info!("Sending News: {:?} for context: {:?}", tx_id, context);
-                // Only a UTXO subscription carries a vout.
-                let response = match vout {
+                // The response type follows the subscription the requester made.
+                let response = match spent_vout {
                     Some(vout) => OutgoingBitVMXApiMessages::SpendingUTXOTransactionFound(
                         *request_id,
                         tx_id,
@@ -72,6 +77,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
+    /// Ticks the coordinator and wallet, then processes and acknowledges the pending monitor and
+    /// coordinator news, each item in its own transaction. Returns whether there was any work.
     fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         let store = self.store.clone();
         let (ready, monitor_news, coordinator_news) = Self::run_transaction(&store, || {
@@ -101,71 +108,78 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             return Ok(true);
         }
 
+        // Each item is acknowledged in the same transaction that processes it, so a failed step rolls the
+        // ack back and the item stays in coordinator storage for the next fetch.
         let had_monitor_news = !monitor_news.is_empty();
         for news in monitor_news {
-            self.run_tx_step("monitor news", |this| this.process_monitor_news(news))?;
+            self.run_tx_step("monitor news", |this| {
+                this.process_monitor_news(&news)?;
+                this.program_context
+                    .bitcoin_coordinator
+                    .ack_news(AckNews::Monitor(news))?;
+                Ok(())
+            })?;
         }
         let had_coordinator_news = !coordinator_news.is_empty();
-        // Unacknowledged items remain in coordinator storage for the next fetch.
         for news in coordinator_news {
             self.run_tx_step("coordinator news", |this| {
-                this.process_coordinator_news(news)
+                this.process_coordinator_news(&news)?;
+                this.program_context
+                    .bitcoin_coordinator
+                    .ack_news(AckNews::Coordinator(news))?;
+                Ok(())
             })?;
         }
         Ok(had_monitor_news || had_coordinator_news)
     }
 
-    fn process_monitor_news(&mut self, news: MonitorNews) -> Result<(), BitVMXError> {
-        // The coordinator acknowledges by value, so the item is kept as it was received.
-        let ack_news = news.clone();
-        let MonitorNews {
-            target,
-            context,
-            kind,
-        } = news;
-
-        match (target, kind) {
+    /// Handles a monitor news, an observation on chain: transactions go to their owner, output pattern
+    /// matches and new blocks go to L2.
+    fn process_monitor_news(&mut self, news: &MonitorNews) -> Result<(), BitVMXError> {
+        match (&news.target, &news.kind) {
             (MonitorTarget::Transaction(_), NewsKind::Transaction { txid, status, .. }) => {
-                self.handle_news(txid, status, context, None)?;
+                self.route_tx_news_to_owner(*txid, status.clone(), news.context.clone(), None)?;
                 //TODO: Handle reorg case with due_to_reorg
             }
             (MonitorTarget::SpendingUtxo(outpoint), NewsKind::Transaction { status, .. }) => {
                 // Consumers expect the spent output's txid and vout. The spender comes inside the status.
-                self.handle_news(outpoint.txid, status, context, Some(outpoint.vout))?;
+                self.route_tx_news_to_owner(
+                    outpoint.txid,
+                    status.clone(),
+                    news.context.clone(),
+                    Some(outpoint.vout),
+                )?;
             }
             (MonitorTarget::OutputPattern(filter), NewsKind::Transaction { txid, status, .. }) => {
                 if filter.tag == RSK_PEGIN_TAG {
                     self.notify_l2(&OutgoingBitVMXApiMessages::PeginTransactionFound(
-                        txid,
+                        *txid,
                         status.clone(),
                     ))?;
                 }
                 self.notify_l2(&OutgoingBitVMXApiMessages::OutputPatternTransactionFound(
-                    txid,
-                    status,
-                    filter.tag,
+                    *txid,
+                    status.clone(),
+                    filter.tag.clone(),
                 ))?;
             }
             (_, NewsKind::Block(BlockRef { height, hash })) => {
                 debug!("New block: {} {}", height, hash);
-                if self.send_new_block_news() {
-                    self.notify_l2(&OutgoingBitVMXApiMessages::NewBlock(hash, height))?;
+                if self.should_send_new_block_news() {
+                    self.notify_l2(&OutgoingBitVMXApiMessages::NewBlock(*hash, *height))?;
                 }
             }
             (target, kind) => {
                 warn!(
                     "Unhandled monitor news {:?} for target {:?} and context {}",
-                    kind, target, context
+                    kind, target, news.context
                 );
             }
         }
-
-        self.program_context
-            .bitcoin_coordinator
-            .ack_news(AckNews::Monitor(ack_news))?;
         Ok(())
     }
 
+    /// Sends an API message to L2.
     fn notify_l2(&self, message: &OutgoingBitVMXApiMessages) -> Result<(), BitVMXError> {
         let data = serde_json::to_string(message)?;
         self.program_context
@@ -174,11 +188,15 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
+    /// Handles a coordinator news, a problem dispatching or funding a transaction. Problems L2 can act on
+    /// are sent as error reports to the program's L2 or the requester, read from the context; the rest
+    /// are only logged.
     fn process_coordinator_news(
         &mut self,
-        coordinator_news: CoordinatorNews,
+        coordinator_news: &CoordinatorNews,
     ) -> Result<(), BitVMXError> {
-        match coordinator_news.clone() {
+        let broker_channel = &self.program_context.broker_channel;
+        match coordinator_news {
             CoordinatorNews::InsufficientFunds {
                 available,
                 required,
@@ -188,38 +206,42 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     available, required
                 );
                 // No txid or context, so the program cannot be identified.
-                self.report_coordinator_news(
+                self.reporter.coordinator_news(
                     None,
                     ErrorReportKind::InsufficientFunds {
-                        available,
-                        required,
+                        available: *available,
+                        required: *required,
                     },
+                    broker_channel,
                 )?;
             }
             CoordinatorNews::DispatchError { txid, context } => {
                 error!("Dispatch Transaction Error: {:?} {:?}", txid, context);
                 if let Some(wallet) = self.wallet.as_mut() {
-                    if let Some(wallet_tx) = wallet.get_wallet_tx(txid)? {
+                    if let Some(wallet_tx) = wallet.get_wallet_tx(*txid)? {
                         wallet.cancel_tx(&wallet_tx.tx_node.tx)?;
                     }
                 }
-                self.report_coordinator_news(
-                    Some(&context),
-                    ErrorReportKind::TransactionDispatchFailed { txid },
+                self.reporter.coordinator_news(
+                    Some(context.as_str()),
+                    ErrorReportKind::TransactionDispatchFailed { txid: *txid },
+                    broker_channel,
                 )?;
             }
             CoordinatorNews::SpeedupDispatchError { txid, context } => {
                 error!("Speedup dispatch error: {:?} {:?}", txid, context);
-                self.report_coordinator_news(
-                    Some(&context),
-                    ErrorReportKind::SpeedupDispatchFailed { txid },
+                self.reporter.coordinator_news(
+                    Some(context.as_str()),
+                    ErrorReportKind::SpeedupDispatchFailed { txid: *txid },
+                    broker_channel,
                 )?;
             }
             CoordinatorNews::TransactionStuckInMempool { txid, context } => {
                 warn!("Transaction stuck in mempool: {:?} {:?}", txid, context);
-                self.report_coordinator_news(
-                    Some(&context),
-                    ErrorReportKind::TransactionStuckInMempool { txid },
+                self.reporter.coordinator_news(
+                    Some(context.as_str()),
+                    ErrorReportKind::TransactionStuckInMempool { txid: *txid },
+                    broker_channel,
                 )?;
             }
             CoordinatorNews::MaxFeeRateReached {
@@ -231,12 +253,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Speedup for {:?} reached the fee rate cap at {} sat/vB. No further boosts",
                     txid, effective_fee_rate
                 );
-                self.report_coordinator_news(
-                    Some(&context),
+                self.reporter.coordinator_news(
+                    Some(context.as_str()),
                     ErrorReportKind::MaxFeeRateReached {
-                        txid,
-                        effective_fee_rate,
+                        txid: *txid,
+                        effective_fee_rate: *effective_fee_rate,
                     },
+                    broker_channel,
                 )?;
             }
             CoordinatorNews::EstimateFeerateTooHigh {
@@ -247,17 +270,22 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Estimated fee rate {} exceeds the configured maximum {}",
                     estimated_fee_rate, max_fee_rate
                 );
-                self.report_coordinator_news(
+                self.reporter.coordinator_news(
                     None,
                     ErrorReportKind::FeeRateTooHigh {
-                        estimated: estimated_fee_rate,
-                        max: max_fee_rate,
+                        estimated: *estimated_fee_rate,
+                        max: *max_fee_rate,
                     },
+                    broker_channel,
                 )?;
             }
             CoordinatorNews::FundingNotAvailable => {
                 error!("No funding UTXO is available");
-                self.report_coordinator_news(None, ErrorReportKind::FundingNotAvailable)?;
+                self.reporter.coordinator_news(
+                    None,
+                    ErrorReportKind::FundingNotAvailable,
+                    broker_channel,
+                )?;
             }
             CoordinatorNews::InvalidFundingUtxo {
                 amount,
@@ -267,12 +295,13 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     "Funding UTXO of {} is below the {} minimum",
                     amount, min_required
                 );
-                self.report_coordinator_news(
+                self.reporter.coordinator_news(
                     None,
                     ErrorReportKind::InvalidFundingUtxo {
-                        amount,
-                        min_required,
+                        amount: *amount,
+                        min_required: *min_required,
                     },
+                    broker_channel,
                 )?;
             }
             // Not reported: our own invariant broke, which is not L2's problem.
@@ -299,23 +328,11 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 error!("Coordinator has no record of transaction {:?}", txid);
             }
         }
-
-        self.program_context
-            .bitcoin_coordinator
-            .ack_news(AckNews::Coordinator(coordinator_news))?;
         Ok(())
     }
 
-    fn report_coordinator_news(
-        &self,
-        context: Option<&str>,
-        kind: ErrorReportKind,
-    ) -> Result<(), BitVMXError> {
-        self.reporter
-            .coordinator_news(context, kind, &self.program_context.broker_channel)
-    }
-
-    fn send_new_block_news(&self) -> bool {
+    /// Whether L2 asked to receive a `NewBlock` message for every new block, read from the global settings.
+    fn should_send_new_block_news(&self) -> bool {
         self.program_context
             .globals
             .get_var(&CLIENT_GLOBAL_SETTINGS_UUID, SEND_NEW_BLOCK_NEWS)
