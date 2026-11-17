@@ -93,6 +93,8 @@ pub struct BitVMX<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     shutdown: bool,
     /// Set once the indexer reaches the chain tip; until then a tick only syncs.
     chain_synced: bool,
+    /// Set while the last news fetch returned something, so the next one fetches again without ticking the coordinator.
+    draining_news: bool,
 }
 
 impl<BC: BitcoinCoordinatorApi> Drop for BitVMX<BC> {
@@ -278,6 +280,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             reporter,
             shutdown: false,
             chain_synced: false,
+            draining_news: false,
         })
     }
 

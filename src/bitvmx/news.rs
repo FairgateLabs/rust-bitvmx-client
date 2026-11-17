@@ -13,6 +13,10 @@ use bitcoin_coordinator::{
 };
 use tracing::{debug, error, info, warn};
 
+/// How many transactions and block heights one `get_news` call reads.
+/// 50 is the value the monitor recommends (see `Monitor::get_news`).
+const MAX_NEWS_KEYS_PER_FETCH: usize = 50;
+
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Owns the coordinator and news transactions; requires no active global transaction.
     pub fn process_bitcoin_updates_with_throttle(&mut self) -> Result<(), BitVMXError> {
@@ -77,23 +81,30 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
-    /// Ticks the coordinator and wallet, then processes and acknowledges the pending monitor and
-    /// coordinator news, each item in its own transaction. Returns whether there was any work.
+    /// Ticks the coordinator and wallet, then processes and acknowledges one batch of pending monitor and coordinator
+    /// news, each item in its own transaction. While a batch was returned, the next call only fetches the next batch
+    /// without ticking, so the news is drained before the chain moves on. Returns whether there was any work.
     fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         let store = self.store.clone();
         let (ready, monitor_news, coordinator_news) = Self::run_transaction(&store, || {
-            self.program_context.bitcoin_coordinator.tick()?;
-            if let Some(wallet) = self.wallet.as_mut() {
-                wallet.tick()?;
-            }
-            if !self.program_context.bitcoin_coordinator.is_ready()? {
-                return Ok((false, Vec::new(), Vec::new()));
-            }
-            if !self.chain_synced {
-                return Ok((true, Vec::new(), Vec::new()));
+            // Draining only starts after a fetch, so the coordinator is ready and the chain synced.
+            if !self.draining_news {
+                self.program_context.bitcoin_coordinator.tick()?;
+                if let Some(wallet) = self.wallet.as_mut() {
+                    wallet.tick()?;
+                }
+                if !self.program_context.bitcoin_coordinator.is_ready()? {
+                    return Ok((false, Vec::new(), Vec::new()));
+                }
+                if !self.chain_synced {
+                    return Ok((true, Vec::new(), Vec::new()));
+                }
             }
 
-            let news = self.program_context.bitcoin_coordinator.get_news(None)?;
+            let news = self
+                .program_context
+                .bitcoin_coordinator
+                .get_news(Some(MAX_NEWS_KEYS_PER_FETCH))?;
             Ok((true, news.monitor_news, news.coordinator_news))
         })?;
 
@@ -109,6 +120,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             self.chain_synced = true;
             return Ok(true);
         }
+
+        // Keep fetching without ticking until a fetch comes back empty. Speedup news counts toward the limit but is
+        // filtered out inside get_news, so an empty fetch can still leave news pending: it is drained after the next tick.
+        self.draining_news = !monitor_news.is_empty() || !coordinator_news.is_empty();
 
         // Each item is acknowledged in the same transaction that processes it, so a failed step rolls the
         // ack back and the item stays in coordinator storage for the next fetch.
