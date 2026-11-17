@@ -28,6 +28,9 @@ pub struct ProtocolBuilderConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommsConfig {
     pub address: SocketAddr,
+    /// Address returned by `GetCommInfo` when peers cannot reach `address` (Docker, NAT).
+    /// Defaults to `address`.
+    pub public_address: Option<SocketAddr>,
     pub priv_key: String,
     pub storage_path: String,
     pub allow_list: String,
@@ -124,10 +127,6 @@ impl Config {
             }
             None => Ok(bitvmx_settings::settings::load::<Config>()?),
         }
-    }
-
-    pub fn comms_address(&self) -> &SocketAddr {
-        &self.comms.address
     }
 
     pub fn comms_key(&self) -> &str {

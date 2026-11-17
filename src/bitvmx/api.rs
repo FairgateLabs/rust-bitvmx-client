@@ -980,7 +980,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     Ok(Some(OutgoingBitVMXApiMessages::CommInfo(
                         id,
                         CommsAddress {
-                            address: self.program_context.comms.get_address(),
+                            address: self.public_address(),
                             pubkey_hash: self.program_context.comms.get_pubk_hash(),
                             pubkey_pem: self.program_context.rsa_public_key.clone(),
                         },

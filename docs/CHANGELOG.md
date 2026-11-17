@@ -5,6 +5,11 @@ introduce breaking changes between versions.
 
 ## Unreleased
 
+### Added
+
+- `comms.public_address`: optional `IP:port` returned by `GetCommInfo` instead of the listen
+  `comms.address`, for nodes peers cannot reach on it (Docker, NAT).
+
 ### Changed
 
 - **BREAKING**: Removed the `ProofReady` request and response, along with `BitVMXClient::proof_ready`.
@@ -41,6 +46,8 @@ introduce breaking changes between versions.
   without the field). Code building `CommsAddress` with a struct literal must set it.
 - `CommInfo` now returns the node's `pubkey_pem` inside its `CommsAddress`, so L2 can share it
   with the other participants to encrypt messages for this node.
+- `Config::comms_address()` is removed: it returned the listen address, not the one peers dial. Use
+  `BitVMX::public_address()`.
 
 ## 0.8.7
 
