@@ -36,6 +36,11 @@ introduce breaking changes between versions.
   indexed by the `bitvmx/expected_job/ids` list, to `bitvmx/expected_job/active/<digest>` while a
   result is expected and `bitvmx/expected_job/finished/<digest>` once terminal. The ID list is no
   longer written.
+- `CommsAddress` has a new `pubkey_pem` field with the participant's full comms RSA public key
+  (PEM). It is empty when not provided (`CommsAddress::new`, `try_new`, `FromStr`, or JSON
+  without the field). Code building `CommsAddress` with a struct literal must set it.
+- `CommInfo` now returns the node's `pubkey_pem` inside its `CommsAddress`, so L2 can share it
+  with the other participants to encrypt messages for this node.
 
 ## 0.8.7
 
