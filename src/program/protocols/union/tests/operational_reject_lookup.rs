@@ -18,7 +18,7 @@ use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClientApi;
 use bitvmx_broker::RemoteChannel;
 use bitvmx_client::program::participant::ParticipantRole;
 use bitvmx_client::program::protocols::union::types::{
-    Committee, MemberData, PacketSettings, RejectPeginData, DUST_VALUE, REJECT_PEGIN_TX,
+    dust_value, Committee, MemberData, PacketSettings, RejectPeginData, REJECT_PEGIN_TX,
 };
 use bitvmx_client::program::variables::VariableTypes;
 use bitvmx_client::{bitvmx::BitVMX, types::*};
@@ -178,7 +178,7 @@ fn rejection_setup_and_lookup(early_lookup: bool) -> Result<()> {
                 .clone(),
             },
             TxOut {
-                value: Amount::from_sat(2 * DUST_VALUE),
+                value: Amount::from_sat(2 * dust_value()),
                 script_pubkey: ScriptBuf::new_p2tr(
                     &secp,
                     reject_tree.internal_key(),

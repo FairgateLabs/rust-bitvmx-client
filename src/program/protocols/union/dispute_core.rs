@@ -1120,7 +1120,7 @@ impl DisputeCoreProtocol {
             (wt_speedup_key, self.get_sign_mode(data.member_index)),
             &committee.dispute_aggregated_key,
             CLAIM_GATE_FEE,
-            DUST_VALUE,
+            dust_value(),
             vec![op_speedup_key],
             Some(vec![key_pair]),
             settings.claim_gate_timelock,
@@ -1144,7 +1144,7 @@ impl DisputeCoreProtocol {
             (op_speedup_key, self.get_sign_mode(op_index)),
             &committee.dispute_aggregated_key,
             CLAIM_GATE_FEE,
-            DUST_VALUE,
+            dust_value(),
             vec![wt_speedup_key],
             Some(vec![key_pair]),
             settings.claim_gate_timelock,
@@ -1592,10 +1592,10 @@ impl DisputeCoreProtocol {
 
         let change = self.checked_sub(funding_amount, total_cost + fees)?;
 
-        if change > DUST_VALUE {
+        if change > dust_value() {
             info!(
                 "Adding change output of {} sats to {} transaction. Change exceeds dust value: {} sats",
-                change, PROTOCOL_FUNDING_TX, DUST_VALUE
+                change, PROTOCOL_FUNDING_TX, dust_value()
             );
             protocol
                 .add_transaction_output(
@@ -3750,7 +3750,7 @@ impl DisputeCoreProtocol {
         )?;
 
         let claim_success_output =
-            ClaimGate::output_from_aggregated(&committee.dispute_aggregated_key, DUST_VALUE)?;
+            ClaimGate::output_from_aggregated(&committee.dispute_aggregated_key, dust_value())?;
 
         let mut init_challenge_utxos: Vec<Option<PartialUtxo>> = vec![];
         let mut claim_init_utxos: Vec<Option<ClaimInitUtxos>> = vec![];
@@ -3777,7 +3777,7 @@ impl DisputeCoreProtocol {
                     VariableTypes::Utxo((
                         wt_success_txid,
                         0,
-                        Some(DUST_VALUE),
+                        Some(dust_value()),
                         Some(claim_success_output.clone()),
                     )),
                 )?;
@@ -3794,7 +3794,7 @@ impl DisputeCoreProtocol {
                     VariableTypes::Utxo((
                         op_success_txid,
                         0,
-                        Some(DUST_VALUE),
+                        Some(dust_value()),
                         Some(claim_success_output.clone()),
                     )),
                 )?;
@@ -4397,7 +4397,7 @@ mod tests {
             (&wt_speedup, SignMode::Single),
             &aggregated,
             CLAIM_GATE_FEE,
-            DUST_VALUE,
+            dust_value(),
             vec![&op_speedup],
             Some(vec![&key_pair]),
             10,
@@ -4415,7 +4415,7 @@ mod tests {
             (&op_speedup, SignMode::Single),
             &aggregated,
             CLAIM_GATE_FEE,
-            DUST_VALUE,
+            dust_value(),
             vec![&wt_speedup],
             Some(vec![&key_pair]),
             10,

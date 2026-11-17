@@ -11,7 +11,7 @@ use crate::{
             union::{
                 common::{collect_input_signatures, InputSigningInfo},
                 types::{
-                    Committee, RejectPeginData, DUST_VALUE, REJECT_PEGIN_TX, REQUEST_PEGIN_TX,
+                    dust_value, Committee, RejectPeginData, REJECT_PEGIN_TX, REQUEST_PEGIN_TX,
                     SPEEDUP_KEY, SPEEDUP_VALUE,
                 },
             },
@@ -107,7 +107,7 @@ impl ProtocolHandler for RejectPegInProtocol {
         protocol.add_connection(
             "accept_enabler_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(2 * DUST_VALUE, &take_aggregated_key, &enabler_scripts)?.into(),
+            OutputType::taproot(2 * dust_value(), &take_aggregated_key, &enabler_scripts)?.into(),
             REJECT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),

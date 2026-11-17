@@ -42,9 +42,9 @@ use crate::{
                 },
                 dispute_core_claim_gate::CLAIM_GATE_INIT_STOPPER_COMMITTEE_LEAF,
                 types::{
-                    ClaimInitUtxos, Committee, DisputeTxType, FullPenalizationData, PacketSettings,
-                    PenalizedMember, CLAIM_INIT_TX, CLAIM_INIT_UTXOS, DISPUTE_AGGREGATED_KEY,
-                    DUST_VALUE, INPUT_NOT_REVEALED_ENABLER, INPUT_NOT_REVEALED_TX,
+                    dust_value, ClaimInitUtxos, Committee, DisputeTxType, FullPenalizationData,
+                    PacketSettings, PenalizedMember, CLAIM_INIT_TX, CLAIM_INIT_UTXOS,
+                    DISPUTE_AGGREGATED_KEY, INPUT_NOT_REVEALED_ENABLER, INPUT_NOT_REVEALED_TX,
                     OPERATOR_TAKE_ENABLER, OPERATOR_WON_ENABLER, OP_CLAIM_GATE_SUCCESS,
                     OP_CLAIM_SUCCESS_DISABLER_DIRECTORY_UTXO, OP_DISABLER_DIRECTORY_TX,
                     OP_DISABLER_DIRECTORY_UTXO, OP_DISABLER_TX, OP_INITIAL_DEPOSIT_AMOUNT,
@@ -1348,7 +1348,7 @@ impl FullPenalizationProtocol {
             protocol.add_connection(
                 "from_disabler_directory",
                 &wt_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+                OutputType::taproot(dust_value(), &committee.dispute_aggregated_key, &[])?.into(),
                 &wt_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),
@@ -1393,7 +1393,7 @@ impl FullPenalizationProtocol {
             protocol.add_connection(
                 "from_disabler_directory",
                 &wt_disabler_directory_name,
-                OutputType::taproot(DUST_VALUE, &committee.dispute_aggregated_key, &[])?.into(),
+                OutputType::taproot(dust_value(), &committee.dispute_aggregated_key, &[])?.into(),
                 &wt_cosign_disabler_name,
                 InputSpec::Auto(
                     SighashType::taproot_all(),

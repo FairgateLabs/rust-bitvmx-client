@@ -27,7 +27,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
-        protocols::union::types::{DUST_VALUE, SPEEDUP_VALUE},
+        protocols::union::types::{dust_value, SPEEDUP_VALUE},
         variables::PartialUtxo,
     },
     spv_proof::BtcTxSPVProof,
@@ -203,7 +203,7 @@ impl User {
             }
         };
         let input_value = input_utxo.2.unwrap();
-        let change_value = input_value - (stream_value + fee + 2 * DUST_VALUE);
+        let change_value = input_value - (stream_value + fee + 2 * dust_value());
 
         info!(
             "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
@@ -276,7 +276,7 @@ impl User {
         );
 
         let reject_output = TxOut {
-            value: Amount::from_sat(2 * DUST_VALUE),
+            value: Amount::from_sat(2 * dust_value()),
             script_pubkey: reject_script_pubkey,
         };
 
@@ -525,6 +525,6 @@ impl User {
     }
 
     pub fn get_request_pegin_fees(&self) -> u64 {
-        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + 2 * DUST_VALUE;
+        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + 2 * dust_value();
     }
 }

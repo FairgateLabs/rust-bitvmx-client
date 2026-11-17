@@ -6,7 +6,7 @@ use bitvmx_client::program::protocols::union::common::{
     get_user_take_pid,
 };
 use bitvmx_client::program::protocols::union::types::{
-    MemberData, PacketSettings, PegInAccepted, PegOutAccepted, ACCEPT_PEGIN_TX, DUST_VALUE,
+    dust_value, MemberData, PacketSettings, PegInAccepted, PegOutAccepted, ACCEPT_PEGIN_TX,
     SPEEDUP_VALUE, USER_TAKE_TX,
 };
 use bitvmx_client::program::{participant::ParticipantRole, variables::PartialUtxo};
@@ -399,7 +399,7 @@ impl Committee {
             .count() as u64;
 
         // Considerate each WT disabler directory output
-        return DUST_VALUE * operator_counts * 2 as u64
+        return dust_value() * operator_counts * 2 as u64
             + SPEEDUP_VALUE
             + estimate_fee(2, operator_counts as usize * 2, 1);
     }

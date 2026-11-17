@@ -25,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
   for every transaction in the dispute flow.
 
 ### Changed
+- Replace the `DUST_VALUE` constant with `dust_value()`, which returns `OutputType::generic_dust_limit(None).to_sat()`
+  from the protocol builder. The value stays at 540 sats, as the Union Bridge contracts require; a unit test
+  pins it. Code that imported `DUST_VALUE` (also re-exported through `rust-bitvmx-client-types`) must call
+  `dust_value()` instead.
 - `WT_START_ENABLER_TX` challenge outputs are sized with `dispute::DEFAULT_PROTOCOL_COST`, a fixed worst case
   for a 10 round, 3 input transaction program. `dispute::protocol_cost` now derives the exact funding of a
   dispute from its `ProgramDefinition`, but `create_wt_start_enabler` commits those output values at packet
