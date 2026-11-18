@@ -5,6 +5,11 @@ introduce breaking changes between versions.
 
 ## Unreleased
 
+### Added
+
+- `comms.public_address`: optional `IP:port` returned by `GetCommInfo` instead of the listen
+  `comms.address`, for nodes peers cannot reach on it (Docker, NAT).
+
 ### Changed
 
 - **BREAKING**: Removed the `ProofReady` request and response, along with `BitVMXClient::proof_ready`.
@@ -36,6 +41,13 @@ introduce breaking changes between versions.
   indexed by the `bitvmx/expected_job/ids` list, to `bitvmx/expected_job/active/<digest>` while a
   result is expected and `bitvmx/expected_job/finished/<digest>` once terminal. The ID list is no
   longer written.
+- `CommsAddress` has a new `pubkey_pem` field with the participant's full comms RSA public key
+  (PEM). It is empty when not provided (`CommsAddress::new`, `try_new`, `FromStr`, or JSON
+  without the field). Code building `CommsAddress` with a struct literal must set it.
+- `CommInfo` now returns the node's `pubkey_pem` inside its `CommsAddress`, so L2 can share it
+  with the other participants to encrypt messages for this node.
+- `Config::comms_address()` is removed: it returned the listen address, not the one peers dial. Use
+  `BitVMX::public_address()`.
 - Following the rust-bitvmx-bitcoin indexer, monitor and coordinator refactor:
   - **BREAKING (wire format)**: `TransactionStatus` is an enum, internally tagged on `"status"`:
     `Confirmed { tx, block_height, block_hash, confirmations }`, `InMempool` or `NotFound`. The old

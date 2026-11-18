@@ -330,19 +330,26 @@ fn validate_pubkey_hash(pubkey_hash: &str) -> Result<(), String> {
 pub struct CommsAddress {
     pub address: SocketAddr,
     pub pubkey_hash: PubkHash,
+    /// Full comms RSA public key (PEM). Filled by `CommInfo` so L2 can encrypt for this node.
+    /// Empty when not provided.
+    pub pubkey_pem: String,
 }
 
 #[derive(Deserialize)]
 struct UncheckedCommsAddress {
     address: SocketAddr,
     pubkey_hash: PubkHash,
+    #[serde(default)]
+    pubkey_pem: String,
 }
 
 impl TryFrom<UncheckedCommsAddress> for CommsAddress {
     type Error = String;
 
     fn try_from(value: UncheckedCommsAddress) -> Result<Self, Self::Error> {
-        CommsAddress::try_new(value.address, value.pubkey_hash)
+        let mut address = CommsAddress::try_new(value.address, value.pubkey_hash)?;
+        address.pubkey_pem = value.pubkey_pem;
+        Ok(address)
     }
 }
 
@@ -353,6 +360,7 @@ impl CommsAddress {
         Self {
             address,
             pubkey_hash,
+            pubkey_pem: String::new(),
         }
     }
 
@@ -361,6 +369,7 @@ impl CommsAddress {
         Ok(Self {
             address,
             pubkey_hash,
+            pubkey_pem: String::new(),
         })
     }
 }
@@ -525,6 +534,20 @@ mod tests {
         });
 
         assert!(serde_json::from_value::<CommsAddress>(value).is_err());
+    }
+
+    #[test]
+    fn serde_defaults_missing_pubkey_pem() {
+        let hash = "7005e4a0325b644baa2b66c3fa2ed2a795cae584b6d3a57ca45ebf5d0eb0011f";
+        let missing = serde_json::json!({ "address": "127.0.0.1:1000", "pubkey_hash": hash });
+        let legacy: CommsAddress = serde_json::from_value(missing).unwrap();
+        assert!(legacy.pubkey_pem.is_empty());
+
+        let mut address = CommsAddress::new("127.0.0.1:1000".parse().unwrap(), hash.to_string());
+        address.pubkey_pem = "pem".to_string();
+        let decoded: CommsAddress =
+            serde_json::from_value(serde_json::to_value(&address).unwrap()).unwrap();
+        assert_eq!(decoded, address);
     }
 
     #[test]

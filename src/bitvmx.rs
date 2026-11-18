@@ -302,6 +302,14 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         self.program_context.comms.get_address()
     }
 
+    /// Address peers dial: `comms.public_address`, or the listen address when unset.
+    pub fn public_address(&self) -> SocketAddr {
+        self.config
+            .comms
+            .public_address
+            .unwrap_or_else(|| self.address())
+    }
+
     pub fn pubkey_hash(&self) -> Result<String, BitVMXError> {
         Ok(self.program_context.comms.get_pubk_hash())
     }
