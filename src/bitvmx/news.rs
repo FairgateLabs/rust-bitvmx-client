@@ -197,7 +197,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             // An error, already reported by run_step, or the reaction and ack are committed.
             None | Some(ResultDisposition::Success) => false,
             Some(ResultDisposition::NoOp(reason)) => {
-                debug!("Monitor news consumed without a reaction ({:?}): {:?}", reason, news);
+                debug!(
+                    "Monitor news consumed without a reaction ({:?}): {:?}",
+                    reason, news
+                );
                 true
             }
             Some(ResultDisposition::Retry(reason)) => {
@@ -205,7 +208,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 false
             }
             Some(ResultDisposition::Fail(detail)) => {
-                error!("Unexpected failure disposition {:?} for monitor news {:?}", detail, news);
+                error!(
+                    "Unexpected failure disposition {:?} for monitor news {:?}",
+                    detail, news
+                );
                 true
             }
         };
@@ -259,15 +265,33 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                     filter.tag.clone(),
                 ))?;
             }
-            (_, NewsKind::Block(BlockRef { height, hash })) => {
+            (MonitorTarget::NewBlock, NewsKind::Block(BlockRef { height, hash })) => {
                 debug!("New block: {} {}", height, hash);
                 if self.should_send_new_block_news() {
                     self.notify_l2(&OutgoingBitVMXApiMessages::NewBlock(*hash, *height))?;
                 }
             }
-            (target, kind) => {
+            // The transaction was mined before the first block the indexer read, and the monitor dropped the subscription.
+            (MonitorTarget::Transaction(txid), NewsKind::UnreachableTx) => {
+                // TODO: Tell the owner from the context that this transaction will never be reported.
                 warn!(
-                    "Unhandled monitor news {:?} for target {:?} and context {}",
+                    "Transaction {} is unreachable, its subscription was dropped (context {})",
+                    txid, news.context
+                );
+            }
+            // The output is older than the indexed window and no spender was found. The subscription stays, so a
+            // spender found later is still reported.
+            (MonitorTarget::SpendingUtxo(outpoint), NewsKind::ProbablyUnreachableUTXO) => {
+                // TODO: Tell the owner from the context, so it decides whether to keep waiting or cancel.
+                warn!(
+                    "Spend of {} is probably unreachable, its subscription stays (context {})",
+                    outpoint, news.context
+                );
+            }
+            // The monitor never produces any other pair, so reaching this is a bug. Acked so it never loops.
+            (target, kind) => {
+                error!(
+                    "Unexpected monitor news {:?} for target {:?} and context {}",
                     kind, target, news.context
                 );
             }
