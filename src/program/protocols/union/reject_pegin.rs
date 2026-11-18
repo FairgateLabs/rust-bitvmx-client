@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 use std::collections::HashMap;
 
 use crate::{
@@ -152,14 +153,14 @@ impl ProtocolHandler for RejectPegInProtocol {
         tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Reject Pegin protocol received news of transaction: {}, txid: {} with {} confirmations",
             tx_name, tx_id, tx_status.confirmations()
         );
 
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     fn setup_complete<BC: BitcoinCoordinatorApi>(

@@ -58,8 +58,8 @@ use crate::types::{
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
 use crate::types::{
-    JobDispatcherType, ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP,
-    PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_GC_GENERATION,
+    JobDispatcherType, ProgramContext, ResultDisposition, PROGRAM_TYPE_AGGREGATED_KEY,
+    PROGRAM_TYPE_DRP, PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_GC_GENERATION,
 };
 
 use crate::program::setup::steps::SetupStepName;
@@ -339,6 +339,10 @@ pub trait ProtocolHandler {
         )))
     }
 
+    /// Reacts to a monitor news for one of the protocol's transactions. The returned disposition tells the caller what
+    /// to do with the reaction and the news: `Success` commits the reaction and acks the news, `NoOp` discards the
+    /// reaction and acks the news, and `Retry` discards the reaction without acking, so the news comes back on the next
+    /// fetch. `Fail` is not expected here and is treated like `NoOp`. Errors follow the usual severity rules.
     fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         _tx_id: Txid,
@@ -346,9 +350,9 @@ pub trait ProtocolHandler {
         _tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        // Default implementation: no-op for protocols that don't need to handle news
-        Ok(())
+    ) -> Result<ResultDisposition, BitVMXError> {
+        // Default implementation: nothing to do for protocols that don't need to handle news
+        Ok(ResultDisposition::Success)
     }
 
     fn notify_external_news<BC: BitcoinCoordinatorApi>(

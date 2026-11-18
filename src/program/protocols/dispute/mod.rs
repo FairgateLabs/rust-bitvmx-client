@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 pub mod challenge;
 pub mod config;
 pub mod execution;
@@ -504,8 +505,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        tx_news::handle_tx_news(&self, tx_id, vout, tx_status, program_context)
+    ) -> Result<ResultDisposition, BitVMXError> {
+        tx_news::handle_tx_news(&self, tx_id, vout, tx_status, program_context)?;
+        Ok(ResultDisposition::Success)
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

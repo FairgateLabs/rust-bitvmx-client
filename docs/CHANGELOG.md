@@ -62,6 +62,19 @@ introduce breaking changes between versions.
     `checkpoint_height` is gone, so a config that sets it fails to load. A fresh indexer starts at
     the node's tip minus `retention_depth`. A `coordinator_settings` section given needs all its
     fields, so a fee cap is set with a full `fee:` section.
+- **BREAKING (protocol API)**: `ProtocolHandler::notify_news` returns `Result<ResultDisposition, BitVMXError>`
+  instead of `Result<(), BitVMXError>`, so each protocol decides what happens to its reaction and to the news:
+  - `Success`: the reaction is committed and the news is acked, together.
+  - `NoOp`: the reaction is rolled back and the news is acked.
+  - `Retry`: the reaction is rolled back and the news is not acked, so it comes back on the next fetch. Use it
+    only for a condition that eventually recovers.
+  - `Fail`: not expected for news. It is handled like `NoOp` and logged as an error.
+  - An error rolls back the reaction and the ack. A fatal error stops the node, and any other error is retried
+    on the next fetch.
+    
+  Every protocol returns `Success` for now, which keeps the previous behaviour. Choosing the right disposition
+  in each protocol's `notify_news` is pending. `notify_external_news` is unchanged; whether it should also return
+  a disposition is part of that pending work. The `Transaction` message to L2 is only sent on `Success`.
 
 ## 0.8.7
 

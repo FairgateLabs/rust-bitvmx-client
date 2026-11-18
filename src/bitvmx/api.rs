@@ -1703,26 +1703,27 @@ mod tests {
         }
 
         let monitored = env.coordinator_mock().monitored();
-        assert_eq!(monitored.len(), 4); // NewBlock is registered during construction.
+        // NewBlock is only registered once the first tick catches up, and this test never ticks.
+        assert_eq!(monitored.len(), 3);
         assert!(matches!(
-            &monitored[1].targets[..],
+            &monitored[0].targets[..],
             [MonitorTarget::SpendingUtxo(outpoint)]
                 if outpoint.txid == txid && outpoint.vout == 4
         ));
-        assert_eq!(monitored[1].confirmation_trigger, Some(2));
+        assert_eq!(monitored[0].confirmation_trigger, Some(2));
         assert_eq!(
-            monitored[2].targets,
+            monitored[1].targets,
             vec![MonitorTarget::OutputPattern(filter.clone())]
         );
-        assert_eq!(monitored[2].context, OUTPUT_PATTERN_CONTEXT);
-        assert_eq!(monitored[2].confirmation_trigger, Some(3));
+        assert_eq!(monitored[1].context, OUTPUT_PATTERN_CONTEXT);
+        assert_eq!(monitored[1].confirmation_trigger, Some(3));
         assert!(matches!(
-            &monitored[3].targets[..],
+            &monitored[2].targets[..],
             [MonitorTarget::OutputPattern(monitored_filter)]
                 if monitored_filter.output_index == 1 && monitored_filter.tag == RSK_PEGIN_TAG
         ));
-        assert_eq!(monitored[3].context, OUTPUT_PATTERN_CONTEXT);
-        assert_eq!(monitored[3].confirmation_trigger, Some(4));
+        assert_eq!(monitored[2].context, OUTPUT_PATTERN_CONTEXT);
+        assert_eq!(monitored[2].confirmation_trigger, Some(4));
         assert!(api_replies(&mut env.bitvmx).is_empty());
     }
 

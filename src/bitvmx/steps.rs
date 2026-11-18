@@ -195,11 +195,24 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         store: &Storage,
         work: impl FnOnce() -> Result<T, BitVMXError>,
     ) -> Result<T, BitVMXError> {
+        Self::run_transaction_committing_if(store, || work().map(|value| (value, true)))
+    }
+
+    /// Like `run_transaction`, but the work also decides whether its writes are kept: they are committed when it
+    /// returns `(value, true)` and rolled back when it returns `(value, false)`. Errors always roll back.
+    pub(super) fn run_transaction_committing_if<T>(
+        store: &Storage,
+        work: impl FnOnce() -> Result<(T, bool), BitVMXError>,
+    ) -> Result<T, BitVMXError> {
         store.begin_global_transaction()?;
         match work() {
-            Ok(value) => {
+            Ok((value, true)) => {
                 // Storage consumes the transaction even when commit fails.
                 store.commit_global_transaction()?;
+                Ok(value)
+            }
+            Ok((value, false)) => {
+                store.rollback_global_transaction()?;
                 Ok(value)
             }
             Err(error) => {

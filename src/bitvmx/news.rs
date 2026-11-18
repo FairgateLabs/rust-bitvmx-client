@@ -4,7 +4,9 @@ use super::{BitVMX, Context, CLIENT_GLOBAL_SETTINGS_UUID, NEW_BLOCK_CONTEXT, SEN
 use crate::{
     errors::BitVMXError,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
-    types::{ErrorReportKind, OutgoingBitVMXApiMessages, RSK_PEGIN_TAG},
+    types::{
+        ErrorReportKind, NoOpReason, OutgoingBitVMXApiMessages, ResultDisposition, RSK_PEGIN_TAG,
+    },
 };
 use bitcoin::Txid;
 use bitcoin_coordinator::{
@@ -28,7 +30,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     }
 
     /// Sends a transaction news from the monitor to whoever subscribed to it, read from the context: the
-    /// program for a `ProgramId`, or the API requester for a `RequestId`.
+    /// program for a `ProgramId`, or the API requester for a `RequestId`. Returns what to do with the reaction
+    /// and the news, see `process_and_ack_monitor_news`.
     ///
     /// `spent_vout` is set when the news comes from a SpendingUtxo subscription, and then `tx_id` is the
     /// spent output's txid. It is `None` for a plain transaction subscription.
@@ -38,8 +41,18 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         tx_status: TransactionStatus,
         context_data: String,
         spent_vout: Option<u32>,
-    ) -> Result<(), BitVMXError> {
-        let context = Context::from_string(&context_data)?;
+    ) -> Result<ResultDisposition, BitVMXError> {
+        // An unreadable context can never be routed, so retrying it would loop forever.
+        let context = match Context::from_string(&context_data) {
+            Ok(context) => context,
+            Err(error) => {
+                warn!(
+                    "route_tx_news_to_owner: unreadable context {:?} for {}: {}",
+                    context_data, tx_id, error
+                );
+                return Ok(ResultDisposition::NoOp(NoOpReason::Uncorrelatable));
+            }
+        };
         debug!(
             "Transaction Found: {:?} {:?} for context: {:?}",
             tx_id, tx_status, context
@@ -48,16 +61,17 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         match &context {
             Context::ProgramId(program_id) => match self.load_program(program_id)? {
                 Some(program) => {
-                    program.notify_news(
+                    return program.notify_news(
                         tx_id,
                         spent_vout,
                         tx_status,
                         context_data,
                         &self.program_context,
-                    )?;
+                    );
                 }
                 None => {
                     warn!("route_tx_news_to_owner: Program {} not found", program_id);
+                    return Ok(ResultDisposition::NoOp(NoOpReason::Orphaned));
                 }
             },
             Context::RequestId(request_id, from) => {
@@ -78,7 +92,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             }
             _ => {}
         }
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     /// Ticks the coordinator and wallet, then processes and acknowledges one batch of pending monitor and coordinator
@@ -125,18 +139,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         // filtered out inside get_news, so an empty fetch can still leave news pending: it is drained after the next tick.
         self.draining_news = !monitor_news.is_empty() || !coordinator_news.is_empty();
 
-        // Each item is acknowledged in the same transaction that processes it, so a failed step rolls the
-        // ack back and the item stays in coordinator storage for the next fetch.
         let had_monitor_news = !monitor_news.is_empty();
         for news in monitor_news {
-            self.run_tx_step("monitor news", |this| {
-                this.process_monitor_news(&news)?;
-                this.program_context
-                    .bitcoin_coordinator
-                    .ack_news(AckNews::Monitor(news))?;
-                Ok(())
-            })?;
+            self.process_and_ack_monitor_news(news)?;
         }
+        // Each item is acknowledged in the same transaction that processes it, so a failed step rolls the
+        // ack back and the item stays in coordinator storage for the next fetch.
         let had_coordinator_news = !coordinator_news.is_empty();
         for news in coordinator_news {
             self.run_tx_step("coordinator news", |this| {
@@ -162,22 +170,81 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
+    /// Processes one monitor news in its own transaction and acts on the reaction's disposition:
+    /// - `Success`: the reaction and the ack are committed together.
+    /// - `NoOp`: the reaction is rolled back, and the ack is committed in a new transaction.
+    /// - `Retry`: the reaction is rolled back and the news is not acked, so it comes back on the next fetch.
+    /// - `Fail`: not expected for news. Handled like `NoOp` and logged as an error, so it never loops.
+    ///
+    /// An error rolls back the reaction and the ack. A fatal error stops the node, and any other error is
+    /// reported and the news is retried on the next fetch.
+    fn process_and_ack_monitor_news(&mut self, news: MonitorNews) -> Result<(), BitVMXError> {
+        let store = self.store.clone();
+        let disposition = self.run_step("monitor news", |this| {
+            Self::run_transaction_committing_if(&store, || {
+                let disposition = this.process_monitor_news(&news)?;
+                let keep = disposition == ResultDisposition::Success;
+                if keep {
+                    this.program_context
+                        .bitcoin_coordinator
+                        .ack_news(AckNews::Monitor(news.clone()))?;
+                }
+                Ok((disposition, keep))
+            })
+        })?;
+
+        let ack_without_reaction = match disposition {
+            // An error, already reported by run_step, or the reaction and ack are committed.
+            None | Some(ResultDisposition::Success) => false,
+            Some(ResultDisposition::NoOp(reason)) => {
+                debug!("Monitor news consumed without a reaction ({:?}): {:?}", reason, news);
+                true
+            }
+            Some(ResultDisposition::Retry(reason)) => {
+                debug!("Monitor news will be retried ({:?}): {:?}", reason, news);
+                false
+            }
+            Some(ResultDisposition::Fail(detail)) => {
+                error!("Unexpected failure disposition {:?} for monitor news {:?}", detail, news);
+                true
+            }
+        };
+        if ack_without_reaction {
+            self.run_tx_step("monitor news ack", |this| {
+                this.program_context
+                    .bitcoin_coordinator
+                    .ack_news(AckNews::Monitor(news))?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
     /// Handles a monitor news, an observation on chain: transactions go to their owner, output pattern
-    /// matches and new blocks go to L2.
-    fn process_monitor_news(&mut self, news: &MonitorNews) -> Result<(), BitVMXError> {
+    /// matches and new blocks go to L2. Returns the owner's disposition for transaction news, and `Success`
+    /// for the rest.
+    fn process_monitor_news(
+        &mut self,
+        news: &MonitorNews,
+    ) -> Result<ResultDisposition, BitVMXError> {
         match (&news.target, &news.kind) {
             (MonitorTarget::Transaction(_), NewsKind::Transaction { txid, status, .. }) => {
-                self.route_tx_news_to_owner(*txid, status.clone(), news.context.clone(), None)?;
                 //TODO: Handle reorg case with due_to_reorg
+                return self.route_tx_news_to_owner(
+                    *txid,
+                    status.clone(),
+                    news.context.clone(),
+                    None,
+                );
             }
             (MonitorTarget::SpendingUtxo(outpoint), NewsKind::Transaction { status, .. }) => {
                 // Consumers expect the spent output's txid and vout. The spender comes inside the status.
-                self.route_tx_news_to_owner(
+                return self.route_tx_news_to_owner(
                     outpoint.txid,
                     status.clone(),
                     news.context.clone(),
                     Some(outpoint.vout),
-                )?;
+                );
             }
             (MonitorTarget::OutputPattern(filter), NewsKind::Transaction { txid, status, .. }) => {
                 if filter.tag == RSK_PEGIN_TAG {
@@ -205,7 +272,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 );
             }
         }
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     /// Sends an API message to L2.

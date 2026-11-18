@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 use crate::{
     bitvmx::Context,
     errors::BitVMXError,
@@ -596,7 +597,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         info!("Notified of transaction: {}. Context: {}", tx_id, context);
 
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
@@ -647,7 +648,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
             // Handle double reveal penalization if needed
             if self.handle_double_reveal(program_context, slot_index)? {
-                return Ok(());
+                return Ok(ResultDisposition::Success);
             } else {
                 self.handle_reveal_input_tx(program_context, &tx_name, &tx_status)?;
             }
@@ -678,7 +679,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
             self.handle_wt_no_challenge_tx(program_context, &tx_name)?;
         }
 
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     fn notify_external_news<BC: BitcoinCoordinatorApi>(
