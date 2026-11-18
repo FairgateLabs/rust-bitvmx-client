@@ -746,7 +746,8 @@ impl Member {
 
         info!(
             "Sent {} transaction with {} confirmations.",
-            txid, status.confirmations
+            txid,
+            status.confirmations()
         );
 
         info!("Waiting for SPV proof...",);

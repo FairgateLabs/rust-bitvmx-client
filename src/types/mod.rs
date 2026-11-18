@@ -146,6 +146,7 @@ pub struct ProgramContext<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     pub leader_broadcast_helper: LeaderBroadcastHelper,
     pub(crate) operation_timeouts: OperationTimeouts,
     pub(crate) expected_jobs: ExpectedJobs,
+    pub finality: u32,
 }
 
 impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
@@ -161,6 +162,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
         leader_broadcast_helper: LeaderBroadcastHelper,
         operation_timeouts: OperationTimeouts,
         expected_jobs: ExpectedJobs,
+        finality: u32,
     ) -> Self {
         Self {
             comms,
@@ -174,6 +176,7 @@ impl<BC: BitcoinCoordinatorApi> ProgramContext<BC> {
             leader_broadcast_helper,
             operation_timeouts,
             expected_jobs,
+            finality,
         }
     }
 }

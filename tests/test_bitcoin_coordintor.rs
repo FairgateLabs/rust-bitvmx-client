@@ -89,7 +89,7 @@ fn retry_failed_txs_test() -> Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
 
-    let news = coordinator.get_news()?;
+    let news = coordinator.get_news(None)?;
     let mut has_dispatch_error = false;
 
     for news_item in news.coordinator_news.iter() {

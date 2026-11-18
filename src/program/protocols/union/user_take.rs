@@ -199,7 +199,7 @@ impl ProtocolHandler for UserTakeProtocol {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "User Take protocol received news of transaction: {}, txid: {} with {} confirmations",
-            tx_name, tx_id, tx_status.confirmations
+            tx_name, tx_id, tx_status.confirmations()
         );
 
         Ok(())

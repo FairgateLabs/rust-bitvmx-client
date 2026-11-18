@@ -125,20 +125,21 @@ pub trait ProtocolHandler {
         self.context_mut().storage = Some(storage);
     }
 
-    // Default to 1 confirmation for Bitcoin transactions
+    // Default to the monitor's finality from the config, the smallest trigger the monitor accepts
     // Each protocol should override if different
     fn requested_confirmations<BC: BitcoinCoordinatorApi>(
         &self,
         program_context: &ProgramContext<BC>,
     ) -> Option<u32> {
+        let finality = program_context.finality;
         Some(
             program_context
                 .globals
                 .get_var(&self.context().id, REQUESTED_CONFIRMATIONS_VAR)
                 .unwrap_or(None)
-                .unwrap_or(VariableTypes::Number(1))
+                .unwrap_or(VariableTypes::Number(finality))
                 .number()
-                .unwrap_or(1) as u32,
+                .unwrap_or(finality) as u32,
         )
     }
 

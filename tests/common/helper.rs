@@ -150,7 +150,7 @@ impl SimchainStack {
     pub fn wait_for_bootstrap(&self, client: &BitcoinClient) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(300);
         loop {
-            match client.get_best_block() {
+            match client.get_tip_height() {
                 Ok(height) if height >= Self::BOOTSTRAP_HEIGHT => return Ok(()),
                 Ok(height) => info!(
                     "simchain bootstrapping: height {} / {}",
@@ -223,11 +223,11 @@ impl InternalWallet {
         if self.mines_on_demand {
             return Ok(self.wallet.mine(num_blocks)?);
         } else {
-            let initial = self.client.get_best_block()?;
+            let initial = self.client.get_tip_height()?;
             let target = initial + 1;
             loop {
                 thread::sleep(Duration::from_millis(500));
-                let current = self.client.get_best_block()?;
+                let current = self.client.get_tip_height()?;
                 if current >= target {
                     break;
                 }

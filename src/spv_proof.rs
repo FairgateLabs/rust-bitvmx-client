@@ -447,7 +447,6 @@ mod tests {
             .unwrap(),
             prev_hash: BlockHash::all_zeros(),
             txs,
-            orphan: false,
             estimated_fee_rate: 1,
         }
     }

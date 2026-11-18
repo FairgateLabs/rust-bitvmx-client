@@ -35,7 +35,7 @@ use crate::{
     },
 };
 use bitcoin::{Amount, PublicKey, Transaction, Txid};
-use bitcoin_coordinator::TransactionStatus;
+use bitcoin_coordinator::{MonitorTarget, TransactionStatus};
 use bitcoin_scriptexec::scriptint_vec;
 use core::result::Result::Ok;
 use key_manager::winternitz::{WinternitzPublicKey, WinternitzType};
@@ -603,7 +603,7 @@ impl ProtocolHandler for DisputeCoreProtocol {
 
         info!(
             "DisputeCoreProtocol received news of transaction: {}, txid: {} with {} confirmations. Context: {}",
-            tx_name, tx_id, tx_status.confirmations, context
+            tx_name, tx_id, tx_status.confirmations(), context
         );
 
         if tx_name == WT_START_ENABLER_TX {
@@ -2319,13 +2319,11 @@ impl DisputeCoreProtocol {
         tx_status: &TransactionStatus,
         timelock: u16,
     ) -> Result<u32, BitVMXError> {
-        let block_height = tx_status
-            .block_info
-            .as_ref()
-            .ok_or(BitVMXError::InvalidParameter(
-                "TransactionStatus missing block_info".to_string(),
-            ))?
-            .height;
+        let TransactionStatus::Confirmed { block_height, .. } = tx_status else {
+            return Err(BitVMXError::InvalidParameter(
+                "TransactionStatus is not confirmed".to_string(),
+            ));
+        };
 
         Ok(block_height + timelock as u32)
     }
@@ -3400,16 +3398,12 @@ impl DisputeCoreProtocol {
         slot_index: usize,
         tx_type: UnionTxType,
     ) -> Result<(), BitVMXError> {
-        let tx_info = context.bitcoin_coordinator.get_transaction(txid);
-
-        let proof = match tx_info {
-            Ok(utx) => match utx.block_info {
-                Some(block_info) => Some(get_spv_proof(txid, block_info)?),
-                None => {
-                    warn!("Transaction {txid} has no block info yet, skipping SPV proof");
-                    None
-                }
-            },
+        let proof = match context.bitcoin_coordinator.get_confirming_block(txid) {
+            Ok(Some(block)) => Some(get_spv_proof(txid, block)?),
+            Ok(None) => {
+                warn!("Transaction {txid} is not confirmed yet, skipping SPV proof");
+                None
+            }
             Err(e) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",
@@ -4352,13 +4346,18 @@ impl DisputeCoreProtocol {
         };
         info!("Cancelling dispatch of {} for txid {}", tx_name, txid);
 
+        // The coordinator only cancels under the context the transaction was dispatched with.
+        let dispatch_context = match Context::ProgramId(pid).to_string() {
+            Ok(dispatch_context) => dispatch_context,
+            Err(e) => {
+                warn!("Failed to build the context to cancel txid {}: {:?}", txid, e);
+                return;
+            }
+        };
+
         context
             .bitcoin_coordinator
-            .cancel(bitcoin_coordinator::TypesToMonitor::Transactions(
-                vec![txid],
-                String::default(),
-                None,
-            ))
+            .cancel(&[MonitorTarget::Transaction(txid)], &dispatch_context)
             .unwrap_or_else(|e| {
                 warn!("Failed to cancel monitoring for txid {}: {:?}", txid, e);
             });

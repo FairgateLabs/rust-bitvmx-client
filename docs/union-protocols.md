@@ -23,13 +23,15 @@ UTXO notifications with a confirmation trigger between **6 and 10 blocks**.
 The committee settings select the exact threshold. A protocol must not rely on
 the generic one-confirmation fallback.
 
-A transaction notification marked `resent_due_to_reorg` means it had already
-reached its trigger before a reorganization and has now reached the trigger
-again in another block. At a 6–10 block threshold this is a deep reorganization
-beyond the protocol's assumed Bitcoin finality, not a normal replay condition.
-The client logs it as an error for operational attention, does not run protocol
-side effects a second time, and acknowledges it as an exceptional duplicate.
-Automatic replay of one event is not considered safe recovery for a deep reorg.
+The monitor reports a trigger once and never restates it, not even after a
+reorganization, and it refuses a trigger below its configured `finality`
+(default 6). A `due_to_reorg` notification only exists for a subscription
+without a trigger, so a protocol-owned trigger subscription never receives one.
+A reorganization deeper than the trigger is beyond the protocol's assumed
+Bitcoin finality and is not reported by the trigger subscription. When it is
+detected, the policy is to log it as an error for operational attention and not
+run protocol side effects a second time. Automatic replay of one event is not
+considered safe recovery for a deep reorg.
 See
 [`BITVMX_COORDINATOR_MESSAGE_ERROR_HANDLING.md`](BITVMX_COORDINATOR_MESSAGE_ERROR_HANDLING.md#reorganization-and-confirmation-finality-policy)
 for the complete event policy.

@@ -3,7 +3,7 @@
 ## Scope
 
 This plan covers both classes of events returned by
-`BitcoinCoordinatorApi::get_news()`:
+`BitcoinCoordinatorApi::get_news(max_keys)`:
 
 - `MonitorNews`: chain observations produced by the transaction monitor;
 - `CoordinatorNews`: terminal or noteworthy outcomes produced by the transaction
@@ -48,7 +48,7 @@ Remaining gaps:
   `handle_bitcoin_outcome` hook;
 - an unreadable persisted monitor context is a generic serialization error and
   can be retried and reported forever;
-- `resent_due_to_reorg` is ignored;
+- `due_to_reorg` is only logged; the restated status is forwarded like any other;
 - `InvalidStateTransition` and `TxNotFound` are logged and acknowledged without
   a durable diagnostic;
 - `InvalidCancel` still drops the context received by the coordinator;
@@ -205,13 +205,19 @@ specific, but a protocol must not rely on the current one-confirmation fallback.
 This policy applies to protocol setup and to subscriptions created later by
 runtime protocol paths.
 
-`TransactionNews::resent_due_to_reorg == true` means that the same monitored
-transaction previously reached its trigger, was affected by a reorganization,
-and later reached the trigger again in another block. With a 6–10 block
-trigger, this represents a deep reorganization beyond BitVMX's assumed Bitcoin
-finality and should not occur during normal production operation.
+The monitor reports a confirmation trigger once, at the first block where the
+count reaches it, and never restates it, not even after a reorganization. A
+trigger subscriber hears nothing before the trigger fires either, including a
+reorganization that takes the transaction out of its block. The trigger is the
+consumer's finality claim, and the monitor itself refuses any trigger below its
+configured `finality` (default 6) or above `max_monitoring_confirmations`.
 
-The client policy for such an event is:
+`NewsKind::Transaction { due_to_reorg: true, .. }` is only produced for a
+subscription without a trigger. It means the reorganization pass restated the
+transaction, with its status after the reorganization: still `Confirmed` if its
+block survived, `NotFound` or `InMempool` if it did not. 
+
+The client policy for a reorganization detected that way is:
 
 1. log it at **error** level with the transaction ID, context, confirmation
    count, and block information available in the status;
@@ -257,10 +263,12 @@ node.
 
 | Event/path | Outcome |
 |---|---|
-| `Transaction` / `SpendingUTXOTransaction` with `ProgramId` and an existing program | Apply `Program::notify_news`, then ack |
+| `Transaction` / `SpendingUtxo` target with `ProgramId` and an existing program | Apply `Program::notify_news`, then ack |
 | same event for a program that no longer exists | Log/return typed stale no-op, then ack |
 | same event with `RequestId` | Enqueue the API notification to the recorded requester, then ack atomically |
-| protocol-owned `Transaction` with `resent_due_to_reorg == true` | Skip `notify_news`, deliver `ProtocolBitcoinFailure::DeepReorg` through the outcome hook, then ack after it succeeds |
+| protocol-owned deep reorganization | Skip `notify_news`, deliver `ProtocolBitcoinFailure::DeepReorg` through the outcome hook, then ack after it succeeds |
+| `UnreachableTx` | The transaction was mined before the monitor started and the subscription was dropped. Currently error-logged and acked |
+| `ProbablyUnreachableUTXO` | The outpoint is spent by a transaction outside the monitor window. Not final, currently warning-logged and acked |
 | output-pattern or RSK pegin event | Enqueue the L2 notification(s), then ack atomically |
 | new-block event | Read the setting fallibly, enqueue the configured notification if enabled, then ack atomically |
 | ordinary duplicate already applied by protocol state | Typed no-op, then ack |
@@ -327,10 +335,11 @@ must be safe under retry.
    `ProtocolHandler::handle_bitcoin_outcome` implementation that logs warnings
    and failures at the corresponding level and returns `Ok(())`. Route only
    program-owned outcomes to this hook.
-3. **Handle protocol reorg resends at the event boundary.** Error-log
-   `resent_due_to_reorg`, skip `ProgramId` `notify_news` redelivery, invoke the
-   dedicated outcome hook, and acknowledge after it succeeds. Preserve the
-   separate `RequestId` subscription contract.
+3. **Detect and handle protocol deep reorganizations.** The trigger
+   subscription never restates, so detection needs a subscription without a
+   trigger or polling. Error-log the reorganization, skip `ProgramId`
+   `notify_news` redelivery, invoke the dedicated outcome hook, and acknowledge
+   after it succeeds. Preserve the separate `RequestId` subscription contract.
 4. **Type protocol news outcomes.** Add applied and stale/already-applied
    outcomes and identify every deterministic protocol failure.
 5. **Tighten context handling.** Keep missing programs stale, but treat an
@@ -360,7 +369,7 @@ must be safe under retry.
 4. An unreadable context does not enter an endless nonfatal retry loop.
 5. Every protocol-owned monitor registration uses a trigger between 6 and 10
    confirmations, including runtime registrations.
-6. A protocol-owned `resent_due_to_reorg` transaction is error-logged, enters
+6. A protocol-owned deep reorganization is error-logged, enters
    `handle_bitcoin_outcome` rather than `notify_news`, does not repeat
    successful outgoing effects, and is acknowledged after the outcome hook
    succeeds;

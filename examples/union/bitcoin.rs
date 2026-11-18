@@ -52,7 +52,7 @@ impl BitcoinWrapper {
             return Ok(());
         }
 
-        let mut height = self.get_best_block()?;
+        let mut height = self.get_tip_height()?;
         let last_block = height + blocks;
         info!("Height: {}. Waiting until block: {}", height, last_block);
 
@@ -69,7 +69,7 @@ impl BitcoinWrapper {
             }
             debug!("Waiting {} seconds...", sleep_secs);
             thread::sleep(Duration::from_secs(sleep_secs));
-            height = self.get_best_block()?;
+            height = self.get_tip_height()?;
             debug!("Current height: {}", height);
         }
         Ok(())
