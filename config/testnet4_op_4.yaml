@@ -22,6 +22,8 @@ coordinator_settings:
     max_feerate_sat_vb: 2
     base_fee_multiplier: 1.0
     min_safe_fee_rate: 1
+  monitor:
+    finality: 1
 
 
 coordinator_throttle:
