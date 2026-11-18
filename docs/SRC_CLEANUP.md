@@ -18,6 +18,8 @@ Line numbers refer to commit `c9d7976`. Items are proposed unless marked as appl
 
 ### 1. Keep `ProgramState` in step with the engine in one place
 
+Status: applied.
+
 `program/program.rs`
 
 After the setup engine changes, three places derive `ProgramState` from the engine's step state with
@@ -32,6 +34,8 @@ Add `fn sync_state_with_engine(&mut self)`. `tick_inner` can then drop the block
 `current_step_state`.
 
 ### 2. `handle_setup_error` never returns `Ok`
+
+Status: applied.
 
 `program/program.rs:483-504`
 
@@ -48,6 +52,8 @@ to a plain call.
 
 ### 3. Share `can_advance` across the setup steps
 
+Status: applied.
+
 `program/setup/steps/{keys,nonces,signatures}_step.rs`
 
 `KeysStep::can_advance` (250-274), `NoncesStep::can_advance` (225-249) and
@@ -56,6 +62,8 @@ name in the log. Make it the default method on `SetupStep`, using `self.step_nam
 `GarblerStep` keeps its override.
 
 ### 4. Merge the nonce and signature step bodies
+
+Status: applied.
 
 `program/setup/steps/nonces_step.rs`, `signatures_step.rs`
 
@@ -74,6 +82,8 @@ specific parts: the signature verification loop (signatures 221-247), and the tw
 
 ### 5. Collapse `comms_helper::request` onto `prepare_message`
 
+Status: applied.
+
 `comms_helper.rs:116-176`
 
 `request` repeats the body of `prepare_message` (88-114) inline: it builds the canonical message, then
@@ -90,13 +100,22 @@ The wire bytes don't change: the signature covers the sorted-key string of the s
 
 ## Medium value
 
-- **`SetupEngine::tick` change tracking (`setup_engine.rs:777-883`):** the before/after comparison of
-  the engine state (860-867) already catches every change the explicit `state_changed = true` lines
+- **`SetupEngine::tick` change tracking (`setup_engine.rs:777-883`):**
+
+  Status: applied.
+
+  The before/after comparison of the engine state (860-867) already catches every change the
+  explicit `state_changed = true` lines
   record. Generation always moves `current_step_state`, advancing moves the index or the completion
   flag, and `process_produced_data` marks this participant. Compare once at the end, after
   `process_produced_data`, and drop the flags.
-- **Setup checks repeated in three layers:** membership and the step's message type are checked by
-  `classify_participant_message` at the peer boundary, again by `receive_current_step_data`
+- **Setup checks repeated in three layers:**
+
+  Status: applied. The step-level checks remain for direct `SetupStep::verify_received` callers;
+  wrong message types now consistently return `SetupNotReady`.
+
+  Membership and the step's message type are checked by `classify_participant_message` at the peer
+  boundary, again by `receive_current_step_data`
   (`setup_engine.rs:413-423`), and again by `SetupStep::verify_received` (`setup_step.rs:110-131`).
   The second and third return different retry reasons for the same condition (`SetupNotReady` and
   `UnexpectedSetupMessageType`). The engine always runs its checks first, so the step's checks only

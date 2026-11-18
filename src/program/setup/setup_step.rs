@@ -5,7 +5,7 @@ use crate::{
 use enum_dispatch::enum_dispatch;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracing::info;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     errors::BitVMXError,
     program::{
         participant::{get_index_by_pubkey_hash, CommsAddress},
-        protocols::protocol_handler::ProtocolType,
+        protocols::protocol_handler::{ProtocolHandler, ProtocolType},
     },
     types::{NoOpReason, PeerSetupFaultReason, ProgramContext, ResultDisposition, RetryReason},
 };
@@ -57,6 +57,21 @@ where
     })
 }
 
+pub(crate) fn load_participant_data(
+    globals: &Globals,
+    uuid: &Uuid,
+    idx: usize,
+    step_name: &str,
+) -> Result<String, BitVMXError> {
+    let key = format!("participant_{}_{}", idx, step_name);
+    globals
+        .get_var(uuid, &key)?
+        .ok_or_else(|| {
+            BitVMXError::InvalidMessage(format!("Missing {} for participant {}", step_name, idx))
+        })?
+        .string()
+}
+
 /// Trait that defines a generic step of a protocol setup.
 ///
 /// Each step manages its own lifecycle in 4 phases:
@@ -93,8 +108,9 @@ pub trait SetupStep {
     ///
     /// - a sender outside the participant list cannot contribute to this
     ///   program and is consumed as a no-op;
-    /// - a message for another step's `accepted_message_type` stays retryable,
-    ///   because the engine may still advance to the step that consumes it.
+    /// - a message for another step's `accepted_message_type` returns
+    ///   [`RetryReason::SetupNotReady`], because the engine may still advance
+    ///   to the step that consumes it.
     ///
     /// Steps implement `verify_received_impl` and must not repeat these checks.
     fn verify_received<BC: BitcoinCoordinatorApi>(
@@ -125,9 +141,7 @@ pub trait SetupStep {
                 self.step_name(),
                 accepted
             );
-            return Ok(ResultDisposition::Retry(
-                RetryReason::UnexpectedSetupMessageType,
-            ));
+            return Ok(ResultDisposition::Retry(RetryReason::SetupNotReady));
         }
 
         self.verify_received_impl(
@@ -165,7 +179,30 @@ pub trait SetupStep {
         protocol: &ProtocolType,
         participants: &[CommsAddress],
         context: &ProgramContext<BC>,
-    ) -> Result<bool, BitVMXError>;
+    ) -> Result<bool, BitVMXError> {
+        let protocol_id = protocol.context().id;
+
+        for (idx, participant) in participants.iter().enumerate() {
+            if !self.has_participant_data(&context.globals, &protocol_id, idx)? {
+                debug!(
+                    "{} step: Still waiting for {} from participant {} (index {})",
+                    self.step_name(),
+                    self.step_name(),
+                    participant.pubkey_hash,
+                    idx
+                );
+                return Ok(false);
+            }
+        }
+
+        debug!(
+            "{} step: All {} participants have sent their {}",
+            self.step_name(),
+            participants.len(),
+            self.step_name()
+        );
+        Ok(true)
+    }
 
     /// **Optional hook**: Called when the step completes successfully.
     ///
@@ -225,17 +262,7 @@ pub trait SetupStep {
         uuid: &Uuid,
         idx: usize,
     ) -> Result<String, BitVMXError> {
-        let step_name = self.step_name();
-        let key = format!("participant_{}_{}", idx, step_name);
-        globals
-            .get_var(uuid, &key)?
-            .ok_or_else(|| {
-                BitVMXError::InvalidMessage(format!(
-                    "Missing {} for participant {}",
-                    step_name, idx
-                ))
-            })?
-            .string()
+        load_participant_data(globals, uuid, idx, self.step_name())
     }
 
     fn has_participant_data(
@@ -289,15 +316,6 @@ mod tests {
             Ok(ResultDisposition::Retry(
                 RetryReason::MissingSetupPrerequisite,
             ))
-        }
-
-        fn can_advance<BC: BitcoinCoordinatorApi>(
-            &self,
-            _protocol: &ProtocolType,
-            _participants: &[CommsAddress],
-            _context: &ProgramContext<BC>,
-        ) -> Result<bool, BitVMXError> {
-            Ok(false)
         }
     }
 
@@ -382,6 +400,11 @@ mod tests {
         assert!(!step
             .can_advance(&protocol, &participants, &env.context)
             .unwrap());
+        step.store_participant_data(&env.context.globals, &id, 0, "payload")
+            .unwrap();
+        assert!(step
+            .can_advance(&protocol, &participants, &env.context)
+            .unwrap());
         step.on_step_complete(&protocol, &participants, &mut env.context)
             .unwrap();
         let result = step.receive_dispatcher_result(
@@ -418,7 +441,7 @@ mod tests {
                 false,
             )
             .unwrap(),
-            ResultDisposition::Retry(RetryReason::UnexpectedSetupMessageType)
+            ResultDisposition::Retry(RetryReason::SetupNotReady)
         );
 
         let mut outsider = participant;

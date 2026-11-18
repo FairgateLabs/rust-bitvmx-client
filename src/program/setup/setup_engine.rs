@@ -781,7 +781,6 @@ impl SetupEngine {
 
         // Process the tick based on current state
         let mut data_and_type_to_send = None;
-        let mut state_changed = false;
 
         match self.state.current_step_state {
             StepState::Generating => {
@@ -829,7 +828,6 @@ impl SetupEngine {
                         step_name
                     );
                 }
-                state_changed = true;
             }
             StepState::WaitingForParticipants => {
                 info!("Wasted");
@@ -848,22 +846,11 @@ impl SetupEngine {
                         "SetupEngine::tick() - Step '{}' advanced successfully",
                         step_name
                     );
-                    state_changed = true;
                 }
             }
             StepState::Completed => {
                 error!("We should never be in Completed state during tick - the engine should have already advanced to the next step. Step '{}'", step_name);
             }
-        }
-
-        // Check if engine state changed
-        let engine_state_after = self.state.clone();
-        if engine_state_before != engine_state_after {
-            info!(
-                "SetupEngine::tick() - State changed - before: {:?}, after: {:?}",
-                engine_state_before.current_step_state, engine_state_after.current_step_state
-            );
-            state_changed = true;
         }
 
         // If we have data to send, broadcast it and mark as sent
@@ -877,7 +864,14 @@ impl SetupEngine {
                 program_id,
                 context,
             )?;
-            state_changed = true;
+        }
+
+        let state_changed = engine_state_before != self.state;
+        if state_changed {
+            info!(
+                "SetupEngine::tick() - State changed - before: {:?}, after: {:?}",
+                engine_state_before.current_step_state, self.state.current_step_state
+            );
         }
 
         Ok(state_changed)
