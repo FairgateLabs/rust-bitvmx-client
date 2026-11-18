@@ -24,6 +24,10 @@ comms:
   storage_path: /tmp/development/comms.db
   allow_list: config/comms_allow_list.yaml
 
+coordinator_settings:
+  monitor:
+    finality: 1
+
 coordinator_throttle:
   init_interval: 10
   busy_interval: 50

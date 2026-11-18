@@ -1001,7 +1001,11 @@ impl AcceptPegInProtocol {
         tx_type: UnionTxType,
     ) -> Result<(), BitVMXError> {
         let proof = match context.bitcoin_coordinator.get_confirming_block(txid) {
-            Ok(block) => Some(get_spv_proof(txid, block.unwrap())?),
+            Ok(Some(block)) => Some(get_spv_proof(txid, block)?),
+            Ok(None) => {
+                warn!("Transaction {txid} is not confirmed yet, skipping SPV proof");
+                None
+            }
             Err(e) => {
                 warn!(
                     "Failed to retrieve transaction info for txid {}: {:?}",
