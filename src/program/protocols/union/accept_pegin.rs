@@ -14,12 +14,12 @@ use crate::{
                     send_dispute_tx_notification, InputSigningInfo,
                 },
                 types::{
-                    dust_value, Committee, DisputeTxType, PacketSettings, PegInAccepted,
-                    PegInRequest, UnionSPVNotification, UnionTxType, ACCEPT_PEGIN_TX,
-                    CANCEL_TAKE0_TX, LAST_OPERATOR_TAKE_UTXO, OPERATOR_TAKE_ENABLER,
-                    OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX, P2TR_FEE,
-                    REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS, SPEEDUP_KEY,
-                    SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
+                    dust_value, enabler_value, Committee, DisputeTxType, PacketSettings,
+                    PegInAccepted, PegInRequest, UnionSPVNotification, UnionTxType,
+                    ACCEPT_PEGIN_TX, CANCEL_TAKE0_TX, LAST_OPERATOR_TAKE_UTXO,
+                    OPERATOR_TAKE_ENABLER, OPERATOR_TAKE_TX, OPERATOR_WON_ENABLER, OPERATOR_WON_TX,
+                    P2TR_FEE, REIMBURSEMENT_KICKOFF_TX, REQUEST_PEGIN_TX, REVEAL_IN_PROGRESS,
+                    SPEEDUP_KEY, SPEEDUP_VALUE, TAKE_AGGREGATED_KEY,
                 },
             },
         },
@@ -158,7 +158,7 @@ impl ProtocolHandler for AcceptPegInProtocol {
         protocol.add_connection(
             "accept_enabler_conn",
             REQUEST_PEGIN_TX,
-            OutputType::taproot(2 * dust_value(), &take_aggregated_key, &enabler_scripts)?.into(),
+            OutputType::taproot(enabler_value(), &take_aggregated_key, &enabler_scripts)?.into(),
             ACCEPT_PEGIN_TX,
             InputSpec::Auto(
                 SighashType::taproot_all(),

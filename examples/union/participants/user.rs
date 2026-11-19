@@ -27,7 +27,7 @@ use bitvmx_client::{
     client::BitVMXClient,
     config::Config,
     program::{
-        protocols::union::types::{dust_value, SPEEDUP_VALUE},
+        protocols::union::types::{enabler_value, SPEEDUP_VALUE},
         variables::PartialUtxo,
     },
     spv_proof::BtcTxSPVProof,
@@ -205,7 +205,7 @@ impl User {
         let input_value = input_utxo
             .2
             .ok_or_else(|| anyhow::anyhow!("Request pegin UTXO has no amount"))?;
-        let required_value = stream_value + fee + 2 * dust_value();
+        let required_value = stream_value + fee + enabler_value();
         let change_value = input_value.checked_sub(required_value).ok_or_else(|| {
             anyhow::anyhow!(
                 "Insufficient funds for request pegin: input has {} sats, needs {} sats",
@@ -285,7 +285,7 @@ impl User {
         );
 
         let reject_output = TxOut {
-            value: Amount::from_sat(2 * dust_value()),
+            value: Amount::from_sat(enabler_value()),
             script_pubkey: reject_script_pubkey,
         };
 
@@ -534,6 +534,6 @@ impl User {
     }
 
     pub fn get_request_pegin_fees(&self) -> u64 {
-        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + 2 * dust_value();
+        return self.get_extra_fee() + OP_RETURN_FEE + KEY_SPEND_FEE + enabler_value();
     }
 }

@@ -101,7 +101,25 @@ pub const STOPPER_TX: &str = "STOPPER_TX";
 pub fn dust_value() -> u64 {
     OutputType::generic_dust_limit(None).to_sat()
 }
+
+/// Enabler output amount in satoshis: twice the dust value.
+///
+/// Must match `Constants.ENABLER_AMOUNT = 2 * DUST_AMOUNT` (1080 sats) in
+/// `bitvmx-union-bridge-contracts/src/libraries/Constants.sol`; `BitcoinManager` rejects any
+/// enabler output whose amount differs.
+pub fn enabler_value() -> u64 {
+    2 * dust_value()
+}
+
+/// Speed-up output amount in satoshis.
+///
+/// Must stay at 540 sats to match `Constants.SPEED_UP_AMOUNT` in
+/// `bitvmx-union-bridge-contracts/src/libraries/Constants.sol`: `BitcoinManager` rejects speed-up
+/// outputs below it, and `OperatorTakeManager` computes the user amount as
+/// `denomination - 2 * (P2TR_FEE + SPEED_UP_AMOUNT)`, which must equal the amount built here.
 pub const SPEEDUP_VALUE: u64 = 540;
+// Checked at build time against the literal on purpose, so a change fails to compile.
+const _: () = assert!(SPEEDUP_VALUE == 540);
 pub const P2TR_FEE: u64 = 335; // This should match the value P2TR_FEE in Union Smart contracts
 pub const USER_TAKE_FEE: u64 = 335; // This should match the value USER_TAKE_FEE in Union Smart contracts
 pub const OP_DISABLER_FEE: u64 = 240;
@@ -476,5 +494,11 @@ mod dust_value_tests {
     #[test]
     fn dust_value_matches_contract_dust_amount() {
         assert_eq!(dust_value(), 540);
+    }
+
+    // Same reasoning: `Constants.ENABLER_AMOUNT` is 1080 sats and is checked exactly by `BitcoinManager`.
+    #[test]
+    fn enabler_value_matches_contract_enabler_amount() {
+        assert_eq!(enabler_value(), 1080);
     }
 }
