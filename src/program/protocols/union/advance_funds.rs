@@ -31,8 +31,8 @@ use crate::{
                 },
                 dispute_core::PEGOUT_ID,
                 types::{
-                    AdvanceFundsRequest, Committee, FundsAdvanceSPV, FundsAdvanced,
-                    ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX, DUST_VALUE,
+                    dust_value, AdvanceFundsRequest, Committee, FundsAdvanceSPV, FundsAdvanced,
+                    ACCEPT_PEGIN_TX, ADVANCE_FUNDS_INPUT, ADVANCE_FUNDS_TX,
                     LAST_OPERATOR_TAKE_UTXO, OP_INITIAL_DEPOSIT_FLAG, OP_INITIAL_DEPOSIT_TX,
                     REIMBURSEMENT_KICKOFF_TX, USER_TAKE_FEE,
                 },
@@ -165,7 +165,7 @@ impl ProtocolHandler for AdvanceFundsProtocol {
             input_amount + USER_TAKE_FEE,
             accept_pegin_output_amount + request.fee,
         )?;
-        if op_change > DUST_VALUE {
+        if op_change > dust_value() {
             let op_wpkh = self
                 .my_dispute_key(context)?
                 .wpubkey_hash()
