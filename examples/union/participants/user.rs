@@ -202,8 +202,17 @@ impl User {
                 return Err(anyhow::anyhow!("No UTXO available for request pegin"));
             }
         };
-        let input_value = input_utxo.2.unwrap();
-        let change_value = input_value - (stream_value + fee + 2 * dust_value());
+        let input_value = input_utxo
+            .2
+            .ok_or_else(|| anyhow::anyhow!("Request pegin UTXO has no amount"))?;
+        let required_value = stream_value + fee + 2 * dust_value();
+        let change_value = input_value.checked_sub(required_value).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Insufficient funds for request pegin: input has {} sats, needs {} sats",
+                input_value,
+                required_value
+            )
+        })?;
 
         info!(
             "Creating request pegin transaction with value: {} sats, total fee: {} sats. Input value: {}. Change: {}",
