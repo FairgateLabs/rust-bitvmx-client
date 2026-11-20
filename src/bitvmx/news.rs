@@ -3,9 +3,11 @@
 use super::{BitVMX, Context, CLIENT_GLOBAL_SETTINGS_UUID, NEW_BLOCK_CONTEXT, SEND_NEW_BLOCK_NEWS};
 use crate::{
     errors::BitVMXError,
+    news_retry_queue::NewsRetryQueue,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
     types::{
-        ErrorReportKind, NoOpReason, OutgoingBitVMXApiMessages, ResultDisposition, RSK_PEGIN_TAG,
+        ErrorReportKind, NoOpReason, OutgoingBitVMXApiMessages, ResultDisposition, RetryReason,
+        RSK_PEGIN_TAG,
     },
 };
 use bitcoin::Txid;
@@ -13,11 +15,17 @@ use bitcoin_coordinator::{
     types::{AckNews, CoordinatorNews},
     BlockRef, MonitorNews, MonitorTarget, NewsKind, TransactionStatus,
 };
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 /// How many transactions and block heights one `get_news` call reads.
 /// 50 is the value the monitor recommends (see `Monitor::get_news`).
 const MAX_NEWS_KEYS_PER_FETCH: usize = 50;
+
+/// How long a monitor news waits in the retry queue when its reaction
+/// asks to retry without a delay, or fails with a non-fatal error.
+const DEFAULT_NEWS_RETRY_DELAY: Duration = Duration::from_secs(10);
 
 impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// Owns the coordinator and news transactions; requires no active global transaction.
@@ -31,7 +39,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
     /// Sends a transaction news from the monitor to whoever subscribed to it, read from the context: the
     /// program for a `ProgramId`, or the API requester for a `RequestId`. Returns what to do with the reaction
-    /// and the news, see `process_and_ack_monitor_news`.
+    /// and the news, see `react_to_monitor_news`.
     ///
     /// `spent_vout` is set when the news comes from a SpendingUtxo subscription, and then `tx_id` is the
     /// spent output's txid. It is `None` for a plain transaction subscription.
@@ -97,7 +105,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
     /// Ticks the coordinator and wallet, then processes and acknowledges one batch of pending monitor and coordinator
     /// news, each item in its own transaction. While a batch was returned, the next call only fetches the next batch
-    /// without ticking, so the news is drained before the chain moves on. Returns whether there was any work.
+    /// without ticking, so the news is drained before the chain moves on. Before the batch, queued news retries that are
+    /// due are handed to their owners again. Returns whether there was any work.
     fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         let store = self.store.clone();
         let (ready, monitor_news, coordinator_news) = Self::run_transaction(&store, || {
@@ -139,9 +148,12 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         // filtered out inside get_news, so an empty fetch can still leave news pending: it is drained after the next tick.
         self.draining_news = !monitor_news.is_empty() || !coordinator_news.is_empty();
 
+        // Queued retries go first. A news queued below is not due before the next call.
+        let settled_retries = self.process_due_news_retries()?;
+
         let had_monitor_news = !monitor_news.is_empty();
         for news in monitor_news {
-            self.process_and_ack_monitor_news(news)?;
+            self.react_to_monitor_news(news, None)?;
         }
         // Each item is acknowledged in the same transaction that processes it, so a failed step rolls the
         // ack back and the item stays in coordinator storage for the next fetch.
@@ -155,7 +167,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 Ok(())
             })?;
         }
-        Ok(had_monitor_news || had_coordinator_news)
+        Ok(had_monitor_news || had_coordinator_news || settled_retries)
     }
 
     /// Subscribes the client to every new block. Called only after the coordinator has ticked and caught up, because
@@ -170,60 +182,112 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         Ok(())
     }
 
-    /// Processes one monitor news in its own transaction and acts on the reaction's disposition:
-    /// - `Success`: the reaction and the ack are committed together.
-    /// - `NoOp`: the reaction is rolled back, and the ack is committed in a new transaction.
-    /// - `Retry`: the reaction is rolled back and the news is not acked, so it comes back on the next fetch.
-    /// - `Fail`: not expected for news. Handled like `NoOp` and logged as an error, so it never loops.
-    ///
-    /// An error rolls back the reaction and the ack. A fatal error stops the node, and any other error is
-    /// reported and the news is retried on the next fetch.
-    fn process_and_ack_monitor_news(&mut self, news: MonitorNews) -> Result<(), BitVMXError> {
-        let store = self.store.clone();
-        let disposition = self.run_step("monitor news", |this| {
-            Self::run_transaction_committing_if(&store, || {
-                let disposition = this.process_monitor_news(&news)?;
-                let keep = disposition == ResultDisposition::Success;
-                if keep {
-                    this.program_context
-                        .bitcoin_coordinator
-                        .ack_news(AckNews::Monitor(news.clone()))?;
-                }
-                Ok((disposition, keep))
-            })
-        })?;
+    /// Hands every queued news whose delay has passed to its owner again, oldest first. Returns whether any of them was
+    /// settled, so a news that only asks to be retried again does not keep the coordinator throttle busy.
+    fn process_due_news_retries(&mut self) -> Result<bool, BitVMXError> {
+        let due = self.news_retry_queue.due(NewsRetryQueue::now_ms()?)?;
+        let mut settled_any = false;
+        for (id, entry) in due {
+            settled_any |= self.react_to_monitor_news(entry.news, Some((id, entry.attempts)))?;
+        }
+        Ok(settled_any)
+    }
 
-        let ack_without_reaction = match disposition {
-            // An error, already reported by run_step, or the reaction and ack are committed.
-            None | Some(ResultDisposition::Success) => false,
-            Some(ResultDisposition::NoOp(reason)) => {
+    /// Runs the reaction to one monitor news in its own transaction and acts on its disposition:
+    /// - `Success`: the reaction is committed together with consuming the news.
+    /// - `NoOp`: the reaction is rolled back, and the news is consumed in a new transaction.
+    /// - `Retry(NewsNotReady)`: the reaction is rolled back, and in a new transaction the news is consumed and queued
+    ///   to be handed to its owner again after `retry_after`, or after `DEFAULT_NEWS_RETRY_DELAY` when it is `None`.
+    /// - `Fail`, or `Retry` with any other reason: not expected for news. Handled like `NoOp` and logged as an error.
+    ///
+    /// A fatal error stops the node and leaves the news untouched. Any other error is reported and logged, and the news
+    /// is queued like a retry after `DEFAULT_NEWS_RETRY_DELAY`.
+    fn react_to_monitor_news(
+        &mut self,
+        news: MonitorNews,
+        queued: Option<(Uuid, u32)>,
+    ) -> Result<bool, BitVMXError> {
+        let store = self.store.clone();
+        let result = Self::run_transaction_committing_if(&store, || {
+            let disposition = self.process_monitor_news(&news)?;
+            let keep = disposition == ResultDisposition::Success;
+            if keep {
+                self.consume_monitor_news(&news, queued)?;
+            }
+            Ok((disposition, keep))
+        });
+
+        let retry_after = match result {
+            Ok(ResultDisposition::Success) => return Ok(true),
+            Ok(ResultDisposition::Retry(RetryReason::NewsNotReady { retry_after })) => {
+                retry_after.unwrap_or(DEFAULT_NEWS_RETRY_DELAY)
+            }
+            Ok(ResultDisposition::NoOp(reason)) => {
                 debug!(
                     "Monitor news consumed without a reaction ({:?}): {:?}",
                     reason, news
                 );
-                true
+                self.run_tx_step("monitor news consume", |this| {
+                    this.consume_monitor_news(&news, queued)
+                })?;
+                return Ok(true);
             }
-            Some(ResultDisposition::Retry(reason)) => {
-                debug!("Monitor news will be retried ({:?}): {:?}", reason, news);
-                false
-            }
-            Some(ResultDisposition::Fail(detail)) => {
+            // Fail, or Retry with any other reason: not expected for news.
+            Ok(unexpected) => {
                 error!(
-                    "Unexpected failure disposition {:?} for monitor news {:?}",
-                    detail, news
+                    "Unexpected disposition {:?} for monitor news {:?}",
+                    unexpected, news
                 );
-                true
+                self.run_tx_step("monitor news consume", |this| {
+                    this.consume_monitor_news(&news, queued)
+                })?;
+                return Ok(true);
+            }
+            Err(error) => {
+                // A fatal error stops here. Any other one is reported to L2 and logged.
+                Self::finish_step::<()>(
+                    "monitor news",
+                    Err(error),
+                    &mut self.reporter,
+                    &self.program_context.broker_channel,
+                )?;
+                DEFAULT_NEWS_RETRY_DELAY
             }
         };
-        if ack_without_reaction {
-            self.run_tx_step("monitor news ack", |this| {
+
+        let attempts = queued.map_or(1, |(_, attempts)| attempts + 1);
+        info!(
+            "Monitor news will be retried in {:?} (attempt {}): {:?}",
+            retry_after, attempts, news
+        );
+        self.run_tx_step("monitor news retry", |this| match queued {
+            Some((id, _)) => this.news_retry_queue.reschedule(&id, retry_after),
+            None => {
                 this.program_context
                     .bitcoin_coordinator
-                    .ack_news(AckNews::Monitor(news))?;
+                    .ack_news(AckNews::Monitor(news.clone()))?;
+                this.news_retry_queue.push(news.clone(), retry_after)
+            }
+        })?;
+        Ok(false)
+    }
+
+    /// Consumes a monitor news so it is not handed to its owner again: acks a fetched news in the coordinator, or removes
+    /// the retry queue entry of a queued one.
+    fn consume_monitor_news(
+        &self,
+        news: &MonitorNews,
+        queued: Option<(Uuid, u32)>,
+    ) -> Result<(), BitVMXError> {
+        match queued {
+            Some((id, _)) => self.news_retry_queue.remove(&id),
+            None => {
+                self.program_context
+                    .bitcoin_coordinator
+                    .ack_news(AckNews::Monitor(news.clone()))?;
                 Ok(())
-            })?;
+            }
         }
-        Ok(())
     }
 
     /// Handles a monitor news, an observation on chain: transactions go to their owner, output pattern

@@ -340,9 +340,12 @@ pub trait ProtocolHandler {
     }
 
     /// Reacts to a monitor news for one of the protocol's transactions. The returned disposition tells the caller what
-    /// to do with the reaction and the news: `Success` commits the reaction and acks the news, `NoOp` discards the
-    /// reaction and acks the news, and `Retry` discards the reaction without acking, so the news comes back on the next
-    /// fetch. `Fail` is not expected here and is treated like `NoOp`. Errors follow the usual severity rules.
+    /// to do with the reaction and the news: `Success` commits the reaction and acks the news, and `NoOp` discards the
+    /// reaction and acks the news. `Retry(RetryReason::NewsNotReady { retry_after })` discards the reaction, acks the
+    /// news and queues it, so it is handed to the protocol again after `retry_after`, or after a default delay when it is
+    /// `None`, without blocking other news. Retries are unlimited, and a retried news is no longer in order with other
+    /// news. `Fail`, or `Retry` with any other reason, is not expected here and is treated like `NoOp`. A fatal error
+    /// stops the node, and any other error is reported and the news is queued like a retry with the default delay.
     fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         _tx_id: Txid,

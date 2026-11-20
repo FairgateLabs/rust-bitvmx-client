@@ -27,8 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ### Changed
 - `notify_news` returns a `ResultDisposition`, following the client `ProtocolHandler` change. Every Union protocol
   returns `Success` for now, which keeps the previous behaviour. Pending: decide per protocol when a reaction
-  should be `NoOp` or `Retry` instead, and whether `DisputeCoreProtocol::notify_external_news` should also
-  return a disposition.
+  should be `NoOp` or `Retry(RetryReason::NewsNotReady { retry_after })` instead, and whether
+  `DisputeCoreProtocol::notify_external_news` should also return a disposition. A retried news comes back later
+  and out of order with other news.
 - `WT_START_ENABLER_TX` challenge outputs are sized with `dispute::DEFAULT_PROTOCOL_COST`, a fixed worst case
   for a 10 round, 3 input transaction program. `dispute::protocol_cost` now derives the exact funding of a
   dispute from its `ProgramDefinition`, but `create_wt_start_enabler` commits those output values at packet
