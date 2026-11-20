@@ -74,6 +74,24 @@ introduce breaking changes between versions.
     `checkpoint_height` is gone, so a config that sets it fails to load. A fresh indexer starts at
     the node's tip minus `retention_depth`. A `coordinator_settings` section given needs all its
     fields, so a fee cap is set with a full `fee:` section.
+- **BREAKING (protocol API)**: `ProtocolHandler::notify_news` returns `Result<ResultDisposition, BitVMXError>`
+  instead of `Result<(), BitVMXError>`, so each protocol decides what happens to its reaction and to the news:
+  - `Success`: the reaction is committed and the news is acked, together.
+  - `NoOp`: the reaction is rolled back and the news is acked.
+  - `Retry(RetryReason::NewsNotReady { retry_after })`: the reaction is rolled back, and the news is acked and
+    stored in a persistent retry queue, so it never blocks other news or the coordinator tick. It is handed to the
+    protocol again after `retry_after`, or after 10 seconds when it is `None`, and the protocol decides again.
+    Retries are unlimited, so use it only for a condition that eventually recovers, such as a race with other
+    news. A retried news is no longer in order with other news.
+  - `Fail`, or `Retry` with any other reason: not expected for news. It is handled like `NoOp` and logged as an
+    error.
+  - An error rolls back the reaction. A fatal error stops the node and leaves the news unacked. Any other error is
+    reported to L2 and logged, and the news is queued like a retry after 10 seconds.
+
+
+  Every protocol returns `Success` for now, which keeps the previous behaviour. Choosing the right disposition
+  in each protocol's `notify_news` is pending. `notify_external_news` is unchanged; whether it should also return
+  a disposition is part of that pending work. The `Transaction` message to L2 is only sent on `Success`.
 
 ## 0.8.7
 

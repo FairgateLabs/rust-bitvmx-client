@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid, XOnlyPublicKey};
@@ -105,7 +106,7 @@ impl ProtocolHandler for LockProtocol {
         tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         if tx_status.confirmations() == 1 {
             info!(
@@ -121,7 +122,7 @@ impl ProtocolHandler for LockProtocol {
                     .map_err(|_| BitVMXError::InvalidMessageFormat)?
             );
         }
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

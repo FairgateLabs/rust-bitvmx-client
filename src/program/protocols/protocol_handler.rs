@@ -58,8 +58,8 @@ use crate::types::{
 use crate::types::{PROGRAM_TYPE_LOCK, PROGRAM_TYPE_SLOT, PROGRAM_TYPE_TRANSFER};
 
 use crate::types::{
-    JobDispatcherType, ProgramContext, PROGRAM_TYPE_AGGREGATED_KEY, PROGRAM_TYPE_DRP,
-    PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_GC_GENERATION,
+    JobDispatcherType, ProgramContext, ResultDisposition, PROGRAM_TYPE_AGGREGATED_KEY,
+    PROGRAM_TYPE_DRP, PROGRAM_TYPE_GC_DRP, PROGRAM_TYPE_GC_GENERATION,
 };
 
 use crate::program::setup::steps::SetupStepName;
@@ -339,6 +339,13 @@ pub trait ProtocolHandler {
         )))
     }
 
+    /// Reacts to a monitor news for one of the protocol's transactions. The returned disposition tells the caller what
+    /// to do with the reaction and the news: `Success` commits the reaction and acks the news, and `NoOp` discards the
+    /// reaction and acks the news. `Retry(RetryReason::NewsNotReady { retry_after })` discards the reaction, acks the
+    /// news and queues it, so it is handed to the protocol again after `retry_after`, or after a default delay when it is
+    /// `None`, without blocking other news. Retries are unlimited, and a retried news is no longer in order with other
+    /// news. `Fail`, or `Retry` with any other reason, is not expected here and is treated like `NoOp`. A fatal error
+    /// stops the node, and any other error is reported and the news is queued like a retry with the default delay.
     fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         _tx_id: Txid,
@@ -346,9 +353,9 @@ pub trait ProtocolHandler {
         _tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        // Default implementation: no-op for protocols that don't need to handle news
-        Ok(())
+    ) -> Result<ResultDisposition, BitVMXError> {
+        // Default implementation: nothing to do for protocols that don't need to handle news
+        Ok(ResultDisposition::Success)
     }
 
     fn notify_external_news<BC: BitcoinCoordinatorApi>(

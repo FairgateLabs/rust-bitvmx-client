@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 use std::collections::HashMap;
 
 use bitcoin::{PublicKey, Transaction, Txid};
@@ -133,8 +134,8 @@ impl ProtocolHandler for TransferProtocol {
         _tx_status: TransactionStatus,
         _context: String,
         _program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        Ok(())
+    ) -> Result<ResultDisposition, BitVMXError> {
+        Ok(ResultDisposition::Success)
     }
 
     fn build<BC: BitcoinCoordinatorApi>(
