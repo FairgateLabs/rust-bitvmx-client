@@ -199,7 +199,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
 
         let txid = transaction.compute_txid();
         // TODO: Is this confirmation threshold of 1 appropriate here? What about stuck_in_mempool_blocks?
-        self.dispatch_transaction(from, id, transaction.clone(), Some(1), None)?;
+        self.dispatch_transaction(from, id, transaction.clone(), None, None)?;
         self.wallet
             .as_mut()
             .expect("wallet availability checked above")
