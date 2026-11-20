@@ -23,8 +23,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Send a `CancelUserTake` SPV notification after a `CANCEL_TAKE0_TX` transaction is mined.
 - `DisputeTxNotification` message carrying the challenge, accept-pegin correlation, and SPV proof
   for every transaction in the dispute flow.
+- `enabler_value()`, the enabler output amount (`2 * dust_value()`, 1080 sats), matching the contracts'
+  `Constants.ENABLER_AMOUNT`. It replaces the `2 * dust_value()` expressions in the protocols, tests and
+  examples, and a unit test pins it.
 
 ### Changed
+- Replace the `DUST_VALUE` constant with `dust_value()`, which returns `OutputType::generic_dust_limit(None).to_sat()`
+  from the protocol builder. The value stays at 540 sats, as the Union Bridge contracts require; a unit test
+  pins it. Code that imported `DUST_VALUE` (also re-exported through `rust-bitvmx-client-types`) must call
+  `dust_value()` instead.
+- Document `SPEEDUP_VALUE` as matching the contracts' `Constants.SPEED_UP_AMOUNT` and check at build time
+  that it stays at 540 sats.
 - `notify_news` returns a `ResultDisposition`, following the client `ProtocolHandler` change. Every Union protocol
   returns `Success` for now, which keeps the previous behaviour. Pending: decide per protocol when a reaction
   should be `NoOp` or `Retry(RetryReason::NewsNotReady { retry_after })` instead, and whether
