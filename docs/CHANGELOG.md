@@ -55,10 +55,11 @@ introduce breaking changes between versions.
     `Finalized` states are gone. This changes every API message that carries a status:
     `Transaction`, `SpendingUTXOTransactionFound`, `PeginTransactionFound` and
     `OutputPatternTransactionFound`. A not found status serializes as `{ "status": "NotFound" }`.
-  - **Notification order is not guaranteed.** Monitor news is grouped by the txid or block height it
-    is about, and groups come in txid order. A transaction's own notification and the notification
-    that one of its outputs was spent can arrive in either order, even when both happen in the same
-    block. Consumers must not depend on the order between notifications of different subscriptions.
+  - **Notification order.** Monitor news comes in the order the monitor decided it: every block and every
+    reorg is a step, and a step's news always comes after the news of the steps before it, also across
+    restarts. Inside one step the block comes first, a transaction after the transactions it spends, so a
+    transaction's own notification comes before the notification that one of its outputs was spent. Other
+    news in the same step comes in txid order, so consumers must not depend on the order between unrelated subscriptions in one block.
   - **A subscription with a confirmation trigger notifies once**, at the first block where the
     confirmations reach it, and is never restated, not even after a reorg. Before it fires it
     notifies nothing, including a reorg that takes the transaction out of its block.
@@ -85,8 +86,9 @@ introduce breaking changes between versions.
     news. A retried news is no longer in order with other news.
   - `Fail`, or `Retry` with any other reason: not expected for news. It is handled like `NoOp` and logged as an
     error.
-  - An error rolls back the reaction. A fatal error stops the node and leaves the news unacked. Any other error is
-    reported to L2 and logged, and the news is queued like a retry after 10 seconds.
+
+  News comes in the order the monitor decided it, across blocks and reorgs, and the coordinator keeps ticking while older news is pending, so the monitor can be several blocks ahead when a news is handled. A reaction must act on the status the news carries, not on live queries about unconfirmed state.
+  - An error rolls back the reaction. A fatal error stops the node and leaves the news unacked. Any other error is reported to L2 and logged, and the news is queued like a retry after 10 seconds.
 
 
   Every protocol returns `Success` for now, which keeps the previous behaviour. Choosing the right disposition

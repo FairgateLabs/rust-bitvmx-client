@@ -123,11 +123,11 @@ mod tests {
     use bitcoin_coordinator::{MonitorTarget, NewsKind};
 
     fn news(n: u8) -> MonitorNews {
-        MonitorNews {
-            target: MonitorTarget::Transaction(Txid::from_byte_array([n; 32])),
-            context: format!("context-{n}"),
-            kind: NewsKind::UnreachableTx,
-        }
+        MonitorNews::new(
+            MonitorTarget::Transaction(Txid::from_byte_array([n; 32])),
+            format!("context-{n}"),
+            NewsKind::UnreachableTx,
+        )
     }
 
     #[test]

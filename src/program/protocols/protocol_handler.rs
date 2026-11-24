@@ -346,6 +346,7 @@ pub trait ProtocolHandler {
     /// `None`, without blocking other news. Retries are unlimited, and a retried news is no longer in order with other
     /// news. `Fail`, or `Retry` with any other reason, is not expected here and is treated like `NoOp`. A fatal error
     /// stops the node, and any other error is reported and the news is queued like a retry with the default delay.
+    /// News comes in the order the monitor decided it, but the monitor can be several blocks ahead when it is handled.
     fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         _tx_id: Txid,
