@@ -66,4 +66,15 @@ version = "2.1.2+zstd.1.5.7"
 [[allow.exact]]
 crate = "libz-sys"
 version = "1.1.31"
+
+# Security fix for RUSTSEC-2026-0592. url 2.5.9 requires
+# form_urlencoded ^1.2.3, so both recent versions are admitted together.
+# https://rustsec.org/advisories/RUSTSEC-2026-0592
+[[allow.exact]]
+crate = "url"
+version = "2.5.9"
+
+[[allow.exact]]
+crate = "form_urlencoded"
+version = "1.2.3"
 ```
