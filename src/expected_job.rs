@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::{rc::Rc, time::Duration};
 use storage_backend::{
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
 };
 use tracing::{error, warn};
 use uuid::Uuid;
@@ -243,11 +243,7 @@ impl ExpectedJobs {
 
     fn active_jobs(&self) -> Result<Vec<ExpectedJob>, BitVMXError> {
         let prefix = StorageKey::new(["bitvmx", "expected_job", ACTIVE])?.to_scan_prefix();
-        self.storage
-            .partial_compare(&prefix, None)?
-            .into_iter()
-            .map(|(_, job)| Ok(serde_json::from_str(&job)?))
-            .collect()
+        Ok(self.storage.partial_get(&prefix, None)?)
     }
 
     pub fn get_registered(&self, job_id: &str) -> Result<ExpectedJob, BitVMXError> {

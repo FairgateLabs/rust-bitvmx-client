@@ -243,7 +243,7 @@ mod tests {
         types::IncomingBitVMXApiMessages,
     };
     use bitcoin_coordinator::coordinator::BitcoinCoordinator;
-    use storage_backend::{error::StorageError, key::StorageKey, storage::KeyValueStore};
+    use storage_backend::{error::StorageError, key::StorageKey};
 
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
 

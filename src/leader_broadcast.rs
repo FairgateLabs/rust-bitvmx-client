@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use storage_backend::{
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
 };
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -224,18 +224,7 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
     ) -> Result<Vec<OriginalMessage>, BitVMXError> {
         let prefix = get_original_messages_prefix(context_id, msg_type)?;
-        self.store
-            .partial_compare(&prefix, None)?
-            .into_iter()
-            .map(|(_, msg_json)| {
-                serde_json::from_str(&msg_json).map_err(|e| {
-                    BitVMXError::InvalidMessage(format!(
-                        "Failed to deserialize original message: {:?}",
-                        e
-                    ))
-                })
-            })
-            .collect()
+        Ok(self.store.partial_get(&prefix, None)?)
     }
 
     /// Check if all expected messages have been received
@@ -269,10 +258,10 @@ impl LeaderBroadcastHelper {
         msg_type: CommsMessageType,
     ) -> Result<(), BitVMXError> {
         let prefix = get_original_messages_prefix(context_id, msg_type)?;
-        let stored_messages = self.store.partial_compare(&prefix, None)?;
+        let stored_keys = self.store.partial_compare_keys(&prefix, None)?;
 
         // Delete each individual message key
-        for (key, _) in stored_messages.iter() {
+        for key in stored_keys.iter() {
             self.store.remove(StorageKey::from_joined(key)?, None)?;
         }
 
@@ -1018,7 +1007,7 @@ mod tests {
             env.context
                 .leader_broadcast_helper
                 .store
-                .partial_compare(
+                .partial_compare_keys(
                     &get_original_messages_prefix(&context_id, CommsMessageType::Keys).unwrap(),
                     None
                 )
