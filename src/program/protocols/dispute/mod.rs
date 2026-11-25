@@ -5,11 +5,7 @@ pub mod config;
 pub mod execution;
 pub mod input_handler;
 pub mod tx_news;
-use std::{
-    collections::HashMap,
-    sync::{OnceLock, RwLock},
-    vec,
-};
+use std::{collections::HashMap, vec};
 
 use bitcoin::{PublicKey, ScriptBuf, Transaction, Txid};
 use bitcoin_coordinator::TransactionStatus;
@@ -81,13 +77,7 @@ pub const CHALLENGE_READ: &str = "CHALLENGE_READ"; // For the second N-ary searc
 pub const TIMELOCK_BLOCKS_KEY: &str = "TIMELOCK_BLOCKS";
 pub const VERIFIER_FINAL: &str = "VERIFIER_FINAL";
 
-pub static TRACE_VARS: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
-pub static PROVER_CHALLENGE_STEP1: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
-
-pub static TK_2NARY: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
-pub static PROVER_CHALLENGE_STEP2: OnceLock<RwLock<Vec<(String, usize)>>> = OnceLock::new();
-
-fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
+pub(super) fn build_trace_vars(rounds: u8) -> Vec<(String, usize)> {
     let mut vars = vec![
         ("prover_write_address".to_string(), 4),
         ("prover_write_value".to_string(), 4),
@@ -130,7 +120,7 @@ fn build_challenge_step_vars(rounds: u8) -> Vec<(String, usize)> {
     vars
 }
 
-fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
+pub(super) fn build_translation_keys_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
     let mut vars = vec![
         ("prover_step_hash_tk2".to_string(), 20),
         ("prover_next_hash_tk2".to_string(), 20),
@@ -157,74 +147,6 @@ fn build_challenge_step_vars_2nd_nary(rounds: u8) -> Vec<(String, usize)> {
     }
 
     vars
-}
-
-pub fn init_trace_vars(rounds: u8) -> Result<(), BitVMXError> {
-    let trace_lock = TRACE_VARS.get_or_init(|| RwLock::new(Vec::new()));
-    let challenge_step_lock = PROVER_CHALLENGE_STEP1.get_or_init(|| RwLock::new(Vec::new()));
-
-    let tk_lock = TK_2NARY.get_or_init(|| RwLock::new(Vec::new()));
-    let challenge_step2_lock = PROVER_CHALLENGE_STEP2.get_or_init(|| RwLock::new(Vec::new()));
-
-    // Read both locks to check existing consistency //TODO: now there is no need for round parameter
-    let trace = trace_lock.read()?;
-    let challenge_step = challenge_step_lock.read()?;
-
-    let tk = tk_lock.read()?;
-    let challenge_step2 = challenge_step2_lock.read()?;
-
-    let existing_trace_rounds = trace
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
-        .count() as u8;
-
-    let existing_step_rounds = challenge_step
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
-        .count() as u8;
-
-    let existing_tk_rounds = tk
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits2_"))
-        .count() as u8;
-
-    let existing_step2_rounds = challenge_step2
-        .iter()
-        .filter(|(name, _)| name.starts_with("verifier_selection_bits_"))
-        .count() as u8;
-
-    let is_consistent = existing_trace_rounds == rounds
-        && existing_tk_rounds == rounds
-        && existing_step_rounds == rounds
-        && existing_step2_rounds == rounds;
-
-    if is_consistent {
-        return Ok(()); // already consistent
-    }
-
-    drop(trace);
-    drop(challenge_step);
-    drop(tk);
-    drop(challenge_step2);
-
-    // Rebuild all in a consistent state
-    {
-        let mut trace = trace_lock.write()?;
-        *trace = build_trace_vars(rounds);
-    }
-    {
-        let mut tk = tk_lock.write()?;
-        *tk = build_translation_keys_2nd_nary(rounds);
-    }
-    {
-        let mut challenge_step = challenge_step_lock.write()?;
-        *challenge_step = build_challenge_step_vars(rounds);
-    }
-    {
-        let mut challenge_step2 = challenge_step2_lock.write()?;
-        *challenge_step2 = build_challenge_step_vars_2nd_nary(rounds);
-    }
-    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -335,7 +257,6 @@ impl ProtocolHandler for DisputeResolutionProtocol {
     ) -> Result<ParticipantKeyDeclaration, BitVMXError> {
         let program_def = self.get_program_definition(&program_context)?.0;
         let nary_def = program_def.nary_def();
-        init_trace_vars(nary_def.total_rounds())?;
 
         let aggregated_1 = program_context
             .key_manager
@@ -375,6 +296,9 @@ impl ProtocolHandler for DisputeResolutionProtocol {
         }
 
         if self.role() == ParticipantRole::Prover {
+            let trace_vars = build_trace_vars(nary_def.total_rounds());
+            let translation_keys = build_translation_keys_2nd_nary(nary_def.total_rounds());
+
             let last_step = program_context
                 .key_manager
                 .next_winternitz(8, WinternitzType::HASH160)?;
@@ -385,19 +309,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                 .next_winternitz(20, WinternitzType::HASH160)?;
             keys.push(("prover_last_hash".to_string(), last_hash.into()));
 
-            let trace = TRACE_VARS
-                .get()
-                .ok_or_else(|| {
-                    BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
-                })?
-                .read()?;
-            let tk = TK_2NARY
-                .get()
-                .ok_or_else(|| {
-                    BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
-                })?
-                .read()?;
-            for (name, size) in trace.iter() {
+            for (name, size) in &trace_vars {
                 if name.starts_with("prover") {
                     let key = program_context
                         .key_manager
@@ -405,7 +317,7 @@ impl ProtocolHandler for DisputeResolutionProtocol {
                     keys.push((name.to_string(), key.into()));
                 }
             }
-            for (name, size) in tk.iter() {
+            for (name, size) in &translation_keys {
                 if name.starts_with("prover") {
                     let key = program_context
                         .key_manager
@@ -1285,24 +1197,12 @@ impl DisputeResolutionProtocol {
     ) -> Result<ProtocolScript, BitVMXError> {
         let prover_keys = &keys[0];
         let verifier_keys = &keys[1];
+        let program_def = self.get_program_definition(context)?.0;
+        let rounds = program_def.nary_def().total_rounds();
 
         let challenge_step_vars = match nary_search_type {
-            NArySearchType::ConflictStep => PROVER_CHALLENGE_STEP1
-                .get()
-                .ok_or_else(|| {
-                    BitVMXError::InitializationError(
-                        "PROVER_CHALLENGE_STEP1 not initialized".to_string(),
-                    )
-                })?
-                .read()?,
-            _ => PROVER_CHALLENGE_STEP2
-                .get()
-                .ok_or_else(|| {
-                    BitVMXError::InitializationError(
-                        "PROVER_CHALLENGE_STEP2 not initialized".to_string(),
-                    )
-                })?
-                .read()?,
+            NArySearchType::ConflictStep => build_challenge_step_vars(rounds),
+            _ => build_challenge_step_vars_2nd_nary(rounds),
         };
 
         let challenge_names_and_keys: Vec<(&str, &key_manager::winternitz::WinternitzPublicKey)> =
@@ -1324,8 +1224,6 @@ impl DisputeResolutionProtocol {
             stackvars.insert(name.clone(), stack.define((size * 2) as u32, name));
         }
 
-        let program_def = self.get_program_definition(context)?.0;
-        let rounds = program_def.nary_def().total_rounds();
         let nary = program_def.nary_def().nary;
         let nary_last_round = program_def.nary_def().nary_last_round;
         let total_size = challenge_step_vars
@@ -1417,19 +1315,11 @@ impl DisputeResolutionProtocol {
     ) -> Result<Vec<ProtocolScript>, BitVMXError> {
         let prover_keys = &keys[0];
         let verifier_keys = &keys[1];
+        let program_def = self.get_program_definition(context)?.0;
+        let rounds = program_def.nary_def().total_rounds();
         let vars = match nary_search_type {
-            NArySearchType::ConflictStep => TRACE_VARS
-                .get()
-                .ok_or_else(|| {
-                    BitVMXError::InitializationError("TRACE_VARS not initialized".to_string())
-                })?
-                .read()?,
-            NArySearchType::ReadValueChallenge => TK_2NARY
-                .get()
-                .ok_or_else(|| {
-                    BitVMXError::InitializationError("TK_2NARY not initialized".to_string())
-                })?
-                .read()?,
+            NArySearchType::ConflictStep => build_trace_vars(rounds),
+            NArySearchType::ReadValueChallenge => build_translation_keys_2nd_nary(rounds),
         };
 
         let vars_names = vars
@@ -1454,8 +1344,6 @@ impl DisputeResolutionProtocol {
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         );
-
-        let program_def = self.get_program_definition(context)?.0;
 
         let vars_without_witness = vars
             .iter()

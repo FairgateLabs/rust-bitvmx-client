@@ -7,6 +7,7 @@ use crate::{
         protocols::{
             claim::{auto_claim_start, claim_state_handle, ClaimGate},
             dispute::{
+                build_trace_vars, build_translation_keys_2nd_nary,
                 challenge::READ_VALUE_NARY_SEARCH_CHALLENGE,
                 config::{DisputeConfiguration, ForceFailConfiguration},
                 input_handler::{
@@ -14,7 +15,7 @@ use crate::{
                 },
                 input_tx_name, program_input, DisputeResolutionProtocol, CHALLENGE, CHALLENGE_READ,
                 COMMITMENT, EXECUTE, GET_HASHES_AND_STEP, INPUT_TX, POST_COMMITMENT,
-                PRE_COMMITMENT, START_CH, TK_2NARY, TRACE_VARS, VERIFIER_FINAL, VERIFIER_WINS,
+                PRE_COMMITMENT, START_CH, VERIFIER_FINAL, VERIFIER_WINS,
             },
             protocol_handler::{timeout_input_tx, ProtocolHandler, WithClaimGateConfig},
             timeouts::{auto_dispatch_timeout, cancel_timeout, TxOwnershipTable},
@@ -205,7 +206,7 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
             }
 
             let my_tx = ownership_table.is_my_tx(&name, drp.role());
-            let (_def, program_definition) = drp.get_program_definition(program_context)?;
+            let (program_def, program_definition) = drp.get_program_definition(program_context)?;
 
             let mut leaf = 0;
             let mut names = vec![];
@@ -392,15 +393,8 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
 
                         let mut values = std::collections::HashMap::new();
 
-                        let trace_vars = TRACE_VARS
-                            .get()
-                            .ok_or_else(|| {
-                                BitVMXError::InitializationError(
-                                    "TRACE_VARS not initialized".to_string(),
-                                )
-                            })?
-                            .read()?;
-                        for (name, _) in trace_vars.iter() {
+                        let trace_vars = build_trace_vars(program_def.nary_def().total_rounds());
+                        for (name, _) in &trace_vars {
                             if *name == "prover_witness" {
                                 continue;
                             }
@@ -590,15 +584,9 @@ pub fn handle_tx_news<BC: BitcoinCoordinatorApi>(
 
                         let mut values = std::collections::HashMap::new();
 
-                        let trace_vars = TK_2NARY
-                            .get()
-                            .ok_or_else(|| {
-                                BitVMXError::InitializationError(
-                                    "TK_2NARY not initialized".to_string(),
-                                )
-                            })?
-                            .read()?;
-                        for (name, _) in trace_vars.iter() {
+                        let trace_vars =
+                            build_translation_keys_2nd_nary(program_def.nary_def().total_rounds());
+                        for (name, _) in &trace_vars {
                             let value = program_context
                                 .witness
                                 .get_witness_or_err(&drp.ctx.id, name)?

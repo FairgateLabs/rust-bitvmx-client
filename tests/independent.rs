@@ -12,7 +12,7 @@ use bitvmx_client::program::protocols::dispute::{
 };
 use bitvmx_client::program::protocols::protocol_handler::action_wins;
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
-use bitvmx_client::types::IncomingBitVMXApiMessages;
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
 use bitvmx_wallet::wallet::Destination;
 use common::dispute::{prepare_dispute, program_definition_path, ForcedChallenges};
 use common::helper::Mode;
@@ -276,10 +276,29 @@ pub fn test_all_aux(
         None,
     )?;
 
-    let msg = helper.wait_msg(0)?;
-    info!("Setup dispute done: {:?}", msg);
-    let msg = helper.wait_msg(1)?;
-    info!("Setup dispute done: {:?}", msg);
+    for participant in 0..2 {
+        let msg = helper.wait_msg(participant)?;
+        match &msg {
+            OutgoingBitVMXApiMessages::SetupCompleted(id) if *id == prog_id => {
+                info!(
+                    "Setup dispute done for participant {}: {:?}",
+                    participant, msg
+                );
+            }
+            OutgoingBitVMXApiMessages::Error(report) => {
+                anyhow::bail!(
+                    "dispute setup failed for participant {}: {:?}",
+                    participant,
+                    report
+                );
+            }
+            other => anyhow::bail!(
+                "unexpected setup response for participant {}: {:?}",
+                participant,
+                other
+            ),
+        }
+    }
 
     // wait input from command line
     info!("Waiting for funding ready");
