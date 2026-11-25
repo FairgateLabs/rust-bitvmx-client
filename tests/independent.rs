@@ -151,27 +151,19 @@ pub fn test_all_aux(
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount, &funding_key_0);
     let command =
         IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
-    helper.id_channel_pairs[0]
-        .channel
-        .send(&helper.id_channel_pairs[0].id, command)?;
+    helper.send_msg(0, command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount, &funding_key_1);
     let command =
         IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_1).to_string()?;
-    helper.id_channel_pairs[1]
-        .channel
-        .send(&helper.id_channel_pairs[1].id, command)?;
+    helper.send_msg(1, command)?;
 
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
     let pair_0_1_agg_id = Uuid::new_v4();
     let command =
         IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0, None);
-    helper.id_channel_pairs[0]
-        .channel
-        .send(&helper.id_channel_pairs[0].id, command.to_string()?)?;
-    helper.id_channel_pairs[1]
-        .channel
-        .send(&helper.id_channel_pairs[1].id, command.to_string()?)?;
+    helper.send_msg(0, command.to_string()?)?;
+    helper.send_msg(1, command.to_string()?)?;
     let _msg = helper.wait_msg(0)?;
     let msg = helper.wait_msg(1)?;
     let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
@@ -308,8 +300,8 @@ pub fn test_all_aux(
         send_all(&pair_0_1_channels, set_witness)?;
     }
 
-    let _ = helper.id_channel_pairs[1].channel.send(
-        &helper.id_channel_pairs[1].id,
+    let _ = helper.send_msg(
+        1,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             prog_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -698,8 +690,8 @@ fn test_zkp() -> Result<()> {
 
     let id = Uuid::new_v4();
 
-    let _ = helper.id_channel_pairs[0].channel.send(
-        &helper.id_channel_pairs[0].id,
+    let _ = helper.send_msg(
+        0,
         IncomingBitVMXApiMessages::GenerateZKP(
             id,
             vec![1, 2, 3, 4],
@@ -711,8 +703,8 @@ fn test_zkp() -> Result<()> {
     let msg = helper.wait_msg(0)?;
     info!("ZKP generated: {:?}", msg);
 
-    let _ = helper.id_channel_pairs[0].channel.send(
-        &helper.id_channel_pairs[0].id,
+    let _ = helper.send_msg(
+        0,
         IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
     );
 

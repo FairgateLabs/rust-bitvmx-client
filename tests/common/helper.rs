@@ -36,7 +36,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tracing::{error, info, info_span};
+use tracing::{error, info, info_span, warn};
 use uuid::Uuid;
 
 use bitcoind::{
@@ -45,7 +45,7 @@ use bitcoind::{
 };
 use bitvmx_wallet::{wallet::errors::WalletError, Destination, RegtestWallet, Wallet};
 
-use crate::common::{clear_db, send_all, INITIAL_BLOCK_COUNT};
+use crate::common::{clear_db, send_all, send_message, INITIAL_BLOCK_COUNT};
 const MIN_TX_FEE: f64 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -578,15 +578,40 @@ impl TestHelper {
     }
 
     pub fn wait_msg(&self, idx: usize) -> Result<OutgoingBitVMXApiMessages> {
+        const RECEIVE_ATTEMPTS: usize = 5;
+        const RETRY_DELAY: Duration = Duration::from_millis(250);
+
         let channel = &self.id_channel_pairs[idx].channel;
+        let mut failed_attempts = 0;
         loop {
-            let msg = channel.recv()?;
+            let msg = match channel.recv() {
+                Ok(msg) => {
+                    failed_attempts = 0;
+                    msg
+                }
+                Err(error) => {
+                    failed_attempts += 1;
+                    warn!(
+                        "Test broker receive failed for channel {} on attempt {}/{}: {}",
+                        idx, failed_attempts, RECEIVE_ATTEMPTS, error
+                    );
+                    if failed_attempts == RECEIVE_ATTEMPTS {
+                        return Err(error.into());
+                    }
+                    thread::sleep(RETRY_DELAY);
+                    continue;
+                }
+            };
             if let Some(msg) = msg {
                 //info!("Received message from channel {}: {:?}", idx, msg);
                 return Ok(OutgoingBitVMXApiMessages::from_string(&msg.0)?);
             }
             thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    pub fn send_msg(&self, idx: usize, msg: String) -> Result<bool> {
+        send_message(&self.id_channel_pairs[idx], &msg)
     }
 
     pub fn wait_specific_msg(
@@ -638,13 +663,11 @@ impl TestHelper {
     ) -> Result<()> {
         let set_input_1 =
             VariableTypes::Input(input_data).set_msg(prog_id, &program_input(input_idx, None))?;
-        let _ = self.id_channel_pairs[participant]
-            .channel
-            .send(&self.id_channel_pairs[participant].id, set_input_1)?;
+        self.send_msg(participant, set_input_1)?;
 
         // send the tx
-        let _ = self.id_channel_pairs[participant].channel.send(
-            &self.id_channel_pairs[participant].id,
+        let _ = self.send_msg(
+            participant,
             IncomingBitVMXApiMessages::DispatchTransactionName(prog_id, input_tx_name(input_idx))
                 .to_string()?,
         );
@@ -854,9 +877,9 @@ impl ProcessBitvmx {
         );
 
         for channel in channels.iter().take(child_count) {
-            channel.channel.send(
-                &channel.id,
-                IncomingBitVMXApiMessages::Shutdown(Uuid::new_v4()).to_string()?,
+            send_message(
+                channel,
+                &IncomingBitVMXApiMessages::Shutdown(Uuid::new_v4()).to_string()?,
             )?;
         }
 
