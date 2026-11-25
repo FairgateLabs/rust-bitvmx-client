@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 use std::collections::HashMap;
 
 use bitcoin::{hashes::Hash, OutPoint, PublicKey, Sequence, Transaction, Txid};
@@ -221,7 +222,7 @@ impl ProtocolHandler for SlotProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "Program {}: Transaction {}:{:?} has been seen on-chain {}",
@@ -254,7 +255,7 @@ impl ProtocolHandler for SlotProtocol {
                     .is_some()
                 {
                     info!("GID for operator {} already dispatched, skipping", operator);
-                    return Ok(());
+                    return Ok(ResultDisposition::Success);
                 }
 
                 let gid = program_context
@@ -346,7 +347,7 @@ impl ProtocolHandler for SlotProtocol {
                 .unwrap_or("")
                 .parse::<u32>()?;
             if operator != self.ctx.my_idx as u32 {
-                return Ok(());
+                return Ok(ResultDisposition::Success);
             }
 
             let total_operators = program_context
@@ -436,7 +437,7 @@ impl ProtocolHandler for SlotProtocol {
             info!("Operator {} has sent a claim win", operator);
             if operator != self.ctx.my_idx as u32 {
                 //TOOD: Others should react sending the stop tx
-                return Ok(());
+                return Ok(ResultDisposition::Success);
             }
 
             let timelock_blocks = program_context
@@ -487,7 +488,7 @@ impl ProtocolHandler for SlotProtocol {
             )?;
         }
 
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     fn build<BC: BitcoinCoordinatorApi>(

@@ -16,6 +16,7 @@ use crate::{
     expected_job::ExpectedJobs,
     leader_broadcast::LeaderBroadcastHelper,
     message_queue::MessageQueue,
+    news_retry_queue::NewsRetryQueue,
     operation_timeout::OperationTimeouts,
     ping_helper::PingHelper,
     ports::bitcoin_coordinator::BitcoinCoordinatorApi,
@@ -26,7 +27,7 @@ use crate::{
     throttle::Throttle,
     types::{OutgoingBitVMXApiMessages, ProgramContext, ProgramStatus},
 };
-use bitcoin_coordinator::{coordinator::BitcoinCoordinator, MonitorTarget};
+use bitcoin_coordinator::coordinator::BitcoinCoordinator;
 use bitvmx_broker::{identification::identifier::Identifier, retry::RetryPolicy, BrokerNode};
 use bitvmx_settings::settings;
 use bitvmx_wallet::wallet::Wallet;
@@ -85,6 +86,8 @@ pub struct BitVMX<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     store: Rc<Storage>,
     tick_count: u32,
     message_queue: MessageQueue,
+    /// Monitor news whose reaction asked to be retried later. They are already acked in the coordinator.
+    news_retry_queue: NewsRetryQueue,
     coordinator_throttle: Throttle,
     bitvmx_throttle: Throttle,
     wallet: Option<Wallet>,
@@ -229,12 +232,6 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         )?;
         info!("Broker services initialized successfully");
 
-        bitcoin_coordinator.monitor(
-            &[MonitorTarget::NewBlock],
-            NEW_BLOCK_CONTEXT.to_string(),
-            None,
-        )?;
-
         let leader_broadcast_helper = LeaderBroadcastHelper::new(store.clone());
         let operation_timeouts = OperationTimeouts::new(store.clone());
         let expected_jobs = ExpectedJobs::new(store.clone());
@@ -265,6 +262,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         );
         info!("Message queue initialized successfully");
 
+        let news_retry_queue = NewsRetryQueue::new(store.clone());
+
         let coordinator_throttle = Throttle::new(config.coordinator_throttle.clone());
         let bitvmx_throttle = Throttle::new(config.bitvmx_throttle.clone());
 
@@ -277,6 +276,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             store,
             tick_count: 0,
             message_queue,
+            news_retry_queue,
             coordinator_throttle,
             bitvmx_throttle,
             wallet,

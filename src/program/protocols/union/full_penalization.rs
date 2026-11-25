@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 use core::convert::Into;
 use std::{collections::HashMap, vec};
 
@@ -171,7 +172,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let tx_name = self.get_transaction_name_by_id(tx_id)?;
         info!(
             "FullPenalizationProtocol received news of transaction: {}, txid: {} with {} confirmations",
@@ -208,7 +209,7 @@ impl ProtocolHandler for FullPenalizationProtocol {
             )?;
         }
 
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     fn setup_complete<BC: BitcoinCoordinatorApi>(

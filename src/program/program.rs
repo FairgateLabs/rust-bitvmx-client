@@ -958,7 +958,8 @@ impl Program {
         Ok(())
     }
 
-    /// Notifies the protocol about blockchain events (transaction confirmations, etc.)
+    /// Notifies the protocol about blockchain events (transaction confirmations, etc.) and returns the protocol's
+    /// disposition, which tells the caller whether to keep the reaction and whether to ack the news.
     pub fn notify_news<BC: BitcoinCoordinatorApi>(
         &self,
         tx_id: Txid,
@@ -966,12 +967,17 @@ impl Program {
         tx_status: TransactionStatus,
         context: String,
         program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
-        self.protocol
-            .notify_news(tx_id, vout, tx_status.clone(), context, program_context)?;
+    ) -> Result<ResultDisposition, BitVMXError> {
+        let disposition = self.protocol.notify_news(
+            tx_id,
+            vout,
+            tx_status.clone(),
+            context,
+            program_context,
+        )?;
 
-        // Send transaction notification to L2 channel
-        if vout.is_none() {
+        // Send transaction notification to L2 channel, only when the protocol kept its reaction
+        if disposition == ResultDisposition::Success && vout.is_none() {
             let name = self.protocol.get_transaction_name_by_id(tx_id)?;
             program_context.broker_channel.send_service(
                 &program_context.components_config.l2,
@@ -980,7 +986,7 @@ impl Program {
             )?;
         }
 
-        Ok(())
+        Ok(disposition)
     }
 }
 
