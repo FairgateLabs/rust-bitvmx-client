@@ -48,7 +48,9 @@ use bitcoind::{
 };
 use bitvmx_wallet::{wallet::errors::WalletError, Destination, RegtestWallet, Wallet};
 
-use crate::common::{clear_db, send_all, send_message, INITIAL_BLOCK_COUNT};
+use crate::common::{
+    clear_db, mine_blocks_with_retry, send_all, send_message, INITIAL_BLOCK_COUNT,
+};
 const MIN_TX_FEE: f64 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -366,7 +368,7 @@ impl TestHelper {
             if std::env::var("GITHUB_ACTIONS").is_err() {
                 // Locally we control bitcoind; in CI the shared bitcoind is already
                 // funded by the test harness, so skip the extra mining.
-                bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &address)?;
+                mine_blocks_with_retry(&bitcoin_client, INITIAL_BLOCK_COUNT, &address)?;
             }
             bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
             wallet.sync_wallet()?;

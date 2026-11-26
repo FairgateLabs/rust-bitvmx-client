@@ -5,7 +5,7 @@ pub mod dispute;
 pub mod helper;
 
 use anyhow::Result;
-use bitcoin::{Amount, PublicKey, Txid, XOnlyPublicKey};
+use bitcoin::{Address, Amount, PublicKey, Txid, XOnlyPublicKey};
 use bitcoind::{
     bitcoind::{Bitcoind, BitcoindFlags},
     config::BitcoindConfig,
@@ -40,6 +40,33 @@ use crate::common::{dispute::process_dispatcher_non_blocking, helper::InternalWa
 
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
+
+/// Mine blocks during regtest setup, tolerating a short-lived RPC interruption
+/// while the freshly started Docker container settles.
+pub fn mine_blocks_with_retry(
+    bitcoin_client: &BitcoinClient,
+    block_count: u64,
+    address: &Address,
+) -> Result<()> {
+    const MAX_ATTEMPTS: usize = 3;
+    const RETRY_DELAY: Duration = Duration::from_secs(1);
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match bitcoin_client.mine_blocks_to_address(block_count, address) {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < MAX_ATTEMPTS => {
+                warn!(
+                    "Failed to mine regtest setup blocks on attempt {}/{}: {}. Retrying in {:?}",
+                    attempt, MAX_ATTEMPTS, error, RETRY_DELAY
+                );
+                thread::sleep(RETRY_DELAY);
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    unreachable!("the bounded mining retry loop always returns")
+}
 
 /// RAII guard for bitcoind that ensures cleanup on Drop.
 /// This prevents Docker containers from being left running if a test panics.
@@ -389,7 +416,7 @@ pub fn prepare_bitcoin() -> Result<(BitcoinClient, Option<Bitcoind>, InternalWal
     } else {
         info!("Local mode: full initialization with mining and funding");
         let _address = bitcoin_client.init_wallet(&wallet_config.bitcoin.wallet)?;
-        bitcoin_client.mine_blocks_to_address(INITIAL_BLOCK_COUNT, &_address)?;
+        mine_blocks_with_retry(&bitcoin_client, INITIAL_BLOCK_COUNT, &_address)?;
         bitcoin_client.fund_address(&wallet.receive_address()?, Amount::from_int_btc(10))?;
     }
 
