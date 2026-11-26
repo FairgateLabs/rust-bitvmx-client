@@ -22,7 +22,7 @@ use bitvmx_client::{
     },
     types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages, ParticipantChannel},
 };
-use bitvmx_job_dispatcher::DispatcherHandler;
+use bitvmx_job_dispatcher::{dispatcher_error::DispatcherError, DispatcherHandler};
 use bitvmx_job_dispatcher_types::{
     emulator_messages::EmulatorJobType, garbled_messages::GarbledJobType,
     prover_messages::ProverJobType,
@@ -500,11 +500,13 @@ impl TestHelper {
     pub fn stop(&mut self) -> Result<()> {
         // Dispatchers connect to the brokers hosted by BitVMX, so they must exit while
         // BitVMX is still up. Signal everything first so the waits run concurrently.
-        self.disp_stop_tx.send(()).unwrap();
-        self.zkp_stop_tx.send(()).unwrap();
-        self.garbled_stop_tx.send(()).unwrap();
+        // A worker may already have exited with an error. Do not obscure that error with a
+        // SendError panic; joining the worker below will return its original failure.
+        let _ = self.disp_stop_tx.send(());
+        let _ = self.zkp_stop_tx.send(());
+        let _ = self.garbled_stop_tx.send(());
         if let Some(mine_stop_tx) = self.mine_stop_tx.take() {
-            mine_stop_tx.send(()).unwrap();
+            let _ = mine_stop_tx.send(());
         }
 
         self.disp_handle.take().unwrap().join().unwrap()?;
@@ -1192,8 +1194,17 @@ fn run_emulator(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result
             break;
         }
         for (idx, dispatcher) in instances.iter_mut().enumerate() {
-            if dispatcher.tick()? {
-                let _ = tx.send(idx);
+            match dispatcher.tick() {
+                Ok(true) => {
+                    let _ = tx.send(idx);
+                }
+                Ok(false) => {}
+                Err(DispatcherError::BrokerError(error))
+                    if env::var_os("BITVMX_TEST_RESTART_INTERVAL_MS").is_some() =>
+                {
+                    warn!("Emulator dispatcher broker unavailable during process restart: {error}");
+                }
+                Err(error) => return Err(error.into()),
             }
             thread::sleep(Duration::from_millis(500));
         }
@@ -1238,8 +1249,17 @@ fn run_zkp(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<()> 
             break;
         }
         for (idx, dispatcher) in instances.iter_mut().enumerate() {
-            if dispatcher.tick()? {
-                let _ = tx.send(idx);
+            match dispatcher.tick() {
+                Ok(true) => {
+                    let _ = tx.send(idx);
+                }
+                Ok(false) => {}
+                Err(DispatcherError::BrokerError(error))
+                    if env::var_os("BITVMX_TEST_RESTART_INTERVAL_MS").is_some() =>
+                {
+                    warn!("ZKP dispatcher broker unavailable during process restart: {error}");
+                }
+                Err(error) => return Err(error.into()),
             }
             thread::sleep(Duration::from_millis(500));
         }
@@ -1288,8 +1308,17 @@ fn run_garbled(network: Network, rx: Receiver<()>, tx: Sender<usize>) -> Result<
             break;
         }
         for (idx, dispatcher) in instances.iter_mut().enumerate() {
-            if dispatcher.tick()? {
-                let _ = tx.send(idx);
+            match dispatcher.tick() {
+                Ok(true) => {
+                    let _ = tx.send(idx);
+                }
+                Ok(false) => {}
+                Err(DispatcherError::BrokerError(error))
+                    if env::var_os("BITVMX_TEST_RESTART_INTERVAL_MS").is_some() =>
+                {
+                    warn!("Garbled dispatcher broker unavailable during process restart: {error}");
+                }
+                Err(error) => return Err(error.into()),
             }
             thread::sleep(Duration::from_millis(500));
         }
