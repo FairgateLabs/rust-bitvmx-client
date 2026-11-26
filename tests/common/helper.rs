@@ -265,6 +265,7 @@ pub struct TestHelper {
     pub bitvmx_handle: Option<thread::JoinHandle<Result<()>>>,
     pub bitvmx_stop_tx: Option<Sender<()>>,
     process_bitvmx: Option<ProcessBitvmx>,
+    bitcoind_outage: Option<BitcoindOutageSupervisor>,
     pub disp_handle: Option<thread::JoinHandle<Result<()>>>,
     pub disp_stop_tx: Sender<()>,
     pub disp_ready_rx: Receiver<usize>,
@@ -320,6 +321,7 @@ impl TestHelper {
         }
 
         // Only self-hosted regtest spawns its own bitcoind.
+        let mut bitcoind_container_name = None;
         let bitcoind = if mode.spawns_own_bitcoind() {
             // In CI, bitcoind is provided by docker-compose on the same port.
             // Spawning another container would collide on 0.0.0.0:18443.
@@ -327,8 +329,10 @@ impl TestHelper {
                 info!("Running in CI - using external bitcoind from docker-compose");
                 None
             } else {
+                let bitcoind_config = BitcoindConfig::default();
+                bitcoind_container_name = Some(bitcoind_config.container_name.clone());
                 let bitcoind_instance = Bitcoind::new(
-                    BitcoindConfig::default(),
+                    bitcoind_config,
                     wallet_config.bitcoin.clone(),
                     Some(BitcoindFlags {
                         min_relay_tx_fee: 0.00001,
@@ -479,6 +483,10 @@ impl TestHelper {
             bitvmx_handle,
             bitvmx_stop_tx,
             process_bitvmx,
+            bitcoind_outage: match bitcoind_container_name {
+                Some(container_name) => BitcoindOutageSupervisor::start(container_name)?,
+                None => None,
+            },
             disp_handle: Some(disp_handle),
             disp_stop_tx,
             disp_ready_rx,
@@ -500,6 +508,11 @@ impl TestHelper {
     }
 
     pub fn stop(&mut self) -> Result<()> {
+        // Ensure bitcoind is available while the workers perform their final ticks and exit.
+        if let Some(mut outage) = self.bitcoind_outage.take() {
+            outage.stop()?;
+        }
+
         // Dispatchers connect to the brokers hosted by BitVMX, so they must exit while
         // BitVMX is still up. Signal everything first so the waits run concurrently.
         // A worker may already have exited with an error. Do not obscure that error with a
@@ -694,7 +707,103 @@ impl TestHelper {
 //   all of them (default), one at random, or a random non-empty subset.
 // - BITVMX_TEST_RESTART_SEED=N replays a previous random sequence (the seed is logged).
 // - BITVMX_TEST_PROCESS_START_TIMEOUT_MS=N controls process startup waits (default 60000).
+// - BITVMX_TEST_BITCOIND_OUTAGE_INTERVAL_MS=N pauses the local regtest container at
+//   randomized intervals around N milliseconds. Docker pause/unpause is deliberately
+//   used instead of removing the container, so its chain and mempool survive.
+// - BITVMX_TEST_BITCOIND_OUTAGE_DOWNTIME_MS=N controls each outage (default 3000).
+// - BITVMX_TEST_BITCOIND_OUTAGE_SEED=N replays the outage timing sequence.
 // -----------------------------------------------------------------------------
+
+struct BitcoindOutageSupervisor {
+    stop_tx: Option<Sender<()>>,
+    handle: Option<thread::JoinHandle<Result<()>>>,
+}
+
+impl BitcoindOutageSupervisor {
+    fn start(container_name: String) -> Result<Option<Self>> {
+        let Some(interval) = duration_from_env("BITVMX_TEST_BITCOIND_OUTAGE_INTERVAL_MS")? else {
+            return Ok(None);
+        };
+        anyhow::ensure!(
+            !interval.is_zero(),
+            "bitcoind outage interval must be greater than zero"
+        );
+        let downtime = duration_from_env("BITVMX_TEST_BITCOIND_OUTAGE_DOWNTIME_MS")?
+            .unwrap_or(Duration::from_secs(3));
+        let seed = match env::var("BITVMX_TEST_BITCOIND_OUTAGE_SEED") {
+            Ok(value) => value.parse::<u64>().map_err(|e| {
+                anyhow::anyhow!("invalid BITVMX_TEST_BITCOIND_OUTAGE_SEED={value}: {e}")
+            })?,
+            Err(_) => rand::random(),
+        };
+        info!(
+            "bitcoind automatic outages: interval={interval:?} downtime={downtime:?} seed={seed}"
+        );
+
+        let (stop_tx, stop_rx) = channel();
+        let handle = thread::spawn(move || {
+            let mut rng = StdRng::seed_from_u64(seed);
+            loop {
+                // Jitter each interval between 50% and 150% of the configured value.
+                let interval_ms = interval.as_millis() as u64;
+                let wait_ms = rng.gen_range(
+                    (interval_ms / 2).max(1)..=interval_ms.saturating_add(interval_ms / 2),
+                );
+                match stop_rx.recv_timeout(Duration::from_millis(wait_ms)) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => {}
+                }
+
+                info!("Pausing bitcoind container {container_name}");
+                run_docker_container_command("pause", &container_name)?;
+                let stop_during_outage = match stop_rx.recv_timeout(downtime) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => true,
+                    Err(RecvTimeoutError::Timeout) => false,
+                };
+                info!("Unpausing bitcoind container {container_name}");
+                run_docker_container_command("unpause", &container_name)?;
+                if stop_during_outage {
+                    break;
+                }
+            }
+            Ok(())
+        });
+
+        Ok(Some(Self {
+            stop_tx: Some(stop_tx),
+            handle: Some(handle),
+        }))
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            handle
+                .join()
+                .map_err(|_| anyhow::anyhow!("bitcoind outage supervisor panicked"))??;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for BitcoindOutageSupervisor {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
+}
+
+fn run_docker_container_command(action: &str, container_name: &str) -> Result<()> {
+    let status = Command::new("docker")
+        .args([action, container_name])
+        .status()?;
+    anyhow::ensure!(
+        status.success(),
+        "docker {action} {container_name} failed with status {status}"
+    );
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BitvmxExecutionMode {
@@ -1358,7 +1467,14 @@ fn run_auto_mine(
             info!("Signal received, shutting down...");
             break;
         }
-        bitcoin_client.mine_blocks_to_address(1, &address)?;
+        if let Err(error) = bitcoin_client.mine_blocks_to_address(1, &address) {
+            if env::var_os("BITVMX_TEST_BITCOIND_OUTAGE_INTERVAL_MS").is_some() {
+                warn!("Auto miner could not reach bitcoind during an injected outage: {error}");
+                thread::sleep(Duration::from_millis(interval));
+                continue;
+            }
+            return Err(error.into());
+        }
         mined += 1;
         tx.send(())?;
         if let Some(limit) = max_mined_blocks {
