@@ -13,7 +13,6 @@ use bitvmx_broker::{identification::identifier::Identifier, ReceivedMessage};
 use bitvmx_dispatcher_utils::PingMessage;
 use bitvmx_job_dispatcher::dispatcher_job::ResultMessage;
 use std::str::FromStr;
-use storage_backend::storage::KeyValueStore;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use zk_result::ResultType as ProverResultType;

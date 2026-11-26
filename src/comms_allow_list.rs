@@ -15,7 +15,7 @@ use bitvmx_broker::identification::{allow_list::AllowList, identifier::PubkHash}
 use serde::{Deserialize, Serialize};
 use storage_backend::{
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
 };
 use tracing::info;
 

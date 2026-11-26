@@ -32,7 +32,7 @@ use std::{rc::Rc, time::Duration};
 use storage_backend::{
     error::StorageError,
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
 };
 use tracing::{debug, info, warn};
 use uuid::Uuid;

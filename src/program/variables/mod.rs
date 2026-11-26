@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::errors::BitVMXError;
 use storage_backend::{
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
 };
 use uuid::Uuid;
 

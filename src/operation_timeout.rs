@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::{rc::Rc, sync::LazyLock, time::Duration};
 use storage_backend::{
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
 };
 use uuid::Uuid;
 

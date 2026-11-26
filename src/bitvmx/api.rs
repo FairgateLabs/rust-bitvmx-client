@@ -27,7 +27,7 @@ use protocol_builder::{
     graph::graph::GraphOptions,
 };
 use std::time::Duration;
-use storage_backend::{error::StorageError, storage::KeyValueStore};
+use storage_backend::error::StorageError;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 

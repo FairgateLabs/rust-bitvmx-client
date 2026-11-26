@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, rc::Rc, thread::sleep, time::Duration};
 use storage_backend::{
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
 };
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;

@@ -306,7 +306,7 @@ mod tests {
     use bitcoin_coordinator::coordinator::BitcoinCoordinator;
     use key_manager::key_type::BitcoinKeyType;
     use std::collections::HashMap;
-    use storage_backend::{error::StorageError, key::StorageKey, storage::KeyValueStore};
+    use storage_backend::{error::StorageError, key::StorageKey};
 
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
 

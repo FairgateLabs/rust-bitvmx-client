@@ -12,7 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use storage_backend::key::StorageKey;
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::storage::Storage;
 use uuid::Uuid;
 
 static QUEUE_IDS_KEY: LazyLock<StorageKey> = LazyLock::new(|| {
