@@ -164,7 +164,9 @@ mod tests {
 
         queue.reschedule(&id, Duration::from_secs(3600)).unwrap();
         assert!(queue.due(now).unwrap().is_empty());
-        let (_, entry) = queue.due(now + 3_600_000).unwrap().remove(0);
+        // Read the clock after rescheduling: the new delay counts from then, not from `now`.
+        let later = NewsRetryQueue::now_ms().unwrap() + 3_600_000;
+        let (_, entry) = queue.due(later).unwrap().remove(0);
         assert_eq!(entry.attempts, 2);
 
         queue.remove(&id).unwrap();
