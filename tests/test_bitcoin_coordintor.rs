@@ -80,9 +80,23 @@ fn retry_failed_txs_test() -> Result<()> {
         key_manager.clone(),
         Some(settings.clone()),
     )?);
+    // Before the first tick the indexer is not initialized, so nothing else can be called yet.
+    coordinator.tick()?;
 
-    coordinator.dispatch(tx1, None, "test_1".to_string(), None, Some(1))?;
-    coordinator.dispatch(tx2, None, "test_2".to_string(), None, Some(1))?;
+    coordinator.dispatch(
+        tx1,
+        None,
+        "test_1".to_string(),
+        None,
+        Some(config.finality()),
+    )?;
+    coordinator.dispatch(
+        tx2,
+        None,
+        "test_2".to_string(),
+        None,
+        Some(config.finality()),
+    )?;
 
     for _ in 0..10 {
         coordinator.tick()?;

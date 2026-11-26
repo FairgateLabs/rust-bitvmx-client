@@ -1,4 +1,5 @@
 use crate::ports::bitcoin_coordinator::BitcoinCoordinatorApi;
+use crate::types::ResultDisposition;
 use std::collections::HashMap;
 
 use bitcoin::{script::read_scriptint, PublicKey, ScriptBuf, Transaction, Txid, XOnlyPublicKey};
@@ -464,7 +465,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
         tx_status: TransactionStatus,
         _context: String,
         program_context: &ProgramContext<BC>,
-    ) -> Result<(), BitVMXError> {
+    ) -> Result<ResultDisposition, BitVMXError> {
         let name = self.get_transaction_name_by_id(tx_id)?;
         let TransactionStatus::Confirmed {
             block_height: current_height,
@@ -555,7 +556,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
 
                 if leaf == timeout_leaf {
                     warn!("The timeout input for {name} was consumed");
-                    return Ok(());
+                    return Ok(ResultDisposition::Success);
                 }
 
                 match (name.as_str(), self.role()) {
@@ -608,7 +609,7 @@ impl ProtocolHandler for GCDisputeResolutionProtocol {
             }
         }
 
-        Ok(())
+        Ok(ResultDisposition::Success)
     }
 
     fn setup_complete<BC: BitcoinCoordinatorApi>(

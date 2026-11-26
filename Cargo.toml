@@ -1,6 +1,6 @@
 [package]
 name = "bitvmx-client"
-version = "0.8.9"
+version = "0.8.11"
 edition = "2021"
 
 [dependencies]
@@ -20,7 +20,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.24.1", features = ["v4", "v5"] }
 chrono = "0.4.45"
 tokio = { version = "1.40.0", features = ["sync"] }
-signature = "3.0.0"
 rsa = "0.9"
 enum_dispatch = { version = "0.3.13" }
 ctrlc = "3.5.2"
@@ -29,37 +28,37 @@ bitcoincore-rpc = { version = "0.19.0" }
 bitcoin-script = { git = "https://github.com/FairgateLabs/rust-bitcoin-script/", tag = "v0.6.0" }
 bitcoin-scriptexec = { git = "https://github.com/FairgateLabs/rust-bitcoin-scriptexec/", tag = "v0.6.0" }
 
-bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", tag = "v0.8.9" }
-bitvmx-protocol-builder = { git = "https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git", tag = "v0.8.9" }
-bitcoin-coordinator = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin", tag = "v0.8.9" }
-bitvmx-transaction-monitor = { git = "https://github.com/FairgateLabs/rust-bitvmx-transaction-monitor.git", tag = "v0.8.9" }
-rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", tag = "v0.8.9" }
-bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.8.9" }
-bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.8.9" }
-bitvmx-broker = { git = "https://github.com/FairgateLabs/rust-bitvmx-broker.git", tag = "v0.8.9" }
-emulator = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.9" }
-bitcoin-script-riscv = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.9" }
-bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.9" }
+bitvmx-key-manager = { git = "https://github.com/FairgateLabs/rust-bitvmx-key-manager.git", tag = "v0.8.11" }
+bitvmx-protocol-builder = { git = "https://github.com/FairgateLabs/rust-bitvmx-protocol-builder.git", tag = "v0.8.11" }
+bitcoin-coordinator = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin", tag = "v0.8.11" }
+bitvmx-transaction-monitor = { git = "https://github.com/FairgateLabs/rust-bitvmx-transaction-monitor.git", tag = "v0.8.11" }
+rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", tag = "v0.8.11" }
+bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.8.11" }
+bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.8.11" }
+bitvmx-broker = { git = "https://github.com/FairgateLabs/rust-bitvmx-broker.git", tag = "v0.8.11" }
+emulator = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.11" }
+bitcoin-script-riscv = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.11" }
+bitvmx-cpu-definitions = { git = "https://github.com/FairgateLabs/BitVMX-CPU", tag = "v0.8.11" }
 bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack", tag = "v0.6.0" }
 bitcoin-script-functions = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-functions", tag = "v0.6.0" }
 
-bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git", tag = "v0.8.9" }
+bitvmx-wallet = { git = "https://github.com/FairgateLabs/rust-bitvmx-wallet.git", tag = "v0.8.11" }
 bitvmx-job-dispatcher-types = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", features = [
     "emulator",
     "prover",
     "garbled",
-], tag = "v0.8.9" }
-bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.9" }
-bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.9" }
+], tag = "v0.8.11" }
+bitvmx-job-dispatcher = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.11" }
+bitvmx-dispatcher-utils = { git = "https://github.com/FairgateLabs/rust-bitvmx-job-dispatcher", tag = "v0.8.11" }
 redact = { version = "0.1", features = ["serde", "zeroize"] }
 time = "0.3.55"
-zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", tag = "v0.8.9" }
+zk-result = { git = "https://github.com/FairgateLabs/rust-bitvmx-zk-proof.git", tag = "v0.8.11" }
 
 
 [dev-dependencies]
 futures-util = "0.3"
 criterion = { version = "0.8.2", features = ["html_reports"] }
-bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.8.9" }
+bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.8.11" }
 reqwest = "0.13.4"
 
 [features]

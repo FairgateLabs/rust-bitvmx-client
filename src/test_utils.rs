@@ -665,7 +665,15 @@ mod tests {
 
     #[test]
     fn test_bitvmx_env_uses_mock_and_registers_new_blocks() {
-        let env = TestBitVMXEnv::new("bitvmx-env").unwrap();
+        let mut env = TestBitVMXEnv::new("bitvmx-env").unwrap();
+        // Nothing is registered before the coordinator has ticked and caught up.
+        assert!(env.coordinator_mock().monitored().is_empty());
+        // The coordinator throttle waits a few milliseconds before its first call.
+        let caught_up = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            env.bitvmx.tick().unwrap() == crate::bitvmx::TickOutcome::CaughtUp
+        });
+        assert!(caught_up);
         assert_eq!(
             env.coordinator_mock().monitored(),
             vec![MockMonitor {

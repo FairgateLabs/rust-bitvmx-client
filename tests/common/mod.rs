@@ -32,7 +32,7 @@ use protocol_builder::{
     scripts::{self, ProtocolScript, SignMode},
     types::{OutputType, Utxo},
 };
-use std::{path::Path, process::Command, sync::Once};
+use std::{path::Path, process::Command, sync::Once, thread, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -498,11 +498,34 @@ pub fn check_bitvmx_cpu_built() -> Result<()> {
     Ok(())
 }
 
+const BROKER_REQUEST_ATTEMPTS: usize = 5;
+const BROKER_REQUEST_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+pub fn send_message(id_channel_pair: &ParticipantChannel, msg: &str) -> Result<bool> {
+    for attempt in 1..=BROKER_REQUEST_ATTEMPTS {
+        match id_channel_pair
+            .channel
+            .send(&id_channel_pair.id, msg.to_string())
+        {
+            Ok(sent) => return Ok(sent),
+            Err(error) => {
+                warn!(
+                    "Test broker send failed on attempt {}/{}: {}",
+                    attempt, BROKER_REQUEST_ATTEMPTS, error
+                );
+                if attempt == BROKER_REQUEST_ATTEMPTS {
+                    return Err(error.into());
+                }
+                thread::sleep(BROKER_REQUEST_RETRY_DELAY);
+            }
+        }
+    }
+    unreachable!()
+}
+
 pub fn send_all(id_channel_pairs: &Vec<ParticipantChannel>, msg: &str) -> Result<()> {
     for id_channel_pair in id_channel_pairs {
-        id_channel_pair
-            .channel
-            .send(&id_channel_pair.id, msg.to_string())?;
+        send_message(id_channel_pair, msg)?;
     }
     Ok(())
 }

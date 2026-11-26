@@ -1,7 +1,7 @@
 mod shared;
 pub use shared::*;
 
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
 use crate::config::ComponentsConfig;
 use bitcoin_coordinator::coordinator::BitcoinCoordinator;
@@ -78,6 +78,11 @@ pub enum RetryReason {
     SetupNotReady,
     /// The active setup step is still waiting for a prerequisite.
     MissingSetupPrerequisite,
+    /// A protocol cannot react to a monitor news yet, usually because of a race with other news. The news is acked and
+    /// queued, and handed to the protocol again after `retry_after`, or after the default news retry delay when it is
+    /// `None`. Retries are unlimited, so the protocol must eventually return something else. A retried news is no
+    /// longer in order with other news. This is the only retry reason accepted for monitor news.
+    NewsNotReady { retry_after: Option<Duration> },
 }
 
 impl RetryReason {

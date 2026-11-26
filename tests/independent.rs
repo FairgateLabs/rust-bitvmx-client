@@ -12,7 +12,7 @@ use bitvmx_client::program::protocols::dispute::{
 };
 use bitvmx_client::program::protocols::protocol_handler::action_wins;
 use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
-use bitvmx_client::types::IncomingBitVMXApiMessages;
+use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
 use bitvmx_wallet::wallet::Destination;
 use common::dispute::{prepare_dispute, program_definition_path, ForcedChallenges};
 use common::helper::Mode;
@@ -151,30 +151,24 @@ pub fn test_all_aux(
     let funds_utxo_0 = Utxo::new(fund_txid_0, 0, speedup_amount, &funding_key_0);
     let command =
         IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_0).to_string()?;
-    helper.id_channel_pairs[0]
-        .channel
-        .send(&helper.id_channel_pairs[0].id, command)?;
+    helper.send_msg(0, command)?;
     let funds_utxo_1 = Utxo::new(fund_txid_1, 0, speedup_amount, &funding_key_1);
     let command =
         IncomingBitVMXApiMessages::SetFundingUtxo(Uuid::new_v4(), funds_utxo_1).to_string()?;
-    helper.id_channel_pairs[1]
-        .channel
-        .send(&helper.id_channel_pairs[1].id, command)?;
+    helper.send_msg(1, command)?;
 
     info!("Generate Aggregated from pair");
     let pair_0_1 = vec![addresses[0].clone(), addresses[1].clone()];
     let pair_0_1_agg_id = Uuid::new_v4();
     let command =
         IncomingBitVMXApiMessages::SetupKey(pair_0_1_agg_id, pair_0_1.clone(), None, 0, None);
-    helper.id_channel_pairs[0]
-        .channel
-        .send(&helper.id_channel_pairs[0].id, command.to_string()?)?;
-    helper.id_channel_pairs[1]
-        .channel
-        .send(&helper.id_channel_pairs[1].id, command.to_string()?)?;
+    helper.send_msg(0, command.to_string()?)?;
+    helper.send_msg(1, command.to_string()?)?;
     let _msg = helper.wait_msg(0)?;
     let msg = helper.wait_msg(1)?;
-    let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
+    let pair_0_1_agg_pub_key = msg
+        .aggregated_pub_key()
+        .ok_or_else(|| anyhow::anyhow!("expected AggregatedPubkey from op_2, got {msg:?}"))?;
 
     // prepare a second fund available so we don't need 2 blocks to get the UTXO
 
@@ -276,10 +270,29 @@ pub fn test_all_aux(
         None,
     )?;
 
-    let msg = helper.wait_msg(0)?;
-    info!("Setup dispute done: {:?}", msg);
-    let msg = helper.wait_msg(1)?;
-    info!("Setup dispute done: {:?}", msg);
+    for participant in 0..2 {
+        let msg = helper.wait_msg(participant)?;
+        match &msg {
+            OutgoingBitVMXApiMessages::SetupCompleted(id) if *id == prog_id => {
+                info!(
+                    "Setup dispute done for participant {}: {:?}",
+                    participant, msg
+                );
+            }
+            OutgoingBitVMXApiMessages::Error(report) => {
+                anyhow::bail!(
+                    "dispute setup failed for participant {}: {:?}",
+                    participant,
+                    report
+                );
+            }
+            other => anyhow::bail!(
+                "unexpected setup response for participant {}: {:?}",
+                participant,
+                other
+            ),
+        }
+    }
 
     // wait input from command line
     info!("Waiting for funding ready");
@@ -289,8 +302,8 @@ pub fn test_all_aux(
         send_all(&pair_0_1_channels, set_witness)?;
     }
 
-    let _ = helper.id_channel_pairs[1].channel.send(
-        &helper.id_channel_pairs[1].id,
+    let _ = helper.send_msg(
+        1,
         IncomingBitVMXApiMessages::DispatchTransactionName(
             prog_id,
             program::protocols::dispute::START_CH.to_string(),
@@ -679,8 +692,8 @@ fn test_zkp() -> Result<()> {
 
     let id = Uuid::new_v4();
 
-    let _ = helper.id_channel_pairs[0].channel.send(
-        &helper.id_channel_pairs[0].id,
+    let _ = helper.send_msg(
+        0,
         IncomingBitVMXApiMessages::GenerateZKP(
             id,
             vec![1, 2, 3, 4],
@@ -692,8 +705,8 @@ fn test_zkp() -> Result<()> {
     let msg = helper.wait_msg(0)?;
     info!("ZKP generated: {:?}", msg);
 
-    let _ = helper.id_channel_pairs[0].channel.send(
-        &helper.id_channel_pairs[0].id,
+    let _ = helper.send_msg(
+        0,
         IncomingBitVMXApiMessages::GetZKPExecutionResult(id).to_string()?,
     );
 

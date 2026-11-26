@@ -197,10 +197,9 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoord
         };
         info!("Cancel timeout tx: {}", tx_to_cancel);
         let tx_id = protocol_handler.get_transaction_id_by_name(&tx_to_cancel)?;
-        program_context.bitcoin_coordinator.cancel(
-            &[MonitorTarget::Transaction(tx_id)],
-            &dispatch_context,
-        )?;
+        program_context
+            .bitcoin_coordinator
+            .cancel(&[MonitorTarget::Transaction(tx_id)], &dispatch_context)?;
     }
 
     let Some(orig_tx) = name.strip_suffix("_INPUT_TO") else {
@@ -218,10 +217,9 @@ pub fn cancel_timeout<T: ProtocolHandler + WithClaimGateConfig, BC: BitcoinCoord
         info!("Cancel timeout tx: {}", tx_to_cancel);
         let tx_id = protocol_handler.get_transaction_id_by_name(&tx_to_cancel)?;
 
-        program_context.bitcoin_coordinator.cancel(
-            &[MonitorTarget::Transaction(tx_id)],
-            &dispatch_context,
-        )?;
+        program_context
+            .bitcoin_coordinator
+            .cancel(&[MonitorTarget::Transaction(tx_id)], &dispatch_context)?;
     }
 
     Ok(())

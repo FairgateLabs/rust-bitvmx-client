@@ -86,7 +86,7 @@ pub trait BitcoinCoordinatorApi {
     }
 
     /// Returns unacknowledged monitor and coordinator news. `max_keys` limits the monitor news to the first
-    /// `max_keys` transactions and block heights, `None` returns all of it.
+    /// `max_keys` keys in tick order, `None` returns all of it.
     fn get_news(&self, max_keys: Option<usize>) -> Result<News, BitcoinCoordinatorError>;
 
     /// Acknowledges a news item so it is not returned again.
