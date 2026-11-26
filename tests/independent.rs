@@ -271,26 +271,28 @@ pub fn test_all_aux(
     )?;
 
     for participant in 0..2 {
-        let msg = helper.wait_msg(participant)?;
-        match &msg {
-            OutgoingBitVMXApiMessages::SetupCompleted(id) if *id == prog_id => {
-                info!(
-                    "Setup dispute done for participant {}: {:?}",
-                    participant, msg
-                );
+        loop {
+            let msg = helper.wait_msg(participant)?;
+            match &msg {
+                OutgoingBitVMXApiMessages::SetupCompleted(id) if *id == prog_id => {
+                    info!(
+                        "Setup dispute done for participant {}: {:?}",
+                        participant, msg
+                    );
+                    break;
+                }
+                OutgoingBitVMXApiMessages::Error(report) => {
+                    anyhow::bail!(
+                        "dispute setup failed for participant {}: {:?}",
+                        participant,
+                        report
+                    );
+                }
+                other => info!(
+                    "Ignoring unrelated response while waiting for dispute setup for participant {}: {:?}",
+                    participant, other
+                ),
             }
-            OutgoingBitVMXApiMessages::Error(report) => {
-                anyhow::bail!(
-                    "dispute setup failed for participant {}: {:?}",
-                    participant,
-                    report
-                );
-            }
-            other => anyhow::bail!(
-                "unexpected setup response for participant {}: {:?}",
-                participant,
-                other
-            ),
         }
     }
 
