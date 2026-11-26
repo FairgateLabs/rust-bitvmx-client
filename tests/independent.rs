@@ -166,7 +166,9 @@ pub fn test_all_aux(
     helper.send_msg(1, command.to_string()?)?;
     let _msg = helper.wait_msg(0)?;
     let msg = helper.wait_msg(1)?;
-    let pair_0_1_agg_pub_key = msg.aggregated_pub_key().unwrap();
+    let pair_0_1_agg_pub_key = msg
+        .aggregated_pub_key()
+        .ok_or_else(|| anyhow::anyhow!("expected AggregatedPubkey from op_2, got {msg:?}"))?;
 
     // prepare a second fund available so we don't need 2 blocks to get the UTXO
 

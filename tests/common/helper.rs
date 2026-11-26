@@ -2,7 +2,10 @@
 #![cfg(test)]
 
 use anyhow::Result;
-use bitcoin::{Amount, Network, Transaction};
+use bitcoin::{
+    secp256k1::rand::{self, rngs::StdRng, Rng, SeedableRng},
+    Amount, Network, Transaction,
+};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_broker::{
     identification::allow_list::AllowList,
@@ -495,36 +498,34 @@ impl TestHelper {
     }
 
     pub fn stop(&mut self) -> Result<()> {
+        // Dispatchers connect to the brokers hosted by BitVMX, so they must exit while
+        // BitVMX is still up. Signal everything first so the waits run concurrently.
+        self.disp_stop_tx.send(()).unwrap();
+        self.zkp_stop_tx.send(()).unwrap();
+        self.garbled_stop_tx.send(()).unwrap();
+        if let Some(mine_stop_tx) = self.mine_stop_tx.take() {
+            mine_stop_tx.send(()).unwrap();
+        }
+
+        self.disp_handle.take().unwrap().join().unwrap()?;
+        self.zkp_handle.take().unwrap().join().unwrap()?;
+        self.garbled_handle.take().unwrap().join().unwrap()?;
+        if let Some(mine_handle) = self.mine_handle.take() {
+            mine_handle.join().unwrap()?;
+        }
+        info!("Dispatchers and miner stopped");
+
         if self.process_bitvmx.is_some() {
             self.stop_process_bitvmx()?;
         } else {
             self.stop_in_process_bitvmx()?;
         }
-
-        self.disp_stop_tx.send(()).unwrap();
-        let handle = self.disp_handle.take().unwrap();
-        handle.join().unwrap()?;
-
-        self.zkp_stop_tx.send(()).unwrap();
-        let handle = self.zkp_handle.take().unwrap();
-        handle.join().unwrap()?;
-
-        self.garbled_stop_tx.send(()).unwrap();
-        let handle = self.garbled_handle.take().unwrap();
-        handle.join().unwrap()?;
-
-        if let Some(mine_stop_tx) = self.mine_stop_tx.take() {
-            mine_stop_tx.send(()).unwrap();
-        }
-        if let Some(mine_handle) = self.mine_handle.take() {
-            mine_handle.join().unwrap()?;
-        }
+        info!("BitVMX instances stopped");
 
         if let Some(bitcoind) = &self.bitcoind {
             info!("Stopping bitcoind");
             bitcoind.stop()?;
         }
-        info!("BitVMX instances stopped");
         Ok(())
     }
 
@@ -685,6 +686,9 @@ impl TestHelper {
 // - BITVMX_TEST_EXECUTION=process enables this path.
 // - BITVMX_TEST_RESTART_INTERVAL_MS=N crashes all instances every N milliseconds.
 // - BITVMX_TEST_RESTART_DOWNTIME_MS=N controls how long they remain down (default 500).
+// - BITVMX_TEST_RESTART_TARGET=all|one|random picks which instances each cycle crashes:
+//   all of them (default), one at random, or a random non-empty subset.
+// - BITVMX_TEST_RESTART_SEED=N replays a previous random sequence (the seed is logged).
 // - BITVMX_TEST_PROCESS_START_TIMEOUT_MS=N controls process startup waits (default 60000).
 // -----------------------------------------------------------------------------
 
@@ -706,6 +710,44 @@ impl BitvmxExecutionMode {
             value => anyhow::bail!(
                 "invalid BITVMX_TEST_EXECUTION={value}; expected in-process or process"
             ),
+        }
+    }
+}
+
+/// Which operators each automatic restart cycle crashes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestartTarget {
+    All,    // Every operator at once.
+    One,    // A single operator chosen at random.
+    Random, // A random non-empty subset of operators.
+}
+
+impl RestartTarget {
+    fn from_env() -> Result<Self> {
+        match env::var("BITVMX_TEST_RESTART_TARGET")
+            .unwrap_or_else(|_| "all".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "all" => Ok(Self::All),
+            "one" => Ok(Self::One),
+            "random" => Ok(Self::Random),
+            value => anyhow::bail!(
+                "invalid BITVMX_TEST_RESTART_TARGET={value}; expected all, one or random"
+            ),
+        }
+    }
+
+    fn pick(self, count: usize, rng: &mut StdRng) -> Vec<usize> {
+        match self {
+            Self::All => (0..count).collect(),
+            Self::One => vec![rng.gen_range(0..count)],
+            Self::Random => loop {
+                let indexes = (0..count).filter(|_| rng.gen_bool(0.5)).collect::<Vec<_>>();
+                if !indexes.is_empty() {
+                    break indexes;
+                }
+            },
         }
     }
 }
@@ -802,6 +844,17 @@ impl ProcessBitvmx {
         );
         let downtime = duration_from_env("BITVMX_TEST_RESTART_DOWNTIME_MS")?
             .unwrap_or(Duration::from_millis(500));
+        let target = RestartTarget::from_env()?;
+        let seed = match env::var("BITVMX_TEST_RESTART_SEED") {
+            Ok(value) => value
+                .parse::<u64>()
+                .map_err(|e| anyhow::anyhow!("invalid BITVMX_TEST_RESTART_SEED={value}: {e}"))?,
+            Err(_) => rand::random(),
+        };
+        info!(
+            "BitVMX automatic restarts: target={target:?} interval={interval:?} downtime={downtime:?} seed={seed}"
+        );
+        let mut rng = StdRng::seed_from_u64(seed);
         let children = Arc::clone(&self.children);
         let (stop_tx, stop_rx) = channel();
 
@@ -814,7 +867,8 @@ impl ProcessBitvmx {
 
             let indexes = {
                 let mut children = children.lock().unwrap();
-                let indexes = (0..children.len()).collect::<Vec<_>>();
+                let indexes = target.pick(children.len(), &mut rng);
+                info!("Crashing BitVMX operator indexes {:?}", indexes);
                 kill_processes(&mut children, &indexes)?;
                 indexes
             };
