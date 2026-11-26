@@ -968,13 +968,9 @@ impl Program {
         context: String,
         program_context: &ProgramContext<BC>,
     ) -> Result<ResultDisposition, BitVMXError> {
-        let disposition = self.protocol.notify_news(
-            tx_id,
-            vout,
-            tx_status.clone(),
-            context,
-            program_context,
-        )?;
+        let disposition =
+            self.protocol
+                .notify_news(tx_id, vout, tx_status.clone(), context, program_context)?;
 
         // Send transaction notification to L2 channel, only when the protocol kept its reaction
         if disposition == ResultDisposition::Success && vout.is_none() {

@@ -109,24 +109,26 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
     /// due are handed to their owners again. Returns whether there was any work.
     fn process_bitcoin_updates(&mut self) -> Result<bool, BitVMXError> {
         let store = self.store.clone();
-        let (ready, monitor_news, coordinator_news) = Self::run_transaction(&store, || {
-            self.program_context.bitcoin_coordinator.tick()?;
-            if let Some(wallet) = self.wallet.as_mut() {
-                wallet.tick()?;
-            }
-            if !self.program_context.bitcoin_coordinator.is_ready()? {
-                return Ok((false, Vec::new(), Vec::new()));
-            }
-            if !self.chain_synced {
-                return Ok((true, Vec::new(), Vec::new()));
-            }
+        let key_store = self.key_store.clone();
+        let (ready, monitor_news, coordinator_news) =
+            Self::run_state_transaction(&store, &key_store, || {
+                self.program_context.bitcoin_coordinator.tick()?;
+                if let Some(wallet) = self.wallet.as_mut() {
+                    wallet.tick()?;
+                }
+                if !self.program_context.bitcoin_coordinator.is_ready()? {
+                    return Ok((false, Vec::new(), Vec::new()));
+                }
+                if !self.chain_synced {
+                    return Ok((true, Vec::new(), Vec::new()));
+                }
 
-            let news = self
-                .program_context
-                .bitcoin_coordinator
-                .get_news(Some(MAX_NEWS_KEYS_PER_FETCH))?;
-            Ok((true, news.monitor_news, news.coordinator_news))
-        })?;
+                let news = self
+                    .program_context
+                    .bitcoin_coordinator
+                    .get_news(Some(MAX_NEWS_KEYS_PER_FETCH))?;
+                Ok((true, news.monitor_news, news.coordinator_news))
+            })?;
 
         self.reporter
             .rpc_recovered(&self.program_context.broker_channel);
@@ -135,7 +137,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         }
         if !self.chain_synced {
             // The coordinator has ticked and caught up, so the indexer is initialized. Runs once per start.
-            Self::run_transaction(&store, || self.subscribe_to_new_blocks())?;
+            Self::run_state_transaction(&store, &key_store, || self.subscribe_to_new_blocks())?;
             info!("Sync complete, starting normal operation");
             self.chain_synced = true;
             return Ok(true);
@@ -201,7 +203,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         queued: Option<(Uuid, u32)>,
     ) -> Result<bool, BitVMXError> {
         let store = self.store.clone();
-        let result = Self::run_transaction_committing_if(&store, || {
+        let key_store = self.key_store.clone();
+        let result = Self::run_state_transaction_committing_if(&store, &key_store, || {
             let disposition = self.process_monitor_news(&news)?;
             let keep = disposition == ResultDisposition::Success;
             if keep {

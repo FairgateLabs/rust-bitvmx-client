@@ -59,7 +59,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         work: impl FnOnce(&mut Self) -> Result<T, BitVMXError>,
     ) -> Result<Option<T>, BitVMXError> {
         let store = self.store.clone();
-        self.run_step(name, |this| Self::run_transaction(&store, || work(this)))
+        let key_store = self.key_store.clone();
+        self.run_step(name, |this| {
+            Self::run_state_transaction(&store, &key_store, || work(this))
+        })
     }
 
     /// Times a step and returns whether it did work. A failed step stays pending, so it
@@ -89,9 +92,10 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         process_one: fn(&mut Self) -> Result<bool, BitVMXError>,
     ) -> Result<bool, BitVMXError> {
         let store = self.store.clone();
+        let key_store = self.key_store.clone();
         let mut had_work = false;
         for _ in 0..MAX_INPUTS_PER_QUEUE {
-            if !Self::run_transaction(&store, || process_one(self))? {
+            if !Self::run_state_transaction(&store, &key_store, || process_one(self))? {
                 break;
             }
             had_work = true;
@@ -113,7 +117,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 source,
             }) => {
                 let store = self.store.clone();
-                Self::run_transaction(&store, || {
+                let key_store = self.key_store.clone();
+                Self::run_state_transaction(&store, &key_store, || {
                     self.fail_program_setup(
                         &program_id,
                         peer,
@@ -129,7 +134,8 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
                 reason,
             }) => {
                 let store = self.store.clone();
-                Self::run_transaction(&store, || {
+                let key_store = self.key_store.clone();
+                Self::run_state_transaction(&store, &key_store, || {
                     self.fail_runtime_job(program_id, expected_job_id, job_id, reason)
                 })?;
                 Ok(None)
@@ -188,44 +194,86 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         }
     }
 
-    /// Commits the work on success and rolls it back on error.
-    /// Requires no active global transaction. Rollback covers database writes only,
-    /// not live memory or external effects.
-    pub(super) fn run_transaction<T>(
+    /// Runs one client event with both main state and key state staged, committing on success and
+    /// rolling back on error. Requires no active global transaction on either store. Rollback covers
+    /// database writes only, not live memory or external effects.
+    ///
+    /// Key storage commits first: if the main commit is interrupted, replay-safe key-manager
+    /// operations accept the already committed values instead of advancing main state without its
+    /// required keys.
+    pub(super) fn run_state_transaction<T>(
         store: &Storage,
+        key_store: &Storage,
         work: impl FnOnce() -> Result<T, BitVMXError>,
     ) -> Result<T, BitVMXError> {
-        Self::run_transaction_committing_if(store, || work().map(|value| (value, true)))
+        Self::run_state_transaction_committing_if(store, key_store, || {
+            work().map(|value| (value, true))
+        })
     }
 
-    /// Like `run_transaction`, but the work also decides whether its writes are kept: they are committed when it
-    /// returns `(value, true)` and rolled back when it returns `(value, false)`. Errors always roll back.
-    pub(super) fn run_transaction_committing_if<T>(
+    /// Like `run_state_transaction`, but the work also decides whether its writes are kept: they are
+    /// committed when it returns `(value, true)` and rolled back when it returns `(value, false)`.
+    /// Errors always roll back.
+    pub(super) fn run_state_transaction_committing_if<T>(
         store: &Storage,
+        key_store: &Storage,
         work: impl FnOnce() -> Result<(T, bool), BitVMXError>,
     ) -> Result<T, BitVMXError> {
         store.begin_global_transaction()?;
+        if let Err(error) = key_store.begin_global_transaction() {
+            error!("Could not begin key transaction: {:?}", error);
+            Self::rollback_store("state", store, &error)?;
+            return Err(error.into());
+        }
+
         match work() {
             Ok((value, true)) => {
+                // The databases cannot commit atomically together. Commit keys first so a crash
+                // leaves replayable key effects, never main state referring to absent key data.
                 // Storage consumes the transaction even when commit fails.
+                if let Err(error) = key_store.commit_global_transaction() {
+                    error!("Could not commit key transaction: {:?}", error);
+                    Self::rollback_store("state", store, &error)?;
+                    return Err(error.into());
+                }
                 store.commit_global_transaction()?;
                 Ok(value)
             }
             Ok((value, false)) => {
-                store.rollback_global_transaction()?;
+                Self::rollback_both(store, key_store, &"discarded work")?;
                 Ok(value)
             }
             Err(error) => {
-                if let Err(rollback) = store.rollback_global_transaction() {
-                    error!(
-                        "Could not roll back transaction step after {:?}: {:?}",
-                        error, rollback
-                    );
-                    return Err(rollback.into());
-                }
+                Self::rollback_both(store, key_store, &error)?;
                 Err(error)
             }
         }
+    }
+
+    /// Rolls back both stores, attempting each even if the other fails, so neither is left with
+    /// an active global transaction. Returns the first rollback failure.
+    fn rollback_both(
+        store: &Storage,
+        key_store: &Storage,
+        cause: &dyn std::fmt::Debug,
+    ) -> Result<(), BitVMXError> {
+        let key_rollback = Self::rollback_store("key", key_store, cause);
+        let state_rollback = Self::rollback_store("state", store, cause);
+        key_rollback.and(state_rollback)
+    }
+
+    fn rollback_store(
+        name: &str,
+        store: &Storage,
+        cause: &dyn std::fmt::Debug,
+    ) -> Result<(), BitVMXError> {
+        store.rollback_global_transaction().map_err(|rollback| {
+            error!(
+                "Could not roll back {name} transaction after {:?}: {:?}",
+                cause, rollback
+            );
+            rollback.into()
+        })
     }
 
     pub(super) fn measure_time<T>(operation: &str, work: impl FnOnce() -> T) -> T {
@@ -256,6 +304,8 @@ mod tests {
         types::IncomingBitVMXApiMessages,
     };
     use bitcoin_coordinator::coordinator::BitcoinCoordinator;
+    use key_manager::key_type::BitcoinKeyType;
+    use std::collections::HashMap;
     use storage_backend::{error::StorageError, key::StorageKey, storage::KeyValueStore};
 
     type BitVMX = super::BitVMX<BitcoinCoordinator>;
@@ -271,6 +321,7 @@ mod tests {
         let mut env = TestBitVMXEnv::new("runtime-dispatcher-rollback-settlement").unwrap();
         let program_id = Uuid::new_v4();
         let store = create_single_participant_program(&mut env, program_id);
+        let key_store = env.bitvmx.key_store.clone();
         let context = Context::ProgramStep(program_id, "execute-round-1".to_string());
         let expected_job_id = context.to_string().unwrap();
         env.bitvmx
@@ -288,7 +339,7 @@ mod tests {
             .run_step(
                 "runtime dispatcher result",
                 |_this| -> Result<(), BitVMXError> {
-                    BitVMX::run_transaction(&store, || {
+                    BitVMX::run_state_transaction(&store, &key_store, || {
                         store.set(&staged_key, "must roll back".to_string(), None)?;
                         Err(BitVMXError::RuntimeJobAttemptFailed {
                             program_id,
@@ -320,16 +371,176 @@ mod tests {
     }
 
     #[test]
+    fn state_transaction_rolls_key_manager_back_with_main_state() {
+        let env = TestBitVMXEnv::new("key-and-main-global-transaction").unwrap();
+        let store = env.bitvmx.store.clone();
+        let key_store = env.bitvmx.key_store.clone();
+        let key_manager = env.bitvmx.program_context.key_manager.clone();
+        let main_key = test_key!("coordinated-main-state");
+
+        let rolled_back_key = BitVMX::run_state_transaction_committing_if(
+            &store,
+            &key_store,
+            || -> Result<_, BitVMXError> {
+                store.set(&main_key, true, None)?;
+                let public_key = key_manager.next_keypair(BitcoinKeyType::P2tr)?;
+                Ok((public_key, false))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(store.get::<bool>(&main_key, None).unwrap(), None);
+
+        let committed_key =
+            BitVMX::run_state_transaction(&store, &key_store, || -> Result<_, BitVMXError> {
+                store.set(&main_key, true, None)?;
+                Ok(key_manager.next_keypair(BitcoinKeyType::P2tr)?)
+            })
+            .unwrap();
+
+        assert_eq!(rolled_back_key, committed_key);
+        assert_eq!(store.get::<bool>(&main_key, None).unwrap(), Some(true));
+    }
+
+    /// Simulates a crash between the two commits: key state is committed, main state is lost.
+    fn interrupt_after_key_commit(
+        store: &Storage,
+        key_store: &Storage,
+        work: impl FnOnce() -> Result<(), BitVMXError>,
+    ) {
+        store.begin_global_transaction().unwrap();
+        key_store.begin_global_transaction().unwrap();
+        work().unwrap();
+        key_store.commit_global_transaction().unwrap();
+        store.rollback_global_transaction().unwrap();
+    }
+
+    #[test]
+    fn setup_exchange_replays_after_key_commit_survives_lost_main_commit() {
+        let first = TestBitVMXEnv::new("replay-first").unwrap();
+        let second = TestBitVMXEnv::new("replay-second").unwrap();
+        let km1 = first.bitvmx.program_context.key_manager.clone();
+        let km2 = second.bitvmx.program_context.key_manager.clone();
+        let store = first.bitvmx.store.clone();
+        let key_store = first.bitvmx.key_store.clone();
+        let session_id = "replay-session";
+        let message_id = "replay-message";
+
+        let first_key = km1.next_keypair(BitcoinKeyType::P2tr).unwrap();
+        // Both environments share a derivation seed; skip an index so the participants differ.
+        km2.next_keypair(BitcoinKeyType::P2tr).unwrap();
+        let second_key = km2.next_keypair(BitcoinKeyType::P2tr).unwrap();
+        let participants = vec![first_key, second_key];
+        let aggregate = km1
+            .new_musig2_session(participants.clone(), first_key)
+            .unwrap();
+        km2.new_musig2_session(participants, second_key).unwrap();
+        for km in [&km1, &km2] {
+            km.generate_nonce(
+                message_id,
+                message_id.as_bytes().to_vec(),
+                &aggregate,
+                session_id,
+                None,
+            )
+            .unwrap();
+        }
+
+        let second_nonces = HashMap::from([(
+            second_key,
+            km2.get_my_pub_nonces(&aggregate, session_id).unwrap(),
+        )]);
+        let nonces_received = test_key!("replay-nonces-received");
+        let receive_nonces = || -> Result<(), BitVMXError> {
+            store.set(&nonces_received, true, None)?;
+            Ok(km1.aggregate_nonces(&aggregate, session_id, second_nonces.clone())?)
+        };
+        interrupt_after_key_commit(&store, &key_store, receive_nonces);
+        assert_eq!(store.get::<bool>(&nonces_received, None).unwrap(), None);
+        BitVMX::run_state_transaction(&store, &key_store, receive_nonces).unwrap();
+        assert_eq!(
+            store.get::<bool>(&nonces_received, None).unwrap(),
+            Some(true)
+        );
+
+        let first_nonces = HashMap::from([(
+            first_key,
+            km1.get_my_pub_nonces(&aggregate, session_id).unwrap(),
+        )]);
+        km2.aggregate_nonces(&aggregate, session_id, first_nonces)
+            .unwrap();
+        let second_signatures = HashMap::from([(
+            second_key,
+            km2.get_my_partial_signatures(&aggregate, session_id)
+                .unwrap(),
+        )]);
+        let signatures_received = test_key!("replay-signatures-received");
+        let receive_signatures = || -> Result<(), BitVMXError> {
+            store.set(&signatures_received, true, None)?;
+            Ok(km1.save_partial_signatures_multi(
+                &aggregate,
+                session_id,
+                second_signatures.clone(),
+            )?)
+        };
+        interrupt_after_key_commit(&store, &key_store, receive_signatures);
+        assert_eq!(store.get::<bool>(&signatures_received, None).unwrap(), None);
+        BitVMX::run_state_transaction(&store, &key_store, receive_signatures).unwrap();
+        assert_eq!(
+            store.get::<bool>(&signatures_received, None).unwrap(),
+            Some(true)
+        );
+
+        let signature = km1
+            .get_aggregated_signature(&aggregate, session_id, message_id)
+            .unwrap();
+        assert!(km1
+            .verify_final_signature(message_id, signature, aggregate, session_id)
+            .unwrap());
+    }
+
+    #[test]
+    fn discarded_work_rolls_back_main_state_even_if_key_rollback_fails() {
+        let dir = TestStorageDir::new("discard-key-rollback-failure");
+        let store = dir.storage();
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
+
+        let result = BitVMX::run_state_transaction_committing_if(&store, &key_store, || {
+            store.set(test_key!("discarded"), true, None)?;
+            // Simulate a handler incorrectly consuming the key transaction.
+            key_store.rollback_global_transaction()?;
+            Ok(((), false))
+        });
+
+        assert!(matches!(
+            result,
+            Err(BitVMXError::StorageError(
+                StorageError::TransactionRollbackFailed
+            ))
+        ));
+        assert_eq!(
+            store.get::<bool>(test_key!("discarded"), None).unwrap(),
+            None
+        );
+        // Neither store is left with an active global transaction.
+        BitVMX::run_state_transaction(&store, &key_store, || Ok(())).unwrap();
+    }
+
+    #[test]
     fn only_committed_transactions_survive_reopening_the_store() {
         let dir = TestStorageDir::new("independent-transactions");
         let store = dir.storage();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.set(test_key!("failed-a"), true, None)?;
-            store.set(test_key!("failed-b"), true, None)?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
+        let result: Result<(), BitVMXError> =
+            BitVMX::run_state_transaction(&store, &key_store, || {
+                store.set(test_key!("failed-a"), true, None)?;
+                store.set(test_key!("failed-b"), true, None)?;
+                Err(BitVMXError::InvalidMessageFormat)
+            });
         assert!(result.is_err());
-        BitVMX::run_transaction(&store, || {
+        BitVMX::run_state_transaction(&store, &key_store, || {
             store.set(test_key!("committed-a"), true, None)?;
             store.set(test_key!("committed-b"), true, None)?;
             Ok(())
@@ -360,13 +571,15 @@ mod tests {
     fn malformed_input_is_consumed_and_the_next_input_can_commit() {
         let dir = TestStorageDir::new("reject-malformed-input");
         let store = dir.storage();
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
         let valid =
             serde_json::to_string(&IncomingBitVMXApiMessages::Ping(Uuid::new_v4())).unwrap();
         store.set(test_key!("bad-input"), "not JSON", None).unwrap();
         store.set(test_key!("next-input"), &valid, None).unwrap();
 
         for key in ["bad-input", "next-input"] {
-            BitVMX::run_transaction(&store, || {
+            BitVMX::run_state_transaction(&store, &key_store, || {
                 let payload: String = store.get(test_key!(key), None)?.unwrap();
                 store.remove(test_key!(key), None)?;
                 if BitVMX::discard_if_malformed(serde_json::from_str::<IncomingBitVMXApiMessages>(
@@ -399,12 +612,15 @@ mod tests {
     fn malformed_input_consumption_rolls_back_with_transaction() {
         let dir = TestStorageDir::new("reject-rollback");
         let store = dir.storage();
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
         store.set(test_key!("input"), "[]", None).unwrap();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("input"), None)?;
-            assert!(BitVMX::discard_if_malformed(deserialize_msg("[]".into(), 1024)).is_none());
-            Err(BitVMXError::StorageError(StorageError::WriteError))
-        });
+        let result: Result<(), BitVMXError> =
+            BitVMX::run_state_transaction(&store, &key_store, || {
+                store.remove(test_key!("input"), None)?;
+                assert!(BitVMX::discard_if_malformed(deserialize_msg("[]".into(), 1024)).is_none());
+                Err(BitVMXError::StorageError(StorageError::WriteError))
+            });
         assert!(result.is_err());
         assert_eq!(
             store.get::<String>(test_key!("input"), None).unwrap(),
@@ -418,13 +634,16 @@ mod tests {
         let mut reporter = Reporter::new(env.context.components_config.l2.clone());
         let dir = TestStorageDir::new("nonfatal-step-storage");
         let store = dir.storage();
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
         store.set(test_key!("input"), true, None).unwrap();
 
-        let failed: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("input"), None)?;
-            store.set(test_key!("partial"), true, None)?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
+        let failed: Result<(), BitVMXError> =
+            BitVMX::run_state_transaction(&store, &key_store, || {
+                store.remove(test_key!("input"), None)?;
+                store.set(test_key!("partial"), true, None)?;
+                Err(BitVMXError::InvalidMessageFormat)
+            });
         assert_eq!(
             BitVMX::finish_step("input", failed, &mut reporter, &env.context.broker_channel)
                 .unwrap(),
@@ -437,7 +656,7 @@ mod tests {
         assert_eq!(store.get::<bool>(test_key!("partial"), None).unwrap(), None);
         assert_eq!(env.l2_messages().unwrap().len(), 1);
 
-        let next = BitVMX::run_transaction(&store, || {
+        let next = BitVMX::run_state_transaction(&store, &key_store, || {
             store.set(test_key!("independent"), true, None)?;
             Ok(true)
         });
@@ -474,11 +693,13 @@ mod tests {
     fn failed_item_preserves_previous_commit_and_unvisited_input() {
         let dir = TestStorageDir::new("application-item-transactions");
         let store = dir.storage();
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
         for key in ["input-a", "input-b", "input-c"] {
             store.set(test_key!(key), true, None).unwrap();
         }
 
-        let value = BitVMX::run_transaction(&store, || {
+        let value = BitVMX::run_state_transaction(&store, &key_store, || {
             store.remove(test_key!("input-a"), None)?;
             store.set(test_key!("state-a"), true, None)?;
             Ok(42)
@@ -486,11 +707,12 @@ mod tests {
         .unwrap();
         assert_eq!(value, 42);
 
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("input-b"), None)?;
-            store.set(test_key!("partial-b"), true, None)?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
+        let result: Result<(), BitVMXError> =
+            BitVMX::run_state_transaction(&store, &key_store, || {
+                store.remove(test_key!("input-b"), None)?;
+                store.set(test_key!("partial-b"), true, None)?;
+                Err(BitVMXError::InvalidMessageFormat)
+            });
         assert!(matches!(result, Err(BitVMXError::InvalidMessageFormat)));
         assert_eq!(store.get::<bool>(test_key!("input-a"), None).unwrap(), None);
         assert_eq!(
@@ -511,7 +733,7 @@ mod tests {
         );
 
         // The next step can open its own transaction after the failure.
-        BitVMX::run_transaction(&store, || {
+        BitVMX::run_state_transaction(&store, &key_store, || {
             store.set(test_key!("next-step"), true, None)?;
             Ok(())
         })
@@ -526,11 +748,14 @@ mod tests {
     fn rollback_failure_is_fatal_even_if_the_original_error_was_not() {
         let dir = TestStorageDir::new("transaction-rollback-failure");
         let store = dir.storage();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            // Simulate a handler incorrectly consuming its owner's transaction.
-            store.rollback_global_transaction()?;
-            Err(BitVMXError::InvalidMessageFormat)
-        });
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
+        let result: Result<(), BitVMXError> =
+            BitVMX::run_state_transaction(&store, &key_store, || {
+                // Simulate a handler incorrectly consuming its owner's transaction.
+                store.rollback_global_transaction()?;
+                Err(BitVMXError::InvalidMessageFormat)
+            });
         let error = result.unwrap_err();
         assert!(matches!(
             error,
@@ -543,11 +768,14 @@ mod tests {
     fn fatal_error_also_rolls_back() {
         let dir = TestStorageDir::new("transaction-fatal-error");
         let store = dir.storage();
+        let key_dir = TestStorageDir::new("key-store");
+        let key_store = key_dir.storage();
         store.set(test_key!("incoming"), true, None).unwrap();
-        let result: Result<(), BitVMXError> = BitVMX::run_transaction(&store, || {
-            store.remove(test_key!("incoming"), None)?;
-            Err(BitVMXError::StorageError(StorageError::WriteError))
-        });
+        let result: Result<(), BitVMXError> =
+            BitVMX::run_state_transaction(&store, &key_store, || {
+                store.remove(test_key!("incoming"), None)?;
+                Err(BitVMXError::StorageError(StorageError::WriteError))
+            });
         assert!(matches!(
             result,
             Err(BitVMXError::StorageError(StorageError::WriteError))

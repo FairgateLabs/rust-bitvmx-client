@@ -4351,7 +4351,10 @@ impl DisputeCoreProtocol {
         let dispatch_context = match Context::ProgramId(pid).to_string() {
             Ok(dispatch_context) => dispatch_context,
             Err(e) => {
-                warn!("Failed to build the context to cancel txid {}: {:?}", txid, e);
+                warn!(
+                    "Failed to build the context to cancel txid {}: {:?}",
+                    txid, e
+                );
                 return;
             }
         };

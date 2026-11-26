@@ -455,10 +455,7 @@ pub fn lockservice(channel: LocalChannel, identifier: Identifier) -> Result<()> 
             _ => panic!("Expected Transaction message"),
         };
 
-        info!(
-            "Received message from channel: {:?}",
-            status.tx_id_or_err()
-        );
+        info!("Received message from channel: {:?}", status.tx_id_or_err());
         info!("happy path secret: {}", fake_secret);
         info!("happy path public: {}", aggregated_happy_path);
 

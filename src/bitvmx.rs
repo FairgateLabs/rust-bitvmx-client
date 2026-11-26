@@ -84,6 +84,7 @@ pub struct BitVMX<BC: BitcoinCoordinatorApi = BitcoinCoordinator> {
     config: Config,
     program_context: ProgramContext<BC>,
     store: Rc<Storage>,
+    key_store: Rc<Storage>,
     tick_count: u32,
     message_queue: MessageQueue,
     /// Monitor news whose reaction asked to be retried later. They are already acked in the coordinator.
@@ -179,6 +180,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
         print_version_info();
         let store = Rc::new(Storage::new(&config.storage)?);
         let key_manager = create_key_manager_from_config(&config.key_manager, &config.key_storage)?;
+        let key_store = key_manager.storage();
         let key_manager = Rc::new(key_manager);
         let rsa_public_key = key_manager
             .import_rsa_private_key(&settings::decrypt_or_read_file(config.comms_key())?)?;
@@ -274,6 +276,7 @@ impl<BC: BitcoinCoordinatorApi> BitVMX<BC> {
             config,
             program_context,
             store,
+            key_store,
             tick_count: 0,
             message_queue,
             news_retry_queue,
