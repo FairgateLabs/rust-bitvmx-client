@@ -304,7 +304,7 @@ mod tests {
         types::IncomingBitVMXApiMessages,
     };
     use bitcoin_coordinator::coordinator::BitcoinCoordinator;
-    use key_manager::key_type::BitcoinKeyType;
+    use key_manager::{key_type::BitcoinKeyType, winternitz::WinternitzType};
     use std::collections::HashMap;
     use storage_backend::{error::StorageError, key::StorageKey};
 
@@ -413,6 +413,54 @@ mod tests {
         work().unwrap();
         key_store.commit_global_transaction().unwrap();
         store.rollback_global_transaction().unwrap();
+    }
+
+    #[test]
+    #[ignore = "passes once key-manager makes same-message Winternitz signing replay-safe"]
+    fn winternitz_signing_replays_after_key_commit_survives_lost_main_commit() {
+        let env = TestBitVMXEnv::new("winternitz-signing-replay").unwrap();
+        let store = env.bitvmx.store.clone();
+        let key_store = env.bitvmx.key_store.clone();
+        let key_manager = env.bitvmx.program_context.key_manager.clone();
+        let result_settled = test_key!("winternitz-result-settled");
+        let message = [3u8];
+        let public_key = key_manager
+            .next_winternitz(message.len(), WinternitzType::HASH160)
+            .unwrap();
+        let index = public_key.derivation_index().unwrap();
+        let mut first_signature = None;
+
+        // Model a process crash after the key manager durably marks the one-time key used,
+        // but before the dispatcher result and inbox consumption commit in the main store.
+        interrupt_after_key_commit(&store, &key_store, || {
+            store.set(&result_settled, true, None)?;
+            first_signature = Some(key_manager.sign_winternitz_message_by_index(
+                &message,
+                WinternitzType::HASH160,
+                index,
+            )?);
+            Ok(())
+        });
+        assert_eq!(store.get::<bool>(&result_settled, None).unwrap(), None);
+
+        // Redelivery must be idempotent: signing the same message with the same index returns
+        // the original signature, allowing the dispatcher result transaction to finish.
+        let replayed_signature =
+            BitVMX::run_state_transaction(&store, &key_store, || -> Result<_, BitVMXError> {
+                store.set(&result_settled, true, None)?;
+                Ok(key_manager.sign_winternitz_message_by_index(
+                    &message,
+                    WinternitzType::HASH160,
+                    index,
+                )?)
+            })
+            .unwrap();
+
+        assert_eq!(replayed_signature, first_signature.unwrap());
+        assert_eq!(
+            store.get::<bool>(&result_settled, None).unwrap(),
+            Some(true)
+        );
     }
 
     #[test]
