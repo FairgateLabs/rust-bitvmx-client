@@ -41,31 +41,40 @@ use crate::common::{dispute::process_dispatcher_non_blocking, helper::InternalWa
 /// Number of blocks to mine initially in tests to ensure sufficient coin maturity
 pub const INITIAL_BLOCK_COUNT: u64 = 101;
 
-/// Mine blocks during regtest setup, tolerating a short-lived RPC interruption
-/// while the freshly started Docker container settles.
+/// Mine blocks during regtest setup in small batches so each RPC stays well
+/// below the client's 15-second request timeout. Retry a batch to tolerate a
+/// short-lived RPC interruption while the freshly started container settles.
 pub fn mine_blocks_with_retry(
     bitcoin_client: &BitcoinClient,
     block_count: u64,
     address: &Address,
 ) -> Result<()> {
+    const BLOCKS_PER_REQUEST: u64 = 10;
     const MAX_ATTEMPTS: usize = 3;
     const RETRY_DELAY: Duration = Duration::from_secs(1);
 
-    for attempt in 1..=MAX_ATTEMPTS {
-        match bitcoin_client.mine_blocks_to_address(block_count, address) {
-            Ok(()) => return Ok(()),
-            Err(error) if attempt < MAX_ATTEMPTS => {
-                warn!(
-                    "Failed to mine regtest setup blocks on attempt {}/{}: {}. Retrying in {:?}",
-                    attempt, MAX_ATTEMPTS, error, RETRY_DELAY
-                );
-                thread::sleep(RETRY_DELAY);
+    let mut remaining = block_count;
+    while remaining > 0 {
+        let batch_size = remaining.min(BLOCKS_PER_REQUEST);
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            match bitcoin_client.mine_blocks_to_address(batch_size, address) {
+                Ok(()) => break,
+                Err(error) if attempt < MAX_ATTEMPTS => {
+                    warn!(
+                        "Failed to mine regtest setup batch of {} blocks on attempt {}/{}: {}. Retrying in {:?}",
+                        batch_size, attempt, MAX_ATTEMPTS, error, RETRY_DELAY
+                    );
+                    thread::sleep(RETRY_DELAY);
+                }
+                Err(error) => return Err(error.into()),
             }
-            Err(error) => return Err(error.into()),
         }
+
+        remaining -= batch_size;
     }
 
-    unreachable!("the bounded mining retry loop always returns")
+    Ok(())
 }
 
 /// RAII guard for bitcoind that ensures cleanup on Drop.
