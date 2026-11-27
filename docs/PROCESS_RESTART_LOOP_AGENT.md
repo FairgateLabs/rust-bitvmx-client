@@ -10,6 +10,18 @@ Bitcoind outages use Docker **pause/unpause**, not container removal. The local 
 
 **Do not use the batch file for this loop:** its launcher returns before the test finishes and does not give you the test's exit code. Instead, run the *same test* in the foreground with the corresponding environment variables set, capturing the entire output in a per-round file. This ignored regtest integration test requires Docker/bitcoind and a built BitVMX-CPU emulator. Do not start another round while one is running; the test owns the `bitcoin-regtest` container and local operator state.
 
+## Reusable runner (Git Bash on Windows)
+
+Use the checked-in foreground runner instead of rebuilding the shell loop each time:
+
+```bash
+bash docs/run-process-restart-loop.sh --rounds 20
+bash docs/run-process-restart-loop.sh --rounds 20 --outages
+# Optional: --base-seed 300000 --outage-interval-ms 15000 --outage-downtime-ms 3000
+```
+
+The script sets the exact working directory, verifies CPU/Docker prerequisites, creates a unique session under `logs/process-restart/`, runs rounds serially with a **3600-second per-round timeout**, redirects both streams to separate logs, checks the single test result, updates `summary.md` after each round, and appends to `tasks.md` on the first anomaly. It clears inherited outage variables when outages are off and unsets `GITHUB_ACTIONS`. It prints only one result line per round. Give the calling tool a timeout long enough for **all** requested rounds, or run smaller *separate* sessions; an externally aborted tool may leave a test process/container running. If interrupted, stop and check the process/container state before starting again. Do not automatically resume or dismiss an anomaly: follow the stopping rule below.
+
 ## Preparation
 
 1. **Run from this exact repository path:** `C:\src\rust-bitvmx-workspace\rust-bitvmx-client` (the directory containing `tall_process.bat`). The CPU check in `tests/common/mod.rs` resolves `../BitVMX-CPU/target/release/emulator.exe` and `../BitVMX-CPU/docker-riscv32/riscv32/build` relative to the **test process's working directory**, not relative to the test executable. Set the working directory explicitly in the shell/process that invokes `cargo`, and verify those two paths there before starting. A missing-CPU message from another working directory is a launch-path mistake: correct the path, do not build the CPU or report it absent. If the paths really are missing from the verified directory, or Docker is unavailable, create an alert as below. Do not run `cargo test` merely to probe readiness.
