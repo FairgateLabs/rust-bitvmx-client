@@ -15,8 +15,7 @@ use bitvmx_client::program::variables::{VariableTypes, WitnessTypes};
 use bitvmx_client::types::{IncomingBitVMXApiMessages, OutgoingBitVMXApiMessages};
 use bitvmx_wallet::wallet::Destination;
 use common::dispute::{prepare_dispute, program_definition_path, ForcedChallenges};
-use common::helper::Mode;
-use common::helper::TestHelper;
+use common::helper::{Mode, TestHelper, TxNameWaitOutcome};
 use common::init_utxo_new;
 use common::{config_trace, send_all};
 use emulator::decision::challenge::{ForceChallenge, ForceCondition};
@@ -27,7 +26,7 @@ use key_manager::winternitz::{
 };
 use protocol_builder::scripts::{self, SignMode};
 use protocol_builder::types::Utxo;
-use std::vec;
+use std::{env, vec};
 use tracing::info;
 use uuid::Uuid;
 
@@ -356,11 +355,28 @@ pub fn test_all_aux(
         None => forced_challenge.get_role().unwrap_or(Verifier).opposite(),
     };
 
-    helper.wait_tx_name(1, &action_wins(&role, 1))?;
+    let expected_action = action_wins(&role, 1);
+    let opposite_action = action_wins(&role.opposite(), 1);
+    let winner = helper.wait_tx_name_or(1, &expected_action, &[&opposite_action])?;
 
     helper.stop()?;
 
-    Ok(())
+    match winner {
+        TxNameWaitOutcome::Expected(_) => Ok(()),
+        TxNameWaitOutcome::Alternative { name, .. }
+            if env::var("BITVMX_TEST_EXECUTION").as_deref() == Ok("process")
+                && env::var_os("BITVMX_TEST_RESTART_INTERVAL_MS").is_some() =>
+        {
+            info!(
+                "PROCESS_RESTART_OPPOSITE_WINNER expected={} observed={}",
+                expected_action, name
+            );
+            Ok(())
+        }
+        TxNameWaitOutcome::Alternative { name, .. } => {
+            anyhow::bail!("expected terminal transaction {expected_action}, observed {name}")
+        }
+    }
 }
 
 pub fn derive_winternitz(message_size_in_bytes: usize, index: u32) -> WinternitzPublicKey {

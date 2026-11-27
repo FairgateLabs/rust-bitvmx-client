@@ -53,6 +53,14 @@ use crate::common::{
 };
 const MIN_TX_FEE: f64 = 2.0;
 
+pub enum TxNameWaitOutcome {
+    Expected(OutgoingBitVMXApiMessages),
+    Alternative {
+        name: String,
+        message: OutgoingBitVMXApiMessages,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Regtest, // Local regtest whose bitcoind the harness spawns, funds, and mines itself.
@@ -655,17 +663,33 @@ impl TestHelper {
     }
 
     pub fn wait_tx_name(&self, idx: usize, name: &str) -> Result<OutgoingBitVMXApiMessages> {
+        match self.wait_tx_name_or(idx, name, &[])? {
+            TxNameWaitOutcome::Expected(message) => Ok(message),
+            TxNameWaitOutcome::Alternative { .. } => unreachable!("no alternatives were supplied"),
+        }
+    }
+
+    pub fn wait_tx_name_or(
+        &self,
+        idx: usize,
+        expected: &str,
+        alternatives: &[&str],
+    ) -> Result<TxNameWaitOutcome> {
         info!(
             "Waiting for transaction with name: {} on channel: {}",
-            name, idx
+            expected, idx
         );
         loop {
             let msg = self.wait_msg(idx)?;
-            if let Some((_uuid, _status, tx_name)) = msg.transaction() {
-                if let Some(tx_name) = tx_name {
-                    if tx_name == name {
-                        return Ok(msg);
-                    }
+            if let Some((_uuid, _status, Some(tx_name))) = msg.transaction() {
+                if tx_name == expected {
+                    return Ok(TxNameWaitOutcome::Expected(msg));
+                }
+                if alternatives.contains(&tx_name.as_str()) {
+                    return Ok(TxNameWaitOutcome::Alternative {
+                        name: tx_name,
+                        message: msg,
+                    });
                 }
             }
             thread::sleep(Duration::from_millis(100));

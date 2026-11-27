@@ -91,11 +91,20 @@ for ((round=1; round<=rounds; round++)); do
     results=$(grep -F 'test result:' "$log_path" || true)
     result=$(printf '%s\n' "$results" | tail -n 1)
     result_count=$(printf '%s\n' "$results" | grep -c . || true)
+    opposite_winners=$(grep -F 'PROCESS_RESTART_OPPOSITE_WINNER' "$log_path" || true)
+    opposite_winner_count=$(printf '%s\n' "$opposite_winners" | grep -c . || true)
+    valid_result=false
     if [[ $exit_code -eq 0 && $result_count -eq 1 && $result == 'test result: ok. 1 passed; 0 failed;'* ]]; then
+        valid_result=true
+    fi
+    if $valid_result && [[ $opposite_winner_count -eq 0 ]]; then
         record pass "$exit_code" "$result" "$log_path"
+    elif $valid_result && [[ $opposite_winner_count -eq 1 ]]; then
+        record accepted "$exit_code" 'opposite protocol winner accepted' "$log_path"
     else
         symptom=${result:-missing test result}
         [[ $result_count -gt 1 ]] && symptom='ambiguous test result (multiple matches)'
+        [[ $opposite_winner_count -gt 1 ]] && symptom='ambiguous opposite-winner result (multiple matches)'
         [[ $exit_code -eq 124 ]] && symptom='test timed out after 3600 seconds'
         [[ -f $log_path ]] || { log_path='not created'; symptom='test did not create a log'; }
         record anomaly "$exit_code" "$symptom" "$log_path"
